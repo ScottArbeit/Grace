@@ -185,6 +185,8 @@ module WatchTests =
         configuration.BranchName <- branchName
         configuration.RootDirectory <- rootDirectory
 
+        saveConfigFile (Path.Combine(rootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)) configuration
+
         repositoryId, branchId
 
     /// Writes a repository configuration file without relying on the process-local cached Current() value.
@@ -15430,6 +15432,66 @@ module WatchTests =
             degradedRequests.ToArray()
             |> should equal [| "missing local-state DB authority" |])
 
+    /// Verifies that suspended IPC requests degraded handling instead of waiting for ordinary queue drain.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator treats suspended ipc as degraded`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let suspendedInspection: Services.GraceWatchStatusInspection =
+                {
+                    Exists = true
+                    Status = Some status
+                    PersistedMode = Some Services.GraceWatchRuntimeMode.Suspended
+                    SafetyFlags = [| "suspended" |]
+                    ReadError = None
+                }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "suspended-ipc-gate-test"))
+
+            let inspectStatus () = Task.FromResult(suspendedInspection)
+            let degradedRequests = ResizeArray<string>()
+            let requestDegradedResync reason = degradedRequests.Add(reason)
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("suspended IPC must not wait for a safe point"))
+            let reestablishedReferences = ResizeArray<ReferenceId>()
+            let reestablishIpc payload _ = task { reestablishedReferences.Add(payload.ReferenceId) }
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("suspended IPC must not apply"))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+
+            degradedRequests.ToArray()
+            |> should equal [| "Watch is suspended" |]
+
+            reestablishedReferences.ToArray()
+            |> should
+                equal
+                [|
+                    notification.ReferenceId
+                    notification.ReferenceId
+                |])
+
     /// Verifies that degraded resync is not requested after the notification stops targeting Current().
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator rechecks branch before degraded resync request`` () =
@@ -15523,6 +15585,65 @@ module WatchTests =
             let current = Current()
             current.BranchId <- branchBId
             current.BranchName <- "branch-b"
+
+            blockingLease.Dispose()
+
+            Task.WaitAll([| materializationTask :> Task |], 5000)
+            |> should equal true
+
+            materializationTask.Result.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
+
+    /// Verifies that a branch switch persisted during the repository lease wait is observed before apply.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator reloads persisted branch after lease wait`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
+            let branchBId = Guid.NewGuid()
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "persisted-post-lease-branch-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync _ = Assert.Fail("Stale notification must not request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale persisted-branch notification must not apply"))
+            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
+            |> ignore
+
+            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+
+            let materializationTask =
+                Task.Run (fun () ->
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        notification)
+                        .GetAwaiter()
+                        .GetResult())
+
+            Task.Delay(150).Wait()
+
+            writeRepositoryConfiguration root currentRepositoryId "current-repo" branchBId "branch-b"
+
+            Current().BranchId |> should equal currentBranchId
 
             blockingLease.Dispose()
 
@@ -15962,6 +16083,141 @@ module WatchTests =
 
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
+
+    /// Verifies that dirty status becoming clean re-runs the latest-reference decision before apply.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator retries after dirty status becomes clean`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let cleanStatus = liveWatchStatus (Guid.NewGuid())
+            let dirtyStatus = { cleanStatus with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let branchFetches = ResizeArray<ReferenceId>()
+
+            let getBranch () =
+                task {
+                    branchFetches.Add(notification.ReferenceId)
+                    return Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-clean-retry-test")
+                }
+
+            let mutable inspections = 0
+
+            let inspectStatus () =
+                inspections <- inspections + 1
+
+                if inspections = 1 then
+                    Task.FromResult(watchStatusInspection dirtyStatus)
+                else
+                    Task.FromResult(watchStatusInspection cleanStatus)
+
+            let requestDegradedResync _ = Assert.Fail("Clean recovered status must not request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must retry instead of waiting."))
+            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must not reestablish IPC."))
+            let appliedReferences = ResizeArray<ReferenceId>()
+            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            branchFetches.ToArray()
+            |> should
+                equal
+                [|
+                    notification.ReferenceId
+                    notification.ReferenceId
+                |]
+
+            inspections |> should equal 5
+
+            appliedReferences.ToArray()
+            |> should equal [| notification.ReferenceId |])
+
+    /// Verifies that unavailable status becoming clean re-runs the latest-reference decision before apply.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator retries after unavailable status becomes clean`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let cleanStatus = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Checkpoint
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let branchFetches = ResizeArray<ReferenceId>()
+
+            let getBranch () =
+                task {
+                    branchFetches.Add(notification.ReferenceId)
+                    return Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "unavailable-clean-retry-test")
+                }
+
+            let mutable inspections = 0
+
+            let inspectStatus () =
+                inspections <- inspections + 1
+
+                if inspections = 1 then
+                    Task.FromResult(missingWatchStatusInspection)
+                else
+                    Task.FromResult(watchStatusInspection cleanStatus)
+
+            let requestDegradedResync _ = Assert.Fail("Clean recovered status must not request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must retry instead of waiting."))
+            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("Clean recovered status must not reestablish IPC."))
+            let appliedReferences = ResizeArray<ReferenceId>()
+            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            branchFetches.ToArray()
+            |> should
+                equal
+                [|
+                    notification.ReferenceId
+                    notification.ReferenceId
+                |]
+
+            inspections |> should equal 5
+
+            appliedReferences.ToArray()
+            |> should equal [| notification.ReferenceId |])
 
     /// Verifies that a clean gate after a local status identity rejection terminates instead of spinning.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
