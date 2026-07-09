@@ -541,7 +541,7 @@ END;');
 
         rawFact
             .HasIndex([| "RehydrationExpiresAtUtc" |])
-            .HasDatabaseName(OperationsUsageSql.TemporaryHotCleanupExpiryIndexName)
+            .HasDatabaseName("IX_ops_RawUsageFact_RehydrationExpiresAtUtc")
             .HasFilter("[RehydrationExpiresAtUtc] IS NOT NULL")
         |> ignore
 

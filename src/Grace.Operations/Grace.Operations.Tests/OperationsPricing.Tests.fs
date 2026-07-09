@@ -360,9 +360,9 @@ type OperationsPricingTests() =
                 Assert.That(script, Does.Contain("effective windows cannot overlap")))
         )
 
-    /// Verifies the reviewed pricing migration no longer delegates its historical target model to runtime configuration.
+    /// Verifies the reviewed pricing migration keeps historical schema metadata independent of runtime helpers.
     [<Test>]
-    member _.PricingMigrationTargetModelIsFrozenFromRuntimeConfigurator() =
+    member _.PricingMigrationTargetModelIsFrozenFromRuntimeSchemaHelpers() =
         let source = pricingMigrationSource ()
         let targetModelStart = source.IndexOf("override _.BuildTargetModel(modelBuilder: ModelBuilder) =", StringComparison.Ordinal)
         Assert.That(targetModelStart, Is.GreaterThanOrEqualTo(0))
@@ -370,9 +370,10 @@ type OperationsPricingTests() =
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(targetModelSource, Does.Not.Contain("OperationsModel.configure"))
+                Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
                 Assert.That(targetModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
                 Assert.That(targetModelSource, Does.Contain("let pricingRate = modelBuilder.Entity<PricingRateEntity>()"))
+                Assert.That(targetModelSource, Does.Contain(".HasDatabaseName(\"IX_ops_RawUsageFact_RehydrationExpiresAtUtc\")"))
                 Assert.That(targetModelSource, Does.Contain(".UseCollation(\"Latin1_General_100_BIN2\")")))
         )
 
