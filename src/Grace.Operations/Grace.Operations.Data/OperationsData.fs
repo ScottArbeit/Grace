@@ -1123,11 +1123,29 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
 
         member this.EnsureCreatedAsync(cancellationToken) = this.EnsureCreatedAsync cancellationToken
 
+/// Carries one shared Operations schema initialization attempt and the token that can stop it during host shutdown.
+type private OperationsUsageSchemaInitializationAttempt = { Task: Task; Cancellation: CancellationTokenSource }
+
 /// Shares one Operations schema initialization attempt across hosted services before SQL runtime work begins.
-type OperationsUsageSchemaInitializationBarrier(schema: OperationsUsageSchema) =
+type OperationsUsageSchemaInitializationBarrier(schema: IOperationsUsageSchemaInitializer) =
     let gate = obj ()
     let mutable initialized = false
-    let mutable inFlight: Task option = None
+    let mutable inFlight: OperationsUsageSchemaInitializationAttempt option = None
+
+    /// Links a joining caller's shutdown token to the shared schema attempt.
+    let cancelAttemptWhenCallerCancels (attempt: OperationsUsageSchemaInitializationAttempt) (cancellationToken: CancellationToken) =
+        if cancellationToken.CanBeCanceled then
+            let registration =
+                cancellationToken.Register(
+                    Action (fun () ->
+                        try
+                            attempt.Cancellation.Cancel()
+                        with
+                        | :? ObjectDisposedException -> ())
+                )
+
+            attempt.Task.ContinueWith(Action<Task>(fun _ -> registration.Dispose()))
+            |> ignore
 
     /// Starts or joins the shared schema initialization attempt.
     member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
@@ -1137,24 +1155,31 @@ type OperationsUsageSchemaInitializationBarrier(schema: OperationsUsageSchema) =
                     Task.CompletedTask
                 else
                     match inFlight with
-                    | Some task -> task
+                    | Some attempt ->
+                        cancelAttemptWhenCallerCancels attempt cancellationToken
+                        attempt.Task
                     | None ->
+                        let attemptCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+
                         let task =
                             task {
                                 try
-                                    do! schema.EnsureCreatedAsync CancellationToken.None
+                                    try
+                                        do! schema.EnsureCreatedAsync attemptCancellation.Token
 
-                                    lock gate (fun () ->
-                                        initialized <- true
-                                        inFlight <- None)
-                                with
-                                | ex ->
-                                    lock gate (fun () -> inFlight <- None)
-                                    ExceptionDispatchInfo.Capture(ex).Throw()
+                                        lock gate (fun () ->
+                                            initialized <- true
+                                            inFlight <- None)
+                                    with
+                                    | ex ->
+                                        lock gate (fun () -> inFlight <- None)
+                                        ExceptionDispatchInfo.Capture(ex).Throw()
+                                finally
+                                    attemptCancellation.Dispose()
                             }
                             :> Task
 
-                        inFlight <- Some task
+                        inFlight <- Some { Task = task; Cancellation = attemptCancellation }
                         task)
 
         initialization.WaitAsync cancellationToken

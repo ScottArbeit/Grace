@@ -446,6 +446,39 @@ type private RecordingSchemaInitializer(events: List<string>, ?failure: exn) =
             | Some ex -> Task.FromException ex
             | None -> Task.CompletedTask
 
+/// Records schema barrier attempts and cancels the first attempt only through the supplied caller token.
+type private CancellableSchemaInitializer(events: List<string>) =
+    let attempts = ResizeArray<bool>()
+    let firstAttempt = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    /// Completes when the first shared schema attempt starts.
+    member _.FirstAttempt = firstAttempt.Task
+
+    /// Returns whether each schema attempt received a cancelable token from the barrier.
+    member _.AttemptTokensCanBeCanceled = attempts |> Seq.toList
+
+    interface IOperationsUsageSchemaInitializer with
+
+        member _.EnsureCreatedAsync(cancellationToken) =
+            events.Add("schema")
+            attempts.Add cancellationToken.CanBeCanceled
+
+            if attempts.Count = 1 then
+                firstAttempt.TrySetResult() |> ignore
+
+                let completion = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+                let _registration =
+                    cancellationToken.Register(
+                        Action (fun () ->
+                            completion.TrySetCanceled(cancellationToken)
+                            |> ignore)
+                    )
+
+                completion.Task
+            else
+                Task.CompletedTask
+
 /// Covers hot/cold archive layout, Blob verification, SQL state ordering, and migration shape.
 [<TestFixture>]
 type OperationsUsageArchiveTests() =
@@ -569,8 +602,8 @@ type OperationsUsageArchiveTests() =
 
         context.Model.FindEntityType(typeof<RawUsageFactEntity>)
 
-    /// Creates a SqlException through non-public constructors so dependency classification is tested with the real type.
-    let sqlException message =
+    /// Creates a numbered SqlException through non-public constructors so classifier tests use the real provider type.
+    let sqlExceptionWithNumber number message =
         let errorCtor =
             typeof<SqlError>.GetConstructor
                 (BindingFlags.NonPublic ||| BindingFlags.Instance,
@@ -591,7 +624,7 @@ type OperationsUsageArchiveTests() =
         let error =
             errorCtor.Invoke(
                 [|
-                    box 40613
+                    box number
                     box (byte 1)
                     box (byte 20)
                     box "operations-sql"
@@ -630,6 +663,9 @@ type OperationsUsageArchiveTests() =
             |]
         )
         :?> SqlException
+
+    /// Creates a transient SQL dependency exception for archive retry tests.
+    let sqlException message = sqlExceptionWithNumber 40613 message
 
     /// Creates archive worker settings for hosted-service ordering tests without opening Blob storage.
     let archiveWorkerSettings () =
@@ -744,6 +780,57 @@ type OperationsUsageArchiveTests() =
                     Assert.That(archiveStore.ExpiredCleanupCount, Is.EqualTo(0))
                     Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
                     Assert.That(snapshot.DependencyFailure.Value, Does.Contain("Operations usage schema initialization failed (InvalidOperationException).")))
+            )
+        }
+
+    /// Verifies shared schema initialization observes startup cancellation and retries with a fresh later attempt.
+    [<Test>]
+    member _.SchemaInitializationBarrierCancelsInFlightAttemptAndRetriesLaterStartup() =
+        task {
+            let events = List<string>()
+            let schema = CancellableSchemaInitializer(events)
+            let barrier = OperationsUsageSchemaInitializationBarrier(schema)
+            use shutdown = new CancellationTokenSource()
+
+            let firstAttempt = barrier.EnsureCreatedAsync(shutdown.Token)
+            do! schema.FirstAttempt.WaitAsync(TimeSpan.FromSeconds(5.0))
+            shutdown.Cancel()
+
+            let mutable canceled = false
+
+            try
+                do! firstAttempt
+                Assert.Fail("Canceled schema startup should stop the shared initialization attempt.")
+            with
+            | :? OperationCanceledException -> canceled <- true
+
+            let retryDeadline = DateTime.UtcNow.AddSeconds(5.0)
+            let mutable retrySucceeded = false
+
+            while not retrySucceeded
+                  && DateTime.UtcNow < retryDeadline do
+                try
+                    do!
+                        barrier
+                            .EnsureCreatedAsync(CancellationToken.None)
+                            .WaitAsync(TimeSpan.FromMilliseconds(100.0))
+
+                    retrySucceeded <- true
+                with
+                | :? OperationCanceledException -> do! Task.Delay(TimeSpan.FromMilliseconds(20.0), CancellationToken.None)
+                | :? TimeoutException -> do! Task.Delay(TimeSpan.FromMilliseconds(20.0), CancellationToken.None)
+
+            do!
+                barrier
+                    .EnsureCreatedAsync(CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(5.0))
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(canceled, Is.True)
+                    Assert.That(retrySucceeded, Is.True)
+                    Assert.That(String.Join("|", events), Is.EqualTo("schema|schema"))
+                    Assert.That(schema.AttemptTokensCanBeCanceled[0], Is.True))
             )
         }
 
@@ -897,6 +984,78 @@ type OperationsUsageArchiveTests() =
                     Assert.That(String.Join("|", events), Is.EqualTo("list-candidates|verify-blob|complete-archive"))
                     Assert.That(archiveStore.RecordedFailures, Is.Empty)
                     Assert.That(archiveStore.MarkedPointers, Is.Empty))
+            )
+        }
+
+    /// Verifies known SQL archive transition guard errors stay row-scoped and later candidates continue.
+    [<Test>]
+    member _.ArchiveBatchRecordsSqlGuardFailuresAndContinuesPastBadRows() =
+        task {
+            let events = List<string>()
+            let firstBadUsageFactId = Guid.Parse("84848484-8484-8484-8484-848484848481")
+            let secondBadUsageFactId = Guid.Parse("84848484-8484-8484-8484-848484848482")
+            let safeUsageFactId = Guid.Parse("84848484-8484-8484-8484-848484848483")
+
+            let firstBadCandidate =
+                OperationsUsageArchiveTestData.candidate
+                    firstBadUsageFactId
+                    RawUsageFactArchiveState.Hot
+                    (Some(OperationsUsageArchiveTestData.payload firstBadUsageFactId))
+                    None
+
+            let secondBadCandidate =
+                OperationsUsageArchiveTestData.candidate
+                    secondBadUsageFactId
+                    RawUsageFactArchiveState.Hot
+                    (Some(OperationsUsageArchiveTestData.payload secondBadUsageFactId))
+                    None
+
+            let safeCandidate =
+                OperationsUsageArchiveTestData.candidate
+                    safeUsageFactId
+                    RawUsageFactArchiveState.Hot
+                    (Some(OperationsUsageArchiveTestData.payload safeUsageFactId))
+                    None
+
+            let safeArchiveBlob = OperationsUsageArchiveFormat.createArchiveBlob safeCandidate (OperationsUsageArchiveTestData.payload safeUsageFactId)
+
+            let archiveStore =
+                RecordingArchiveStore(
+                    [
+                        firstBadCandidate
+                        secondBadCandidate
+                        safeCandidate
+                    ],
+                    events,
+                    markFailures =
+                        [
+                            sqlExceptionWithNumber 57201 "SQL 57201 archive verified guard mismatch"
+                            sqlExceptionWithNumber 57202 "SQL 57202 archive completion guard mismatch"
+                        ]
+                )
+
+            let blobStore = RecordingArchiveBlobStore(events)
+            let processor = createProcessor archiveStore blobStore
+            let! archived = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(archived, Is.EqualTo(1))
+
+                    Assert.That(
+                        String.Join("|", events),
+                        Is.EqualTo(
+                            "list-candidates|write-verify-blob|mark-verified|record-archive-failure|write-verify-blob|mark-verified|record-archive-failure|write-verify-blob|mark-verified|verify-blob|complete-archive"
+                        )
+                    )
+
+                    Assert.That(archiveStore.RecordedFailures |> List.length, Is.EqualTo(2))
+                    Assert.That(fst archiveStore.RecordedFailures[0], Is.EqualTo(firstBadUsageFactId))
+                    Assert.That(snd archiveStore.RecordedFailures[0], Does.Contain("57201"))
+                    Assert.That(fst archiveStore.RecordedFailures[1], Is.EqualTo(secondBadUsageFactId))
+                    Assert.That(snd archiveStore.RecordedFailures[1], Does.Contain("57202"))
+                    Assert.That(archiveStore.CompletedPointers |> List.length, Is.EqualTo(1))
+                    Assert.That(archiveStore.CompletedPointers[0], Is.EqualTo(safeArchiveBlob.Pointer)))
             )
         }
 
@@ -1089,6 +1248,91 @@ type OperationsUsageArchiveTests() =
                         String.Join("|", events),
                         Is.EqualTo("list-candidates|write-verify-blob|list-candidates|write-verify-blob|mark-verified|verify-blob|complete-archive")
                     ))
+            )
+        }
+
+    /// Verifies Blob timeout cancellation is dependency-wide unless it is caused by worker shutdown.
+    [<Test>]
+    member _.ArchiveBatchClassifiesBlobCancellationByShutdownToken() =
+        task {
+            let timeoutEvents = List<string>()
+            let timeoutUsageFactId = Guid.Parse("85858585-8585-8585-8585-858585858581")
+
+            let timeoutCandidate =
+                OperationsUsageArchiveTestData.candidate
+                    timeoutUsageFactId
+                    RawUsageFactArchiveState.Hot
+                    (Some(OperationsUsageArchiveTestData.payload timeoutUsageFactId))
+                    None
+
+            let timeoutArchiveStore = RecordingArchiveStore([ timeoutCandidate ], timeoutEvents)
+
+            let timeoutBlobStore =
+                RecordingArchiveBlobStore(
+                    timeoutEvents,
+                    writeVerifyFailures =
+                        [
+                            TaskCanceledException("Blob upload timed out.")
+                        ]
+                )
+
+            let timeoutProcessor = createProcessor timeoutArchiveStore timeoutBlobStore
+            let mutable timeoutCanceled = false
+
+            try
+                let! _ = timeoutProcessor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+                Assert.Fail("Blob timeout cancellation should abort the archive batch for dependency retry.")
+            with
+            | :? OperationCanceledException -> timeoutCanceled <- true
+
+            let shutdownEvents = List<string>()
+            let shutdownUsageFactId = Guid.Parse("85858585-8585-8585-8585-858585858582")
+
+            let shutdownCandidate =
+                OperationsUsageArchiveTestData.candidate
+                    shutdownUsageFactId
+                    RawUsageFactArchiveState.Hot
+                    (Some(OperationsUsageArchiveTestData.payload shutdownUsageFactId))
+                    None
+
+            let shutdownArchiveStore = RecordingArchiveStore([ shutdownCandidate ], shutdownEvents)
+            use shutdown = new CancellationTokenSource()
+
+            let shutdownBlobStore =
+                { new IOperationsUsageArchiveBlobStore with
+                    member _.WriteAndVerifyAsync(_archiveBlob, _cancellationToken) =
+                        shutdownEvents.Add("write-verify-blob")
+                        shutdown.Cancel()
+                        Task.FromException(TaskCanceledException("Archive worker shutdown requested."))
+
+                    member _.VerifyAsync(_pointer, _cancellationToken) =
+                        shutdownEvents.Add("verify-blob")
+                        Task.CompletedTask
+
+                    member _.DownloadVerifiedAsync(_pointer, _cancellationToken) =
+                        shutdownEvents.Add("download-verified")
+                        Task.FromResult(Array.empty<byte>)
+                }
+
+            let shutdownProcessor = createProcessor shutdownArchiveStore shutdownBlobStore
+            let mutable shutdownCanceled = false
+
+            try
+                let! _ = shutdownProcessor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, shutdown.Token)
+                Assert.Fail("Worker shutdown cancellation should stop the archive batch without row-scoped failure evidence.")
+            with
+            | :? OperationCanceledException -> shutdownCanceled <- true
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(timeoutCanceled, Is.True)
+                    Assert.That(String.Join("|", timeoutEvents), Is.EqualTo("list-candidates|write-verify-blob"))
+                    Assert.That(timeoutArchiveStore.RecordedFailures, Is.Empty)
+                    Assert.That(timeoutArchiveStore.CompletedPointers, Is.Empty)
+                    Assert.That(shutdownCanceled, Is.True)
+                    Assert.That(String.Join("|", shutdownEvents), Is.EqualTo("list-candidates|write-verify-blob"))
+                    Assert.That(shutdownArchiveStore.RecordedFailures, Is.Empty)
+                    Assert.That(shutdownArchiveStore.CompletedPointers, Is.Empty))
             )
         }
 

@@ -404,6 +404,12 @@ type AzureOperationsUsageArchiveBlobStore(containerClient: BlobContainerClient) 
 
         member _.DownloadVerifiedAsync(pointer, cancellationToken) = downloadContentAfterLengthGuardAsync pointer cancellationToken
 
+/// Classifies archive failures before deciding whether a row may receive durable failure evidence.
+type private ArchiveFailureClassification =
+    | ShutdownCancellation
+    | ArchiveDependencyFailure
+    | RowScopedFailure
+
 /// Archives old hot raw payloads after Blob authority is verified and persisted in SQL.
 type OperationsUsageArchiveProcessor
     (
@@ -436,24 +442,44 @@ type OperationsUsageArchiveProcessor
     /// Keeps an exact missing archive Blob pointer row-scoped while service-level Blob failures abort the batch.
     let isExactCandidateBlobFailure (ex: RequestFailedException) = String.Equals(ex.ErrorCode, "BlobNotFound", StringComparison.OrdinalIgnoreCase)
 
-    /// Classifies Blob and network dependency failures that affect the archive service instead of one candidate row.
-    let rec isArchiveDependencyFailure (ex: exn) =
+    /// Keeps SQL transition guard mismatches scoped to the exact candidate that lost its archive state race.
+    let isArchiveTransitionGuardFailure (ex: SqlException) =
+        ex.Errors
+        |> Seq.cast<SqlError>
+        |> Seq.exists (fun error -> error.Number = 57201 || error.Number = 57202)
+
+    /// Classifies archive failures as shutdown, dependency-wide retry, or row-scoped durable evidence.
+    let rec classifyArchiveFailure (shutdownToken: CancellationToken) (ex: exn) =
         match ex with
-        | :? RequestFailedException as requestFailure when isExactCandidateBlobFailure requestFailure -> false
-        | :? RequestFailedException -> true
-        | :? AuthenticationFailedException -> true
-        | :? SqlException -> true
-        | :? TimeoutException -> true
-        | :? System.Net.Http.HttpRequestException -> true
-        | :? IOException -> true
+        | :? OperationCanceledException when shutdownToken.IsCancellationRequested -> ShutdownCancellation
+        | :? OperationCanceledException -> ArchiveDependencyFailure
+        | :? RequestFailedException as requestFailure when isExactCandidateBlobFailure requestFailure -> RowScopedFailure
+        | :? RequestFailedException -> ArchiveDependencyFailure
+        | :? AuthenticationFailedException -> ArchiveDependencyFailure
+        | :? SqlException as sqlFailure when isArchiveTransitionGuardFailure sqlFailure -> RowScopedFailure
+        | :? SqlException -> ArchiveDependencyFailure
+        | :? TimeoutException -> ArchiveDependencyFailure
+        | :? System.Net.Http.HttpRequestException -> ArchiveDependencyFailure
+        | :? IOException -> ArchiveDependencyFailure
         | :? AggregateException as aggregate ->
-            aggregate.InnerExceptions
-            |> Seq.exists isArchiveDependencyFailure
+            let classifications =
+                aggregate.InnerExceptions
+                |> Seq.map (classifyArchiveFailure shutdownToken)
+                |> Seq.toList
+
+            if classifications
+               |> List.contains ShutdownCancellation then
+                ShutdownCancellation
+            elif classifications
+                 |> List.contains ArchiveDependencyFailure then
+                ArchiveDependencyFailure
+            else
+                RowScopedFailure
         | _ ->
             if isNull ex.InnerException then
-                false
+                RowScopedFailure
             else
-                isArchiveDependencyFailure ex.InnerException
+                classifyArchiveFailure shutdownToken ex.InnerException
 
     /// Archives one hot candidate or resumes cleanup for an already verified candidate.
     let archiveCandidateAsync (candidate: RawUsageFactArchiveCandidate) cancellationToken =
@@ -502,28 +528,30 @@ type OperationsUsageArchiveProcessor
                     do! archiveCandidateAsync candidate cancellationToken
                     archived <- archived + 1
                 with
-                | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> cancellationToken.ThrowIfCancellationRequested()
-                | ex when isArchiveDependencyFailure ex ->
-                    logger.LogWarning(
-                        ex,
-                        "Operations usage archive dependency failed; row-scoped failure evidence was not recorded and the batch will retry after dependency recovery. UsageFactId: {UsageFactId}; ArchiveState: {ArchiveState}; FailureType: {FailureType}.",
-                        candidate.UsageFactId,
-                        candidate.ArchiveState,
-                        ex.GetType().Name
-                    )
-
-                    raise ex
                 | ex ->
-                    let failureReason = archiveFailureReason ex
-                    do! archiveStore.RecordArchiveFailureAsync(candidate.UsageFactId, failureReason, cancellationToken)
+                    match classifyArchiveFailure cancellationToken ex with
+                    | ShutdownCancellation -> cancellationToken.ThrowIfCancellationRequested()
+                    | ArchiveDependencyFailure ->
+                        logger.LogWarning(
+                            ex,
+                            "Operations usage archive dependency failed; row-scoped failure evidence was not recorded and the batch will retry after dependency recovery. UsageFactId: {UsageFactId}; ArchiveState: {ArchiveState}; FailureType: {FailureType}.",
+                            candidate.UsageFactId,
+                            candidate.ArchiveState,
+                            ex.GetType().Name
+                        )
 
-                    logger.LogError(
-                        ex,
-                        "Operations usage archive candidate failed; row-scoped failure evidence was recorded and the batch will continue. UsageFactId: {UsageFactId}; ArchiveState: {ArchiveState}; FailureReason: {FailureReason}.",
-                        candidate.UsageFactId,
-                        candidate.ArchiveState,
-                        failureReason
-                    )
+                        raise ex
+                    | RowScopedFailure ->
+                        let failureReason = archiveFailureReason ex
+                        do! archiveStore.RecordArchiveFailureAsync(candidate.UsageFactId, failureReason, cancellationToken)
+
+                        logger.LogError(
+                            ex,
+                            "Operations usage archive candidate failed; row-scoped failure evidence was recorded and the batch will continue. UsageFactId: {UsageFactId}; ArchiveState: {ArchiveState}; FailureReason: {FailureReason}.",
+                            candidate.UsageFactId,
+                            candidate.ArchiveState,
+                            failureReason
+                        )
 
                 index <- index + 1
 
