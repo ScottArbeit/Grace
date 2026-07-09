@@ -1200,6 +1200,128 @@ type OperationsUsageArchiveTests() =
             | Ok value -> Assert.That(value.MatchingArchivedFactCount, Is.EqualTo(1))
         }
 
+    /// Verifies overlong CorrelationId filters fail validation before archive exploration can broaden the query.
+    [<Test>]
+    member _.RehydrationRejectsOverlongCorrelationIdFiltersBeforeArchiveExploration() =
+        task {
+            let overlongCorrelationId = CorrelationId(String.replicate (OperationsUsageSql.CorrelationIdMaxLength + 1) "x")
+
+            let runRequest dryRun includeValidFilter =
+                task {
+                    let events = List<string>()
+                    let candidate, archiveBlob = archivedCandidate (Guid.Parse("48484848-4848-4848-8848-484848484869")) (Instant.FromUtc(2026, 7, 4, 10, 0, 0))
+
+                    let archiveStore = RecordingArchiveStore([ candidate ], events)
+                    let blobStore = RecordingArchiveBlobStore(events)
+                    blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
+                    let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
+                    let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
+
+                    let request =
+                        { rehydrationRequest now with
+                            Query = { rehydrationQuery (Some candidate.ObservedAt) (Some candidate.ObservedAt) with CorrelationIds = [ overlongCorrelationId ] }
+                            DryRun = dryRun
+                        }
+
+                    let request =
+                        if includeValidFilter then
+                            { request with
+                                Query =
+                                    { request.Query with
+                                        CorrelationIds =
+                                            [
+                                                candidate.CorrelationId
+                                                overlongCorrelationId
+                                            ]
+                                    }
+                            }
+                        else
+                            request
+
+                    let! result = processor.RehydrateAsync(request, CancellationToken.None)
+                    return result, events
+                }
+
+            let! dryRunResult, dryRunEvents = runRequest true false
+            let! rehydrateResult, rehydrateEvents = runRequest false false
+            let! mixedDryRunResult, mixedDryRunEvents = runRequest true true
+            let! mixedRehydrateResult, mixedRehydrateEvents = runRequest false true
+
+            let assertValidationFailure (result: Result<OperationsUsageRehydrationResult, string list>) (events: List<string>) =
+                match result with
+                | Ok value -> Assert.Fail($"Overlong CorrelationId should fail validation before matching {value.MatchingArchivedFactCount} archived facts.")
+                | Error errors ->
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(
+                                String.Join("|", errors),
+                                Does.Contain($"CorrelationId filters must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer")
+                            )
+
+                            Assert.That(events, Is.Empty))
+                    )
+
+            assertValidationFailure dryRunResult dryRunEvents
+            assertValidationFailure rehydrateResult rehydrateEvents
+            assertValidationFailure mixedDryRunResult mixedDryRunEvents
+            assertValidationFailure mixedRehydrateResult mixedRehydrateEvents
+        }
+
+    /// Verifies exact-width CorrelationId filters still work in dry-run and temporary rehydration paths.
+    [<Test>]
+    member _.RehydrationAcceptsMaximumLengthCorrelationIdFilters() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("48484848-4848-4848-8848-484848484870")
+            let observedAt = Instant.FromUtc(2026, 7, 4, 10, 0, 0)
+            let maxLengthCorrelationId = CorrelationId(String.replicate OperationsUsageSql.CorrelationIdMaxLength "m")
+
+            let fact = { OperationsUsageArchiveTestData.usageFact usageFactId with CorrelationId = maxLengthCorrelationId; ObservedAt = observedAt }
+
+            let rawPayload = OperationsUsageArchiveTestData.usageFactPayload fact
+
+            let hotCandidate =
+                { OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None with
+                    CorrelationId = maxLengthCorrelationId
+                    ObservedAt = observedAt
+                }
+
+            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+
+            let candidate =
+                { hotCandidate with
+                    ArchiveState = RawUsageFactArchiveState.Archived
+                    RawPayload = None
+                    ArchiveBlobName = Some archiveBlob.Pointer.BlobName
+                    ArchiveChecksumSha256Hex = Some archiveBlob.Pointer.ChecksumSha256Hex
+                    ArchiveByteLength = Some archiveBlob.Pointer.ByteLength
+                }
+
+            let archiveStore = RecordingArchiveStore([ candidate ], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
+            let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
+            let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
+
+            let query = { rehydrationQuery (Some observedAt) (Some observedAt) with CorrelationIds = [ maxLengthCorrelationId ] }
+
+            let! dryRun = processor.RehydrateAsync({ rehydrationRequest now with Query = query; DryRun = true }, CancellationToken.None)
+            let! rehydrated = processor.RehydrateAsync({ rehydrationRequest now with Query = query; DryRun = false }, CancellationToken.None)
+
+            match dryRun, rehydrated with
+            | Ok dryRunResult, Ok rehydratedResult ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(dryRunResult.MatchingArchivedFactCount, Is.EqualTo(1))
+                        Assert.That(rehydratedResult.MatchingArchivedFactCount, Is.EqualTo(1))
+                        Assert.That(rehydratedResult.AuditEntries |> List.length, Is.EqualTo(1))
+                        Assert.That(rehydratedResult.AuditEntries[0].UsageFactId, Is.EqualTo(usageFactId))
+                        Assert.That(String.Join("|", events), Is.EqualTo("count-archived|count-archived|list-archived|download-verified|rehydrate")))
+                )
+            | Error errors, _
+            | _, Error errors -> Assert.Fail(String.Join("; ", errors))
+        }
+
     /// Verifies large optional filter lists have identical dry-run and mutation semantics without per-value SQL parameters.
     [<Test>]
     member _.RehydrationLargeFilterListsUseBoundedSqlShapeAndConsistentSemantics() =

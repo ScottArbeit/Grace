@@ -652,6 +652,11 @@ type OperationsUsageRehydrationProcessor
            && request.Query.ObservedBeforeUtc.IsNone then
             errors.Add("Rehydration requires ObservedAfterUtc or ObservedBeforeUtc.")
 
+        request.Query.CorrelationIds
+        |> List.iter (fun correlationId ->
+            if (string correlationId).Length > OperationsUsageSql.CorrelationIdMaxLength then
+                errors.Add($"Rehydration CorrelationId filters must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer."))
+
         if String.IsNullOrWhiteSpace request.RequestedBy then
             errors.Add("Rehydration RequestedBy audit value is required.")
 
