@@ -93,7 +93,7 @@ module Queue =
 
         if observablePromotionSetIds.IsEmpty
            && observableRunningPromotionSetId.IsNone then
-            { queue with PromotionSetIds = []; RunningPromotionSetId = None; State = QueueState.Idle; UpdatedAt = None }
+            PromotionQueue.Default
         else
             { queue with
                 PromotionSetIds = observablePromotionSetIds

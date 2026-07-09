@@ -68,8 +68,8 @@ module Review =
                     return Error graceError
         }
 
-    /// Resolves resolve promotion set by id data from request or repository state.
-    let private resolvePromotionSetById (context: HttpContext) (promotionSetId: Guid) =
+    /// Resolves a PromotionSet only when the caller can observe its durable visibility scope.
+    let private resolveObservablePromotionSetById (context: HttpContext) (promotionSetId: Guid) =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
@@ -78,7 +78,13 @@ module Review =
 
             if exists then
                 let! promotionSet = actorProxy.Get correlationId
-                return Option.Some promotionSet
+
+                if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                    return Option.None
+                else
+                    let! isObservable = Grace.Server.PromotionSet.canObservePromotionSet context promotionSet
+
+                    if isObservable then return Option.Some promotionSet else return Option.None
             else
                 return Option.None
         }
@@ -86,7 +92,7 @@ module Review =
     /// Resolves resolve candidate projection context data from request or repository state.
     let private resolveCandidateProjectionContext (context: HttpContext) (parameters: CandidateProjectionParameters) =
         task {
-            match! resolveCandidatePromotionSetWith (resolvePromotionSetById context) parameters with
+            match! resolveCandidatePromotionSetWith (resolveObservablePromotionSetById context) parameters with
             | Error error -> return Error error
             | Ok (_, normalizedCandidateId, promotionSet) ->
                 let identity =
@@ -819,7 +825,24 @@ module Review =
 
     /// Resolves resolve candidate identity projection data from request or repository state.
     let internal resolveCandidateIdentityProjection (context: HttpContext) (parameters: ResolveCandidateIdentityParameters) =
-        resolveCandidateIdentityProjectionWith (resolvePromotionSetById context) parameters
+        resolveCandidateIdentityProjectionWith (resolveObservablePromotionSetById context) parameters
+
+    /// Loads the PromotionSet named by review parameters before review-note reads or mutations touch private state.
+    let private requireObservableReviewPromotionSet (context: HttpContext) (parameters: #ReviewParameters) =
+        task {
+            let correlationId = getCorrelationId context
+            let promotionSetId = Guid.Parse(parameters.PromotionSetId)
+            let! promotionSet = resolveObservablePromotionSetById context promotionSetId
+
+            match promotionSet with
+            | Option.Some promotionSet -> return Ok promotionSet
+            | Option.None ->
+                return
+                    Error(
+                        (GraceError.Create "PromotionSet does not exist." correlationId)
+                            .enhance (nameof PromotionSetId, promotionSetId)
+                    )
+        }
 
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> ReviewParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<ReviewCommand>) =
@@ -877,7 +900,20 @@ module Review =
                 if validationsPassed then
                     let! cmd = command parameters
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
-                    return! handleCommand promotionSetId cmd
+
+                    match! requireObservableReviewPromotionSet context parameters with
+                    | Ok _ -> return! handleCommand promotionSetId cmd
+                    | Error graceError ->
+                        graceError
+                            .enhance(parameterDictionary)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance("Command", commandName)
+                            .enhance ("Path", context.Request.Path.Value)
+                        |> ignore
+
+                        return! context |> result400BadRequest graceError
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = ReviewError.getErrorMessage error
@@ -931,19 +967,32 @@ module Review =
 
                 if validationsPassed then
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
-                    let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
-                    let! queryResult = query context 0 actorProxy
 
-                    let graceReturnValue =
-                        (GraceReturnValue.Create queryResult correlationId)
+                    match! requireObservableReviewPromotionSet context parameters with
+                    | Error graceError ->
+                        graceError
                             .enhance(parameterDictionary)
                             .enhance(nameof OwnerId, graceIds.OwnerId)
                             .enhance(nameof OrganizationId, graceIds.OrganizationId)
                             .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof PromotionSetId, promotionSetId)
                             .enhance ("Path", context.Request.Path.Value)
+                        |> ignore
 
-                    return! context |> result200Ok graceReturnValue
+                        return! context |> result400BadRequest graceError
+                    | Ok _ ->
+                        let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
+                        let! queryResult = query context 0 actorProxy
+
+                        let graceReturnValue =
+                            (GraceReturnValue.Create queryResult correlationId)
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof PromotionSetId, promotionSetId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = ReviewError.getErrorMessage error

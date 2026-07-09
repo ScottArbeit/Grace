@@ -2,6 +2,7 @@ namespace Grace.Server.Tests
 
 open Grace.Server
 open Grace.Types.Common
+open Grace.Types.Policy
 open Grace.Types.Queue
 open NodaTime
 open NUnit.Framework
@@ -34,14 +35,18 @@ type QueuePromotionSetTests() =
                 PromotionSetIds = [ hiddenPromotionSetId ]
                 RunningPromotionSetId = Some hiddenPromotionSetId
                 State = QueueState.Running
+                PolicySnapshotId = PolicySnapshotId "private-policy-snapshot"
                 UpdatedAt = Some(Instant.FromUtc(2026, 7, 8, 8, 0))
             }
 
         let projected = Grace.Server.Queue.projectObservableQueueStatus queue [] None
 
+        Assert.That(projected, Is.EqualTo(PromotionQueue.Default))
+        Assert.That(projected.TargetBranchId, Is.EqualTo(BranchId.Empty))
         Assert.That(projected.PromotionSetIds, Is.Empty)
         Assert.That(projected.RunningPromotionSetId, Is.EqualTo(None))
         Assert.That(projected.State, Is.EqualTo(QueueState.Idle))
+        Assert.That(projected.PolicySnapshotId, Is.EqualTo(PolicySnapshotId ""))
         Assert.That(projected.UpdatedAt, Is.EqualTo(None))
 
     /// Verifies that queue status preserves explicit visible running work.

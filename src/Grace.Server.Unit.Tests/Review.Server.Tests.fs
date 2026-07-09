@@ -137,6 +137,29 @@ type ReviewProjectionTests() =
             Assert.That(error.Properties["RepositoryId"], Is.EqualTo(parameters.RepositoryId))
             Assert.That(error.Properties["NormalizedCandidateId"], Is.EqualTo(candidateId.ToString()))
 
+    /// Verifies that hidden candidate PromotionSets use the same projection error as missing candidates.
+    [<Test>]
+    member _.ResolveCandidateIdentityProjectionWithTreatsHiddenPromotionSetAsMissing() =
+        let candidateId = Guid.NewGuid()
+        let parameters = createParameters (candidateId.ToString())
+        let mutable backendWasAskedForCandidate = false
+
+        let resolvePromotionSet (promotionSetId: Guid) : Task<Grace.Types.PromotionSet.PromotionSetDto option> =
+            task {
+                backendWasAskedForCandidate <- promotionSetId = candidateId
+                return Option.None
+            }
+
+        let resultTask = Review.resolveCandidateIdentityProjectionWith resolvePromotionSet parameters
+        let result = resultTask.GetAwaiter().GetResult()
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected hidden candidate projection to return the missing-equivalent error.")
+        | Error error ->
+            Assert.That(backendWasAskedForCandidate, Is.True)
+            Assert.That(error.Error, Is.EqualTo($"Candidate '{candidateId}' was not found in repository scope."))
+            Assert.That(error.Properties["NormalizedCandidateId"], Is.EqualTo(candidateId.ToString()))
+
     /// Verifies that derive Candidate Required Actions Returns Ordered Deterministic Actions.
     [<Test>]
     member _.DeriveCandidateRequiredActionsReturnsOrderedDeterministicActions() =

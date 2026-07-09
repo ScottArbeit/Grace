@@ -1685,6 +1685,25 @@ module Services =
             | ReferenceLinkType.PromotionSetTerminal _ -> true
             | _ -> false)
 
+    /// Checks whether a reference is a PromotionSet intermediate step that cannot become branch/base authority.
+    let internal hasPromotionSetIntermediateLink (referenceDto: ReferenceDto) =
+        referenceDto.Links
+        |> Seq.exists (fun link ->
+            match link with
+            | ReferenceLinkType.IncludedInPromotionSet _ -> true
+            | _ -> false)
+
+    /// Checks whether a promotion reference was created as a direct branch promotion rather than a PromotionSet step.
+    let internal isDirectBranchPromotionReference (referenceDto: ReferenceDto) =
+        referenceDto.ReferenceType = ReferenceType.Promotion
+        && not (hasPromotionSetIntermediateLink referenceDto)
+        && not (hasPromotionSetTerminalLink referenceDto)
+
+    /// Checks whether a promotion reference is allowed to participate in branch/base fallback.
+    let internal isEffectivePromotionBaseCandidate (referenceDto: ReferenceDto) =
+        isDirectBranchPromotionReference referenceDto
+        || hasPromotionSetTerminalLink referenceDto
+
     /// Attempts to load latest not deleted reference data and returns None when it is unavailable.
     let internal tryGetLatestNotDeletedReference (references: seq<ReferenceDto>) = references |> Seq.tryFind isNotDeletedReference
 
@@ -1693,22 +1712,25 @@ module Services =
         references
         |> Seq.tryFind (fun referenceDto ->
             isNotDeletedReference referenceDto
-            && referenceDto.ReferenceType = ReferenceType.Promotion)
+            && referenceDto.ReferenceType = ReferenceType.Promotion
+            && isEffectivePromotionBaseCandidate referenceDto)
 
     /// Checks whether a terminal promotion reference can publish normal branch/base authority.
     let internal terminalPromotionCanPublishBranchAuthority (referenceDto: ReferenceDto) =
-        referenceDto.Visibility = ResourceVisibility.Public
-        || referenceDto.Ownership = ResourceOwnership.RepositoryOwned
+        isEffectivePromotionBaseCandidate referenceDto
+        && (referenceDto.Visibility = ResourceVisibility.Public
+            || referenceDto.Ownership = ResourceOwnership.RepositoryOwned)
 
     /// Checks whether a terminal promotion reference can publish public branch/base authority for the supplied workflow.
     let internal terminalPromotionVisibleToPromotionSet (promotionSetDto: Grace.Types.PromotionSet.PromotionSetDto) (referenceDto: ReferenceDto) =
-        match referenceDto.Visibility, referenceDto.Ownership, promotionSetDto.Visibility, promotionSetDto.Ownership with
-        | ResourceVisibility.Public, _, _, _ -> true
-        | ResourceVisibility.Private, ResourceOwnership.ContributorOwned, ResourceVisibility.Private, ResourceOwnership.ContributorOwned ->
-            match referenceDto.CreatorUserId, promotionSetDto.CreatorUserId with
-            | Some referenceCreator, Some promotionSetCreator -> referenceCreator = promotionSetCreator
-            | _ -> false
-        | _ -> false
+        isEffectivePromotionBaseCandidate referenceDto
+        && (match referenceDto.Visibility, referenceDto.Ownership, promotionSetDto.Visibility, promotionSetDto.Ownership with
+            | ResourceVisibility.Public, _, _, _ -> true
+            | ResourceVisibility.Private, ResourceOwnership.ContributorOwned, ResourceVisibility.Private, ResourceOwnership.ContributorOwned ->
+                match referenceDto.CreatorUserId, promotionSetDto.CreatorUserId with
+                | Some referenceCreator, Some promotionSetCreator -> referenceCreator = promotionSetCreator
+                | _ -> false
+            | _ -> false)
 
     /// Attempts to load latest effective promotion reference visible to the supplied PromotionSet workflow.
     let internal tryGetLatestEffectivePromotionReferenceForPromotionSet
@@ -1718,7 +1740,6 @@ module Services =
         references
         |> Seq.tryFind (fun referenceDto ->
             isNotDeletedReference referenceDto
-            && hasPromotionSetTerminalLink referenceDto
             && terminalPromotionVisibleToPromotionSet promotionSetDto referenceDto)
 
     /// Returns root directory version by directory version id data from Services storage or actor state.
