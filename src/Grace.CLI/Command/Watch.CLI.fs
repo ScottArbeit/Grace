@@ -7,6 +7,7 @@ open Grace.SDK.Common
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Types.Common
 open Grace.Types.Reference
@@ -3227,6 +3228,451 @@ module Watch =
     let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
         handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
 
+    /// Provides injectable operations for applying one exact current-branch Reference from local object-cache content.
+    type internal CurrentBranchRemoteMaterializationApplyClients =
+        {
+            GetRemoteDirectoryVersions: DirectoryVersionId -> CorrelationId -> Task<Result<DirectoryVersion array, GraceError>>
+            ReadGraceStatus: unit -> Task<GraceStatus>
+            WriteGraceStatus: GraceStatus -> Task<unit>
+            RequestResync: string -> unit
+        }
+
+    /// Lists the exact target paths that a remote Reference materialization will mutate.
+    type internal CurrentBranchRemoteMaterializationPlan =
+        {
+            FileDeletes: RelativePath array
+            DirectoryDeletes: RelativePath array
+            DirectoryCreates: RelativePath array
+            FileWrites: LocalFileVersion array
+        }
+
+    /// Creates a GraceStatus snapshot from remote DirectoryVersion metadata without scanning the working tree.
+    let private createRemoteGraceStatus (remoteDirectoryVersions: DirectoryVersion array) =
+        let lastWriteTimeUtc = DateTime.UtcNow
+        let index = GraceIndex()
+
+        for directoryVersion in remoteDirectoryVersions do
+            let localDirectoryVersion = directoryVersion.ToLocalDirectoryVersion lastWriteTimeUtc
+
+            index.TryAdd(localDirectoryVersion.DirectoryVersionId, localDirectoryVersion)
+            |> ignore
+
+        let rootDirectoryVersion =
+            index.Values.FirstOrDefault((fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath), LocalDirectoryVersion.Default)
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootDirectoryVersion.DirectoryVersionId
+            RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash
+            RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
+        }
+
+    /// Normalizes paths for exact materialization target comparisons.
+    let private normalizedMaterializationPath (relativePath: RelativePath) = normalizeFilePath $"{relativePath}"
+
+    /// Reports whether a child materialization path is within a parent materialization path.
+    let private materializationPathIsUnder parentPath childPath =
+        let parentPath = normalizedMaterializationPath parentPath
+        let childPath = normalizedMaterializationPath childPath
+
+        parentPath = Constants.RootDirectoryPath
+        || childPath.StartsWith(parentPath + "/", StringComparison.Ordinal)
+
+    /// Gets a full target path while rejecting relative paths that leave the repository root.
+    let private materializationTargetFullPath (relativePath: RelativePath) =
+        let rootDirectory = Path.GetFullPath(Current().RootDirectory)
+        let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, $"{relativePath}"))
+
+        let rootWithSeparator =
+            if rootDirectory.EndsWith(string Path.DirectorySeparatorChar, StringComparison.Ordinal) then
+                rootDirectory
+            else
+                rootDirectory + string Path.DirectorySeparatorChar
+
+        if
+            not (String.Equals(rootDirectory, fullPath, StringComparison.OrdinalIgnoreCase))
+            && not (fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+        then
+            invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
+
+        fullPath
+
+    /// Builds a lookup keyed by repository-relative path.
+    let private materializationDirectoriesByPath (status: GraceStatus) =
+        status.Index.Values.ToDictionary(
+            (fun (directoryVersion: LocalDirectoryVersion) -> normalizedMaterializationPath directoryVersion.RelativePath),
+            id,
+            StringComparer.OrdinalIgnoreCase
+        )
+
+    /// Builds a file lookup keyed by repository-relative path.
+    let private materializationFilesByPath (status: GraceStatus) =
+        let filesByPath = Dictionary<string, LocalFileVersion>(StringComparer.OrdinalIgnoreCase)
+
+        for fileVersion in
+            status.Index.Values
+            |> Seq.collect (fun (directoryVersion: LocalDirectoryVersion) -> directoryVersion.Files :> seq<LocalFileVersion>) do
+            filesByPath[normalizedMaterializationPath fileVersion.RelativePath] <- fileVersion
+
+        filesByPath
+
+    /// Chooses only paths that are not already covered by an ancestor directory delete.
+    let private topLevelDirectoryDeletePaths (paths: seq<RelativePath>) =
+        let ordered =
+            paths
+            |> Seq.distinctBy normalizedMaterializationPath
+            |> Seq.sortBy (fun path -> (normalizedMaterializationPath path).Length)
+            |> Seq.toArray
+
+        ordered
+        |> Array.filter (fun candidate ->
+            not (
+                ordered
+                |> Array.exists (fun other ->
+                    normalizedMaterializationPath other
+                    <> normalizedMaterializationPath candidate
+                    && materializationPathIsUnder other candidate)
+            ))
+
+    /// Computes the exact target set that differs between local status and the remote Reference tree.
+    let internal buildCurrentBranchRemoteMaterializationPlanForWatchTests (currentStatus: GraceStatus) (remoteStatus: GraceStatus) =
+        let currentDirectories = materializationDirectoriesByPath currentStatus
+        let currentFiles = materializationFilesByPath currentStatus
+        let remoteDirectories = materializationDirectoriesByPath remoteStatus
+        let remoteFiles = materializationFilesByPath remoteStatus
+
+        let directoryDeletes =
+            currentDirectories.Values
+            |> Seq.filter (fun (directoryVersion: LocalDirectoryVersion) ->
+                normalizedMaterializationPath directoryVersion.RelativePath
+                <> Constants.RootDirectoryPath
+                && (not (remoteDirectories.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath))
+                    || remoteFiles.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath)))
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> topLevelDirectoryDeletePaths
+
+        let directoryDeleteSet = directoryDeletes |> HashSet<RelativePath>
+
+        let fileIsUnderDirectoryDelete (relativePath: RelativePath) =
+            directoryDeleteSet
+            |> Seq.exists (fun directoryPath -> materializationPathIsUnder directoryPath relativePath)
+
+        let fileDeletes =
+            currentFiles.Values
+            |> Seq.filter (fun (fileVersion: LocalFileVersion) ->
+                let path = normalizedMaterializationPath fileVersion.RelativePath
+
+                not (fileIsUnderDirectoryDelete fileVersion.RelativePath)
+                && (not (remoteFiles.ContainsKey path)
+                    || remoteDirectories.ContainsKey path))
+            |> Seq.map (fun fileVersion -> fileVersion.RelativePath)
+            |> Seq.distinctBy normalizedMaterializationPath
+            |> Seq.toArray
+
+        let directoryCreates =
+            remoteDirectories.Values
+            |> Seq.filter (fun (directoryVersion: LocalDirectoryVersion) ->
+                normalizedMaterializationPath directoryVersion.RelativePath
+                <> Constants.RootDirectoryPath
+                && (not (currentDirectories.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath))
+                    || currentFiles.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath)))
+            |> Seq.sortBy (fun directoryVersion ->
+                (normalizedMaterializationPath directoryVersion.RelativePath)
+                    .Count(fun c -> c = '/'))
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> Seq.toArray
+
+        let fileWrites =
+            remoteFiles.Values
+            |> Seq.filter (fun (remoteFile: LocalFileVersion) ->
+                let path = normalizedMaterializationPath remoteFile.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                currentDirectories.ContainsKey path
+                || not (currentFiles.TryGetValue(path, &currentFile))
+                || currentFile.Sha256Hash <> remoteFile.Sha256Hash
+                || currentFile.Blake3Hash <> remoteFile.Blake3Hash)
+            |> Seq.toArray
+
+        { FileDeletes = fileDeletes; DirectoryDeletes = directoryDeletes; DirectoryCreates = directoryCreates; FileWrites = fileWrites }
+
+    /// Verifies a tracked target file still matches the local status snapshot.
+    let private targetFileStillMatchesStatus (fileVersion: LocalFileVersion) =
+        task {
+            let fullPath = materializationTargetFullPath fileVersion.RelativePath
+
+            if not (File.Exists(fullPath)) then
+                return false
+            else
+                match! createLocalFileVersion (FileInfo fullPath) with
+                | Some actual ->
+                    return
+                        actual.Sha256Hash = fileVersion.Sha256Hash
+                        && actual.Blake3Hash = fileVersion.Blake3Hash
+                | None -> return false
+        }
+
+    /// Verifies a deleted directory target has no local edits beyond the local status snapshot.
+    let private targetDirectoryStillMatchesStatus (currentStatus: GraceStatus) (relativePath: RelativePath) =
+        task {
+            let fullPath = materializationTargetFullPath relativePath
+
+            if not (Directory.Exists(fullPath)) then
+                return false
+            else
+                let currentDirectories = materializationDirectoriesByPath currentStatus
+                let currentFiles = materializationFilesByPath currentStatus
+
+                let expectedDirectoryPaths =
+                    let targetPath = normalizedMaterializationPath relativePath
+
+                    currentDirectories.Values
+                    |> Seq.filter (fun directoryVersion ->
+                        let directoryPath = normalizedMaterializationPath directoryVersion.RelativePath
+
+                        directoryPath = targetPath
+                        || materializationPathIsUnder relativePath directoryVersion.RelativePath)
+                    |> Seq.map (fun directoryVersion -> normalizedMaterializationPath directoryVersion.RelativePath)
+                    |> HashSet
+
+                let expectedFiles =
+                    currentFiles.Values
+                    |> Seq.filter (fun fileVersion -> materializationPathIsUnder relativePath fileVersion.RelativePath)
+                    |> Seq.toArray
+
+                let expectedFilePaths =
+                    expectedFiles
+                    |> Seq.map (fun fileVersion -> normalizedMaterializationPath fileVersion.RelativePath)
+                    |> HashSet
+
+                let actualFiles =
+                    Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories)
+                    |> Seq.map (fun filePath -> RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, filePath))))
+                    |> Seq.toArray
+
+                let actualDirectoryPaths =
+                    seq {
+                        yield relativePath
+
+                        yield!
+                            Directory.EnumerateDirectories(fullPath, "*", SearchOption.AllDirectories)
+                            |> Seq.map (fun directoryPath -> RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryPath))))
+                    }
+                    |> Seq.map normalizedMaterializationPath
+                    |> HashSet
+
+                let actualFilePaths =
+                    actualFiles
+                    |> Seq.map normalizedMaterializationPath
+                    |> HashSet
+
+                let hasUnexpectedDirectories =
+                    actualDirectoryPaths
+                    |> Seq.exists (expectedDirectoryPaths.Contains >> not)
+
+                let missingExpectedDirectories =
+                    expectedDirectoryPaths
+                    |> Seq.exists (actualDirectoryPaths.Contains >> not)
+
+                let hasUnexpectedFiles =
+                    actualFilePaths
+                    |> Seq.exists (expectedFilePaths.Contains >> not)
+
+                if hasUnexpectedDirectories
+                   || missingExpectedDirectories
+                   || hasUnexpectedFiles then
+                    return false
+                else
+                    let mutable allTrackedFilesMatch = true
+
+                    for fileVersion in expectedFiles do
+                        let! matchesStatus = targetFileStillMatchesStatus fileVersion
+
+                        if not matchesStatus then allTrackedFilesMatch <- false
+
+                    return allTrackedFilesMatch
+        }
+
+    /// Fails before target mutation when a changed target no longer matches the trusted local status.
+    let private verifyCurrentBranchMaterializationTargetsUnchanged (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            let currentFiles = materializationFilesByPath currentStatus
+
+            for relativePath in plan.FileDeletes do
+                let path = normalizedMaterializationPath relativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                if currentFiles.TryGetValue(path, &currentFile) then
+                    let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                    if not matchesStatus then
+                        invalidOp $"Remote materialization target changed before apply: {relativePath}."
+
+            for relativePath in plan.DirectoryDeletes do
+                let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization directory target changed before apply: {relativePath}."
+
+            for fileVersion in plan.FileWrites do
+                let path = normalizedMaterializationPath fileVersion.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                if currentFiles.TryGetValue(path, &currentFile) then
+                    let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                    if not matchesStatus then
+                        invalidOp $"Remote materialization target changed before apply: {fileVersion.RelativePath}."
+        }
+
+    /// Verifies every local object-cache file required by the exact file writes is already present.
+    let private verifyCurrentBranchMaterializationObjectCache (plan: CurrentBranchRemoteMaterializationPlan) =
+        let missingObjectCacheFiles =
+            plan.FileWrites
+            |> Array.filter (fun fileVersion -> not (File.Exists(getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion)))
+
+        if missingObjectCacheFiles.Length > 0 then
+            let missingPaths =
+                missingObjectCacheFiles
+                |> Array.map (fun fileVersion -> $"{fileVersion.RelativePath}")
+                |> String.concat ", "
+
+            invalidOp $"Remote materialization cannot start because object-cache content is missing for: {missingPaths}."
+
+    /// Applies exact target mutations from local object-cache files while the update marker is present.
+    let private applyCurrentBranchMaterializationTargets (writeStatus: GraceStatus -> Task<unit>) remoteStatus plan =
+        task {
+            let markerFileName = updateInProgressFileName ()
+            let completedFileName = updateMarkerCompletedFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
+            |> ignore
+
+            File.WriteAllText(markerFileName, "`grace watch` remote materialization is in progress.")
+
+            try
+                for relativePath in plan.FileDeletes do
+                    let fullPath = materializationTargetFullPath relativePath
+
+                    if File.Exists(fullPath) then File.Delete(fullPath)
+
+                for relativePath in
+                    plan.DirectoryDeletes
+                    |> Array.sortByDescending (fun path -> (normalizedMaterializationPath path).Length) do
+                    let fullPath = materializationTargetFullPath relativePath
+
+                    if Directory.Exists(fullPath) then Directory.Delete(fullPath, true)
+
+                for relativePath in plan.DirectoryCreates do
+                    materializationTargetFullPath relativePath
+                    |> Directory.CreateDirectory
+                    |> ignore
+
+                for fileVersion in plan.FileWrites do
+                    let targetPath = materializationTargetFullPath fileVersion.RelativePath
+                    let sourcePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
+                    |> ignore
+
+                    File.Copy(sourcePath, targetPath, true)
+                    File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
+
+                do! writeStatus remoteStatus
+            finally
+                let completedUtc = DateTime.UtcNow
+                File.WriteAllText(completedFileName, completedUtc.ToString("O", CultureInfo.InvariantCulture))
+                recordGraceUpdateMarkerCompletedUtc completedUtc
+
+                if File.Exists(markerFileName) then File.Delete(markerFileName)
+        }
+
+    /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
+    let internal applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients payload =
+        task {
+            match! clients.GetRemoteDirectoryVersions payload.DirectoryId payload.CorrelationId with
+            | Error error -> raise (InvalidOperationException(error.Error))
+            | Ok remoteDirectoryVersions ->
+                let remoteStatus = createRemoteGraceStatus remoteDirectoryVersions
+
+                if remoteStatus.RootDirectoryId
+                   <> payload.DirectoryId then
+                    invalidOp $"Remote materialization metadata did not include the requested root DirectoryVersionId {payload.DirectoryId}."
+
+                let! currentStatus = clients.ReadGraceStatus()
+                let plan = buildCurrentBranchRemoteMaterializationPlanForWatchTests currentStatus remoteStatus
+
+                try
+                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization target changed before exact apply: {ex.Message}"
+                    raise ex
+
+                verifyCurrentBranchMaterializationObjectCache plan
+
+                try
+                    do! applyCurrentBranchMaterializationTargets clients.WriteGraceStatus remoteStatus plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization failed during exact target apply: {ex.Message}"
+                    raise ex
+        }
+
+    /// Applies one BranchDto-confirmed current-branch Reference without downloading missing object content.
+    let private applyCurrentBranchReferenceMaterialization payload _ =
+        applyCurrentBranchReferenceMaterializationWithClientsForWatchTests
+            {
+                GetRemoteDirectoryVersions =
+                    fun rootDirectoryId correlationId ->
+                        task {
+                            let current = Current()
+
+                            let parameters =
+                                GetParameters(
+                                    OwnerId = $"{current.OwnerId}",
+                                    OwnerName = current.OwnerName,
+                                    OrganizationId = $"{current.OrganizationId}",
+                                    OrganizationName = current.OrganizationName,
+                                    RepositoryId = $"{current.RepositoryId}",
+                                    RepositoryName = current.RepositoryName,
+                                    DirectoryVersionId = $"{rootDirectoryId}",
+                                    CorrelationId = correlationId
+                                )
+
+                            match! DirectoryVersion.GetDirectoryVersionsRecursive parameters with
+                            | Ok returnValue ->
+                                return
+                                    Ok(
+                                        returnValue.ReturnValue
+                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                        |> Seq.toArray
+                                    )
+                            | Error error -> return Error error
+                        }
+                ReadGraceStatus = readGraceStatusFile
+                WriteGraceStatus = writeGraceStatusFile
+                RequestResync = requestGraceWatchExplicitResync
+            }
+            payload
+
+    /// Publishes and verifies the dirty materialization boundary before target mutation can begin.
+    let private tryPublishCurrentBranchMaterializationPendingStatus (_status: GraceWatchStatus) =
+        try
+            let expectedStatus =
+                readGraceStatusFileForPendingWorkTransition()
+                    .GetAwaiter()
+                    .GetResult()
+
+            let directoryIds = expectedStatus.Index.Keys.ToHashSet()
+
+            tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus directoryIds (fun () ->
+                updateGraceWatchInterprocessFile expectedStatus (Some directoryIds))
+        with
+        | ex ->
+            logToAnsiConsole Colors.Error $"Grace Watch could not prove materialization-pending IPC/status publication: {ex.Message}"
+            false
+
     /// Names the coordinator result for one exact same-branch Reference notification.
     type internal CurrentBranchMaterializationCoordinatorOutcomeReason =
         /// The notification was ignored because it did not target the current Watch branch.
@@ -3453,9 +3899,19 @@ module Watch =
                                                         }
                                                 else
                                                     setGraceWatchPendingWorkStatusFlag true
-                                                    publishPendingWatchWorkTransitionIfNeeded ()
+                                                    let materializationPendingPublished = tryPublishCurrentBranchMaterializationPendingStatus leaseStatus
 
-                                                    if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                    if not materializationPendingPublished then
+                                                        setGraceWatchPendingWorkStatusFlag false
+                                                        clients.RequestDegradedResync "materialization pending Watch IPC/status publication failed"
+
+                                                        return
+                                                            {
+                                                                ReferenceId = payload.ReferenceId
+                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                Decision = Some acceptedDecision
+                                                            }
+                                                    elif not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
                                                         setGraceWatchPendingWorkStatusFlag false
                                                         publishPendingWatchWorkTransitionIfNeeded ()
 
@@ -3834,7 +4290,7 @@ module Watch =
                         RequestDegradedResync = requestGraceWatchExplicitResync
                         WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
-                        ApplyReference = fun _ _ -> Task.FromResult(())
+                        ApplyReference = applyCurrentBranchReferenceMaterialization
                         MaxAttempts = None
                     }
                     payload
