@@ -106,6 +106,65 @@ type PromotionSetCommandValidationTests() =
         Assert.That(summary.ApprovalPolicyId, Is.EqualTo(Some policy.ApprovalPolicyId))
         Assert.That(summary.Reason, Is.EqualTo(Some "Approval request is expired."))
 
+    /// Verifies that hidden PromotionSet get uses the stable empty missing DTO shape.
+    [<Test>]
+    member _.MissingPromotionSetRouteDtoKeepsEmptyPromotionSetId() =
+        let missingDto = PromotionSet.missingPromotionSetDtoForRoute ()
+
+        Assert.That(missingDto, Is.EqualTo(PromotionSetDto.Default))
+        Assert.That(missingDto.PromotionSetId, Is.EqualTo(PromotionSetId.Empty))
+
+    /// Verifies that hidden conflict resolution states do not leak blocked or attempt-specific information.
+    [<Test>]
+    member _.ConflictResolutionPrecheckHidesStateBeforeStatusAndAttemptChecks() =
+        let correlationId = "corr-hidden-conflict"
+
+        let hiddenBlockedWrongAttempt =
+            { existingPromotionSet PromotionSetStatus.Blocked StepsComputationStatus.ComputeFailed with StepsComputationAttempt = 3 }
+
+        let hiddenNotBlocked = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let missing = PromotionSetDto.Default
+
+        let hiddenBlockedError = PromotionSet.tryGetConflictResolutionPrecheckError false hiddenBlockedWrongAttempt 99 correlationId
+
+        let hiddenNotBlockedError = PromotionSet.tryGetConflictResolutionPrecheckError false hiddenNotBlocked 1 correlationId
+
+        let missingError = PromotionSet.tryGetConflictResolutionPrecheckError false missing 1 correlationId
+
+        for error in
+            [
+                hiddenBlockedError
+                hiddenNotBlockedError
+                missingError
+            ] do
+            match error with
+            | Option.Some graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet does not exist."))
+            | Option.None -> Assert.Fail("Expected hidden or missing conflict resolution to return the missing-equivalent error.")
+
+    /// Verifies that observable conflict resolution still reports state-specific route errors.
+    [<Test>]
+    member _.ConflictResolutionPrecheckKeepsObservableStateSpecificErrors() =
+        let correlationId = "corr-visible-conflict"
+        let notBlocked = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let blockedWrongAttempt = { existingPromotionSet PromotionSetStatus.Blocked StepsComputationStatus.ComputeFailed with StepsComputationAttempt = 3 }
+        let blockedMatchingAttempt = { blockedWrongAttempt with StepsComputationAttempt = 9 }
+
+        let notBlockedError = PromotionSet.tryGetConflictResolutionPrecheckError true notBlocked 1 correlationId
+
+        let wrongAttemptError = PromotionSet.tryGetConflictResolutionPrecheckError true blockedWrongAttempt 99 correlationId
+
+        let allowed = PromotionSet.tryGetConflictResolutionPrecheckError true blockedMatchingAttempt 9 correlationId
+
+        match notBlockedError with
+        | Option.Some graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet is not blocked for conflict resolution."))
+        | Option.None -> Assert.Fail("Expected an observable non-blocked PromotionSet to keep the route-specific error.")
+
+        match wrongAttemptError with
+        | Option.Some graceError -> Assert.That(graceError.Error, Is.EqualTo("StepsComputationAttempt does not match current PromotionSet state."))
+        | Option.None -> Assert.Fail("Expected an observable wrong-attempt PromotionSet to keep the route-specific error.")
+
+        Assert.That(allowed.IsNone, Is.True)
+
     /// Verifies that apply Rejected When Promotion Set Already Succeeded.
     [<Test>]
     member _.ApplyRejectedWhenPromotionSetAlreadySucceeded() =

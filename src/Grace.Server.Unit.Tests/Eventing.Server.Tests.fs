@@ -8,6 +8,7 @@ open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
+open Grace.Types.Review
 open Grace.Types.Common
 open Grace.Types.Validation
 open Grace.Types.Visibility
@@ -57,6 +58,31 @@ type AutomationEventingTests() =
         metadata.Properties[ "InheritedVisibility" ] <- $"{ResourceVisibility.Private}"
         metadata.Properties[ "InheritedOwnership" ] <- $"{ResourceOwnership.ContributorOwned}"
         metadata
+
+    /// Verifies that inherited private review events are suppressed before public automation fanout.
+    [<Test>]
+    member _.PrivateInheritedReviewEventDoesNotCreateAutomationEnvelope() =
+        let repositoryId = Guid.NewGuid()
+        let promotionSetId = Guid.NewGuid()
+
+        let notes =
+            { ReviewNotes.Default with
+                OwnerId = Guid.NewGuid()
+                OrganizationId = Guid.NewGuid()
+                RepositoryId = repositoryId
+                PromotionSetId = Some promotionSetId
+            }
+
+        let reviewEvent: ReviewEvent =
+            {
+                Event = ReviewEventType.NotesUpserted notes
+                Metadata =
+                    metadata "corr-private-review" repositoryId
+                    |> markPrivateInheritedReference
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReviewEvent reviewEvent)
+        Assert.That(envelope.IsNone, Is.True)
 
     /// Verifies that reference Promotion With Terminal Link Maps To Promotion Set Applied.
     [<Test>]

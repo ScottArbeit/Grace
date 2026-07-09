@@ -245,8 +245,18 @@ module EventingPublisher =
                      |> Option.defaultValue RepositoryId.Empty),
                     AutomationEventType.ReviewNotesUpdated
 
-            envelope eventType reviewEvent.Metadata ownerId organizationId repositoryId (tryGetActorId reviewEvent.Metadata "Review") (serialize reviewEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection reviewEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    eventType
+                    reviewEvent.Metadata
+                    ownerId
+                    organizationId
+                    repositoryId
+                    (tryGetActorId reviewEvent.Metadata "Review")
+                    (serialize reviewEvent)
+                |> Some
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
             | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, _, referenceType, _, links) ->

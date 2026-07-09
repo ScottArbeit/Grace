@@ -108,9 +108,11 @@ module PromotionSet =
                 VisibilityAuthorization.canObservePromotionSet caller (fun _ -> VisibilityResourceAudience.None) (promotionSetVisibilityResource promotionSet)
         }
 
+    /// Builds the stable route-equivalent missing DTO for unused and hidden private PromotionSet ids.
+    let internal missingPromotionSetDtoForRoute () = PromotionSetDto.Default
+
     /// Builds the route-equivalent missing response for an unobservable PromotionSet.
-    let private hiddenPromotionSetReturnValue promotionSetId correlationId =
-        GraceReturnValue.Create { PromotionSetDto.Default with PromotionSetId = promotionSetId } correlationId
+    let private hiddenPromotionSetReturnValue correlationId = GraceReturnValue.Create (missingPromotionSetDtoForRoute ()) correlationId
 
     /// Builds the same successful create envelope for hidden duplicate PromotionSet ids as an unused caller-supplied id.
     let internal hiddenPromotionSetCreateReturnValue (context: HttpContext) (parameters: CreatePromotionSetParameters) promotionSetId =
@@ -447,14 +449,14 @@ module PromotionSet =
             if promotionSet.PromotionSetId = PromotionSetId.Empty then
                 return!
                     context
-                    |> result200Ok (hiddenPromotionSetReturnValue promotionSetId correlationId)
+                    |> result200Ok (hiddenPromotionSetReturnValue correlationId)
             else
                 let! isObservable = canObservePromotionSet context promotionSet
 
                 if not isObservable then
                     return!
                         context
-                        |> result200Ok (hiddenPromotionSetReturnValue promotionSetId correlationId)
+                        |> result200Ok (hiddenPromotionSetReturnValue correlationId)
                 else
                     let! approvalSummary = deriveApprovalSummary promotionSet correlationId
 
@@ -502,6 +504,28 @@ module PromotionSet =
 
             return! context |> result200Ok graceReturnValue
         }
+
+    /// Returns the first conflict-resolution route error without exposing hidden PromotionSet state.
+    let internal tryGetConflictResolutionPrecheckError
+        (isObservable: bool)
+        (currentPromotionSet: PromotionSetDto)
+        (stepsComputationAttempt: int)
+        (correlationId: CorrelationId)
+        =
+        if currentPromotionSet.PromotionSetId = PromotionSetId.Empty
+           || not isObservable then
+            GraceError.Create "PromotionSet does not exist." correlationId
+            |> Option.Some
+        elif currentPromotionSet.Status
+             <> PromotionSetStatus.Blocked then
+            GraceError.Create "PromotionSet is not blocked for conflict resolution." correlationId
+            |> Option.Some
+        elif currentPromotionSet.StepsComputationAttempt
+             <> stepsComputationAttempt then
+            GraceError.Create "StepsComputationAttempt does not match current PromotionSet state." correlationId
+            |> Option.Some
+        else
+            Option.None
 
     /// Creates a promotion set.
     let Create: HttpHandler =
@@ -760,17 +784,15 @@ module PromotionSet =
                         let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                         let! currentPromotionSet = actorProxy.Get correlationId
 
-                        if currentPromotionSet.Status
-                           <> PromotionSetStatus.Blocked then
-                            return!
-                                context
-                                |> result400BadRequest (GraceError.Create "PromotionSet is not blocked for conflict resolution." correlationId)
-                        elif currentPromotionSet.StepsComputationAttempt
-                             <> parameters.StepsComputationAttempt then
-                            return!
-                                context
-                                |> result400BadRequest (GraceError.Create "StepsComputationAttempt does not match current PromotionSet state." correlationId)
-                        else
+                        let! isObservable =
+                            if currentPromotionSet.PromotionSetId = PromotionSetId.Empty then
+                                Task.FromResult false
+                            else
+                                canObservePromotionSet context currentPromotionSet
+
+                        match tryGetConflictResolutionPrecheckError isObservable currentPromotionSet parameters.StepsComputationAttempt correlationId with
+                        | Option.Some graceError -> return! context |> result400BadRequest graceError
+                        | Option.None ->
                             let command = PromotionSetCommand.ResolveConflicts(stepId, parameters.Decisions)
                             return! processCommand context parameters validations promotionSetId true command
             }
