@@ -469,6 +469,11 @@ module Notification =
             visibility = ResourceVisibility.Public
             || ownership = ResourceOwnership.RepositoryOwned
 
+        /// Determines whether a persisted reference snapshot is still eligible for public projection fanout.
+        let internal referenceDtoAllowsPublicProjection (referenceDto: ReferenceDto) =
+            referenceDto.DeletedAt.IsNone
+            && allowsPublicProjection referenceDto.Visibility referenceDto.Ownership
+
         /// Re-reads a PromotionSet before public projection so stale event metadata cannot publish hidden work.
         let private currentPromotionSetAllowsPublicProjection repositoryId promotionSetId correlationId =
             task {
@@ -477,8 +482,6 @@ module Notification =
                 return
                     promotionSetContext
                     |> Option.map (fun (promotionSet, _) -> allowsPublicProjection promotionSet.Visibility promotionSet.Ownership)
-                    |> Option.defaultValue false
-                    |> Some
             }
 
         /// Re-reads a Reference before public projection so SignalR, automation, and webhook fanout use current visibility.
@@ -487,13 +490,17 @@ module Notification =
                 let! referenceDto = getReferenceDto referenceId repositoryId correlationId
 
                 if referenceDto.ReferenceId = ReferenceId.Empty then
-                    return Some false
+                    return None
                 else
-                    return Some(allowsPublicProjection referenceDto.Visibility referenceDto.Ownership)
+                    return Some(referenceDtoAllowsPublicProjection referenceDto)
             }
 
         /// Applies the current reference visibility decision before SignalR clients receive reference ids.
         let internal shouldNotifyReferenceProjection currentReferenceProjection =
+            EventingPublisher.currentSourceAllowsPublicProjection currentReferenceProjection
+
+        /// Determines whether reference-derived validation side effects may run for the current source snapshot.
+        let internal shouldRecordDerivedReferenceProjection currentReferenceProjection =
             EventingPublisher.currentSourceAllowsPublicProjection currentReferenceProjection
 
         /// Extracts the PromotionSet id that owns review, queue, validation, artifact, or work-item projection side effects.
@@ -819,8 +826,6 @@ module Notification =
                         correlationId
                     )
 
-                    do! DerivedComputation.handleReferenceEvent referenceEvent
-
                     match referenceEvent.Event with
                     | ReferenceEventType.Created (referenceId,
                                                   ownerId,
@@ -835,6 +840,9 @@ module Notification =
                                                   links) ->
                         let! currentReferenceProjection = currentReferenceAllowsPublicProjection repositoryId referenceId correlationId
                         let referenceAllowsPublicNotification = shouldNotifyReferenceProjection currentReferenceProjection
+
+                        if shouldRecordDerivedReferenceProjection currentReferenceProjection then
+                            do! DerivedComputation.handleReferenceEvent referenceEvent
 
                         match referenceType with
                         | ReferenceType.Promotion ->

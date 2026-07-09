@@ -395,6 +395,36 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries, Is.Empty)
         }
 
+    /// Verifies that missing current PromotionSet snapshots still allow public apply metadata to create webhook delivery.
+    [<Test>]
+    member _.MissingCurrentPromotionSetSnapshotAllowsPublicWebhookDelivery() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let terminalReferenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.Succeeded 202 ])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatchWithCurrentVisibility
+                    Option.None
+                    transport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId)
+
+            Assert.That(result.DeliveryCount, Is.EqualTo(1))
+            Assert.That(result.DeliveredCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(1))
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Has.Count.EqualTo(1))
+            Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
+        }
+
     /// Verifies that current public visibility does not replay a private apply event as a public webhook.
     [<Test>]
     member _.CurrentPublicPromotionSetDoesNotReplayPrivateWebhookDelivery() =

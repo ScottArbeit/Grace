@@ -605,6 +605,15 @@ module WorkItem =
     /// Adds correlation id to the server request model.
     let private withCorrelationId (metadata: EventMetadata) (correlationId: CorrelationId) = { metadata with CorrelationId = correlationId }
 
+    /// Carries add-summary PromotionSet scope onto artifact link events emitted before the explicit PromotionSet link.
+    let internal withPromotionSetProjectionScope (promotionSetId: PromotionSetId option) (metadata: EventMetadata) =
+        match promotionSetId with
+        | Some promotionSetId ->
+            let properties = Dictionary<string, string>(metadata.Properties, StringComparer.OrdinalIgnoreCase)
+            properties[nameof PromotionSetId] <- $"{promotionSetId}"
+            { metadata with Properties = properties }
+        | None -> metadata
+
     /// Coordinates add summary correlation id processing for Grace Server.
     let private addSummaryCorrelationId (baseCorrelationId: CorrelationId) (segment: string) = $"{baseCorrelationId}:add-summary:{segment}"
 
@@ -757,9 +766,13 @@ module WorkItem =
                             repositoryActorProxy.Get correlationId
                             |> Async.AwaitTask
 
+                        let promotionSetIdOption = tryParseNonEmptyGuid parameters.PromotionSetId
+
                         let summaryArtifactMetadata = withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "summary-artifact")
 
-                        let summaryLinkMetadata = withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "summary-link")
+                        let summaryLinkMetadata =
+                            withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "summary-link")
+                            |> withPromotionSetProjectionScope promotionSetIdOption
 
                         let! summaryArtifactResult =
                             createArtifactFromContent
@@ -800,7 +813,9 @@ module WorkItem =
                                             let promptArtifactMetadata =
                                                 withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "prompt-artifact")
 
-                                            let promptLinkMetadata = withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "prompt-link")
+                                            let promptLinkMetadata =
+                                                withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "prompt-link")
+                                                |> withPromotionSetProjectionScope promotionSetIdOption
 
                                             let! createdPromptArtifactResult =
                                                 createArtifactFromContent
@@ -839,8 +854,6 @@ module WorkItem =
                                         |> result400BadRequest (graceError |> withContext)
                                         |> Async.AwaitTask
                                 | Ok promptArtifactId ->
-                                    let promotionSetIdOption = tryParseNonEmptyGuid parameters.PromotionSetId
-
                                     let! promotionSetLinkResult =
                                         match promotionSetIdOption with
                                         | Some promotionSetId ->

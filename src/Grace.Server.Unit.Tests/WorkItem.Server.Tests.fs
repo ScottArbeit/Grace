@@ -318,6 +318,19 @@ type WorkItemServerUnitTests() =
 
         Assert.That(summaryArtifactId, Is.Not.EqualTo(promptArtifactId))
 
+    /// Verifies that add-summary artifact link metadata carries the PromotionSet scope for public projection gating.
+    [<Test>]
+    member _.AddSummaryArtifactLinkMetadataCarriesPromotionSetScope() =
+        let promotionSetId = Guid.NewGuid()
+        let originalMetadata = metadata (Instant.FromUtc(2026, 7, 9, 10, 15))
+        originalMetadata.Properties[ "Unrelated" ] <- "kept"
+
+        let scopedMetadata = WorkItem.withPromotionSetProjectionScope (Some promotionSetId) originalMetadata
+
+        Assert.That(scopedMetadata.Properties[nameof PromotionSetId], Is.EqualTo($"{promotionSetId}"))
+        Assert.That(scopedMetadata.Properties["Unrelated"], Is.EqualTo("kept"))
+        Assert.That(originalMetadata.Properties.ContainsKey(nameof PromotionSetId), Is.False)
+
     /// Verifies that deterministic Add Summary Artifact Id Differs By Repository Work Item And Correlation Segment.
     [<Test>]
     member _.DeterministicAddSummaryArtifactIdDiffersByRepositoryWorkItemAndCorrelationSegment() =

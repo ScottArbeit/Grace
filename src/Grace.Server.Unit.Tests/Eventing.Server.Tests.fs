@@ -423,6 +423,20 @@ type AutomationEventingTests() =
 
         Assert.That(envelope.IsNone, Is.True)
 
+    /// Verifies that missing current PromotionSet snapshots fall back to durable public event metadata.
+    [<Test>]
+    member _.MissingCurrentPromotionSetSnapshotAllowsPublicPromotionSetAppliedMetadata() =
+        let repositoryId = Guid.NewGuid()
+        let metadata = metadata "corr-missing-current-public-apply" repositoryId
+        metadata.Properties[ "ActorId" ] <- $"{Guid.NewGuid()}"
+
+        let promotionSetEvent: PromotionSetEvent = { Event = PromotionSetEventType.Applied(Guid.NewGuid()); Metadata = metadata }
+
+        let envelope = EventingPublisher.tryCreateEnvelopeWithCurrentVisibility Option.None (GraceEvent.PromotionSetEvent promotionSetEvent)
+
+        Assert.That(envelope.IsSome, Is.True)
+        Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetApplied))
+
     /// Verifies that current public visibility never replays old private PromotionSet apply metadata.
     [<Test>]
     member _.CurrentPublicPromotionSetDoesNotReplayPrivateAutomationProjection() =
@@ -509,6 +523,20 @@ type AutomationEventingTests() =
         Assert.That(envelope.IsSome, Is.True)
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.AgentSummaryAdded))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    /// Verifies that add-summary artifact links can inherit current PromotionSet suppression.
+    [<Test>]
+    member _.WorkItemArtifactLinkedWithPromotionSetScopeCanBeSuppressedByCurrentHiddenProjection() =
+        let repositoryId = Guid.NewGuid()
+        let promotionSetId = Guid.NewGuid()
+        let eventMetadata = metadata "corr-work-item-summary-hidden-promotion-set" repositoryId
+        eventMetadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+
+        let workItemEvent: WorkItemEvent = { Event = WorkItemEventType.ArtifactLinked(Guid.NewGuid()); Metadata = eventMetadata }
+
+        let envelope = EventingPublisher.tryCreateEnvelopeWithCurrentVisibility (Some false) (GraceEvent.WorkItemEvent workItemEvent)
+
+        Assert.That(envelope.IsNone, Is.True)
 
     /// Verifies that private work-item PromotionSet link events do not emit public automation events.
     [<Test>]
