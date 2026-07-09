@@ -15294,6 +15294,7 @@ module WatchTests =
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
     let ``current branch remote materialization rejects case colliding remote paths`` () =
         withTempRepo (fun root ->
+            Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let cachedUpper = cacheRemoteFileVersion root "upper-source.tmp" "upper payload"
             let cachedLower = cacheRemoteFileVersion root "lower-source.tmp" "lower payload"
