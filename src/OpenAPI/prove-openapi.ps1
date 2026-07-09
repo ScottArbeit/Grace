@@ -1104,6 +1104,24 @@ function Test-OpenApiBranchReferenceDiffDetails {
     }
 
     $branchPathsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Paths.OpenAPI.yaml') -Raw
+    $createBranchOperation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' 'CreateBranch'
+    $createBranchOperationText = if ($null -eq $createBranchOperation) { '' } else { [string] $createBranchOperation.OperationText }
+
+    foreach ($requiredCreateBranchReferenceTypeValue in @(
+            '- commit',
+            '- checkpoint',
+            '- save',
+            '- tag'
+        )) {
+        Assert-TextContains $createBranchOperationText $requiredCreateBranchReferenceTypeValue "Branch create OpenAPI path example must publish ReferenceType wire value '$requiredCreateBranchReferenceTypeValue'."
+    }
+
+    foreach ($staleCreateBranchReferenceTypeValue in @('- Commit', '- Checkpoint', '- Save', '- Tag')) {
+        if ($createBranchOperationText.Contains($staleCreateBranchReferenceTypeValue, [StringComparison]::Ordinal)) {
+            Add-Failure "Branch create OpenAPI path example must use ReferenceType JSON wire values, not F# case-name item '$staleCreateBranchReferenceTypeValue'."
+        }
+    }
+
     foreach ($requiredAnnotatePathReferenceTypeContract in @(
             'ReferenceTypes:',
             '- commit',

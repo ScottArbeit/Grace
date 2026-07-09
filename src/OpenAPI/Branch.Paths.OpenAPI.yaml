@@ -23,10 +23,10 @@
                   BranchName: release-2026-06
                   ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   InitialPermissions:
-                    - Commit
-                    - Checkpoint
-                    - Save
-                    - Tag
+                    - commit
+                    - checkpoint
+                    - save
+                    - tag
       responses:
         '200':
           $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'

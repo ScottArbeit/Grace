@@ -563,10 +563,10 @@ paths:
                   BranchName: release-2026-06
                   ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   InitialPermissions:
-                    - Commit
-                    - Checkpoint
-                    - Save
-                    - Tag
+                    - commit
+                    - checkpoint
+                    - save
+                    - tag
       responses:
         '200':
           $ref: '#/components/responses/BranchCommandResponse'
@@ -599,10 +599,10 @@ paths:
                   BranchName: release-2026-06
                   ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   InitialPermissions:
-                    - Commit
-                    - Checkpoint
-                    - Save
-                    - Tag
+                    - commit
+                    - checkpoint
+                    - save
+                    - tag
                   BasedOn: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
