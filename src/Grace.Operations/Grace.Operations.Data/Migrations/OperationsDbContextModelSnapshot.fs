@@ -36,7 +36,6 @@ type OperationsDbContextModelSnapshot() =
         rawFact
             .Property<byte array>("RawPayload")
             .HasColumnType("varbinary(max)")
-            .IsRequired()
         |> ignore
 
         rawFact
@@ -82,6 +81,61 @@ type OperationsDbContextModelSnapshot() =
             .IsRequired()
         |> ignore
 
+        rawFact.Property<int>("ArchiveState").IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<string>("ArchiveBlobName")
+            .HasMaxLength(512)
+        |> ignore
+
+        rawFact
+            .Property<string>("ArchiveChecksumSha256Hex")
+            .HasMaxLength(64)
+            .IsFixedLength()
+            .IsUnicode(false)
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<int64>>("ArchiveByteLength")
+            .HasColumnType("bigint")
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<System.DateTime>>("ArchiveVerifiedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<System.DateTime>>("ArchivedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<System.DateTime>>("RehydrationExpiresAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<string>("LastArchiveFailureReason")
+            .HasMaxLength(400)
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<System.DateTime>>("LastArchiveFailureAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<int>("ArchiveFailureCount")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<System.DateTime>>("ArchiveRetiredAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
         rawFact
             .Property<System.DateTime>("CreatedAtUtc")
             .HasColumnType("datetime2(7)")
@@ -100,6 +154,23 @@ type OperationsDbContextModelSnapshot() =
                 |]
             )
             .HasDatabaseName("IX_ops_RawUsageFact_ScopeKindObservedAt")
+        |> ignore
+
+        rawFact
+            .HasIndex(
+                [|
+                    "ArchiveState"
+                    "ObservedAtUtc"
+                    "UsageFactId"
+                |]
+            )
+            .HasDatabaseName("IX_ops_RawUsageFact_ArchiveStateObservedAt")
+        |> ignore
+
+        rawFact
+            .HasIndex([| "RehydrationExpiresAtUtc" |])
+            .HasDatabaseName(OperationsUsageSql.TemporaryHotCleanupExpiryIndexName)
+            .HasFilter("[RehydrationExpiresAtUtc] IS NOT NULL")
         |> ignore
 
         let aggregate = modelBuilder.Entity<UsageAggregateMinuteEntity>()

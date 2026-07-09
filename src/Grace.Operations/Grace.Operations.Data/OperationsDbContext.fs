@@ -35,7 +35,6 @@ module OperationsModel =
         rawFact
             .Property<byte array>("RawPayload")
             .HasColumnType("varbinary(max)")
-            .IsRequired()
         |> ignore
 
         rawFact
@@ -81,6 +80,61 @@ module OperationsModel =
             .IsRequired()
         |> ignore
 
+        rawFact.Property<int>("ArchiveState").IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<string>("ArchiveBlobName")
+            .HasMaxLength(OperationsUsageSql.ArchiveBlobNameMaxLength)
+        |> ignore
+
+        rawFact
+            .Property<string>("ArchiveChecksumSha256Hex")
+            .HasMaxLength(OperationsUsageSql.ArchiveChecksumSha256HexLength)
+            .IsFixedLength()
+            .IsUnicode(false)
+        |> ignore
+
+        rawFact
+            .Property<Nullable<int64>>("ArchiveByteLength")
+            .HasColumnType("bigint")
+        |> ignore
+
+        rawFact
+            .Property<Nullable<System.DateTime>>("ArchiveVerifiedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<Nullable<System.DateTime>>("ArchivedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<Nullable<System.DateTime>>("RehydrationExpiresAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<string>("LastArchiveFailureReason")
+            .HasMaxLength(OperationsUsageSql.ArchiveFailureReasonMaxLength)
+        |> ignore
+
+        rawFact
+            .Property<Nullable<System.DateTime>>("LastArchiveFailureAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<int>("ArchiveFailureCount")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<Nullable<System.DateTime>>("ArchiveRetiredAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
         rawFact
             .Property<System.DateTime>("CreatedAtUtc")
             .HasColumnType("datetime2(7)")
@@ -99,6 +153,23 @@ module OperationsModel =
                 |]
             )
             .HasDatabaseName("IX_ops_RawUsageFact_ScopeKindObservedAt")
+        |> ignore
+
+        rawFact
+            .HasIndex(
+                [|
+                    "ArchiveState"
+                    "ObservedAtUtc"
+                    "UsageFactId"
+                |]
+            )
+            .HasDatabaseName("IX_ops_RawUsageFact_ArchiveStateObservedAt")
+        |> ignore
+
+        rawFact
+            .HasIndex([| "RehydrationExpiresAtUtc" |])
+            .HasDatabaseName(OperationsUsageSql.TemporaryHotCleanupExpiryIndexName)
+            .HasFilter("[RehydrationExpiresAtUtc] IS NOT NULL")
         |> ignore
 
         let aggregate = modelBuilder.Entity<UsageAggregateMinuteEntity>()

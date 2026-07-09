@@ -9,7 +9,7 @@ type RawUsageFactEntity() =
     /// Stores the durable idempotency key supplied by the UsageFact contract.
     member val UsageFactId = Guid.Empty with get, set
 
-    /// Stores the exact accepted broker payload for replay and audit of raw facts.
+    /// Stores the exact accepted broker payload while the fact remains inside the hot SQL window.
     member val RawPayload: byte array = Array.empty with get, set
 
     /// Stores the request or workflow correlation identifier associated with the fact.
@@ -35,6 +35,39 @@ type RawUsageFactEntity() =
 
     /// Stores the UTC minute timestamp associated with the fact.
     member val ObservedAtUtc = DateTime.MinValue with get, set
+
+    /// Stores the hot/cold archive state for the raw payload.
+    member val ArchiveState = 0 with get, set
+
+    /// Stores the deterministic Blob name that owns the archived raw payload bytes.
+    member val ArchiveBlobName: string = null with get, set
+
+    /// Stores the SHA-256 checksum for the compressed archive Blob bytes.
+    member val ArchiveChecksumSha256Hex: string = null with get, set
+
+    /// Stores the exact compressed archive Blob byte length verified before hot SQL cleanup.
+    member val ArchiveByteLength = Nullable<int64>() with get, set
+
+    /// Stores when Blob authority was verified and recorded in SQL.
+    member val ArchiveVerifiedAtUtc = Nullable<DateTime>() with get, set
+
+    /// Stores when the hot raw payload was cleared after Blob authority was verified.
+    member val ArchivedAtUtc = Nullable<DateTime>() with get, set
+
+    /// Stores when a temporarily restored archived payload must return to cold SQL state.
+    member val RehydrationExpiresAtUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the latest redacted row-scoped archive failure summary for operator inspection.
+    member val LastArchiveFailureReason: string = null with get, set
+
+    /// Stores when the latest row-scoped archive failure was recorded.
+    member val LastArchiveFailureAtUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the number of consecutive archive failures since the latest successful retry or operator repair.
+    member val ArchiveFailureCount = 0 with get, set
+
+    /// Stores when repeated archive failures retired the row from automatic retries pending operator repair.
+    member val ArchiveRetiredAtUtc = Nullable<DateTime>() with get, set
 
     /// Stores the SQL-created UTC timestamp for the raw fact row.
     member val CreatedAtUtc = DateTime.MinValue with get, set

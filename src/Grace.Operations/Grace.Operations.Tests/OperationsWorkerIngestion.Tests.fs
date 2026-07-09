@@ -525,6 +525,60 @@ type OperationsWorkerIngestionTests() =
                 Assert.That(snapshot.DependencyFailure, Is.EqualTo(None)))
         )
 
+    /// Verifies configured archive retention failures remain visible until a later archive batch succeeds.
+    [<Test>]
+    member _.ReadinessSnapshotTracksArchiveRetentionFailureIndependently() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+
+        recorder.MarkReady()
+        recorder.MarkArchiveProcessingFailure("Archive retention failed (RequestFailedException).")
+
+        let failedSnapshot = readinessSnapshot readiness
+
+        recorder.MarkArchiveProcessingSuccess()
+
+        let recoveredSnapshot = readinessSnapshot readiness
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Archive retention failed (RequestFailedException)."))
+                Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None)))
+        )
+
+    /// Verifies temporary-hot cleanup recovery does not clear an unrelated archive-retention failure.
+    [<Test>]
+    member _.ReadinessSnapshotTracksTemporaryHotCleanupFailureIndependently() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+
+        recorder.MarkReady()
+        recorder.MarkArchiveProcessingFailure("Archive retention failed (RequestFailedException).")
+        recorder.MarkTemporaryHotCleanupFailure("Temporary-hot cleanup failed (SqlException).")
+
+        let failedSnapshot = readinessSnapshot readiness
+
+        recorder.MarkTemporaryHotCleanupSuccess()
+
+        let cleanupRecoveredSnapshot = readinessSnapshot readiness
+
+        recorder.MarkArchiveProcessingSuccess()
+
+        let fullyRecoveredSnapshot = readinessSnapshot readiness
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(failedSnapshot.DependencyFailure.Value, Does.Contain("Archive retention failed (RequestFailedException)."))
+                Assert.That(failedSnapshot.DependencyFailure.Value, Does.Contain("Temporary-hot cleanup failed (SqlException)."))
+                Assert.That(cleanupRecoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(cleanupRecoveredSnapshot.DependencyFailure, Is.EqualTo(Some "Archive retention failed (RequestFailedException)."))
+                Assert.That(fullyRecoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                Assert.That(fullyRecoveredSnapshot.DependencyFailure, Is.EqualTo(None)))
+        )
+
     /// Verifies post-start Service Bus processor faults downgrade readiness through the shared worker state.
     [<Test>]
     member _.ServiceBusProcessorReceiveFaultDowngradesReadinessAfterStartup() =

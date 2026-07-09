@@ -117,6 +117,15 @@ type private InMemoryOperationsUsageTransactionScope() =
                                 rawFacts.Add(rawFact.UsageFactId, rawFact)
                                 Task.FromResult true
 
+                        member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, _pointer, insertCancellationToken) =
+                            insertCancellationToken.ThrowIfCancellationRequested()
+
+                            if rawFacts.ContainsKey rawFact.UsageFactId then
+                                Task.FromResult false
+                            else
+                                rawFacts.Add(rawFact.UsageFactId, { rawFact with RawPayload = Array.empty })
+                                Task.FromResult true
+
                         member _.AddToUsageAggregateMinuteAsync(aggregate, updateCancellationToken) =
                             updateCancellationToken.ThrowIfCancellationRequested()
 
@@ -699,6 +708,35 @@ type OperationsUsageStorageTests() =
                     Assert.That(transactionScope.RawFactCount, Is.EqualTo(1))
                     Assert.That(Convert.ToBase64String(rawFact.RawPayload), Is.EqualTo(Convert.ToBase64String(rawPayload)))
                     Assert.That(transactionScope.AggregateQuantity(firstStored.Aggregate.Value.Key), Is.EqualTo(2048L)))
+            )
+        }
+
+    /// Verifies archived replay inserts aggregate state without restoring authoritative hot payload bytes.
+    [<Test>]
+    member _.ReplayArchivedUsageFactDoesNotRepopulateHotPayloadAndStaysIdempotent() =
+        task {
+            let store, transactionScope = createStore ()
+            let usageFactId = Guid.Parse("bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc")
+            let fact = OperationsUsageStorageTestData.fact usageFactId 3072L (Instant.FromUtc(2026, 7, 4, 12, 34, 0))
+            let rawPayload = OperationsUsageStorageTestData.payloadFor fact
+
+            let pointer =
+                { UsageFactId = usageFactId; BlobName = "usage-facts/v1/replay.jsonl.gz"; ChecksumSha256Hex = String.replicate 64 "a"; ByteLength = 123L }
+
+            let! firstResult = store.ReplayArchivedUsageFactAsync(fact, rawPayload, pointer, CancellationToken.None)
+            let firstStored = requireStored firstResult
+
+            let! secondResult = store.ReplayArchivedUsageFactAsync(fact, rawPayload, pointer, CancellationToken.None)
+            let secondStored = requireStored secondResult
+            let rawFact = transactionScope.RawFact usageFactId
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(firstStored.Status, Is.EqualTo(UsageFactPersistenceStatus.Accepted))
+                    Assert.That(secondStored.Status, Is.EqualTo(UsageFactPersistenceStatus.AlreadyProcessed))
+                    Assert.That(rawFact.RawPayload, Is.Empty)
+                    Assert.That(transactionScope.RawFactCount, Is.EqualTo(1))
+                    Assert.That(transactionScope.AggregateQuantity(firstStored.Aggregate.Value.Key), Is.EqualTo(3072L)))
             )
         }
 

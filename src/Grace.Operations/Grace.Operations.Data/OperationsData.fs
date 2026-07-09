@@ -7,6 +7,9 @@ open Microsoft.Data.SqlClient
 open NodaTime
 open System
 open System.Data
+open System.Runtime.ExceptionServices
+open System.Text
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
@@ -55,6 +58,113 @@ type UsageFactPersistenceStatus =
 
 /// Reports the outcome of transactionally storing a usage fact.
 type UsageFactPersistenceResult = { Status: UsageFactPersistenceStatus; UsageFactId: UsageFactId; Aggregate: UsageAggregateMinute option }
+
+/// Tracks whether a raw usage fact payload is still hot in SQL, verified in Blob, or fully archived.
+type RawUsageFactArchiveState =
+    | Hot = 0
+    | ArchiveVerified = 1
+    | Archived = 2
+
+/// Describes one raw usage fact that is ready for Blob archive processing or verified cleanup.
+type RawUsageFactArchiveCandidate =
+    {
+        UsageFactId: UsageFactId
+        RawPayload: byte array option
+        CorrelationId: CorrelationId
+        FactKind: UsageFactKind
+        OwnerId: OwnerId
+        OrganizationId: OrganizationId
+        RepositoryId: RepositoryId
+        StoragePoolId: StoragePoolId
+        Quantity: int64
+        ObservedAt: Instant
+        ArchiveState: RawUsageFactArchiveState
+        ArchiveBlobName: string option
+        ArchiveChecksumSha256Hex: string option
+        ArchiveByteLength: int64 option
+    }
+
+/// Carries the Blob authority that must match before Operations clears a hot SQL payload.
+type RawUsageFactArchivePointer = { UsageFactId: UsageFactId; BlobName: string; ChecksumSha256Hex: string; ByteLength: int64 }
+
+/// Limits archive replay or support rehydration to an explicit Grace repository scope.
+type RawUsageFactArchiveScope = { OwnerId: OwnerId option; OrganizationId: OrganizationId option; RepositoryId: RepositoryId option }
+
+/// Selects archived UsageFacts for replay or scoped support rehydration without reading Blob payloads.
+type RawUsageFactArchiveQuery =
+    {
+        Scope: RawUsageFactArchiveScope option
+        ObservedAfterUtc: Instant option
+        ObservedBeforeUtc: Instant option
+        CorrelationIds: CorrelationId list
+        UsageFactIds: UsageFactId list
+    }
+
+/// Carries the last archived row seen so replay pages advance through stable SQL ordering.
+type RawUsageFactArchiveReplayCursor = { ObservedAt: Instant; UsageFactId: UsageFactId }
+
+/// Describes an archived raw usage fact whose compact SQL index can authorize Blob replay.
+type RawUsageFactArchiveReplayItem =
+    {
+        UsageFactId: UsageFactId
+        CorrelationId: CorrelationId
+        FactKind: UsageFactKind
+        OwnerId: OwnerId
+        OrganizationId: OrganizationId
+        RepositoryId: RepositoryId
+        StoragePoolId: StoragePoolId
+        Quantity: int64
+        ObservedAt: Instant
+        Pointer: RawUsageFactArchivePointer
+    }
+
+/// Carries one verified archived payload that should become temporarily hot in SQL.
+type RawUsageFactRehydrationItem = { Pointer: RawUsageFactArchivePointer; RawPayload: byte array }
+
+/// Records the local support-audit evidence for one temporarily rehydrated archived payload.
+type RawUsageFactRehydrationAuditEntry =
+    {
+        UsageFactId: UsageFactId
+        Scope: RawUsageFactArchiveScope
+        Pointer: RawUsageFactArchivePointer
+        RequestedBy: string
+        Reason: string
+        RehydratedAt: Instant
+        ExpiresAt: Instant
+        RestoredByteLength: int
+        ChangedSqlState: bool
+    }
+
+/// Lists and transitions raw usage facts through the hot/cold archive boundary.
+type IOperationsUsageArchiveStore =
+
+    /// Returns deterministic archive candidates older than the hot-retention cutoff.
+    abstract ListArchiveCandidatesAsync:
+        observedBefore: Instant * batchSize: int * cancellationToken: CancellationToken -> Task<RawUsageFactArchiveCandidate list>
+
+    /// Records verified Blob authority while the hot SQL payload is still present.
+    abstract MarkArchiveVerifiedAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
+
+    /// Clears the hot SQL payload only when the verified SQL pointer still matches the supplied Blob authority.
+    abstract CompleteArchiveAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
+
+    /// Records a row-scoped archive failure so operators can inspect and repair durable retention blockers.
+    abstract RecordArchiveFailureAsync: usageFactId: UsageFactId * reason: string * cancellationToken: CancellationToken -> Task
+
+    /// Returns archived rows whose compact SQL pointer identifies the archived payload for replay or support rehydration.
+    abstract ListArchivedUsageFactsAsync:
+        query: RawUsageFactArchiveQuery * after: RawUsageFactArchiveReplayCursor option * batchSize: int * cancellationToken: CancellationToken ->
+            Task<RawUsageFactArchiveReplayItem list>
+
+    /// Counts archived rows matching a support predicate without materializing Blob payloads.
+    abstract CountArchivedUsageFactsAsync: query: RawUsageFactArchiveQuery * cancellationToken: CancellationToken -> Task<int64>
+
+    /// Temporarily restores or refreshes archived payload bytes only when SQL pointer fields still match the Blob checksum row.
+    abstract RehydrateArchivedPayloadsAsync:
+        items: RawUsageFactRehydrationItem list * expiresAt: Instant * cancellationToken: CancellationToken -> Task<UsageFactId list>
+
+    /// Clears expired temporary support rehydrations left behind after caller or process failure.
+    abstract CleanupExpiredRehydratedPayloadsAsync: expiresBefore: Instant * batchSize: int * cancellationToken: CancellationToken -> Task<int>
 
 /// Chooses whether schema initialization may connect to `master` to create the operations database.
 type OperationsUsageSchemaBootstrapMode =
@@ -165,6 +275,10 @@ type IOperationsUsageTransaction =
     /// Attempts to insert the raw fact, returning `false` when `UsageFactId` already exists.
     abstract TryInsertRawUsageFactAsync: rawFact: RawUsageFact * cancellationToken: CancellationToken -> Task<bool>
 
+    /// Attempts to insert an archived replay fact without restoring hot SQL payload bytes.
+    abstract TryInsertReplayedArchivedUsageFactAsync:
+        rawFact: RawUsageFact * pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
+
     /// Adds the accepted raw fact quantity to the derived minute aggregate.
     abstract AddToUsageAggregateMinuteAsync: aggregate: UsageAggregateMinute * cancellationToken: CancellationToken -> Task
 
@@ -216,6 +330,28 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
 
+    /// Adds raw fact parameters for archive replay inserts that intentionally omit hot payload bytes.
+    let addReplayedRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
+        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+        addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
+        addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
+        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
+        addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
+        addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+
+    /// Adds archive pointer parameters for replay inserts that keep hot payload bytes out of SQL.
+    let addReplayedArchivePointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =
+        addStringParameter command "@ArchiveBlobName" OperationsUsageSql.ArchiveBlobNameMaxLength pointer.BlobName
+
+        let checksumParameter = command.Parameters.Add("@ArchiveChecksumSha256Hex", SqlDbType.Char, OperationsUsageSql.ArchiveChecksumSha256HexLength)
+
+        checksumParameter.Value <- pointer.ChecksumSha256Hex
+        addParameter command "@ArchiveByteLength" SqlDbType.BigInt pointer.ByteLength
+        addParameter command "@ArchiveStateArchived" SqlDbType.Int (int RawUsageFactArchiveState.Archived)
+
     /// Adds the aggregate parameters expected by `OperationsUsageSql.AddToUsageAggregateMinute`.
     let addUsageAggregateMinuteParameters (command: SqlCommand) (aggregate: UsageAggregateMinute) =
         addParameter command "@FactKind" SqlDbType.Int (int aggregate.Key.FactKind)
@@ -232,6 +368,15 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
             task {
                 use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
                 addRawUsageFactParameters command rawFact
+                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
+                return rowsAffected = 1
+            }
+
+        member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
+            task {
+                use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
+                addReplayedRawUsageFactParameters command rawFact
+                addReplayedArchivePointerParameters command pointer
                 let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
                 return rowsAffected = 1
             }
@@ -282,6 +427,643 @@ type SqlOperationsUsageTransactionScope(connectionString: string) =
                     do! rollbackIgnoringFailuresAsync transaction
                     return raise ex
             }
+
+/// Lists and updates archive state through reviewed SQL commands that preserve Blob authority ordering.
+type SqlOperationsUsageArchiveStore(connectionString: string) =
+
+    /// Opens a SQL connection for archive queries and state transitions.
+    let openConnectionAsync cancellationToken =
+        task {
+            let connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync cancellationToken
+            return connection
+        }
+
+    /// Converts a NodaTime instant to the UTC SQL timestamp shape used by operations usage tables.
+    let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
+
+    /// Converts a UTC SQL timestamp into the instant used by archive layout decisions.
+    let toInstant (dateTime: DateTime) =
+        let utc =
+            if dateTime.Kind = DateTimeKind.Utc then
+                dateTime
+            else
+                DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)
+
+        Instant.FromDateTimeUtc utc
+
+    /// Adds a SQL parameter and assigns either the supplied value or database null.
+    let addParameter (command: SqlCommand) name sqlDbType value =
+        let parameter = command.Parameters.Add(name, sqlDbType)
+        parameter.Value <- value
+
+    /// Adds a string SQL parameter with a fixed column length.
+    let addStringParameter (command: SqlCommand) name length (value: string) =
+        let parameter = command.Parameters.Add(name, SqlDbType.NVarChar, length)
+        parameter.Value <- value
+
+    /// Adds archive-state parameters shared by archive SQL commands.
+    let addArchiveStateParameters (command: SqlCommand) =
+        addParameter command "@ArchiveStateHot" SqlDbType.Int (int RawUsageFactArchiveState.Hot)
+        addParameter command "@ArchiveStateVerified" SqlDbType.Int (int RawUsageFactArchiveState.ArchiveVerified)
+        addParameter command "@ArchiveStateArchived" SqlDbType.Int (int RawUsageFactArchiveState.Archived)
+
+    /// Adds Blob pointer parameters that guard archive idempotency and hot-payload cleanup.
+    let addArchivePointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =
+        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier pointer.UsageFactId
+        addStringParameter command "@ArchiveBlobName" OperationsUsageSql.ArchiveBlobNameMaxLength pointer.BlobName
+
+        let checksumParameter = command.Parameters.Add("@ArchiveChecksumSha256Hex", SqlDbType.Char, OperationsUsageSql.ArchiveChecksumSha256HexLength)
+
+        checksumParameter.Value <- pointer.ChecksumSha256Hex
+        addParameter command "@ArchiveByteLength" SqlDbType.BigInt pointer.ByteLength
+
+    /// Adds optional scope parameters that constrain replay and support rehydration scans.
+    let addArchiveScopeParameters (command: SqlCommand) (scope: RawUsageFactArchiveScope option) =
+        let addOptionalGuidParameter name value =
+            let parameter = command.Parameters.Add(name, SqlDbType.UniqueIdentifier)
+
+            parameter.Value <-
+                match value with
+                | Some id -> box id
+                | None -> DBNull.Value
+
+        let ownerId = scope |> Option.bind (fun value -> value.OwnerId)
+
+        let organizationId =
+            scope
+            |> Option.bind (fun value -> value.OrganizationId)
+
+        let repositoryId =
+            scope
+            |> Option.bind (fun value -> value.RepositoryId)
+
+        addOptionalGuidParameter "@OwnerId" ownerId
+        addOptionalGuidParameter "@OrganizationId" organizationId
+        addOptionalGuidParameter "@RepositoryId" repositoryId
+
+    /// Adds optional archived-row predicate parameters used by replay and support rehydration scans.
+    let addArchiveQueryParameters (command: SqlCommand) (query: RawUsageFactArchiveQuery) =
+        addArchiveScopeParameters command query.Scope
+
+        addParameter
+            command
+            "@ObservedAfterUtc"
+            SqlDbType.DateTime2
+            (query.ObservedAfterUtc
+             |> Option.map (fun value -> box (toUtcDateTime value))
+             |> Option.defaultValue DBNull.Value)
+
+        addParameter
+            command
+            "@ObservedBeforeUtc"
+            SqlDbType.DateTime2
+            (query.ObservedBeforeUtc
+             |> Option.map (fun value -> box (toUtcDateTime value))
+             |> Option.defaultValue DBNull.Value)
+
+        let serializedFilterValues values =
+            if List.isEmpty values then
+                box DBNull.Value
+            else
+                values
+                |> List.map string
+                |> List.toArray
+                |> JsonSerializer.Serialize
+                |> box
+
+        let usageFactIdsJson = command.Parameters.Add("@UsageFactIdsJson", SqlDbType.NVarChar, -1)
+        usageFactIdsJson.Value <- serializedFilterValues query.UsageFactIds
+
+        let correlationIdsJson = command.Parameters.Add("@CorrelationIdsJson", SqlDbType.NVarChar, -1)
+        correlationIdsJson.Value <- serializedFilterValues query.CorrelationIds
+
+    /// Declares and populates bounded filter-list tables from JSON parameters so SQL command shape stays constant.
+    let archiveFilterStagingSql =
+        """
+DECLARE @UsageFactIdFilters table
+(
+    UsageFactId uniqueidentifier NOT NULL PRIMARY KEY
+);
+
+IF @UsageFactIdsJson IS NOT NULL
+BEGIN
+    INSERT INTO @UsageFactIdFilters (UsageFactId)
+    SELECT DISTINCT UsageFactId
+    FROM OPENJSON(@UsageFactIdsJson)
+    WITH (UsageFactId uniqueidentifier '$')
+    WHERE UsageFactId IS NOT NULL;
+END;
+
+DECLARE @CorrelationIdFilters table
+(
+    CorrelationId nvarchar(200) NOT NULL PRIMARY KEY
+);
+
+IF @CorrelationIdsJson IS NOT NULL
+BEGIN
+    INSERT INTO @CorrelationIdFilters (CorrelationId)
+    SELECT DISTINCT CorrelationId
+    FROM OPENJSON(@CorrelationIdsJson)
+    WITH (CorrelationId nvarchar(max) '$')
+    WHERE CorrelationId IS NOT NULL
+    AND LEN(CorrelationId) <= 200;
+END;
+"""
+
+    /// Builds a deterministic archived-row SQL predicate for index-only count and page scans.
+    let archivedUsageFactPredicateSql (query: RawUsageFactArchiveQuery) (includeCursor: bool) =
+        let builder = StringBuilder()
+
+        builder.AppendLine("WHERE ArchiveState = @ArchiveStateArchived")
+        |> ignore
+
+        builder.AppendLine("AND ArchiveBlobName IS NOT NULL")
+        |> ignore
+
+        builder.AppendLine("AND ArchiveChecksumSha256Hex IS NOT NULL")
+        |> ignore
+
+        builder.AppendLine("AND ArchiveByteLength IS NOT NULL")
+        |> ignore
+
+        builder.AppendLine("AND (@OwnerId IS NULL OR OwnerId = @OwnerId)")
+        |> ignore
+
+        builder.AppendLine("AND (@OrganizationId IS NULL OR OrganizationId = @OrganizationId)")
+        |> ignore
+
+        builder.AppendLine("AND (@RepositoryId IS NULL OR RepositoryId = @RepositoryId)")
+        |> ignore
+
+        builder.AppendLine("AND (@ObservedAfterUtc IS NULL OR ObservedAtUtc >= @ObservedAfterUtc)")
+        |> ignore
+
+        builder.AppendLine("AND (@ObservedBeforeUtc IS NULL OR ObservedAtUtc <= @ObservedBeforeUtc)")
+        |> ignore
+
+        builder.AppendLine("AND (NOT EXISTS (SELECT 1 FROM @UsageFactIdFilters) OR UsageFactId IN (SELECT UsageFactId FROM @UsageFactIdFilters))")
+        |> ignore
+
+        builder.AppendLine("AND (NOT EXISTS (SELECT 1 FROM @CorrelationIdFilters) OR CorrelationId IN (SELECT CorrelationId FROM @CorrelationIdFilters))")
+        |> ignore
+
+        if includeCursor then
+            builder.AppendLine("AND") |> ignore
+            builder.AppendLine("(") |> ignore
+
+            builder.AppendLine("    @AfterObservedAtUtc IS NULL")
+            |> ignore
+
+            builder.AppendLine("    OR ObservedAtUtc > @AfterObservedAtUtc")
+            |> ignore
+
+            builder.AppendLine("    OR (ObservedAtUtc = @AfterObservedAtUtc AND UsageFactId > @AfterUsageFactId)")
+            |> ignore
+
+            builder.AppendLine(")") |> ignore
+
+        builder.ToString()
+
+    /// Builds the archived-row page scan used by replay and support rehydration exploration.
+    let archivedUsageFactPageSql query =
+        $"""
+{archiveFilterStagingSql}
+
+SELECT TOP (@BatchSize)
+    UsageFactId,
+    CorrelationId,
+    FactKind,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    StoragePoolId,
+    Quantity,
+    ObservedAtUtc,
+    ArchiveState,
+    ArchiveBlobName,
+    ArchiveChecksumSha256Hex,
+    ArchiveByteLength
+FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
+{archivedUsageFactPredicateSql query true}ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
+"""
+
+    /// Builds the index-only archived-row count used before support rehydration mutates SQL.
+    let archivedUsageFactCountSql query =
+        $"""
+{archiveFilterStagingSql}
+
+SELECT COUNT_BIG(1)
+FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
+{archivedUsageFactPredicateSql query false};
+"""
+
+    /// Records one archive failure without reading raw payload bytes or changing archive authority.
+    let recordArchiveFailureAsync usageFactId reason cancellationToken =
+        task {
+            let boundedReason =
+                if String.IsNullOrWhiteSpace reason then
+                    "Archive retention failed."
+                elif reason.Length
+                     <= OperationsUsageSql.ArchiveFailureReasonMaxLength then
+                    reason
+                else
+                    reason.Substring(0, OperationsUsageSql.ArchiveFailureReasonMaxLength)
+
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- OperationsUsageSql.RecordRawUsageFactArchiveFailure
+            addArchiveStateParameters command
+            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
+            addStringParameter command "@LastArchiveFailureReason" OperationsUsageSql.ArchiveFailureReasonMaxLength boundedReason
+            addParameter command "@ArchiveFailureRetirementThreshold" SqlDbType.Int OperationsUsageSql.ArchiveFailureRetirementThreshold
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
+    /// Executes an archive transition command and returns whether this call changed SQL state.
+    let executeArchiveTransitionAsync commandText pointer cancellationToken =
+        task {
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- commandText
+            addArchiveStateParameters command
+            addArchivePointerParameters command pointer
+
+            let! scalar = command.ExecuteScalarAsync cancellationToken
+
+            return
+                match scalar with
+                | :? int as value -> value = 1
+                | :? int64 as value -> value = 1L
+                | :? decimal as value -> value = 1M
+                | _ -> false
+        }
+
+    /// Builds the parameterized insert block for one rehydration payload batch.
+    let rehydrationBatchInsertSql (items: RawUsageFactRehydrationItem array) =
+        let builder = StringBuilder()
+
+        builder.AppendLine(OperationsUsageSql.DeclareRehydratedRawUsageFactBatch.Trim())
+        |> ignore
+
+        builder.AppendLine() |> ignore
+
+        builder.AppendLine("INSERT INTO @RehydrationRows")
+        |> ignore
+
+        builder.AppendLine("(") |> ignore
+        builder.AppendLine("    UsageFactId,") |> ignore
+        builder.AppendLine("    RawPayload,") |> ignore
+
+        builder.AppendLine("    ArchiveBlobName,")
+        |> ignore
+
+        builder.AppendLine("    ArchiveChecksumSha256Hex,")
+        |> ignore
+
+        builder.AppendLine("    ArchiveByteLength")
+        |> ignore
+
+        builder.AppendLine(")") |> ignore
+        builder.AppendLine("VALUES") |> ignore
+
+        let mutable index = 0
+
+        while index < items.Length do
+            let suffix = if index = items.Length - 1 then ";" else ","
+
+            builder
+                .Append("    (@UsageFactId")
+                .Append(index)
+                .Append(", @RawPayload")
+                .Append(index)
+                .Append(", @ArchiveBlobName")
+                .Append(index)
+                .Append(", @ArchiveChecksumSha256Hex")
+                .Append(index)
+                .Append(", @ArchiveByteLength")
+                .Append(index)
+                .AppendLine($"){suffix}")
+            |> ignore
+
+            index <- index + 1
+
+        builder.AppendLine() |> ignore
+
+        builder.AppendLine(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch.Trim())
+        |> ignore
+
+        builder.ToString()
+
+    /// Executes one bounded rehydration batch inside the request transaction and returns refreshed expiry rows.
+    let executeRehydrationPayloadBatchAsync
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (items: RawUsageFactRehydrationItem array)
+        (expiresAt: Instant)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            use command = connection.CreateCommand()
+            command.Transaction <- transaction
+            command.CommandType <- CommandType.Text
+            command.CommandText <- rehydrationBatchInsertSql items
+            addArchiveStateParameters command
+            addParameter command "@RehydrationExpiresAtUtc" SqlDbType.DateTime2 (toUtcDateTime expiresAt)
+
+            let mutable index = 0
+
+            while index < items.Length do
+                let item = items[index]
+                addParameter command $"@UsageFactId{index}" SqlDbType.UniqueIdentifier item.Pointer.UsageFactId
+                let parameter = command.Parameters.Add("@RawPayload", SqlDbType.VarBinary, -1)
+                parameter.ParameterName <- $"@RawPayload{index}"
+                parameter.Value <- Array.copy item.RawPayload
+                addStringParameter command $"@ArchiveBlobName{index}" OperationsUsageSql.ArchiveBlobNameMaxLength item.Pointer.BlobName
+
+                let checksumParameter =
+                    command.Parameters.Add($"@ArchiveChecksumSha256Hex{index}", SqlDbType.Char, OperationsUsageSql.ArchiveChecksumSha256HexLength)
+
+                checksumParameter.Value <- item.Pointer.ChecksumSha256Hex
+                addParameter command $"@ArchiveByteLength{index}" SqlDbType.BigInt item.Pointer.ByteLength
+                index <- index + 1
+
+            use! reader = command.ExecuteReaderAsync cancellationToken
+            let changed = ResizeArray<UsageFactId>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync cancellationToken
+
+                if hasRow then changed.Add(reader.GetGuid 0) else reading <- false
+
+            return changed |> Seq.toList
+        }
+
+    /// Rolls back a failed rehydration request while preserving the original SQL or cancellation failure.
+    let rollbackRehydrationIgnoringFailuresAsync (transaction: SqlTransaction) =
+        task {
+            try
+                do! transaction.RollbackAsync CancellationToken.None
+            with
+            | _ -> ()
+        }
+
+    /// Clears one bounded batch of expired temporary payloads and returns the rows recovered from durable expiry state.
+    let cleanupExpiredRehydratedPayloadsAsync expiresBefore batchSize cancellationToken =
+        task {
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads
+            addArchiveStateParameters command
+            addParameter command "@ExpiresBeforeUtc" SqlDbType.DateTime2 (toUtcDateTime expiresBefore)
+            addParameter command "@BatchSize" SqlDbType.Int batchSize
+
+            let! scalar = command.ExecuteScalarAsync cancellationToken
+
+            return
+                match scalar with
+                | :? int as value -> value
+                | :? int64 as value -> int value
+                | :? decimal as value -> int value
+                | _ -> 0
+        }
+
+    interface IOperationsUsageArchiveStore with
+
+        member _.ListArchiveCandidatesAsync(observedBefore, batchSize, cancellationToken) =
+            task {
+                if batchSize <= 0 then
+                    invalidArg (nameof batchSize) "Archive batch size must be greater than zero."
+
+                use! connection = openConnectionAsync cancellationToken
+                use command = connection.CreateCommand()
+                command.CommandType <- CommandType.Text
+                command.CommandText <- OperationsUsageSql.SelectRawUsageFactsForArchive
+                addParameter command "@BatchSize" SqlDbType.Int batchSize
+                addParameter command "@ObservedBeforeUtc" SqlDbType.DateTime2 (toUtcDateTime observedBefore)
+                addArchiveStateParameters command
+
+                use! reader = command.ExecuteReaderAsync cancellationToken
+                let candidates = ResizeArray<RawUsageFactArchiveCandidate>()
+
+                let usageFactIdOrdinal = reader.GetOrdinal("UsageFactId")
+                let rawPayloadOrdinal = reader.GetOrdinal("RawPayload")
+                let correlationIdOrdinal = reader.GetOrdinal("CorrelationId")
+                let factKindOrdinal = reader.GetOrdinal("FactKind")
+                let ownerIdOrdinal = reader.GetOrdinal("OwnerId")
+                let organizationIdOrdinal = reader.GetOrdinal("OrganizationId")
+                let repositoryIdOrdinal = reader.GetOrdinal("RepositoryId")
+                let storagePoolIdOrdinal = reader.GetOrdinal("StoragePoolId")
+                let quantityOrdinal = reader.GetOrdinal("Quantity")
+                let observedAtOrdinal = reader.GetOrdinal("ObservedAtUtc")
+                let archiveStateOrdinal = reader.GetOrdinal("ArchiveState")
+                let archiveBlobNameOrdinal = reader.GetOrdinal("ArchiveBlobName")
+                let archiveChecksumOrdinal = reader.GetOrdinal("ArchiveChecksumSha256Hex")
+                let archiveByteLengthOrdinal = reader.GetOrdinal("ArchiveByteLength")
+
+                let mutable reading = true
+
+                while reading do
+                    let! hasRow = reader.ReadAsync cancellationToken
+
+                    if hasRow then
+                        let rawPayload =
+                            if reader.IsDBNull rawPayloadOrdinal then
+                                None
+                            else
+                                Some(
+                                    reader.GetFieldValue<byte array>(rawPayloadOrdinal)
+                                    |> Array.copy
+                                )
+
+                        let readOptionalString ordinal = if reader.IsDBNull ordinal then None else Some(reader.GetString ordinal)
+
+                        let archiveByteLength =
+                            if reader.IsDBNull archiveByteLengthOrdinal then
+                                None
+                            else
+                                Some(reader.GetInt64 archiveByteLengthOrdinal)
+
+                        candidates.Add
+                            {
+                                UsageFactId = reader.GetGuid usageFactIdOrdinal
+                                RawPayload = rawPayload
+                                CorrelationId = CorrelationId(reader.GetString correlationIdOrdinal)
+                                FactKind = enum<UsageFactKind> (reader.GetInt32 factKindOrdinal)
+                                OwnerId = reader.GetGuid ownerIdOrdinal
+                                OrganizationId = reader.GetGuid organizationIdOrdinal
+                                RepositoryId = reader.GetGuid repositoryIdOrdinal
+                                StoragePoolId = StoragePoolId(reader.GetString storagePoolIdOrdinal)
+                                Quantity = reader.GetInt64 quantityOrdinal
+                                ObservedAt = toInstant (reader.GetDateTime observedAtOrdinal)
+                                ArchiveState = enum<RawUsageFactArchiveState> (reader.GetInt32 archiveStateOrdinal)
+                                ArchiveBlobName = readOptionalString archiveBlobNameOrdinal
+                                ArchiveChecksumSha256Hex = readOptionalString archiveChecksumOrdinal
+                                ArchiveByteLength = archiveByteLength
+                            }
+                    else
+                        reading <- false
+
+                return candidates |> Seq.toList
+            }
+
+        member _.MarkArchiveVerifiedAsync(pointer, cancellationToken) =
+            executeArchiveTransitionAsync OperationsUsageSql.MarkRawUsageFactArchiveVerified pointer cancellationToken
+
+        member _.CompleteArchiveAsync(pointer, cancellationToken) =
+            executeArchiveTransitionAsync OperationsUsageSql.CompleteRawUsageFactArchive pointer cancellationToken
+
+        member _.RecordArchiveFailureAsync(usageFactId, reason, cancellationToken) = recordArchiveFailureAsync usageFactId reason cancellationToken
+
+        member _.ListArchivedUsageFactsAsync(query, after, batchSize, cancellationToken) =
+            task {
+                if batchSize <= 0 then
+                    invalidArg (nameof batchSize) "Archive replay batch size must be greater than zero."
+
+                use! connection = openConnectionAsync cancellationToken
+                use command = connection.CreateCommand()
+                command.CommandType <- CommandType.Text
+                command.CommandText <- archivedUsageFactPageSql query
+                addParameter command "@BatchSize" SqlDbType.Int batchSize
+                addArchiveStateParameters command
+                addArchiveQueryParameters command query
+
+                match after with
+                | Some cursor ->
+                    addParameter command "@AfterObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime cursor.ObservedAt)
+                    addParameter command "@AfterUsageFactId" SqlDbType.UniqueIdentifier cursor.UsageFactId
+                | None ->
+                    addParameter command "@AfterObservedAtUtc" SqlDbType.DateTime2 DBNull.Value
+                    addParameter command "@AfterUsageFactId" SqlDbType.UniqueIdentifier DBNull.Value
+
+                use! reader = command.ExecuteReaderAsync cancellationToken
+                let items = ResizeArray<RawUsageFactArchiveReplayItem>()
+
+                let usageFactIdOrdinal = reader.GetOrdinal("UsageFactId")
+                let correlationIdOrdinal = reader.GetOrdinal("CorrelationId")
+                let factKindOrdinal = reader.GetOrdinal("FactKind")
+                let ownerIdOrdinal = reader.GetOrdinal("OwnerId")
+                let organizationIdOrdinal = reader.GetOrdinal("OrganizationId")
+                let repositoryIdOrdinal = reader.GetOrdinal("RepositoryId")
+                let storagePoolIdOrdinal = reader.GetOrdinal("StoragePoolId")
+                let quantityOrdinal = reader.GetOrdinal("Quantity")
+                let observedAtOrdinal = reader.GetOrdinal("ObservedAtUtc")
+                let archiveBlobNameOrdinal = reader.GetOrdinal("ArchiveBlobName")
+                let archiveChecksumOrdinal = reader.GetOrdinal("ArchiveChecksumSha256Hex")
+                let archiveByteLengthOrdinal = reader.GetOrdinal("ArchiveByteLength")
+                let mutable reading = true
+
+                while reading do
+                    let! hasRow = reader.ReadAsync cancellationToken
+
+                    if hasRow then
+                        let usageFactId = reader.GetGuid usageFactIdOrdinal
+
+                        let pointer =
+                            {
+                                UsageFactId = usageFactId
+                                BlobName = reader.GetString archiveBlobNameOrdinal
+                                ChecksumSha256Hex = reader.GetString archiveChecksumOrdinal
+                                ByteLength = reader.GetInt64 archiveByteLengthOrdinal
+                            }
+
+                        items.Add
+                            {
+                                UsageFactId = usageFactId
+                                CorrelationId = CorrelationId(reader.GetString correlationIdOrdinal)
+                                FactKind = enum<UsageFactKind> (reader.GetInt32 factKindOrdinal)
+                                OwnerId = reader.GetGuid ownerIdOrdinal
+                                OrganizationId = reader.GetGuid organizationIdOrdinal
+                                RepositoryId = reader.GetGuid repositoryIdOrdinal
+                                StoragePoolId = StoragePoolId(reader.GetString storagePoolIdOrdinal)
+                                Quantity = reader.GetInt64 quantityOrdinal
+                                ObservedAt = toInstant (reader.GetDateTime observedAtOrdinal)
+                                Pointer = pointer
+                            }
+                    else
+                        reading <- false
+
+                return items |> Seq.toList
+            }
+
+        member _.CountArchivedUsageFactsAsync(query, cancellationToken) =
+            task {
+                use! connection = openConnectionAsync cancellationToken
+                use command = connection.CreateCommand()
+                command.CommandType <- CommandType.Text
+                command.CommandText <- archivedUsageFactCountSql query
+                addArchiveStateParameters command
+                addArchiveQueryParameters command query
+
+                let! scalar = command.ExecuteScalarAsync cancellationToken
+
+                return
+                    match scalar with
+                    | :? int as value -> int64 value
+                    | :? int64 as value -> value
+                    | :? decimal as value -> int64 value
+                    | _ -> 0L
+            }
+
+        member _.RehydrateArchivedPayloadsAsync(items, expiresAt, cancellationToken) =
+            task {
+                let itemArray = items |> List.toArray
+
+                if itemArray.Length = 0 then
+                    return []
+                else
+                    let mutable index = 0
+
+                    while index < itemArray.Length do
+                        let item = itemArray[index]
+
+                        if isNull item.RawPayload
+                           || item.RawPayload.Length = 0 then
+                            invalidArg (nameof items) "Rehydrated raw payload bytes are required."
+
+                        index <- index + 1
+
+                    use! connection = openConnectionAsync cancellationToken
+                    let! dbTransaction = connection.BeginTransactionAsync cancellationToken
+                    use transaction = dbTransaction :?> SqlTransaction
+
+                    try
+                        let changed = ResizeArray<UsageFactId>()
+                        let mutable offset = 0
+
+                        while offset < itemArray.Length do
+                            let count = Math.Min(OperationsUsageSql.RehydrationPayloadBatchSize, itemArray.Length - offset)
+                            let batch = Array.zeroCreate<RawUsageFactRehydrationItem> count
+                            Array.Copy(itemArray, offset, batch, 0, count)
+                            let! batchChanged = executeRehydrationPayloadBatchAsync connection transaction batch expiresAt cancellationToken
+                            changed.AddRange batchChanged
+                            offset <- offset + count
+
+                        do! transaction.CommitAsync cancellationToken
+                        return changed |> Seq.toList
+                    with
+                    | ex ->
+                        do! rollbackRehydrationIgnoringFailuresAsync transaction
+                        return raise ex
+            }
+
+        member _.CleanupExpiredRehydratedPayloadsAsync(expiresBefore, batchSize, cancellationToken) =
+            if batchSize <= 0 then
+                invalidArg (nameof batchSize) "Temporary-hot cleanup batch size must be greater than zero."
+
+            let boundedBatchSize = Math.Min(batchSize, OperationsUsageSql.TemporaryHotCleanupBatchSize)
+            cleanupExpiredRehydratedPayloadsAsync expiresBefore boundedBatchSize cancellationToken
+
+/// Initializes the Operations usage schema before hosted services query or mutate operations tables.
+type IOperationsUsageSchemaInitializer =
+
+    /// Applies the reviewed Operations usage schema migrations before runtime processing starts.
+    abstract EnsureCreatedAsync: cancellationToken: CancellationToken -> Task
 
 /// Ensures the operations usage SQL schema exists before ingestion starts consuming durable messages.
 type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsUsageSchemaBootstrapMode) =
@@ -337,6 +1119,75 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
             do! context.Database.MigrateAsync cancellationToken
         }
 
+    interface IOperationsUsageSchemaInitializer with
+
+        member this.EnsureCreatedAsync(cancellationToken) = this.EnsureCreatedAsync cancellationToken
+
+/// Carries one shared Operations schema initialization attempt and the token that can stop it during host shutdown.
+type private OperationsUsageSchemaInitializationAttempt = { Task: Task; Cancellation: CancellationTokenSource }
+
+/// Shares one Operations schema initialization attempt across hosted services before SQL runtime work begins.
+type OperationsUsageSchemaInitializationBarrier(schema: IOperationsUsageSchemaInitializer) =
+    let gate = obj ()
+    let mutable initialized = false
+    let mutable inFlight: OperationsUsageSchemaInitializationAttempt option = None
+
+    /// Links a joining caller's shutdown token to the shared schema attempt.
+    let cancelAttemptWhenCallerCancels (attempt: OperationsUsageSchemaInitializationAttempt) (cancellationToken: CancellationToken) =
+        if cancellationToken.CanBeCanceled then
+            let registration =
+                cancellationToken.Register(
+                    Action (fun () ->
+                        try
+                            attempt.Cancellation.Cancel()
+                        with
+                        | :? ObjectDisposedException -> ())
+                )
+
+            attempt.Task.ContinueWith(Action<Task>(fun _ -> registration.Dispose()))
+            |> ignore
+
+    /// Starts or joins the shared schema initialization attempt.
+    member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
+        let initialization =
+            lock gate (fun () ->
+                if initialized then
+                    Task.CompletedTask
+                else
+                    match inFlight with
+                    | Some attempt ->
+                        cancelAttemptWhenCallerCancels attempt cancellationToken
+                        attempt.Task
+                    | None ->
+                        let attemptCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+
+                        let task =
+                            task {
+                                try
+                                    try
+                                        do! schema.EnsureCreatedAsync attemptCancellation.Token
+
+                                        lock gate (fun () ->
+                                            initialized <- true
+                                            inFlight <- None)
+                                    with
+                                    | ex ->
+                                        lock gate (fun () -> inFlight <- None)
+                                        ExceptionDispatchInfo.Capture(ex).Throw()
+                                finally
+                                    attemptCancellation.Dispose()
+                            }
+                            :> Task
+
+                        inFlight <- Some { Task = task; Cancellation = attemptCancellation }
+                        task)
+
+        initialization.WaitAsync cancellationToken
+
+    interface IOperationsUsageSchemaInitializer with
+
+        member this.EnsureCreatedAsync(cancellationToken) = this.EnsureCreatedAsync cancellationToken
+
 /// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
 type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
@@ -360,4 +1211,29 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
                 let! result = transactionScope.ExecuteAsync(operation, cancellationToken)
                 return Ok result
+        }
+
+    /// Replays an archived usage fact into raw index and aggregate state without restoring hot SQL payload bytes.
+    member _.ReplayArchivedUsageFactAsync(fact: UsageFact, rawPayload: byte array, pointer: RawUsageFactArchivePointer, cancellationToken: CancellationToken) =
+        task {
+            if pointer.UsageFactId <> fact.UsageFactId then
+                return Error [ $"Replay pointer UsageFactId '{pointer.UsageFactId}' does not match payload UsageFactId '{fact.UsageFactId}'." ]
+            else
+                match UsageFactPersistencePlan.tryCreate fact rawPayload with
+                | Error errors -> return Error errors
+                | Ok plan ->
+                    let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
+                        task {
+                            let! accepted = transaction.TryInsertReplayedArchivedUsageFactAsync(plan.RawFact, pointer, operationCancellationToken)
+
+                            if accepted then
+                                do! transaction.AddToUsageAggregateMinuteAsync(plan.Aggregate, operationCancellationToken)
+
+                                return { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = plan.RawFact.UsageFactId; Aggregate = Some plan.Aggregate }
+                            else
+                                return { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = plan.RawFact.UsageFactId; Aggregate = None }
+                        }
+
+                    let! result = transactionScope.ExecuteAsync(operation, cancellationToken)
+                    return Ok result
         }
