@@ -232,11 +232,20 @@ module WebhookDispatch =
         | _ -> Option.None
 
     /// Selects the external webhook event projection supported for a Grace domain event.
-    let private tryCreateDispatchEvent graceEvent =
-        match graceEvent with
-        | GraceEvent.PromotionSetEvent promotionSetEvent -> tryCreatePromotionSetAppliedDispatchEvent promotionSetEvent
-        | GraceEvent.ReferenceEvent referenceEvent -> tryCreatePromotionSetAppliedDispatchEventFromReveal referenceEvent
-        | _ -> Option.None
+    let private tryCreateDispatchEvent currentSourceAllowsProjection graceEvent =
+        let currentSourceAllowsPublicProjection =
+            match currentSourceAllowsProjection with
+            | Option.Some false -> false
+            | Option.Some true
+            | Option.None -> true
+
+        if not currentSourceAllowsPublicProjection then
+            Option.None
+        else
+            match graceEvent with
+            | GraceEvent.PromotionSetEvent promotionSetEvent -> tryCreatePromotionSetAppliedDispatchEvent promotionSetEvent
+            | GraceEvent.ReferenceEvent referenceEvent -> tryCreatePromotionSetAppliedDispatchEventFromReveal referenceEvent
+            | _ -> Option.None
 
     /// Computes hmac sha256 hex data used by Grace Server.
     let private hmacSha256Hex (key: string) (material: byte array) =
@@ -560,17 +569,18 @@ module WebhookDispatch =
         }
 
     /// Coordinates dispatch committed event async processing for Grace Server.
-    let dispatchCommittedEventAsync
+    let dispatchCommittedEventAsyncWithCurrentVisibility
         (logger: ILogger)
         (configuration: IConfiguration)
         (hostEnvironment: IHostEnvironment)
         (transport: IOutboundWebhookTransport)
+        currentSourceAllowsProjection
         (graceEvent: GraceEvent)
         (cancellationToken: CancellationToken)
         =
         task {
             try
-                match tryCreateDispatchEvent graceEvent with
+                match tryCreateDispatchEvent currentSourceAllowsProjection graceEvent with
                 | Option.None -> return DispatchResult.Empty
                 | Option.Some (definition, scope, dedupeKey, payloadJson) ->
                     let rules = WebhookStore.listEnabledRulesForEvent scope definition.Name definition.Version
@@ -605,6 +615,17 @@ module WebhookDispatch =
                 logger.LogError(ex, "Webhook dispatch failed after source event commit; source workflow will not be blocked.")
                 return DispatchResult.Empty
         }
+
+    /// Coordinates dispatch committed event async processing for Grace Server.
+    let dispatchCommittedEventAsync
+        (logger: ILogger)
+        (configuration: IConfiguration)
+        (hostEnvironment: IHostEnvironment)
+        (transport: IOutboundWebhookTransport)
+        (graceEvent: GraceEvent)
+        (cancellationToken: CancellationToken)
+        =
+        dispatchCommittedEventAsyncWithCurrentVisibility logger configuration hostEnvironment transport Option.None graceEvent cancellationToken
 
     /// Coordinates drain scheduled retries once async processing for Grace Server.
     let drainScheduledRetriesOnceAsync

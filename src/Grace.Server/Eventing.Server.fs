@@ -80,6 +80,13 @@ module EventingPublisher =
         visibility = ResourceVisibility.Public
         || ownership = ResourceOwnership.RepositoryOwned
 
+    /// Combines persisted event metadata with the current source visibility read used just before public fanout.
+    let internal currentSourceAllowsPublicProjection currentSourceAllowsProjection =
+        match currentSourceAllowsProjection with
+        | Option.Some false -> false
+        | Option.Some true
+        | Option.None -> true
+
     /// Implements envelope for the server request pipeline.
     let private envelope
         (eventType: AutomationEventType)
@@ -142,180 +149,186 @@ module EventingPublisher =
         |> Some
 
     /// Converts Grace domain events that have automation mappings into serialized event envelopes for dispatch.
-    let tryCreateEnvelope (graceEvent: GraceEvent) =
-        match graceEvent with
-        | PromotionSetEvent promotionSetEvent ->
-            let eventType = mapPromotionSetEventType promotionSetEvent.Event
+    let tryCreateEnvelopeWithCurrentVisibility currentSourceAllowsProjection (graceEvent: GraceEvent) =
+        if not (currentSourceAllowsPublicProjection currentSourceAllowsProjection) then
+            Option.None
+        else
+            match graceEvent with
+            | PromotionSetEvent promotionSetEvent ->
+                let eventType = mapPromotionSetEventType promotionSetEvent.Event
 
-            if not (metadataAllowsPublicProjection promotionSetEvent.Metadata) then
-                Option.None
-            else
+                if not (metadataAllowsPublicProjection promotionSetEvent.Metadata) then
+                    Option.None
+                else
+                    envelope
+                        eventType
+                        promotionSetEvent.Metadata
+                        (tryGetOwnerId promotionSetEvent.Metadata
+                         |> Option.defaultValue OwnerId.Empty)
+                        (tryGetOrganizationId promotionSetEvent.Metadata
+                         |> Option.defaultValue OrganizationId.Empty)
+                        (tryGetRepositoryId promotionSetEvent.Metadata
+                         |> Option.defaultValue RepositoryId.Empty)
+                        (tryGetActorId promotionSetEvent.Metadata "PromotionSet")
+                        (serialize promotionSetEvent)
+                    |> Some
+            | ValidationSetEvent validationSetEvent ->
+                let eventType =
+                    match validationSetEvent.Event with
+                    | ValidationSetEventType.Created _ -> AutomationEventType.ValidationSetCreated
+                    | ValidationSetEventType.Updated _
+                    | ValidationSetEventType.LogicalDeleted _ -> AutomationEventType.ValidationSetUpdated
+
                 envelope
                     eventType
-                    promotionSetEvent.Metadata
-                    (tryGetOwnerId promotionSetEvent.Metadata
-                     |> Option.defaultValue OwnerId.Empty)
-                    (tryGetOrganizationId promotionSetEvent.Metadata
-                     |> Option.defaultValue OrganizationId.Empty)
-                    (tryGetRepositoryId promotionSetEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
-                    (tryGetActorId promotionSetEvent.Metadata "PromotionSet")
-                    (serialize promotionSetEvent)
-                |> Some
-        | ValidationSetEvent validationSetEvent ->
-            let eventType =
-                match validationSetEvent.Event with
-                | ValidationSetEventType.Created _ -> AutomationEventType.ValidationSetCreated
-                | ValidationSetEventType.Updated _
-                | ValidationSetEventType.LogicalDeleted _ -> AutomationEventType.ValidationSetUpdated
-
-            envelope
-                eventType
-                validationSetEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId validationSetEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId validationSetEvent.Metadata "ValidationSet")
-                (serialize validationSetEvent)
-            |> Some
-        | ValidationResultEvent validationResultEvent ->
-            if not (metadataAllowsPublicProjection validationResultEvent.Metadata) then
-                Option.None
-            else
-                envelope
-                    AutomationEventType.ValidationResultRecorded
-                    validationResultEvent.Metadata
+                    validationSetEvent.Metadata
                     OwnerId.Empty
                     OrganizationId.Empty
-                    (tryGetRepositoryId validationResultEvent.Metadata
+                    (tryGetRepositoryId validationSetEvent.Metadata
                      |> Option.defaultValue RepositoryId.Empty)
-                    (tryGetActorId validationResultEvent.Metadata "ValidationResult")
-                    (serialize validationResultEvent)
+                    (tryGetActorId validationSetEvent.Metadata "ValidationSet")
+                    (serialize validationSetEvent)
                 |> Some
-        | ArtifactEvent artifactEvent ->
-            if not (metadataAllowsPublicProjection artifactEvent.Metadata) then
-                Option.None
-            else
-                envelope
-                    AutomationEventType.ArtifactCreated
-                    artifactEvent.Metadata
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    (tryGetRepositoryId artifactEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
-                    (tryGetActorId artifactEvent.Metadata "Artifact")
-                    (serialize artifactEvent)
-                |> Some
-        | QueueEvent queueEvent ->
-            let eventType =
-                match queueEvent.Event with
-                | PromotionQueueEventType.PromotionSetEnqueued _ -> Some AutomationEventType.PromotionSetEnqueued
-                | PromotionQueueEventType.PromotionSetDequeued _ -> Some AutomationEventType.PromotionSetDequeued
-                | _ -> Option.None
-
-            if not (metadataAllowsPublicProjection queueEvent.Metadata) then
-                Option.None
-            else
-                eventType
-                |> Option.map (fun mappedType ->
+            | ValidationResultEvent validationResultEvent ->
+                if not (metadataAllowsPublicProjection validationResultEvent.Metadata) then
+                    Option.None
+                else
                     envelope
-                        mappedType
-                        queueEvent.Metadata
+                        AutomationEventType.ValidationResultRecorded
+                        validationResultEvent.Metadata
                         OwnerId.Empty
                         OrganizationId.Empty
-                        (tryGetRepositoryId queueEvent.Metadata
+                        (tryGetRepositoryId validationResultEvent.Metadata
                          |> Option.defaultValue RepositoryId.Empty)
-                        (tryGetActorId queueEvent.Metadata "PromotionQueue")
-                        (serialize queueEvent))
-        | ReviewEvent reviewEvent ->
-            let ownerId, organizationId, repositoryId, eventType =
-                match reviewEvent.Event with
-                | ReviewEventType.NotesUpserted notes -> notes.OwnerId, notes.OrganizationId, notes.RepositoryId, AutomationEventType.ReviewNotesUpdated
-                | ReviewEventType.CheckpointAdded _ ->
-                    OwnerId.Empty,
-                    OrganizationId.Empty,
-                    (tryGetRepositoryId reviewEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty),
-                    AutomationEventType.ReviewCheckpointRecorded
-                | ReviewEventType.FindingResolved _ ->
-                    OwnerId.Empty,
-                    OrganizationId.Empty,
-                    (tryGetRepositoryId reviewEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty),
-                    AutomationEventType.ReviewNotesUpdated
-
-            if not (metadataAllowsPublicProjection reviewEvent.Metadata) then
-                Option.None
-            else
-                envelope
-                    eventType
-                    reviewEvent.Metadata
-                    ownerId
-                    organizationId
-                    repositoryId
-                    (tryGetActorId reviewEvent.Metadata "Review")
-                    (serialize reviewEvent)
-                |> Some
-        | ReferenceEvent referenceEvent ->
-            match referenceEvent.Event with
-            | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, _, referenceType, _, links) ->
-                if referenceType = ReferenceType.Promotion
-                   && metadataAllowsPublicProjection referenceEvent.Metadata then
-                    match tryGetTerminalPromotionSetId links with
-                    | Some promotionSetId ->
-                        createPromotionSetAppliedEnvelope referenceEvent.Metadata ownerId organizationId repositoryId branchId promotionSetId referenceId
-                        |> Some
-                    | Option.None -> Option.None
-                else
+                        (tryGetActorId validationResultEvent.Metadata "ValidationResult")
+                        (serialize validationResultEvent)
+                    |> Some
+            | ArtifactEvent artifactEvent ->
+                if not (metadataAllowsPublicProjection artifactEvent.Metadata) then
                     Option.None
-            | ReferenceEventType.Revealed (_, _, _, previousVisibility, newVisibility) ->
-                if previousVisibility = ResourceVisibility.Private
-                   && newVisibility = ResourceVisibility.Public then
-                    match tryGetOwnerId referenceEvent.Metadata,
-                          tryGetOrganizationId referenceEvent.Metadata,
-                          tryGetRepositoryId referenceEvent.Metadata,
-                          tryGetBranchId referenceEvent.Metadata,
-                          tryGetPromotionSetId referenceEvent.Metadata,
-                          tryGetTerminalPromotionReferenceId referenceEvent.Metadata
-                        with
-                    | Some ownerId, Some organizationId, Some repositoryId, Some branchId, Some promotionSetId, Some terminalPromotionReferenceId ->
-                        createPromotionSetAppliedEnvelope
-                            referenceEvent.Metadata
-                            ownerId
-                            organizationId
-                            repositoryId
-                            branchId
-                            promotionSetId
-                            terminalPromotionReferenceId
-                        |> Some
+                else
+                    envelope
+                        AutomationEventType.ArtifactCreated
+                        artifactEvent.Metadata
+                        OwnerId.Empty
+                        OrganizationId.Empty
+                        (tryGetRepositoryId artifactEvent.Metadata
+                         |> Option.defaultValue RepositoryId.Empty)
+                        (tryGetActorId artifactEvent.Metadata "Artifact")
+                        (serialize artifactEvent)
+                    |> Some
+            | QueueEvent queueEvent ->
+                let eventType =
+                    match queueEvent.Event with
+                    | PromotionQueueEventType.PromotionSetEnqueued _ -> Some AutomationEventType.PromotionSetEnqueued
+                    | PromotionQueueEventType.PromotionSetDequeued _ -> Some AutomationEventType.PromotionSetDequeued
                     | _ -> Option.None
-                else
-                    Option.None
-            | _ -> Option.None
-        | WorkItemEvent workItemEvent ->
-            let eventType =
-                match workItemEvent.Event with
-                | WorkItemEventType.ArtifactLinked _ -> AutomationEventType.AgentSummaryAdded
-                | _ -> AutomationEventType.ReviewNotesUpdated
 
-            if not (metadataAllowsPublicProjection workItemEvent.Metadata) then
-                Option.None
-            else
-                envelope
+                if not (metadataAllowsPublicProjection queueEvent.Metadata) then
+                    Option.None
+                else
                     eventType
-                    workItemEvent.Metadata
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    (tryGetRepositoryId workItemEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
-                    (tryGetActorId workItemEvent.Metadata "WorkItem")
-                    (serialize workItemEvent)
-                |> Some
-        | PolicyEvent _
-        | ApprovalRequestEvent _
-        | OwnerEvent _
-        | BranchEvent _
-        | DirectoryVersionEvent _
-        | OrganizationEvent _
-        | RepositoryEvent _ -> Option.None
+                    |> Option.map (fun mappedType ->
+                        envelope
+                            mappedType
+                            queueEvent.Metadata
+                            OwnerId.Empty
+                            OrganizationId.Empty
+                            (tryGetRepositoryId queueEvent.Metadata
+                             |> Option.defaultValue RepositoryId.Empty)
+                            (tryGetActorId queueEvent.Metadata "PromotionQueue")
+                            (serialize queueEvent))
+            | ReviewEvent reviewEvent ->
+                let ownerId, organizationId, repositoryId, eventType =
+                    match reviewEvent.Event with
+                    | ReviewEventType.NotesUpserted notes -> notes.OwnerId, notes.OrganizationId, notes.RepositoryId, AutomationEventType.ReviewNotesUpdated
+                    | ReviewEventType.CheckpointAdded _ ->
+                        OwnerId.Empty,
+                        OrganizationId.Empty,
+                        (tryGetRepositoryId reviewEvent.Metadata
+                         |> Option.defaultValue RepositoryId.Empty),
+                        AutomationEventType.ReviewCheckpointRecorded
+                    | ReviewEventType.FindingResolved _ ->
+                        OwnerId.Empty,
+                        OrganizationId.Empty,
+                        (tryGetRepositoryId reviewEvent.Metadata
+                         |> Option.defaultValue RepositoryId.Empty),
+                        AutomationEventType.ReviewNotesUpdated
+
+                if not (metadataAllowsPublicProjection reviewEvent.Metadata) then
+                    Option.None
+                else
+                    envelope
+                        eventType
+                        reviewEvent.Metadata
+                        ownerId
+                        organizationId
+                        repositoryId
+                        (tryGetActorId reviewEvent.Metadata "Review")
+                        (serialize reviewEvent)
+                    |> Some
+            | ReferenceEvent referenceEvent ->
+                match referenceEvent.Event with
+                | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, _, referenceType, _, links) ->
+                    if referenceType = ReferenceType.Promotion
+                       && metadataAllowsPublicProjection referenceEvent.Metadata then
+                        match tryGetTerminalPromotionSetId links with
+                        | Some promotionSetId ->
+                            createPromotionSetAppliedEnvelope referenceEvent.Metadata ownerId organizationId repositoryId branchId promotionSetId referenceId
+                            |> Some
+                        | Option.None -> Option.None
+                    else
+                        Option.None
+                | ReferenceEventType.Revealed (_, _, _, previousVisibility, newVisibility) ->
+                    if previousVisibility = ResourceVisibility.Private
+                       && newVisibility = ResourceVisibility.Public then
+                        match tryGetOwnerId referenceEvent.Metadata,
+                              tryGetOrganizationId referenceEvent.Metadata,
+                              tryGetRepositoryId referenceEvent.Metadata,
+                              tryGetBranchId referenceEvent.Metadata,
+                              tryGetPromotionSetId referenceEvent.Metadata,
+                              tryGetTerminalPromotionReferenceId referenceEvent.Metadata
+                            with
+                        | Some ownerId, Some organizationId, Some repositoryId, Some branchId, Some promotionSetId, Some terminalPromotionReferenceId ->
+                            createPromotionSetAppliedEnvelope
+                                referenceEvent.Metadata
+                                ownerId
+                                organizationId
+                                repositoryId
+                                branchId
+                                promotionSetId
+                                terminalPromotionReferenceId
+                            |> Some
+                        | _ -> Option.None
+                    else
+                        Option.None
+                | _ -> Option.None
+            | WorkItemEvent workItemEvent ->
+                let eventType =
+                    match workItemEvent.Event with
+                    | WorkItemEventType.ArtifactLinked _ -> AutomationEventType.AgentSummaryAdded
+                    | _ -> AutomationEventType.ReviewNotesUpdated
+
+                if not (metadataAllowsPublicProjection workItemEvent.Metadata) then
+                    Option.None
+                else
+                    envelope
+                        eventType
+                        workItemEvent.Metadata
+                        OwnerId.Empty
+                        OrganizationId.Empty
+                        (tryGetRepositoryId workItemEvent.Metadata
+                         |> Option.defaultValue RepositoryId.Empty)
+                        (tryGetActorId workItemEvent.Metadata "WorkItem")
+                        (serialize workItemEvent)
+                    |> Some
+            | PolicyEvent _
+            | ApprovalRequestEvent _
+            | OwnerEvent _
+            | BranchEvent _
+            | DirectoryVersionEvent _
+            | OrganizationEvent _
+            | RepositoryEvent _ -> Option.None
+
+    /// Converts Grace domain events that have automation mappings into serialized event envelopes for dispatch.
+    let tryCreateEnvelope (graceEvent: GraceEvent) = tryCreateEnvelopeWithCurrentVisibility Option.None graceEvent
