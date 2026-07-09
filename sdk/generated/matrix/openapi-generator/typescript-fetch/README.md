@@ -90,6 +90,8 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**rebaseBranch**](docs/BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**refreshCacheService**](docs/CacheApi.md#refreshcacheservice) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
+*CacheApi* | [**registerCacheService**](docs/CacheApi.md#registercacheservice) | **POST** /cache/register | Register a Grace Cache service.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirmContentBlockUpload**](docs/DefaultApi.md#confirmcontentblockupload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discoverContentBlocks**](docs/DefaultApi.md#discovercontentblocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -193,6 +195,12 @@ All URIs are relative to *http://localhost:5000*
 - [BranchParameters](docs/BranchParameters.md)
 - [BranchQueryParameters](docs/BranchQueryParameters.md)
 - [BranchReturnValue](docs/BranchReturnValue.md)
+- [CacheRegistration](docs/CacheRegistration.md)
+- [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
+- [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)
+- [CacheRegistrationRequest](docs/CacheRegistrationRequest.md)
+- [CacheRegistrationResult](docs/CacheRegistrationResult.md)
+- [CacheRegistrationReturnValue](docs/CacheRegistrationReturnValue.md)
 - [ChangeType](docs/ChangeType.md)
 - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
 - [ClaimedReuseRange](docs/ClaimedReuseRange.md)

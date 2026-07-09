@@ -1346,6 +1346,15 @@ module Application =
                         POST [ route "/plan" (composeHandlers requireRepositoryRead Materialization.Plan)
                                |> addMetadata typeof<Grace.Shared.Parameters.Materialization.PlanParameters> ]
                     ]
+                subRoute
+                    "/cache"
+                    [
+                        POST [ route "/register" CacheRegistration.Register
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRequest>
+
+                               route "/refresh" CacheRegistration.Refresh
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRefreshRequest> ]
+                    ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute
                     "/organization"

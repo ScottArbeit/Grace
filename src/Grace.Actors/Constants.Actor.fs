@@ -93,6 +93,9 @@ module Constants =
         let ApprovalRequestIndex = "ApprovalRequestIndexActor"
 
         [<Literal>]
+        let CacheRegistration = "CacheRegistrationActor"
+
+        [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadataActor"
 
         [<Literal>]
@@ -189,6 +192,9 @@ module Constants =
 
         [<Literal>]
         let ApprovalRequestIndex = "ApprovalRequestIndex"
+
+        [<Literal>]
+        let CacheRegistration = "CacheRegistration"
 
         [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadata"

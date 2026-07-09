@@ -157,23 +157,26 @@ docs-only classification with current evidence for the behavior they own.
 ### Cache Service Registration And Identity
 
 - Implementation seam: #617 defines the pre-registration identity boundary in
-  `Grace.Server.Security.CacheServiceIdentity`. Registration must use the existing OIDC/JWT bearer
-  scheme with a client-credentials service token and a configured service principal ID. Server
-  configuration owns the approved service principal IDs, registration scopes, and registration
-  capabilities.
+  `Grace.Server.Security.CacheServiceIdentity`. #618 adds
+  `Grace.Types.CacheRegistration`, `CacheRegistrationActor`, and the `/cache/register` plus
+  `/cache/refresh` server routes. Registration state is server-owned, keyed by service principal,
+  records the cache endpoint, approved scopes, approved capabilities, approved execution modes,
+  read-through and prefetch flags, a 2-hour active lifetime, and a 1-hour refresh-after interval.
 - Proof seam: `CacheServiceIdentityUnitTests` covers disabled configuration, fail-fast enabled
   configuration, valid OIDC service-principal registration, PAT rejection, normal user rejection,
   missing client-credentials marker rejection, unapproved scope and capability rejection, and
-  non-secret status summaries.
-- Status classification: `contract defined; registration actor/API not implemented`.
+  non-secret status summaries. `CacheRegistrationLifecycleTests` covers default lifetime,
+  duplicate register upsert behavior, refresh-before-due behavior, refresh-after-due extension,
+  expired registration exclusion, selection query filtering, and HTTPS endpoint validation.
+- Status classification: `implemented but proof incomplete`.
 - Issue or PR evidence: #617 owns the service credential, identity claim, allowed scheme, scope
-  model, configuration boundary, docs, and `pwsh ./scripts/validate.ps1 -Fast` validation for this
-  preflight.
-- Residual risk or rationale: #618 still owns duplicate registration handling, endpoint routing,
-  persistence, identity rotation behavior, and disabled-cache API behavior. #619 still owns
-  per-call artifact grants. #620 still owns cache-mode plan generation. Cache Service Identity
-  authorizes configured cache registration behavior only; it must not become a global artifact
-  reader or bypass per-call artifact grants.
+  model, configuration boundary, docs, and `pwsh ./scripts/validate.ps1 -Fast` validation for the
+  preflight. #618 owns the registration actor/API implementation and must cite its PR, commit, and
+  final validation evidence before this row can move to `implemented and proven`.
+- Residual risk or rationale: #619 still owns per-call artifact grants. #620 still owns cache-mode
+  plan generation and consuming the eligible-registration selection seam. Cache Service Identity and
+  Cache registration authorize configured registration behavior only; they must not become global
+  artifact readers or bypass per-call artifact grants.
 
 ### Read-Through Behavior
 

@@ -169,6 +169,11 @@ paths:
 
   /materialization/plan:
     $ref: './Materialization.Paths.OpenAPI.yaml#/~1materialization~1plan'
+
+  /cache/register:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1register'
+  /cache/refresh:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1refresh'
       
   /organization/create:
     $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1create'
@@ -421,6 +426,19 @@ components:
       $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlan'
     MaterializationPlanReturnValue:
       $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlanReturnValue'
+
+    CacheRegistrationRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRequest'
+    CacheRegistrationRefreshRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshRequest'
+    CacheRegistrationRefreshStatus:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshStatus'
+    CacheRegistration:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistration'
+    CacheRegistrationResult:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationResult'
+    CacheRegistrationReturnValue:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationReturnValue'
 
     BranchDto:
       $ref: 'Dto.Components.OpenAPI.yaml#/BranchDto'

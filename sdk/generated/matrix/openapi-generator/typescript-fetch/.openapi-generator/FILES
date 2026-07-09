@@ -33,6 +33,13 @@ docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
 docs/BranchesApi.md
+docs/CacheApi.md
+docs/CacheRegistration.md
+docs/CacheRegistrationRefreshRequest.md
+docs/CacheRegistrationRefreshStatus.md
+docs/CacheRegistrationRequest.md
+docs/CacheRegistrationResult.md
+docs/CacheRegistrationReturnValue.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
@@ -250,6 +257,7 @@ docs/WebhooksApi.md
 package.json
 src/apis/ApprovalsApi.ts
 src/apis/BranchesApi.ts
+src/apis/CacheApi.ts
 src/apis/DefaultApi.ts
 src/apis/DiffsApi.ts
 src/apis/DirectoriesApi.ts
@@ -289,6 +297,12 @@ src/models/BranchHashQueryParameters.ts
 src/models/BranchParameters.ts
 src/models/BranchQueryParameters.ts
 src/models/BranchReturnValue.ts
+src/models/CacheRegistration.ts
+src/models/CacheRegistrationRefreshRequest.ts
+src/models/CacheRegistrationRefreshStatus.ts
+src/models/CacheRegistrationRequest.ts
+src/models/CacheRegistrationResult.ts
+src/models/CacheRegistrationReturnValue.ts
 src/models/ChangeType.ts
 src/models/ClaimReuseRangesParameters.ts
 src/models/ClaimedReuseRange.ts

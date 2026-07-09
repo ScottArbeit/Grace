@@ -74,6 +74,8 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**refresh_cache_service**](docs/CacheApi.md#refresh_cache_service) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
+*CacheApi* | [**register_cache_service**](docs/CacheApi.md#register_cache_service) | **POST** /cache/register | Register a Grace Cache service.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirm_content_block_upload**](docs/DefaultApi.md#confirm_content_block_upload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discover_content_blocks**](docs/DefaultApi.md#discover_content_blocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -177,6 +179,12 @@ Class | Method | HTTP request | Description
  - [BranchParameters](docs/BranchParameters.md)
  - [BranchQueryParameters](docs/BranchQueryParameters.md)
  - [BranchReturnValue](docs/BranchReturnValue.md)
+ - [CacheRegistration](docs/CacheRegistration.md)
+ - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
+ - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)
+ - [CacheRegistrationRequest](docs/CacheRegistrationRequest.md)
+ - [CacheRegistrationResult](docs/CacheRegistrationResult.md)
+ - [CacheRegistrationReturnValue](docs/CacheRegistrationReturnValue.md)
  - [ChangeType](docs/ChangeType.md)
  - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
  - [ClaimedReuseRange](docs/ClaimedReuseRange.md)

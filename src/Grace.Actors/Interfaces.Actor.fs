@@ -25,6 +25,7 @@ open Grace.Types.UploadSession
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
 open Grace.Types.MaterializationPlan
+open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open Grace.Shared.Utilities
 open NodaTime
@@ -597,6 +598,33 @@ module Interfaces =
 
         /// Returns the request ids currently indexed for the scope.
         abstract member List: correlationId: CorrelationId -> Task<ApprovalRequestId array>
+
+    /// Defines the operations for the server-owned Cache registration actor.
+    [<Interface>]
+    type ICacheRegistrationActor =
+        inherit IGrainWithStringKey
+
+        /// Registers or replaces one Cache service registration after server identity approval.
+        abstract member Register:
+            servicePrincipalId: string *
+            request: CacheRegistrationRequest *
+            approvedScopes: string array *
+            approvedCapabilities: string array *
+            now: Instant *
+            correlationId: CorrelationId ->
+                Task<GraceResult<CacheRegistrationResult>>
+
+        /// Refreshes one current Cache service registration without changing approved scopes or capabilities.
+        abstract member Refresh: servicePrincipalId: string * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Removes expired registrations from durable actor state.
+        abstract member Expire: now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>
+
+        /// Returns current registrations that match the server-owned selection query.
+        abstract member SelectEligible: query: CacheRegistrationSelectionQuery * now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>
+
+        /// Returns all current registrations without granting artifact access or generating a plan.
+        abstract member Current: now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>
 
     /// Defines the operations for the StoragePool-scoped ContentBlock metadata actor.
     [<Interface>]

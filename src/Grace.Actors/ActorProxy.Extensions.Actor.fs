@@ -385,6 +385,16 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
+    /// Groups Orleans actor helpers for Cache registration keys, proxies, state, or workflow transitions.
+    module CacheRegistration =
+        /// Creates the singleton Cache registration actor proxy.
+        let CreateActorProxy (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<ICacheRegistrationActor>("cache-registration:v1", correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.CacheRegistration)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
     /// Groups Orleans actor helpers for upload session keys, proxies, state, or workflow transitions.
     module UploadSession =
         open Grace.Types.UploadSession

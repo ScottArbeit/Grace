@@ -1,0 +1,129 @@
+CacheRegistrationRequest:
+  description: Request body used by an approved Grace Cache service to register its endpoint and requested boundary.
+  type: object
+  properties:
+    Class:
+      type: string
+      example: CacheRegistrationRequest
+    Endpoint:
+      type: string
+      format: uri
+      example: https://cache.example.net/grace
+    RequestedScopes:
+      type: array
+      items:
+        type: string
+      example: [repository:owner/org/repo]
+    RequestedCapabilities:
+      type: array
+      items:
+        type: string
+      example: [read-through, prefetch]
+    RequestedExecutionModes:
+      type: array
+      items:
+        $ref: './Materialization.Components.OpenAPI.yaml#/MaterializationExecutionMode'
+      example: [cachePreferred, cacheRequired]
+  required: [Class, Endpoint, RequestedScopes, RequestedCapabilities, RequestedExecutionModes]
+CacheRegistrationRefreshRequest:
+  description: Request body used by an approved Grace Cache service to refresh its current registration.
+  type: object
+  properties:
+    Class:
+      type: string
+      example: CacheRegistrationRefreshRequest
+  required: [Class]
+CacheRegistrationRefreshStatus:
+  description: Result classification for a Cache registration or refresh operation.
+  type: string
+  enum: [refreshed, refreshNotDue, expired, notFound]
+  x-enumNames: [Refreshed, RefreshNotDue, Expired, NotFound]
+  example: refreshed
+CacheRegistration:
+  description: Server-owned active registration record for an approved Grace Cache service.
+  type: object
+  properties:
+    Class:
+      type: string
+      example: CacheRegistration
+    ServicePrincipalId:
+      type: string
+      example: cache-service-client
+    Endpoint:
+      type: string
+      format: uri
+      example: https://cache.example.net/grace
+    ApprovedScopes:
+      type: array
+      items:
+        type: string
+    ApprovedCapabilities:
+      type: array
+      items:
+        type: string
+    ApprovedExecutionModes:
+      type: array
+      items:
+        $ref: './Materialization.Components.OpenAPI.yaml#/MaterializationExecutionMode'
+    RegisteredAt:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    LastRefreshedAt:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    RefreshAfter:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    ExpiresAt:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    ReadThroughEnabled:
+      type: boolean
+    PrefetchEnabled:
+      type: boolean
+  required:
+    - Class
+    - ServicePrincipalId
+    - Endpoint
+    - ApprovedScopes
+    - ApprovedCapabilities
+    - ApprovedExecutionModes
+    - RegisteredAt
+    - LastRefreshedAt
+    - RefreshAfter
+    - ExpiresAt
+    - ReadThroughEnabled
+    - PrefetchEnabled
+CacheRegistrationResult:
+  description: Result returned by Cache registration and refresh routes.
+  type: object
+  properties:
+    Class:
+      type: string
+      example: CacheRegistrationResult
+    Status:
+      $ref: '#/CacheRegistrationRefreshStatus'
+    Registration:
+      $ref: '#/CacheRegistration'
+      nullable: true
+    Message:
+      type: string
+      example: Cache registration is current.
+  required: [Class, Status, Message]
+CacheRegistrationReturnValue:
+  description: Grace response envelope whose ReturnValue contains a Cache registration result.
+  type: object
+  properties:
+    ReturnValue:
+      $ref: '#/CacheRegistrationResult'
+    EventTime:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    CorrelationId:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+    Properties:
+      type: object
+      additionalProperties:
+        type: string
+  required: [ReturnValue, EventTime, CorrelationId, Properties]
+CacheRegistrationResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        $ref: '#/CacheRegistrationReturnValue'

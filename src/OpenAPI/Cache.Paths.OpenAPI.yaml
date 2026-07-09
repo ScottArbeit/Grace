@@ -1,0 +1,49 @@
+  /cache/register:
+    post:
+      tags:
+        - Cache
+      summary: Register a Grace Cache service.
+      description: >-
+        Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate
+        with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when
+        they are approved by server configuration.
+      operationId: RegisterCacheService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationRequest'
+      responses:
+        '200':
+          $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401':
+          $ref: './Responses.OpenAPI.yaml#/401'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/refresh:
+    post:
+      tags:
+        - Cache
+      summary: Refresh a Grace Cache service registration.
+      description: >-
+        Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after
+        interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
+      operationId: RefreshCacheService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshRequest'
+      responses:
+        '200':
+          $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401':
+          $ref: './Responses.OpenAPI.yaml#/401'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
