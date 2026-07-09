@@ -14996,7 +14996,25 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
 
             appliedReferences.ToArray()
-            |> should equal Array.empty<ReferenceId>)
+            |> should equal Array.empty<ReferenceId>
+
+            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+            |> should equal false
+
+            let inspection =
+                Services
+                    .inspectGraceWatchStatus()
+                    .GetAwaiter()
+                    .GetResult()
+
+            match inspection.Status with
+            | Some publishedStatus ->
+                publishedStatus.HasPendingWatchWork
+                |> should equal false
+
+                publishedStatus.IsWorkingTreeClean
+                |> should equal true
+            | None -> Assert.Fail("Expected stale materialization cleanup to publish clean Watch IPC."))
 
     /// Verifies that a failed apply cannot republish clean IPC from pre-apply status evidence.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]

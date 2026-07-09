@@ -2225,6 +2225,9 @@ module Watch =
     /// Sets the materialization pending status marker for focused Watch tests.
     let internal setGraceWatchPendingWorkStatusFlagForWatchTests hasPendingWork = setGraceWatchPendingWorkStatusFlag hasPendingWork
 
+    /// Reports whether focused Watch tests still have the manual materialization pending marker set.
+    let internal hasManualPendingWatchWorkStatusFlagForWatchTests () = hasManualPendingWatchWorkStatusFlag ()
+
     /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
     let private pendingWatchWorkTransitionNeedsPublication () =
         File.Exists(IpcFileName())
@@ -3424,6 +3427,9 @@ module Watch =
                                                 publishPendingWatchWorkTransitionIfNeeded ()
 
                                                 if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                                    setGraceWatchPendingWorkStatusFlag false
+                                                    publishPendingWatchWorkTransitionIfNeeded ()
+
                                                     return
                                                         {
                                                             ReferenceId = payload.ReferenceId
