@@ -32,13 +32,16 @@ type ArtifactGrantValidationTests() =
         let key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
         key, GrantCrypto.exportValidationKey keyId createdAt expiresAt key
 
-    /// Builds and signs one valid cache-mode artifact grant.
-    let signedGrant keyId key issuedAt ttl artifacts =
+    /// Builds and signs one artifact grant for the supplied execution mode.
+    let signedGrantForMode keyId key executionMode issuedAt ttl artifacts =
         let header = ArtifactGrantHeader.Create keyId
 
-        let payload = ArtifactGrantPayload.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.CacheRequired, artifacts, issuedAt, ttl)
+        let payload = ArtifactGrantPayload.Create(cacheServicePrincipalId, targetRoot, executionMode, artifacts, issuedAt, ttl)
 
         GrantCrypto.sign key header payload
+
+    /// Builds and signs one valid cache-mode artifact grant.
+    let signedGrant keyId key issuedAt ttl artifacts = signedGrantForMode keyId key MaterializationExecutionMode.CacheRequired issuedAt ttl artifacts
 
     /// Creates a validation-key set with a deterministic publication time.
     let keySet keys = ArtifactGrantValidationKeySet.Create(now, keys)
@@ -83,6 +86,16 @@ type ArtifactGrantValidationTests() =
 
         assertOk result
         Assert.That(refreshCalled, Is.False)
+
+    [<Test>]
+    member _.``low-level signed grant validator rejects direct mode payloads``() =
+        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        use key = key
+        let grant = signedGrantForMode "key-1" key MaterializationExecutionMode.Direct now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
+        let request = ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity)
+
+        validateWithKeySet now (keySet [ validationKey ]) request grant
+        |> assertError WrongExecutionMode
 
     [<Test>]
     member _.``unsigned and malformed grants fail closed``() =

@@ -132,3 +132,35 @@ type ArtifactGrantKeysServerTests() =
             |> Seq.map (fun key -> key.KeyId),
             Does.Contain secondGrant.Header.KeyId
         )
+
+    [<Test>]
+    member _.``validation-key publication rotates before issuing next grant after active window``() =
+        let ring = keyRing ()
+
+        let firstGrant =
+            match ring.IssueGrant(now, issueRequest None) with
+            | Error error -> failwith (ArtifactGrantIssueError.toMessage error)
+            | Ok grant -> grant
+
+        let rotatedAt =
+            now
+                .Plus(ArtifactGrantContract.SigningKeyActiveLifetime)
+                .Plus(Duration.FromTicks 1L)
+
+        let publishedBeforeIssue = ring.PublishValidationKeys rotatedAt
+
+        let secondGrant =
+            match ring.IssueGrant(rotatedAt, issueRequest None) with
+            | Error error -> failwith (ArtifactGrantIssueError.toMessage error)
+            | Ok grant -> grant
+
+        Assert.That(secondGrant.Header.KeyId, Is.Not.EqualTo firstGrant.Header.KeyId)
+
+        Assert.That(
+            publishedBeforeIssue.Keys
+            |> Seq.map (fun key -> key.KeyId),
+            Does.Contain secondGrant.Header.KeyId
+        )
+
+        validateWithKeySet rotatedAt publishedBeforeIssue (validationRequest ()) secondGrant
+        |> assertValidationOk

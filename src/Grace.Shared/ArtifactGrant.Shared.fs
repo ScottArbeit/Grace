@@ -214,11 +214,11 @@ module ArtifactGrant =
         elif grant.Payload.TargetRootDirectoryVersionId
              <> request.TargetRootDirectoryVersionId then
             Error WrongTargetRoot
+        elif grant.Payload.ExecutionMode = MaterializationExecutionMode.Direct then
+            Error WrongExecutionMode
         elif grant.Payload.ExecutionMode
              <> request.ExecutionMode then
             Error WrongExecutionMode
-        elif grant.Payload.ExecutionMode = MaterializationExecutionMode.Direct then
-            Ok()
         elif isNull grant.Payload.ArtifactIdentities
              || grant.Payload.ArtifactIdentities.Count = 0
              || grant.Payload.ArtifactIdentities

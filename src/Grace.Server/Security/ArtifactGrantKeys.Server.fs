@@ -105,9 +105,11 @@ module ArtifactGrantKeys =
             lock syncRoot (fun () ->
                 purgeExpired now
 
-                if signingKeys.IsEmpty then
+                if signingKeys
+                   |> List.exists (fun key -> now < key.ActiveUntil)
+                   |> not then
                     let key = createSigningKey now
-                    signingKeys <- [ key ]
+                    signingKeys <- key :: signingKeys
                     log.LogInformation("Created artifact grant signing key {KeyId}.", key.KeyId)
 
                 currentValidationKeys now
