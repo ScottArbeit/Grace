@@ -164,8 +164,8 @@ components:
 
     ReferenceType:
       type: string
-      enum: [Promotion, Commit, Checkpoint, Save, Tag, External, Rebase]
-      example: Commit
+      enum: [promotion, commit, checkpoint, save, tag, external, rebase]
+      example: commit
     
     CommonParameters:
       description: Common parameters that are used across (almost) every endpoint in Grace.

@@ -1088,7 +1088,7 @@ function Test-OpenApiBranchReferenceDiffDetails {
     }
 
     $sharedComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
-    $referenceTypeSchemaMatch = [regex]::Match($sharedComponentsText, '(?s)ReferenceType:\s*type:\s*string\s*enum:\s*\[(?<values>[^\]]+)\]')
+    $referenceTypeSchemaMatch = [regex]::Match($sharedComponentsText, '(?m)^    ReferenceType:\r?\n      type:\s*string\r?\n      enum:\s*\[(?<values>[^\]]+)\]')
     if (-not $referenceTypeSchemaMatch.Success) {
         Add-Failure 'Shared ReferenceType OpenAPI schema must declare a string enum.'
     }
@@ -1098,10 +1098,22 @@ function Test-OpenApiBranchReferenceDiffDetails {
             ForEach-Object { $_.Trim() } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
-        foreach ($requiredReferenceType in @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')) {
-            if ($requiredReferenceType -notin $referenceTypeValues) {
-                Add-Failure "Shared ReferenceType OpenAPI enum is missing server-supported value '$requiredReferenceType'."
+        $expectedReferenceTypeWireValues = @('promotion', 'commit', 'checkpoint', 'save', 'tag', 'external', 'rebase')
+        foreach ($requiredReferenceType in $expectedReferenceTypeWireValues) {
+            if ($requiredReferenceType -cnotin $referenceTypeValues) {
+                Add-Failure "Shared ReferenceType OpenAPI enum is missing server-supported wire value '$requiredReferenceType'."
             }
+        }
+
+        foreach ($staleReferenceTypeName in @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')) {
+            if ($staleReferenceTypeName -cin $referenceTypeValues) {
+                Add-Failure "Shared ReferenceType OpenAPI enum must publish JSON wire value '$($staleReferenceTypeName.Substring(0, 1).ToLowerInvariant())$($staleReferenceTypeName.Substring(1))', not F# case name '$staleReferenceTypeName'."
+            }
+        }
+
+        $unexpectedReferenceTypeValues = @($referenceTypeValues | Where-Object { $_ -cnotin $expectedReferenceTypeWireValues })
+        if ($unexpectedReferenceTypeValues.Count -gt 0) {
+            Add-Failure "Shared ReferenceType OpenAPI enum contains unexpected value(s): $($unexpectedReferenceTypeValues -join ', ')."
         }
     }
 }
@@ -1741,8 +1753,8 @@ function Test-GeneratedClientMatrixProof {
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/ReferenceType.ts'
-            required = @("Promotion: 'Promotion'", "Commit: 'Commit'", "Checkpoint: 'Checkpoint'", "Save: 'Save'", "Tag: 'Tag'", "External: 'External'", "Rebase: 'Rebase'")
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
+            required = @("Promotion: 'promotion'", "Commit: 'commit'", "Checkpoint: 'checkpoint'", "Save: 'save'", "Tag: 'tag'", "External: 'external'", "Rebase: 'rebase'")
+            forbidden = @("Promotion: 'Promotion'", "Commit: 'Commit'", "Checkpoint: 'Checkpoint'", "Save: 'Save'", "Tag: 'Tag'", "External: 'External'", "Rebase: 'Rebase'", 'NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_target_selector_kind.py'
@@ -1751,8 +1763,8 @@ function Test-GeneratedClientMatrixProof {
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/reference_type.py'
-            required = @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
+            required = @("PROMOTION = 'promotion'", "COMMIT = 'commit'", "CHECKPOINT = 'checkpoint'", "SAVE = 'save'", "TAG = 'tag'", "EXTERNAL = 'external'", "REBASE = 'rebase'")
+            forbidden = @("PROMOTION = 'Promotion'", "COMMIT = 'Commit'", "CHECKPOINT = 'Checkpoint'", "SAVE = 'Save'", "TAG = 'Tag'", "EXTERNAL = 'External'", "REBASE = 'Rebase'", 'NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_target_selector_kind.rs'
@@ -1761,8 +1773,8 @@ function Test-GeneratedClientMatrixProof {
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/rust/src/models/reference_type.rs'
-            required = @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')
-            forbidden = @('Number1', 'Number2', 'Number3', 'Number4', 'Number5', 'Number6', 'Number7')
+            required = @('#[serde(rename = "promotion")]', '#[serde(rename = "commit")]', '#[serde(rename = "checkpoint")]', '#[serde(rename = "save")]', '#[serde(rename = "tag")]', '#[serde(rename = "external")]', '#[serde(rename = "rebase")]')
+            forbidden = @('#[serde(rename = "Promotion")]', '#[serde(rename = "Commit")]', '#[serde(rename = "Checkpoint")]', '#[serde(rename = "Save")]', '#[serde(rename = "Tag")]', '#[serde(rename = "External")]', '#[serde(rename = "Rebase")]', 'Number1', 'Number2', 'Number3', 'Number4', 'Number5', 'Number6', 'Number7')
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationCacheSelectionKind.ts'

@@ -43,7 +43,7 @@ class TestBranchAnnotationApiDto(unittest.TestCase):
                 target_reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 path = '',
                 reference_type_filter = [
-                    'Commit'
+                    'commit'
                     ],
                 max_references = 56,
                 include_line_text = True,
@@ -87,7 +87,7 @@ class TestBranchAnnotationApiDto(unittest.TestCase):
                     grace_generated_openapi_probe.models.annotation_source_reference.AnnotationSourceReference(
                         source_reference_id = '', 
                         reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a', 
-                        reference_type = 'Commit', 
+                        reference_type = 'commit', 
                         reference_text = '', 
                         directory_version_id = '', 
                         created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
@@ -103,7 +103,7 @@ class TestBranchAnnotationApiDto(unittest.TestCase):
                 target_reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 path = '',
                 reference_type_filter = [
-                    'Commit'
+                    'commit'
                     ],
                 max_references = 56,
                 include_line_text = True,
@@ -147,7 +147,7 @@ class TestBranchAnnotationApiDto(unittest.TestCase):
                     grace_generated_openapi_probe.models.annotation_source_reference.AnnotationSourceReference(
                         source_reference_id = '', 
                         reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a', 
-                        reference_type = 'Commit', 
+                        reference_type = 'commit', 
                         reference_text = '', 
                         directory_version_id = '', 
                         created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
