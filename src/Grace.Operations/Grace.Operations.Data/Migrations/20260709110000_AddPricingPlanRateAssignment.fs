@@ -72,7 +72,7 @@ BEGIN
         PricingRateId uniqueidentifier NOT NULL,
         PricingPlanId uniqueidentifier NOT NULL,
         BillableUsageKind int NOT NULL,
-        CurrencyCode char({OperationsPricingSql.CurrencyCodeLength}) COLLATE Latin1_General_100_BIN2 NOT NULL,
+        CurrencyCode varchar({OperationsPricingSql.CurrencyCodeLength}) COLLATE Latin1_General_100_BIN2 NOT NULL,
         UnitName nvarchar({OperationsPricingSql.UnitNameMaxLength}) NOT NULL,
         UnitQuantity bigint NOT NULL,
         UnitPriceMicros bigint NOT NULL,
@@ -83,7 +83,7 @@ BEGIN
         CONSTRAINT FK_ops_PricingRate_PricingPlan FOREIGN KEY (PricingPlanId) REFERENCES {OperationsPricingSql.PricingPlanTable}(PricingPlanId),
         CONSTRAINT CK_ops_PricingRate_Id_NotEmpty CHECK (PricingRateId <> '00000000-0000-0000-0000-000000000000'),
         CONSTRAINT CK_ops_PricingRate_BillableUsageKind_Positive CHECK (BillableUsageKind > 0),
-        CONSTRAINT CK_ops_PricingRate_CurrencyCode_Upper CHECK (CurrencyCode COLLATE Latin1_General_100_BIN2 = UPPER(CurrencyCode) COLLATE Latin1_General_100_BIN2 AND CurrencyCode COLLATE Latin1_General_100_BIN2 NOT LIKE '%%[^A-Z]%%'),
+        CONSTRAINT CK_ops_PricingRate_CurrencyCode_Upper CHECK (LEN(CurrencyCode) = 3 AND CurrencyCode COLLATE Latin1_General_100_BIN2 = UPPER(CurrencyCode) COLLATE Latin1_General_100_BIN2 AND CurrencyCode COLLATE Latin1_General_100_BIN2 NOT LIKE '%%[^A-Z]%%'),
         CONSTRAINT CK_ops_PricingRate_UnitName_NotBlank CHECK (LEN(LTRIM(RTRIM(UnitName))) > 0),
         CONSTRAINT CK_ops_PricingRate_UnitQuantity_Positive CHECK (UnitQuantity > 0),
         CONSTRAINT CK_ops_PricingRate_UnitPriceMicros_NonNegative CHECK (UnitPriceMicros >= 0),
@@ -755,8 +755,8 @@ END;');
 
         pricingRate
             .Property<string>("CurrencyCode")
+            .HasColumnType("varchar(3)")
             .HasMaxLength(3)
-            .IsFixedLength()
             .IsUnicode(false)
             .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
@@ -824,6 +824,7 @@ END;');
             .HasOne(fun rate -> rate.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_PricingRate_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
@@ -923,5 +924,6 @@ END;');
             .HasOne(fun assignment -> assignment.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore

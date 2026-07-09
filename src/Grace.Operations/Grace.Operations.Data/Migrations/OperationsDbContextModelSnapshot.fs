@@ -395,8 +395,8 @@ type OperationsDbContextModelSnapshot() =
 
         pricingRate
             .Property<string>("CurrencyCode")
+            .HasColumnType("varchar(3)")
             .HasMaxLength(3)
-            .IsFixedLength()
             .IsUnicode(false)
             .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
@@ -464,6 +464,7 @@ type OperationsDbContextModelSnapshot() =
             .HasOne(fun rate -> rate.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_PricingRate_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
@@ -563,5 +564,6 @@ type OperationsDbContextModelSnapshot() =
             .HasOne(fun assignment -> assignment.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore

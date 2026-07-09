@@ -159,6 +159,14 @@ type OperationsPricingTests() =
         Path.Combine(operationsRoot (), "Grace.Operations.Data", "Migrations", "20260709110000_AddPricingPlanRateAssignment.fs")
         |> File.ReadAllText
 
+    /// Reads the pricing-plan foreign key name from the supplied entity metadata.
+    let pricingPlanForeignKeyName (entityType: IEntityType) =
+        entityType.GetForeignKeys()
+        |> Seq.find (fun foreignKey ->
+            foreignKey.Properties
+            |> Seq.exists (fun property -> property.Name = "PricingPlanId"))
+        |> fun foreignKey -> foreignKey.GetConstraintName()
+
     /// Verifies effective-rate selection requires customer assignment, mapping, and rate rows.
     [<Test>]
     member _.EffectiveRateSelectionFindsCustomerRateForBillableUsageKind() =
@@ -232,6 +240,8 @@ type OperationsPricingTests() =
         let rate = entityType typeof<PricingRateEntity>
         let assignment = entityType typeof<CustomerPricingAssignmentEntity>
         let currencyCode = rate.FindProperty("CurrencyCode")
+        let rateForeignKeyName = pricingPlanForeignKeyName rate
+        let assignmentForeignKeyName = pricingPlanForeignKeyName assignment
 
         let hasRateIndex =
             rate.GetIndexes()
@@ -248,22 +258,44 @@ type OperationsPricingTests() =
                 Assert.That(mapping.GetTableName(), Is.EqualTo(OperationsPricingSql.BillableUsageKindMappingTableName))
                 Assert.That(rate.GetTableName(), Is.EqualTo(OperationsPricingSql.PricingRateTableName))
                 Assert.That(assignment.GetTableName(), Is.EqualTo(OperationsPricingSql.CustomerPricingAssignmentTableName))
+                Assert.That(currencyCode.GetColumnType(), Is.EqualTo("varchar(3)"))
                 Assert.That(currencyCode.GetCollation(), Is.EqualTo("Latin1_General_100_BIN2"))
+                Assert.That(rateForeignKeyName, Is.EqualTo("FK_ops_PricingRate_PricingPlan"))
+                Assert.That(assignmentForeignKeyName, Is.EqualTo("FK_ops_CustomerPricingAssignment_PricingPlan"))
                 Assert.That(hasRateIndex, Is.True)
                 Assert.That(hasAssignmentIndex, Is.True))
         )
 
-    /// Verifies the latest model snapshot carries pricing entities for future migration drift checks.
+    /// Verifies the latest model snapshot carries pricing entities and reviewed FK names for future migration drift checks.
     [<Test>]
     member _.OperationsModelSnapshotContainsPricingFoundationEntities() =
         let snapshot = OperationsDbContextModelSnapshot()
+        let rate = snapshot.Model.FindEntityType(typeof<PricingRateEntity>)
+        let assignment = snapshot.Model.FindEntityType(typeof<CustomerPricingAssignmentEntity>)
 
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(snapshot.Model.FindEntityType(typeof<PricingPlanEntity>), Is.Not.Null)
                 Assert.That(snapshot.Model.FindEntityType(typeof<BillableUsageKindMappingEntity>), Is.Not.Null)
-                Assert.That(snapshot.Model.FindEntityType(typeof<PricingRateEntity>), Is.Not.Null)
-                Assert.That(snapshot.Model.FindEntityType(typeof<CustomerPricingAssignmentEntity>), Is.Not.Null))
+                Assert.That(rate, Is.Not.Null)
+                Assert.That(assignment, Is.Not.Null)
+                Assert.That(pricingPlanForeignKeyName rate, Is.EqualTo("FK_ops_PricingRate_PricingPlan"))
+                Assert.That(pricingPlanForeignKeyName assignment, Is.EqualTo("FK_ops_CustomerPricingAssignment_PricingPlan")))
+        )
+
+    /// Verifies the reviewed pricing migration target model preserves explicit FK names for future migration diffs.
+    [<Test>]
+    member _.PricingMigrationTargetModelContainsReviewedForeignKeyNames() =
+        let migration = AddPricingPlanRateAssignment()
+        let rate = migration.TargetModel.FindEntityType(typeof<PricingRateEntity>)
+        let assignment = migration.TargetModel.FindEntityType(typeof<CustomerPricingAssignmentEntity>)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(rate, Is.Not.Null)
+                Assert.That(assignment, Is.Not.Null)
+                Assert.That(pricingPlanForeignKeyName rate, Is.EqualTo("FK_ops_PricingRate_PricingPlan"))
+                Assert.That(pricingPlanForeignKeyName assignment, Is.EqualTo("FK_ops_CustomerPricingAssignment_PricingPlan")))
         )
 
     /// Verifies the migration script creates pricing tables and overlap rejection instead of relying on query tie-breaks.
@@ -298,9 +330,12 @@ type OperationsPricingTests() =
                 Assert.That(script, Does.Contain("CREATE TABLE ops.PricingRate"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.CustomerPricingAssignment"))
                 Assert.That(script, Does.Contain("CK_ops_PricingRate_EffectiveRange"))
-                Assert.That(script, Does.Contain("CurrencyCode char(3) COLLATE Latin1_General_100_BIN2 NOT NULL"))
+                Assert.That(script, Does.Contain("CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL"))
+                Assert.That(script, Does.Contain("LEN(CurrencyCode) = 3"))
                 Assert.That(script, Does.Contain("CurrencyCode COLLATE Latin1_General_100_BIN2 = UPPER(CurrencyCode)"))
                 Assert.That(script, Does.Contain("CurrencyCode COLLATE Latin1_General_100_BIN2 NOT LIKE"))
+                Assert.That(script, Does.Contain("CONSTRAINT FK_ops_PricingRate_PricingPlan FOREIGN KEY"))
+                Assert.That(script, Does.Contain("CONSTRAINT FK_ops_CustomerPricingAssignment_PricingPlan FOREIGN KEY"))
                 Assert.That(script, Does.Contain(OperationsPricingSql.PricingRateOverlapTriggerName))
                 Assert.That(script, Does.Contain(OperationsPricingSql.CustomerPricingAssignmentOverlapTriggerName))
                 Assert.That(lockHintCount, Is.EqualTo(4))

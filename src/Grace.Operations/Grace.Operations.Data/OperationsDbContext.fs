@@ -394,8 +394,8 @@ module OperationsModel =
 
         pricingRate
             .Property<string>("CurrencyCode")
+            .HasColumnType("varchar(3)")
             .HasMaxLength(OperationsPricingSql.CurrencyCodeLength)
-            .IsFixedLength()
             .IsUnicode(false)
             .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
@@ -463,6 +463,7 @@ module OperationsModel =
             .HasOne(fun rate -> rate.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_PricingRate_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
@@ -562,6 +563,7 @@ module OperationsModel =
             .HasOne(fun assignment -> assignment.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
