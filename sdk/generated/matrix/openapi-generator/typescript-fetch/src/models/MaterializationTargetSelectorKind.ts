@@ -20,7 +20,8 @@
 export const MaterializationTargetSelectorKind = {
     DirectoryVersionId: 'directoryVersionId',
     ReferenceId: 'referenceId',
-    BranchName: 'branchName'
+    BranchName: 'branchName',
+    ReferenceType: 'referenceType'
 } as const;
 export type MaterializationTargetSelectorKind = typeof MaterializationTargetSelectorKind[keyof typeof MaterializationTargetSelectorKind];
 

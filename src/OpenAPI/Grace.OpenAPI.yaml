@@ -563,10 +563,10 @@ paths:
                   BranchName: release-2026-06
                   ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   InitialPermissions:
-                    - Commit
-                    - Checkpoint
-                    - Save
-                    - Tag
+                    - commit
+                    - checkpoint
+                    - save
+                    - tag
       responses:
         '200':
           $ref: '#/components/responses/BranchCommandResponse'
@@ -599,10 +599,10 @@ paths:
                   BranchName: release-2026-06
                   ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   InitialPermissions:
-                    - Commit
-                    - Checkpoint
-                    - Save
-                    - Tag
+                    - commit
+                    - checkpoint
+                    - save
+                    - tag
                   BasedOn: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
@@ -1000,8 +1000,8 @@ paths:
                   StartLine: 1
                   EndLine: 1
                   ReferenceTypes:
-                    - Commit
-                    - Save
+                    - commit
+                    - save
                   MaxReferences: 1000
                   IncludeLineText: true
       responses:
@@ -3820,10 +3820,12 @@ components:
         - directoryVersionId
         - referenceId
         - branchName
+        - referenceType
       x-enumNames:
         - DirectoryVersionId
         - ReferenceId
         - BranchName
+        - ReferenceType
       example: directoryVersionId
     MaterializationCacheSelectionKind:
       description: Cache behavior requested for artifact source selection.
@@ -3866,7 +3868,7 @@ components:
         - Deferred
       example: directUri
     MaterializationTargetSelector:
-      description: Public selector that the server resolves to one immutable root DirectoryVersionId.
+      description: Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
       type: object
       properties:
         Class:
@@ -3880,8 +3882,14 @@ components:
         ReferenceId:
           $ref: '#/components/schemas/ReferenceId'
           nullable: true
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+          nullable: true
         BranchName:
           $ref: '#/components/schemas/BranchName'
+          nullable: true
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
           nullable: true
       required:
         - Class
@@ -3931,7 +3939,9 @@ components:
           SelectorKind: directoryVersionId
           DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
           ReferenceId: null
+          BranchId: null
           BranchName: null
+          ReferenceType: null
         ExecutionMode: direct
         CacheSelection:
           Class: MaterializationCacheSelection
@@ -3978,7 +3988,9 @@ components:
             SelectorKind: directoryVersionId
             DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
             ReferenceId: null
+            BranchId: null
             BranchName: null
+            ReferenceType: null
           ExecutionMode: direct
           CacheSelection:
             Class: MaterializationCacheSelection
@@ -4480,7 +4492,7 @@ components:
         Principal: user:alice
         RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
         ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-        ReferenceType: Commit
+        ReferenceType: commit
         ReferenceText: Capture release candidate.
     RepositoryParameters:
       description: Parameters shared by public endpoints in the /repository route family.
@@ -5101,12 +5113,14 @@ components:
     ReferenceType:
       type: string
       enum:
-        - Promotion
-        - Commit
-        - Checkpoint
-        - Save
-        - Tag
-      example: Commit
+        - promotion
+        - commit
+        - checkpoint
+        - save
+        - tag
+        - external
+        - rebase
+      example: commit
     CommonParameters:
       description: Common parameters that are used across (almost) every endpoint in Grace.
       type: object
@@ -5768,8 +5782,8 @@ components:
           TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
           Path: src/App.fs
           ReferenceTypeFilter:
-            - Commit
-            - Save
+            - commit
+            - save
           MaxReferences: 1000
           IncludeLineText: true
           Lines:
@@ -5985,7 +5999,7 @@ components:
           DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
           Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
           Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
-          ReferenceType: Commit
+          ReferenceType: commit
           ReferenceText: Capture release candidate.
           CreatedAt: '2026-06-04T18:15:00Z'
         EventTime: '2026-06-04T18:15:00Z'
@@ -6035,7 +6049,7 @@ components:
             DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
             Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
             Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
-            ReferenceType: Commit
+            ReferenceType: commit
             ReferenceText: Capture release candidate.
             CreatedAt: '2026-06-04T18:15:00Z'
         EventTime: '2026-06-04T18:15:00Z'
@@ -7513,7 +7527,7 @@ components:
                   DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
                   Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
-                  ReferenceType: Commit
+                  ReferenceType: commit
                   ReferenceText: Capture release candidate.
                   CreatedAt: '2026-06-04T18:15:00Z'
                 EventTime: '2026-06-04T18:15:00Z'

@@ -42,7 +42,7 @@ class TestReferenceDto(unittest.TestCase):
                 directory_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
                 sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243',
                 blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d',
-                reference_type = 'Commit',
+                reference_type = 'commit',
                 reference_text = '',
                 created_by = '',
                 created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f')

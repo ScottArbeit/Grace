@@ -51,7 +51,7 @@ class TestAnnotateParameters(unittest.TestCase):
                 start_line = 1,
                 end_line = 20,
                 reference_types = [
-                    'Commit'
+                    'commit'
                     ],
                 max_references = 1000,
                 include_line_text = True

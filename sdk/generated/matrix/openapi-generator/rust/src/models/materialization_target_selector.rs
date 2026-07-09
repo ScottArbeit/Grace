@@ -11,7 +11,7 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// MaterializationTargetSelector : Public selector that the server resolves to one immutable root DirectoryVersionId.
+/// MaterializationTargetSelector : Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MaterializationTargetSelector {
     #[serde(rename = "Class")]
@@ -22,19 +22,25 @@ pub struct MaterializationTargetSelector {
     pub directory_version_id: Option<uuid::Uuid>,
     #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
     pub reference_id: Option<uuid::Uuid>,
+    #[serde(rename = "BranchId", skip_serializing_if = "Option::is_none")]
+    pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]
+    pub reference_type: Option<models::ReferenceType>,
 }
 
 impl MaterializationTargetSelector {
-    /// Public selector that the server resolves to one immutable root DirectoryVersionId.
+    /// Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
     pub fn new(class: String, selector_kind: models::MaterializationTargetSelectorKind) -> MaterializationTargetSelector {
         MaterializationTargetSelector {
             class,
             selector_kind,
             directory_version_id: None,
             reference_id: None,
+            branch_id: None,
             branch_name: None,
+            reference_type: None,
         }
     }
 }

@@ -20,9 +20,16 @@ import {
     MaterializationTargetSelectorKindToJSON,
     MaterializationTargetSelectorKindToJSONTyped,
 } from './MaterializationTargetSelectorKind';
+import type { ReferenceType } from './ReferenceType';
+import {
+    ReferenceTypeFromJSON,
+    ReferenceTypeFromJSONTyped,
+    ReferenceTypeToJSON,
+    ReferenceTypeToJSONTyped,
+} from './ReferenceType';
 
 /**
- * Public selector that the server resolves to one immutable root DirectoryVersionId.
+ * Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
  * @export
  * @interface MaterializationTargetSelector
  */
@@ -56,7 +63,19 @@ export interface MaterializationTargetSelector {
      * @type {string}
      * @memberof MaterializationTargetSelector
      */
+    branchId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof MaterializationTargetSelector
+     */
     branchName?: string;
+    /**
+     * 
+     * @type {ReferenceType}
+     * @memberof MaterializationTargetSelector
+     */
+    referenceType?: ReferenceType;
 }
 
 
@@ -84,7 +103,9 @@ export function MaterializationTargetSelectorFromJSONTyped(json: any, ignoreDisc
         'selectorKind': MaterializationTargetSelectorKindFromJSON(json['SelectorKind']),
         'directoryVersionId': json['DirectoryVersionId'] == null ? undefined : json['DirectoryVersionId'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
+        'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
+        'referenceType': json['ReferenceType'] == null ? undefined : ReferenceTypeFromJSON(json['ReferenceType']),
     };
 }
 
@@ -103,7 +124,9 @@ export function MaterializationTargetSelectorToJSONTyped(value?: Materialization
         'SelectorKind': MaterializationTargetSelectorKindToJSON(value['selectorKind']),
         'DirectoryVersionId': value['directoryVersionId'],
         'ReferenceId': value['referenceId'],
+        'BranchId': value['branchId'],
         'BranchName': value['branchName'],
+        'ReferenceType': ReferenceTypeToJSON(value['referenceType']),
     };
 }
 

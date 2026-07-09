@@ -46,7 +46,7 @@ class TestGetDiffsForReferenceTypeParameters(unittest.TestCase):
                 repository_name = '',
                 branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d',
                 branch_name = 'MyBranch',
-                reference_type = 'Commit',
+                reference_type = 'commit',
                 max_count = 50
             )
         else:

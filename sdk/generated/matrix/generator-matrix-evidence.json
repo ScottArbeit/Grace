@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "0fc4d435781218c7b0fa88fb1f0aeb25b70d6c2829b1db56293b6b302b990a94",
+  "sourceProjectionSha256": "ef79d933e768dac17d5a408ff80590bea72004fb356b94dcd737b51144f5a26a",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.3",
@@ -48,7 +48,7 @@
         "OpenAPI warning: #/components/schemas/ScopedOutboundUrl/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UploadMetadata/properties/BlobUriWithSasToken - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UriString - The format uri is not supported by Kiota and the string type will be used.",
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved) (The schema reference is not resolved))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
       ],
       "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
       "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
@@ -62,7 +62,7 @@
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
       "evidence": [
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)))"
       ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
@@ -76,7 +76,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 155066."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 155454."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -180,15 +180,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "bfcaed56fe449e17eb490a871d98ec98605efa7799d79185bc19ba9668e4f1bd"
+      "manifestSha256": "cb6ee7b9b9806782b0159ce7ea142d8d62ee03ad6678d6e4f44e0bbc6d086cc7"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "6944e27b7a3eddd01e8a9b76ac62c90e9673085548f64133bfa1b1f226d37108"
+      "manifestSha256": "bf51663ef5fd721e4102ba370e929951adc6437be7847721d079cab9bcd0be1c"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "0301349f6d447ce4f605c6e503ed5e6f2e1b842bbf2c33770ad40f03a3fcbeed"
+      "manifestSha256": "49a8a3b3d8342f0d38206a30b7c37c3dbc4916e4a7c8be6753a43075d14b0931"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",

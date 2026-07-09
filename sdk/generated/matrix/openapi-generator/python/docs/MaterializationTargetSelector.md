@@ -1,6 +1,6 @@
 # MaterializationTargetSelector
 
-Public selector that the server resolves to one immutable root DirectoryVersionId.
+Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
 
 ## Properties
 
@@ -10,7 +10,9 @@ Name | Type | Description | Notes
 **selector_kind** | [**MaterializationTargetSelectorKind**](MaterializationTargetSelectorKind.md) |  | 
 **directory_version_id** | **UUID** |  | [optional] 
 **reference_id** | **UUID** |  | [optional] 
+**branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
+**reference_type** | [**ReferenceType**](ReferenceType.md) |  | [optional] 
 
 ## Example
 

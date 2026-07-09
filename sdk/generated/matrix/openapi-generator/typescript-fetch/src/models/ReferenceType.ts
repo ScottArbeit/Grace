@@ -18,11 +18,13 @@
  * @export
  */
 export const ReferenceType = {
-    Promotion: 'Promotion',
-    Commit: 'Commit',
-    Checkpoint: 'Checkpoint',
-    Save: 'Save',
-    Tag: 'Tag'
+    Promotion: 'promotion',
+    Commit: 'commit',
+    Checkpoint: 'checkpoint',
+    Save: 'save',
+    Tag: 'tag',
+    External: 'external',
+    Rebase: 'rebase'
 } as const;
 export type ReferenceType = typeof ReferenceType[keyof typeof ReferenceType];
 

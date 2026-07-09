@@ -7,8 +7,8 @@
     MaterializationTargetSelectorKind:
       description: Selector shape supplied before Grace resolves the immutable target root.
       type: string
-      enum: [directoryVersionId, referenceId, branchName]
-      x-enumNames: [DirectoryVersionId, ReferenceId, BranchName]
+      enum: [directoryVersionId, referenceId, branchName, referenceType]
+      x-enumNames: [DirectoryVersionId, ReferenceId, BranchName, ReferenceType]
       example: directoryVersionId
     MaterializationCacheSelectionKind:
       description: Cache behavior requested for artifact source selection.
@@ -29,7 +29,7 @@
       x-enumNames: [DirectUri, CacheEntry, Deferred]
       example: directUri
     MaterializationTargetSelector:
-      description: Public selector that the server resolves to one immutable root DirectoryVersionId.
+      description: Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
       type: object
       properties:
         Class:
@@ -43,8 +43,14 @@
         ReferenceId:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
           nullable: true
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+          nullable: true
         BranchName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+          nullable: true
+        ReferenceType:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
           nullable: true
       required: [Class, SelectorKind]
     MaterializationCacheSelection:
@@ -85,7 +91,9 @@
           SelectorKind: directoryVersionId
           DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
           ReferenceId: null
+          BranchId: null
           BranchName: null
+          ReferenceType: null
         ExecutionMode: direct
         CacheSelection:
           Class: MaterializationCacheSelection

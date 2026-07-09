@@ -49,7 +49,7 @@ class TestCreateBranchParameters(unittest.TestCase):
                 parent_branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d',
                 parent_branch_name = 'MyBranch',
                 initial_permissions = [
-                    'Commit'
+                    'commit'
                     ]
             )
         else:

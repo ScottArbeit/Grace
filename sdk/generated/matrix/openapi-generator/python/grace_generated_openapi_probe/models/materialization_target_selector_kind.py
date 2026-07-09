@@ -30,6 +30,7 @@ class MaterializationTargetSelectorKind(str, Enum):
     DIRECTORYVERSIONID = 'directoryVersionId'
     REFERENCEID = 'referenceId'
     BRANCHNAME = 'branchName'
+    REFERENCETYPE = 'referenceType'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

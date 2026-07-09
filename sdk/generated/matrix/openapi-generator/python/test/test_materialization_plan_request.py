@@ -42,7 +42,9 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                     selector_kind = 'directoryVersionId', 
                     directory_version_id = null, 
                     reference_id = null, 
-                    branch_name = null, ),
+                    branch_id = null, 
+                    branch_name = null, 
+                    reference_type = null, ),
                 execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
@@ -60,7 +62,9 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                     selector_kind = 'directoryVersionId', 
                     directory_version_id = null, 
                     reference_id = null, 
-                    branch_name = null, ),
+                    branch_id = null, 
+                    branch_name = null, 
+                    reference_type = null, ),
                 execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
