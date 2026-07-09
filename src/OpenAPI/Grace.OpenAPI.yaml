@@ -1758,6 +1758,22 @@ paths:
           $ref: '#/components/responses/401'
         '500':
           $ref: '#/components/responses/500'
+  /cache/validation-keys:
+    get:
+      tags:
+        - Cache
+      summary: Publish artifact grant validation keys.
+      description: Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+      operationId: GetArtifactGrantValidationKeys
+      responses:
+        '200':
+          $ref: '#/components/responses/ArtifactGrantValidationKeySetResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '500':
+          $ref: '#/components/responses/500'
   /organization/create:
     post:
       tags:
@@ -4299,6 +4315,68 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    ArtifactGrantValidationKey:
+      description: Public P-256 validation key used by Grace Cache to verify signed artifact grants.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactGrantValidationKey
+        KeyId:
+          type: string
+          example: agk-example
+        Algorithm:
+          type: string
+          enum:
+            - ES256
+          example: ES256
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        NotBefore:
+          $ref: '#/components/schemas/Instant'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+        PublicKeyX:
+          type: string
+          description: Base64url-encoded P-256 X coordinate.
+        PublicKeyY:
+          type: string
+          description: Base64url-encoded P-256 Y coordinate.
+      required:
+        - Class
+        - KeyId
+        - Algorithm
+        - CreatedAt
+        - NotBefore
+        - ExpiresAt
+        - PublicKeyX
+        - PublicKeyY
+    ArtifactGrantValidationKeySet:
+      description: Validation-key publication for local artifact grant verification by Grace Cache.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactGrantValidationKeySet
+        Issuer:
+          type: string
+          example: Grace.Server.ArtifactGrant.v1
+        PublishedAt:
+          $ref: '#/components/schemas/Instant'
+        CacheTtl:
+          type: string
+          description: Validation-key cache lifetime serialized as a NodaTime duration.
+          example: PT15M
+        Keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactGrantValidationKey'
+      required:
+        - Class
+        - Issuer
+        - PublishedAt
+        - CacheTtl
+        - Keys
     BranchDto:
       description: (automatically generated)
       type: object
@@ -7834,6 +7912,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/CacheRegistrationReturnValue'
+    ArtifactGrantValidationKeySetResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ArtifactGrantValidationKeySet'
     OrganizationCommandResponse:
       description: OK
       content:

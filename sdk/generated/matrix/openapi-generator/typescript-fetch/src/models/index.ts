@@ -18,6 +18,8 @@ export * from './ApprovalRequestStatus';
 export * from './ApprovalScope';
 export * from './ApprovalTimeoutAction';
 export * from './ApproveApprovalRequestParameters';
+export * from './ArtifactGrantValidationKey';
+export * from './ArtifactGrantValidationKeySet';
 export * from './BlockUploadIntent';
 export * from './BranchAnnotationApiDto';
 export * from './BranchAnnotationReturnValue';

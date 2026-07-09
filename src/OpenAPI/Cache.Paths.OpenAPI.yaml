@@ -47,3 +47,21 @@
           $ref: './Responses.OpenAPI.yaml#/401'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/validation-keys:
+    get:
+      tags:
+        - Cache
+      summary: Publish artifact grant validation keys.
+      description: >-
+        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants
+        locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+      operationId: GetArtifactGrantValidationKeys
+      responses:
+        '200':
+          $ref: './Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKeySetResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401':
+          $ref: './Responses.OpenAPI.yaml#/401'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'

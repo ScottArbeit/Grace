@@ -21,6 +21,8 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/ArtifactGrantValidationKey.md
+docs/ArtifactGrantValidationKeySet.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
 docs/BranchAnnotationReturnValue.md
@@ -286,6 +288,8 @@ src/models/ApprovalRequestStatus.ts
 src/models/ApprovalScope.ts
 src/models/ApprovalTimeoutAction.ts
 src/models/ApproveApprovalRequestParameters.ts
+src/models/ArtifactGrantValidationKey.ts
+src/models/ArtifactGrantValidationKeySet.ts
 src/models/BlockUploadIntent.ts
 src/models/BranchAnnotationApiDto.ts
 src/models/BranchAnnotationReturnValue.ts

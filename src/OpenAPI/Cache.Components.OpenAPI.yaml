@@ -121,6 +121,60 @@ CacheRegistrationReturnValue:
       additionalProperties:
         type: string
   required: [ReturnValue, EventTime, CorrelationId, Properties]
+ArtifactGrantValidationKey:
+  description: Public P-256 validation key used by Grace Cache to verify signed artifact grants.
+  type: object
+  properties:
+    Class:
+      type: string
+      example: ArtifactGrantValidationKey
+    KeyId:
+      type: string
+      example: agk-example
+    Algorithm:
+      type: string
+      enum: [ES256]
+      example: ES256
+    CreatedAt:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    NotBefore:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    ExpiresAt:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    PublicKeyX:
+      type: string
+      description: Base64url-encoded P-256 X coordinate.
+    PublicKeyY:
+      type: string
+      description: Base64url-encoded P-256 Y coordinate.
+  required: [Class, KeyId, Algorithm, CreatedAt, NotBefore, ExpiresAt, PublicKeyX, PublicKeyY]
+ArtifactGrantValidationKeySet:
+  description: Validation-key publication for local artifact grant verification by Grace Cache.
+  type: object
+  properties:
+    Class:
+      type: string
+      example: ArtifactGrantValidationKeySet
+    Issuer:
+      type: string
+      example: Grace.Server.ArtifactGrant.v1
+    PublishedAt:
+      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    CacheTtl:
+      type: string
+      description: Validation-key cache lifetime serialized as a NodaTime duration.
+      example: PT15M
+    Keys:
+      type: array
+      items:
+        $ref: '#/ArtifactGrantValidationKey'
+  required: [Class, Issuer, PublishedAt, CacheTtl, Keys]
+ArtifactGrantValidationKeySetResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        $ref: '#/ArtifactGrantValidationKeySet'
 CacheRegistrationResponse:
   description: OK
   content:

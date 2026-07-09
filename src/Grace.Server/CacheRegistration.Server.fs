@@ -151,3 +151,20 @@ module CacheRegistration =
                         context
                         |> result500ServerError (GraceError.CreateWithException ex "Cache registration refresh failed." correlationId)
             }
+
+    /// Handles GET /cache/validation-keys.
+    let GetValidationKeys: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let keyRing = context.RequestServices.GetRequiredService<ArtifactGrantKeys.ArtifactGrantKeyRing>()
+                    let keySet = keyRing.PublishValidationKeys(getCurrentInstant ())
+                    return! context |> result200Ok keySet
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex "Artifact grant validation-key publication failed." correlationId)
+            }

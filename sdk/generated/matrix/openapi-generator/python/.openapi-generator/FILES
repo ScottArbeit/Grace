@@ -23,6 +23,8 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/ArtifactGrantValidationKey.md
+docs/ArtifactGrantValidationKeySet.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
 docs/BranchAnnotationReturnValue.md
@@ -293,6 +295,8 @@ grace_generated_openapi_probe/models/approval_request_status.py
 grace_generated_openapi_probe/models/approval_scope.py
 grace_generated_openapi_probe/models/approval_timeout_action.py
 grace_generated_openapi_probe/models/approve_approval_request_parameters.py
+grace_generated_openapi_probe/models/artifact_grant_validation_key.py
+grace_generated_openapi_probe/models/artifact_grant_validation_key_set.py
 grace_generated_openapi_probe/models/block_upload_intent.py
 grace_generated_openapi_probe/models/branch_annotation_api_dto.py
 grace_generated_openapi_probe/models/branch_annotation_return_value.py
@@ -543,6 +547,8 @@ test/test_approval_scope.py
 test/test_approval_timeout_action.py
 test/test_approvals_api.py
 test/test_approve_approval_request_parameters.py
+test/test_artifact_grant_validation_key.py
+test/test_artifact_grant_validation_key_set.py
 test/test_block_upload_intent.py
 test/test_branch_annotation_api_dto.py
 test/test_branch_annotation_return_value.py

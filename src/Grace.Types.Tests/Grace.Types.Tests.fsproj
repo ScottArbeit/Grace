@@ -24,6 +24,7 @@
     <Compile Include="Common.Types.Tests.fs" />
     <Compile Include="Usage.Types.Tests.fs" />
     <Compile Include="MaterializationPlan.Types.Tests.fs" />
+    <Compile Include="ArtifactGrant.Types.Tests.fs" />
     <Compile Include="CacheRegistration.Types.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Types.Tests.fs" />
     <Compile Include="StorageKeys.Shared.Tests.fs" />

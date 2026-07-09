@@ -15,6 +15,16 @@ use crate::{apis::ResponseContent, models};
 use super::{Error, configuration, ContentType};
 
 
+/// struct for typed errors of method [`get_artifact_grant_validation_keys`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetArtifactGrantValidationKeysError {
+    Status400(models::GraceError),
+    Status401(String),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`refresh_cache_service`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -35,6 +45,44 @@ pub enum RegisterCacheServiceError {
     UnknownValue(serde_json::Value),
 }
 
+
+/// Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+pub async fn get_artifact_grant_validation_keys(configuration: &configuration::Configuration, ) -> Result<models::ArtifactGrantValidationKeySet, Error<GetArtifactGrantValidationKeysError>> {
+
+    let uri_str = format!("{}/cache/validation-keys", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::ArtifactGrantValidationKeySet`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::ArtifactGrantValidationKeySet`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetArtifactGrantValidationKeysError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
 
 /// Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
 pub async fn refresh_cache_service(configuration: &configuration::Configuration, cache_registration_refresh_request: models::CacheRegistrationRefreshRequest) -> Result<models::CacheRegistrationReturnValue, Error<RefreshCacheServiceError>> {

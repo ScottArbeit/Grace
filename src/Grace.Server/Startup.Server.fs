@@ -1349,6 +1349,8 @@ module Application =
                 subRoute
                     "/cache"
                     [
+                        GET [ route "/validation-keys" CacheRegistration.GetValidationKeys ]
+
                         POST [ route "/register" CacheRegistration.Register
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRequest>
 
@@ -2029,6 +2031,7 @@ module Application =
 
             services
                 .AddHostedService<CosmosWarmup>()
+                .AddSingleton<ArtifactGrantKeys.ArtifactGrantKeyRing>()
                 .AddGiraffe()
                 // Next line adds the Json serializer that Giraffe uses internally.
                 .AddSingleton<Json.ISerializer>(

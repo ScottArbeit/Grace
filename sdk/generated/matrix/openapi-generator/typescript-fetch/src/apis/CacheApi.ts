@@ -14,6 +14,11 @@
 
 import * as runtime from '../runtime';
 import {
+    type ArtifactGrantValidationKeySet,
+    ArtifactGrantValidationKeySetFromJSON,
+    ArtifactGrantValidationKeySetToJSON,
+} from '../models/ArtifactGrantValidationKeySet';
+import {
     type CacheRegistrationRefreshRequest,
     CacheRegistrationRefreshRequestFromJSON,
     CacheRegistrationRefreshRequestToJSON,
@@ -46,6 +51,53 @@ export interface RegisterCacheServiceRequest {
  * 
  */
 export class CacheApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for getArtifactGrantValidationKeys without sending the request
+     */
+    async getArtifactGrantValidationKeysRequestOpts(): Promise<runtime.RequestOpts> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/cache/validation-keys`;
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+     * Publish artifact grant validation keys.
+     */
+    async getArtifactGrantValidationKeysRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ArtifactGrantValidationKeySet>> {
+        const requestOptions = await this.getArtifactGrantValidationKeysRequestOpts();
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ArtifactGrantValidationKeySetFromJSON(jsonValue));
+    }
+
+    /**
+     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+     * Publish artifact grant validation keys.
+     */
+    async getArtifactGrantValidationKeys(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ArtifactGrantValidationKeySet> {
+        const response = await this.getArtifactGrantValidationKeysRaw(initOverrides);
+        return await response.value();
+    }
 
     /**
      * Creates request options for refreshCacheService without sending the request

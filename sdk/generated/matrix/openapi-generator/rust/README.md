@@ -74,6 +74,7 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**get_artifact_grant_validation_keys**](docs/CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 *CacheApi* | [**refresh_cache_service**](docs/CacheApi.md#refresh_cache_service) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
 *CacheApi* | [**register_cache_service**](docs/CacheApi.md#register_cache_service) | **POST** /cache/register | Register a Grace Cache service.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
@@ -168,6 +169,8 @@ Class | Method | HTTP request | Description
  - [ApprovalScope](docs/ApprovalScope.md)
  - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
  - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
+ - [ArtifactGrantValidationKey](docs/ArtifactGrantValidationKey.md)
+ - [ArtifactGrantValidationKeySet](docs/ArtifactGrantValidationKeySet.md)
  - [BlockUploadIntent](docs/BlockUploadIntent.md)
  - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
  - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)

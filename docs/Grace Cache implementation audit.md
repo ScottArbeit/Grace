@@ -142,17 +142,27 @@ docs-only classification with current evidence for the behavior they own.
 
 ### ContentAccessGrant Issuance And Validation
 
-- Implementation seam: Grace Server grant issuance, grant binding, grant expiry, resolved content
-  scope, resolved path scope, and Grace Cache local validation.
-- Proof seam: tests for caller binding, cache audience binding, expired grants, wrong repository,
-  wrong reference or DirectoryVersion, artifact completeness, whole-target-root authorization,
-  narrowed path-scope rejection, and malformed grant data.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; later grant work must cite the issue or PR that
-  owns the current grant contract.
-- Residual risk or rationale: ContentAccessGrant proof must pair complete Materialization Plan
-  artifacts with current whole-target-root authorization and per-call artifact grant validation; a
-  complete local artifact or bearer-like token is never enough to serve content.
+- Implementation seam: #619 defines `Grace.Types.ArtifactGrant`, `Grace.Shared.ArtifactGrant`, and
+  `Grace.Server.Security.ArtifactGrantKeys` as the signed artifact grant contract. Grants use an
+  internal ES256 envelope with a key id, bind the selected Cache service principal, target root
+  DirectoryVersionId, non-Direct execution mode, and explicit artifact identities. The default grant
+  TTL is 5 minutes, the maximum accepted grant TTL is 15 minutes, signing keys are active for 2
+  hours, old validation keys remain published during the grant-overlap window, and validation-key
+  publications advertise a 15-minute cache TTL through `/cache/validation-keys`.
+- Proof seam: `ArtifactGrantValidationTests` covers valid grants, Direct mode skipping grant
+  validation, unsigned grants, missing key ids, unsupported algorithms, wrong cache, wrong target
+  root, wrong execution mode, wrong artifact, wrong signatures, expired grants, overlong TTLs,
+  expired keys, current/overlap key validation, and one-attempt unknown-key refresh fail-closed
+  behavior. `ArtifactGrantKeysServerTests` covers default TTL issuance, explicit artifact binding,
+  overlong TTL rejection, broad missing-artifact rejection, Direct mode non-issuance, 2-hour signing
+  key rotation, overlap publication, and old-key removal after the overlap window.
+- Status classification: `implemented but proof pending`.
+- Issue or PR evidence: #619 owns the grant/key contract, validation-key publication route, tests,
+  OpenAPI source, and final validation evidence for this row.
+- Residual risk or rationale: #620 still owns adding grants to cache-mode Materialization Plan
+  generation, and later runtime leaves still own serving artifacts only after validating these
+  grants. Local artifact presence, Cache registration, or public validation-key possession is not
+  permission to serve content without a current per-call artifact grant.
 
 ### Cache Service Registration And Identity
 
