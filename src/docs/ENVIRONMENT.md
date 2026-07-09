@@ -258,6 +258,10 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 - `grace__cache__registration__allowed_capabilities`: semicolon-delimited server-approved cache registration
   capabilities.
 
+Registered Grace Cache services use a server-owned active lifetime of 2 hours and a refresh-after interval of 1 hour.
+Cache services may request scopes and capabilities during registration, but only server-approved values from the
+configuration above are persisted on the registration record.
+
 ### Authorization (Bootstrap)
 
 - `grace__authz__bootstrap__system_admin_users`: semicolon-delimited user IDs to seed SystemAdmin at system

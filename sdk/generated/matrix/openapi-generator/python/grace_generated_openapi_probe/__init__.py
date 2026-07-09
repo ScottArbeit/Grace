@@ -21,6 +21,7 @@ __version__ = "0.0.0"
 __all__ = [
     "ApprovalsApi",
     "BranchesApi",
+    "CacheApi",
     "DiffsApi",
     "DirectoriesApi",
     "MaterializationApi",
@@ -67,6 +68,12 @@ __all__ = [
     "BranchParameters",
     "BranchQueryParameters",
     "BranchReturnValue",
+    "CacheRegistration",
+    "CacheRegistrationRefreshRequest",
+    "CacheRegistrationRefreshStatus",
+    "CacheRegistrationRequest",
+    "CacheRegistrationResult",
+    "CacheRegistrationReturnValue",
     "ChangeType",
     "ClaimReuseRangesParameters",
     "ClaimedReuseRange",
@@ -278,6 +285,7 @@ __all__ = [
 # import apis into sdk package
 from grace_generated_openapi_probe.api.approvals_api import ApprovalsApi as ApprovalsApi
 from grace_generated_openapi_probe.api.branches_api import BranchesApi as BranchesApi
+from grace_generated_openapi_probe.api.cache_api import CacheApi as CacheApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi as DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi as DirectoriesApi
 from grace_generated_openapi_probe.api.materialization_api import MaterializationApi as MaterializationApi
@@ -328,6 +336,12 @@ from grace_generated_openapi_probe.models.branch_hash_query_parameters import Br
 from grace_generated_openapi_probe.models.branch_parameters import BranchParameters as BranchParameters
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
+from grace_generated_openapi_probe.models.cache_registration import CacheRegistration as CacheRegistration
+from grace_generated_openapi_probe.models.cache_registration_refresh_request import CacheRegistrationRefreshRequest as CacheRegistrationRefreshRequest
+from grace_generated_openapi_probe.models.cache_registration_refresh_status import CacheRegistrationRefreshStatus as CacheRegistrationRefreshStatus
+from grace_generated_openapi_probe.models.cache_registration_request import CacheRegistrationRequest as CacheRegistrationRequest
+from grace_generated_openapi_probe.models.cache_registration_result import CacheRegistrationResult as CacheRegistrationResult
+from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue as CacheRegistrationReturnValue
 from grace_generated_openapi_probe.models.change_type import ChangeType as ChangeType
 from grace_generated_openapi_probe.models.claim_reuse_ranges_parameters import ClaimReuseRangesParameters as ClaimReuseRangesParameters
 from grace_generated_openapi_probe.models.claimed_reuse_range import ClaimedReuseRange as ClaimedReuseRange

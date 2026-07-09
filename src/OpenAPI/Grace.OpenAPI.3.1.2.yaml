@@ -1714,6 +1714,50 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /cache/register:
+    post:
+      tags:
+        - Cache
+      summary: Register a Grace Cache service.
+      description: Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
+      operationId: RegisterCacheService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheRegistrationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/refresh:
+    post:
+      tags:
+        - Cache
+      summary: Refresh a Grace Cache service registration.
+      description: Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
+      operationId: RefreshCacheService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheRegistrationRefreshRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '500':
+          $ref: '#/components/responses/500'
   /organization/create:
     post:
       tags:
@@ -4093,6 +4137,155 @@ components:
       properties:
         ReturnValue:
           $ref: '#/components/schemas/MaterializationPlan'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    CacheRegistrationRequest:
+      description: Request body used by an approved Grace Cache service to register its endpoint and requested boundary.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRegistrationRequest
+        Endpoint:
+          type: string
+          format: uri
+          example: https://cache.example.net/grace
+        RequestedScopes:
+          type: array
+          items:
+            type: string
+          example:
+            - repository:owner/org/repo
+        RequestedCapabilities:
+          type: array
+          items:
+            type: string
+          example:
+            - read-through
+            - prefetch
+        RequestedExecutionModes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaterializationExecutionMode'
+          example:
+            - cachePreferred
+            - cacheRequired
+      required:
+        - Class
+        - Endpoint
+        - RequestedScopes
+        - RequestedCapabilities
+        - RequestedExecutionModes
+    CacheRegistrationRefreshRequest:
+      description: Request body used by an approved Grace Cache service to refresh its current registration.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRegistrationRefreshRequest
+      required:
+        - Class
+    CacheRegistrationRefreshStatus:
+      description: Result classification for a Cache registration or refresh operation.
+      type: string
+      enum:
+        - refreshed
+        - refreshNotDue
+        - expired
+        - notFound
+      x-enumNames:
+        - Refreshed
+        - RefreshNotDue
+        - Expired
+        - NotFound
+      example: refreshed
+    CacheRegistration:
+      description: Server-owned active registration record for an approved Grace Cache service.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRegistration
+        ServicePrincipalId:
+          type: string
+          example: cache-service-client
+        Endpoint:
+          type: string
+          format: uri
+          example: https://cache.example.net/grace
+        ApprovedScopes:
+          type: array
+          items:
+            type: string
+        ApprovedCapabilities:
+          type: array
+          items:
+            type: string
+        ApprovedExecutionModes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaterializationExecutionMode'
+        RegisteredAt:
+          $ref: '#/components/schemas/Instant'
+        LastRefreshedAt:
+          $ref: '#/components/schemas/Instant'
+        RefreshAfter:
+          $ref: '#/components/schemas/Instant'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+        ReadThroughEnabled:
+          type: boolean
+        PrefetchEnabled:
+          type: boolean
+      required:
+        - Class
+        - ServicePrincipalId
+        - Endpoint
+        - ApprovedScopes
+        - ApprovedCapabilities
+        - ApprovedExecutionModes
+        - RegisteredAt
+        - LastRefreshedAt
+        - RefreshAfter
+        - ExpiresAt
+        - ReadThroughEnabled
+        - PrefetchEnabled
+    CacheRegistrationResult:
+      description: Result returned by Cache registration and refresh routes.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRegistrationResult
+        Status:
+          $ref: '#/components/schemas/CacheRegistrationRefreshStatus'
+        Registration:
+          $ref: '#/components/schemas/CacheRegistration'
+          nullable: true
+        Message:
+          type: string
+          example: Cache registration is current.
+      required:
+        - Class
+        - Status
+        - Message
+    CacheRegistrationReturnValue:
+      description: Grace response envelope whose ReturnValue contains a Cache registration result.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/CacheRegistrationResult'
         EventTime:
           $ref: '#/components/schemas/Instant'
         CorrelationId:
@@ -7332,6 +7525,22 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /owner/get
+    '401':
+      description: Unauthorized
+      headers:
+        WWW-Authenticate:
+          description: Authentication challenge emitted by the configured ASP.NET Core authentication handler.
+          schema:
+            type: string
+          example: Bearer
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            emptyChallenge:
+              summary: Framework authentication challenge
+              value: ''
     '500':
       description: Internal Server Error
       content:
@@ -7619,6 +7828,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MaterializationPlanReturnValue'
+    CacheRegistrationResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CacheRegistrationReturnValue'
     OrganizationCommandResponse:
       description: OK
       content:

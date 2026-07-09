@@ -142,6 +142,8 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**refresh_cache_service**](docs/CacheApi.md#refresh_cache_service) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
+*CacheApi* | [**register_cache_service**](docs/CacheApi.md#register_cache_service) | **POST** /cache/register | Register a Grace Cache service.
 *DiffsApi* | [**get_diff**](docs/DiffsApi.md#get_diff) | **POST** /diff/getDiff | Get a diff.
 *DiffsApi* | [**get_diff_by_blake3_hash**](docs/DiffsApi.md#get_diff_by_blake3_hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 *DiffsApi* | [**get_diff_by_sha256_hash**](docs/DiffsApi.md#get_diff_by_sha256_hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
@@ -245,6 +247,12 @@ Class | Method | HTTP request | Description
  - [BranchParameters](docs/BranchParameters.md)
  - [BranchQueryParameters](docs/BranchQueryParameters.md)
  - [BranchReturnValue](docs/BranchReturnValue.md)
+ - [CacheRegistration](docs/CacheRegistration.md)
+ - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
+ - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)
+ - [CacheRegistrationRequest](docs/CacheRegistrationRequest.md)
+ - [CacheRegistrationResult](docs/CacheRegistrationResult.md)
+ - [CacheRegistrationReturnValue](docs/CacheRegistrationReturnValue.md)
  - [ChangeType](docs/ChangeType.md)
  - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
  - [ClaimedReuseRange](docs/ClaimedReuseRange.md)

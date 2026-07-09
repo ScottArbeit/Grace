@@ -53,6 +53,7 @@
         <Compile Include="ValidationResult.Actor.fs" />
         <Compile Include="Artifact.Actor.fs" />
         <Compile Include="ApprovalRequest.Actor.fs" />
+        <Compile Include="CacheRegistration.Actor.fs" />
         <Compile Include="DedupeIndex.Actor.fs" />
         <Compile Include="ContentBlockMetadata.Actor.fs" />
         <Compile Include="UploadSession.Actor.fs" />
