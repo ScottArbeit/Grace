@@ -166,6 +166,12 @@ module OperationsModel =
             .HasDatabaseName("IX_ops_RawUsageFact_ArchiveStateObservedAt")
         |> ignore
 
+        rawFact
+            .HasIndex([| "RehydrationExpiresAtUtc" |])
+            .HasDatabaseName(OperationsUsageSql.TemporaryHotCleanupExpiryIndexName)
+            .HasFilter("[RehydrationExpiresAtUtc] IS NOT NULL")
+        |> ignore
+
         let aggregate = modelBuilder.Entity<UsageAggregateMinuteEntity>()
 
         aggregate.ToTable(OperationsUsageSql.UsageAggregateMinuteTableName, OperationsUsageSql.SchemaName)

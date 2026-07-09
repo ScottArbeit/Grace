@@ -64,6 +64,10 @@ module OperationsUsageSql =
     [<Literal>]
     let TemporaryHotCleanupBatchSize = 1000
 
+    /// Names the filtered expiry index used by periodic temporary-hot cleanup.
+    [<Literal>]
+    let TemporaryHotCleanupExpiryIndexName = "IX_ops_RawUsageFact_RehydrationExpiresAtUtc"
+
     /// Creates the configured operations database when SQL Server does not already contain it.
     [<Literal>]
     let CreateDatabaseIfMissing =

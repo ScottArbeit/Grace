@@ -22,6 +22,7 @@
     <Compile Include="Migrations\20260707130000_AddRawUsageFactArchiveState.fs" />
     <Compile Include="Migrations\20260707140000_AddRawUsageFactRehydrationExpiry.fs" />
     <Compile Include="Migrations\20260708170000_AddRawUsageFactArchiveFailureState.fs" />
+    <Compile Include="Migrations\20260709090000_AddRawUsageFactRehydrationExpiryIndex.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>

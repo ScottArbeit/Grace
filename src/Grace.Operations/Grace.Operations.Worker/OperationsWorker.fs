@@ -316,6 +316,40 @@ module OperationsUsageArchiveFormat =
 
         usageFact, rawPayload
 
+/// Applies SQL pointer guards before archive Blob bytes are materialized.
+[<RequireQualifiedAccess>]
+module internal OperationsUsageArchiveBlobGuards =
+
+    /// Throws when durable Blob length does not match the SQL archive authority before content is materialized.
+    let verifyByteLength (pointer: RawUsageFactArchivePointer) actualByteLength =
+        if actualByteLength <> pointer.ByteLength then
+            invalidOp
+                $"Archive Blob '{pointer.BlobName}' length mismatch for UsageFactId '{pointer.UsageFactId}'. Expected {pointer.ByteLength}; actual {actualByteLength}."
+
+    /// Throws when durable Blob bytes do not match the SQL archive authority.
+    let verifyContent (pointer: RawUsageFactArchivePointer) (content: byte array) =
+        verifyByteLength pointer (int64 content.Length)
+
+        let actualChecksum = OperationsUsageArchiveFormat.checksumSha256Hex content
+
+        if not (String.Equals(actualChecksum, pointer.ChecksumSha256Hex, StringComparison.Ordinal)) then
+            invalidOp $"Archive Blob '{pointer.BlobName}' checksum mismatch for UsageFactId '{pointer.UsageFactId}'."
+
+    /// Downloads archive content only after Blob metadata matches the SQL byte-length guard.
+    let downloadAfterLengthGuardAsync
+        (pointer: RawUsageFactArchivePointer)
+        (readContentLengthAsync: string -> CancellationToken -> Task<int64>)
+        (downloadContentAsync: string -> CancellationToken -> Task<byte array>)
+        cancellationToken
+        =
+        task {
+            let! contentLength = readContentLengthAsync pointer.BlobName cancellationToken
+            verifyByteLength pointer contentLength
+            let! storedContent = downloadContentAsync pointer.BlobName cancellationToken
+            verifyContent pointer storedContent
+            return storedContent
+        }
+
 /// Stores archive blobs in Azure Blob Storage and reads them back for authority verification.
 type AzureOperationsUsageArchiveBlobStore(containerClient: BlobContainerClient) =
 
@@ -327,18 +361,17 @@ type AzureOperationsUsageArchiveBlobStore(containerClient: BlobContainerClient) 
             return response.Value.Content.ToArray()
         }
 
-    /// Throws when durable Blob bytes do not match the SQL archive authority.
-    let verifyContent (pointer: RawUsageFactArchivePointer) (content: byte array) =
-        let actualByteLength = int64 content.Length
+    /// Reads the Blob length from storage metadata without buffering archive content.
+    let readContentLengthAsync blobName cancellationToken =
+        task {
+            let blobClient = containerClient.GetBlobClient blobName
+            let! properties = blobClient.GetPropertiesAsync(cancellationToken = cancellationToken)
+            return properties.Value.ContentLength
+        }
 
-        if actualByteLength <> pointer.ByteLength then
-            invalidOp
-                $"Archive Blob '{pointer.BlobName}' length mismatch for UsageFactId '{pointer.UsageFactId}'. Expected {pointer.ByteLength}; actual {actualByteLength}."
-
-        let actualChecksum = OperationsUsageArchiveFormat.checksumSha256Hex content
-
-        if not (String.Equals(actualChecksum, pointer.ChecksumSha256Hex, StringComparison.Ordinal)) then
-            invalidOp $"Archive Blob '{pointer.BlobName}' checksum mismatch for UsageFactId '{pointer.UsageFactId}'."
+    /// Materializes archive bytes only after Blob metadata proves the SQL byte-length guard.
+    let downloadContentAfterLengthGuardAsync (pointer: RawUsageFactArchivePointer) cancellationToken =
+        OperationsUsageArchiveBlobGuards.downloadAfterLengthGuardAsync pointer readContentLengthAsync downloadContentAsync cancellationToken
 
     /// Uploads content only when the deterministic Blob does not already exist.
     let uploadIfMissingAsync (archiveBlob: OperationsUsageArchiveBlob) cancellationToken =
@@ -359,22 +392,17 @@ type AzureOperationsUsageArchiveBlobStore(containerClient: BlobContainerClient) 
             task {
                 let! _ = containerClient.CreateIfNotExistsAsync(cancellationToken = cancellationToken)
                 do! uploadIfMissingAsync archiveBlob cancellationToken
-                let! storedContent = downloadContentAsync archiveBlob.Pointer.BlobName cancellationToken
-                verifyContent archiveBlob.Pointer storedContent
+                let! _ = downloadContentAfterLengthGuardAsync archiveBlob.Pointer cancellationToken
+                return ()
             }
 
         member _.VerifyAsync(pointer, cancellationToken) =
             task {
-                let! storedContent = downloadContentAsync pointer.BlobName cancellationToken
-                verifyContent pointer storedContent
+                let! _ = downloadContentAfterLengthGuardAsync pointer cancellationToken
+                return ()
             }
 
-        member _.DownloadVerifiedAsync(pointer, cancellationToken) =
-            task {
-                let! storedContent = downloadContentAsync pointer.BlobName cancellationToken
-                verifyContent pointer storedContent
-                return storedContent
-            }
+        member _.DownloadVerifiedAsync(pointer, cancellationToken) = downloadContentAfterLengthGuardAsync pointer cancellationToken
 
 /// Archives old hot raw payloads after Blob authority is verified and persisted in SQL.
 type OperationsUsageArchiveProcessor
@@ -414,6 +442,7 @@ type OperationsUsageArchiveProcessor
         | :? RequestFailedException as requestFailure when isExactCandidateBlobFailure requestFailure -> false
         | :? RequestFailedException -> true
         | :? AuthenticationFailedException -> true
+        | :? SqlException -> true
         | :? TimeoutException -> true
         | :? System.Net.Http.HttpRequestException -> true
         | :? IOException -> true

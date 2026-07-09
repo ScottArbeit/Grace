@@ -7,6 +7,7 @@ open Grace.Operations.Worker
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Usage
+open Microsoft.Data.SqlClient
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
@@ -23,6 +24,7 @@ open System.Collections.Generic
 open System.IO
 open System.IO.Compression
 open System.Linq
+open System.Reflection
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -95,6 +97,8 @@ type private RecordingArchiveStore
         ?rehydrateResults: Result<UsageFactId list, exn> list,
         ?afterRehydrate: RawUsageFactRehydrationItem -> bool -> unit,
         ?expiredCleanupResults: int list,
+        ?markFailures: exn list,
+        ?completeFailures: exn list,
         ?completeResults: bool list,
         ?archivedCountOverride: int64
     ) =
@@ -106,6 +110,8 @@ type private RecordingArchiveStore
     let rehydrateCancellationCanBeCanceled = ResizeArray<bool>()
     let rehydrateResults = Queue<Result<UsageFactId list, exn>>(defaultArg rehydrateResults [])
     let expiredCleanupResults = Queue<int>(defaultArg expiredCleanupResults [])
+    let markFailures = Queue<exn>(defaultArg markFailures [])
+    let completeFailures = Queue<exn>(defaultArg completeFailures [])
     let completeResults = Queue<bool>(defaultArg completeResults [])
     let expiredCleanupBatchSizes = ResizeArray<int>()
     let archivedPageBatchSizes = ResizeArray<int>()
@@ -183,13 +189,21 @@ type private RecordingArchiveStore
         member _.MarkArchiveVerifiedAsync(pointer, _cancellationToken) =
             events.Add("mark-verified")
             markedPointers.Add pointer
-            Task.FromResult true
+
+            if markFailures.Count > 0 then
+                Task.FromException<bool>(markFailures.Dequeue())
+            else
+                Task.FromResult true
 
         member _.CompleteArchiveAsync(pointer, _cancellationToken) =
             events.Add("complete-archive")
             completedPointers.Add pointer
-            let changed = if completeResults.Count > 0 then completeResults.Dequeue() else true
-            Task.FromResult changed
+
+            if completeFailures.Count > 0 then
+                Task.FromException<bool>(completeFailures.Dequeue())
+            else
+                let changed = if completeResults.Count > 0 then completeResults.Dequeue() else true
+                Task.FromResult changed
 
         member _.RecordArchiveFailureAsync(usageFactId, reason, _cancellationToken) =
             events.Add("record-archive-failure")
@@ -555,6 +569,68 @@ type OperationsUsageArchiveTests() =
 
         context.Model.FindEntityType(typeof<RawUsageFactEntity>)
 
+    /// Creates a SqlException through non-public constructors so dependency classification is tested with the real type.
+    let sqlException message =
+        let errorCtor =
+            typeof<SqlError>.GetConstructor
+                (BindingFlags.NonPublic ||| BindingFlags.Instance,
+                 binder = null,
+                 types = [|
+                     typeof<int>
+                     typeof<byte>
+                     typeof<byte>
+                     typeof<string>
+                     typeof<string>
+                     typeof<string>
+                     typeof<int>
+                     typeof<int>
+                     typeof<exn>
+                 |],
+                 modifiers = null)
+
+        let error =
+            errorCtor.Invoke(
+                [|
+                    box 40613
+                    box (byte 1)
+                    box (byte 20)
+                    box "operations-sql"
+                    box message
+                    box ""
+                    box 1
+                    box 0
+                    null
+                |]
+            )
+
+        let collection = Activator.CreateInstance(typeof<SqlErrorCollection>, nonPublic = true)
+
+        let add = typeof<SqlErrorCollection>.GetMethod ("Add", BindingFlags.NonPublic ||| BindingFlags.Instance)
+
+        add.Invoke(collection, [| error |]) |> ignore
+
+        let exceptionCtor =
+            typeof<SqlException>.GetConstructor
+                (BindingFlags.NonPublic ||| BindingFlags.Instance,
+                 binder = null,
+                 types = [|
+                     typeof<string>
+                     typeof<SqlErrorCollection>
+                     typeof<exn>
+                     typeof<Guid>
+                 |],
+                 modifiers = null)
+
+        exceptionCtor.Invoke(
+            [|
+                box message
+                collection
+                null
+                box Guid.Empty
+            |]
+        )
+        :?> SqlException
+
     /// Creates archive worker settings for hosted-service ordering tests without opening Blob storage.
     let archiveWorkerSettings () =
         {
@@ -740,6 +816,126 @@ type OperationsUsageArchiveTests() =
 
                     Assert.That(archiveStore.MarkedPointers[0], Is.EqualTo(pointer))
                     Assert.That(blobStore.Contains(pointer.BlobName), Is.True))
+            )
+        }
+
+    /// Verifies SQL failures while recording verified Blob authority abort the batch without row-scoped retirement evidence.
+    [<Test>]
+    member _.ArchiveBatchTreatsMarkVerifiedSqlFailureAsDependencyOutage() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("81818181-8181-8181-8181-818181818181")
+            let rawPayload = OperationsUsageArchiveTestData.payload usageFactId
+            let candidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+
+            let archiveStore =
+                RecordingArchiveStore(
+                    [ candidate ],
+                    events,
+                    markFailures =
+                        [
+                            sqlException "database is unavailable during archive verification"
+                        ]
+                )
+
+            let blobStore = RecordingArchiveBlobStore(events)
+            let processor = createProcessor archiveStore blobStore
+            let mutable failure = None
+
+            try
+                let! _ = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+                Assert.Fail("SQL dependency failure should abort the archive batch for retry.")
+            with
+            | :? SqlException as ex -> failure <- Some ex
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failure.IsSome, Is.True)
+                    Assert.That(String.Join("|", events), Is.EqualTo("list-candidates|write-verify-blob|mark-verified"))
+                    Assert.That(archiveStore.RecordedFailures, Is.Empty)
+                    Assert.That(archiveStore.CompletedPointers, Is.Empty))
+            )
+        }
+
+    /// Verifies SQL failures while clearing hot payload bytes abort the batch without row-scoped retirement evidence.
+    [<Test>]
+    member _.ArchiveBatchTreatsCompleteArchiveSqlFailureAsDependencyOutage() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("82828282-8282-8282-8282-828282828282")
+            let rawPayload = OperationsUsageArchiveTestData.payload usageFactId
+            let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+
+            let verifiedCandidate =
+                OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.ArchiveVerified None (Some archiveBlob.Pointer)
+
+            let archiveStore =
+                RecordingArchiveStore(
+                    [ verifiedCandidate ],
+                    events,
+                    completeFailures =
+                        [
+                            sqlException "database is unavailable during archive completion"
+                        ]
+                )
+
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
+            let processor = createProcessor archiveStore blobStore
+            let mutable failure = None
+
+            try
+                let! _ = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+                Assert.Fail("SQL dependency failure should abort the archive batch for retry.")
+            with
+            | :? SqlException as ex -> failure <- Some ex
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failure.IsSome, Is.True)
+                    Assert.That(String.Join("|", events), Is.EqualTo("list-candidates|verify-blob|complete-archive"))
+                    Assert.That(archiveStore.RecordedFailures, Is.Empty)
+                    Assert.That(archiveStore.MarkedPointers, Is.Empty))
+            )
+        }
+
+    /// Verifies archive reads fail on length metadata before any Blob content is buffered.
+    [<Test>]
+    member _.ArchiveBlobLengthGuardRunsBeforeContentDownload() =
+        task {
+            let pointer =
+                {
+                    UsageFactId = Guid.Parse("83838383-8383-8383-8383-838383838383")
+                    BlobName = "usage-facts/v1/oversized.jsonl.gz"
+                    ChecksumSha256Hex = String('0', OperationsUsageSql.ArchiveChecksumSha256HexLength)
+                    ByteLength = 42L
+                }
+
+            let events = List<string>()
+
+            let readLength _blobName _cancellationToken =
+                events.Add("read-length")
+                Task.FromResult 43L
+
+            let downloadContent _blobName _cancellationToken =
+                events.Add("download-content")
+                Task.FromResult(Array.zeroCreate<byte> 43)
+
+            let mutable message = None
+
+            try
+                let! _ = OperationsUsageArchiveBlobGuards.downloadAfterLengthGuardAsync pointer readLength downloadContent CancellationToken.None
+
+                Assert.Fail("Length mismatch should fail before archive content is downloaded.")
+            with
+            | :? InvalidOperationException as ex -> message <- Some ex.Message
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(message.Value, Does.Contain("length mismatch"))
+                    Assert.That(message.Value, Does.Contain("Expected 42; actual 43"))
+                    Assert.That(String.Join("|", events), Is.EqualTo("read-length")))
             )
         }
 
@@ -2177,6 +2373,10 @@ type OperationsUsageArchiveTests() =
             rawFact.GetIndexes()
             |> Seq.exists (fun index -> index.GetDatabaseName() = "IX_ops_RawUsageFact_ArchiveStateObservedAt")
 
+        let cleanupIndex =
+            rawFact.GetIndexes()
+            |> Seq.find (fun index -> index.GetDatabaseName() = OperationsUsageSql.TemporaryHotCleanupExpiryIndexName)
+
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(rawFact.FindProperty("RawPayload").IsNullable, Is.True)
@@ -2260,6 +2460,15 @@ type OperationsUsageArchiveTests() =
 
                 Assert.That(rawFact.FindProperty("RehydratedAtUtc"), Is.Null)
 
+                Assert.That(
+                    cleanupIndex.Properties
+                    |> Seq.map (fun property -> property.Name)
+                    |> String.concat ",",
+                    Is.EqualTo("RehydrationExpiresAtUtc")
+                )
+
+                Assert.That(cleanupIndex.GetFilter(), Is.EqualTo("[RehydrationExpiresAtUtc] IS NOT NULL"))
+
                 Assert.That(hasArchiveIndex, Is.True))
         )
 
@@ -2287,5 +2496,8 @@ type OperationsUsageArchiveTests() =
                 Assert.That(script, Does.Not.Contain("RehydratedAtUtc datetime2(7) NULL"))
                 Assert.That(script, Does.Contain("ALTER COLUMN RawPayload varbinary(max) NULL"))
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_RawUsageFact_ArchiveStateObservedAt"))
+                Assert.That(script, Does.Contain($"CREATE INDEX {OperationsUsageSql.TemporaryHotCleanupExpiryIndexName}"))
+                Assert.That(script, Does.Contain("ON ops.RawUsageFact(RehydrationExpiresAtUtc)"))
+                Assert.That(script, Does.Contain("WHERE RehydrationExpiresAtUtc IS NOT NULL"))
                 Assert.That(script, Does.Contain("ON PS_ops_OperationsUsageMonthUtc(ObservedAtUtc)")))
         )
