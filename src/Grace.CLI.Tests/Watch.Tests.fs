@@ -629,6 +629,20 @@ module WatchTests =
             (List<FileVersion>(files))
             1L
 
+    /// Builds a GraceStatus snapshot around a caller-supplied root directory version.
+    let private graceStatusFromRootDirectory (rootDirectory: LocalDirectoryVersion) =
+        let index = GraceIndex()
+
+        index.TryAdd(rootDirectory.DirectoryVersionId, rootDirectory)
+        |> ignore
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootDirectory.DirectoryVersionId
+            RootDirectorySha256Hash = rootDirectory.Sha256Hash
+            RootDirectoryBlake3Hash = rootDirectory.Blake3Hash
+        }
+
     /// Builds default local clients for current-branch remote materialization tests.
     let private remoteMaterializationClients
         (remoteDirectoryVersions: DirectoryVersion array)
@@ -15105,7 +15119,248 @@ module WatchTests =
             |> should equal "local payload"
 
             writtenStatuses.Count |> should equal 0
-            resyncRequests.Count |> should equal 0)
+
+            resyncRequests.ToArray()
+            |> should not' (equal Array.empty<string>))
+
+    /// Verifies corrupt object-cache content stops exact remote materialization before target mutation.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization refuses corrupt object cache before target mutation`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let targetPath = Path.Combine(root, "target.txt")
+            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
+            let objectCachePath = Services.getLocalObjectCachePathForFileVersion remoteFile
+            File.WriteAllText(targetPath, "local payload")
+            File.WriteAllText(objectCachePath, "corrupt cached payload")
+
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| "target.txt" |] Array.empty<string>
+            let remoteRootId = Guid.NewGuid()
+            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            File.ReadAllText(targetPath)
+            |> should equal "local payload"
+
+            writtenStatuses.Count |> should equal 0
+
+            resyncRequests.ToArray()
+            |> should not' (equal Array.empty<string>))
+
+    /// Verifies a path absent from the clean snapshot cannot be created locally before the remote copy.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization refuses newly created absent target before copy`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let targetPath = Path.Combine(root, "target.txt")
+            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
+            File.Delete(targetPath)
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            File.WriteAllText(targetPath, "local create after clean gate")
+
+            let remoteRootId = Guid.NewGuid()
+            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            File.ReadAllText(targetPath)
+            |> should equal "local create after clean gate"
+
+            writtenStatuses.Count |> should equal 0
+
+            resyncRequests.ToArray()
+            |> should not' (equal Array.empty<string>))
+
+    /// Verifies recursive DirectoryVersion metadata must include every declared child before planning mutations.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization refuses partial directory version closure before mutation`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let targetPath = Path.Combine(root, "target.txt")
+            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
+            File.Delete(targetPath)
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+
+            let missingChildId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| missingChildId |] [| remoteFile |]
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            File.Exists(targetPath) |> should equal false
+
+            writtenStatuses.Count |> should equal 0
+
+            resyncRequests.ToArray()
+            |> should not' (equal Array.empty<string>))
+
+    /// Verifies materialization planning does not collapse case-distinct paths under case-sensitive repository rules.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization plan respects case-sensitive path lookup`` () =
+        let localFile = localFileVersion (RelativePath "Readme.txt")
+
+        let remoteFile =
+            FileVersion.CreateWithHashes (RelativePath "README.txt") localFile.Sha256Hash localFile.Blake3Hash String.Empty localFile.IsBinary localFile.Size
+
+        let currentRoot =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "current-root-sha")
+                (Blake3Hash "current-root-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| localFile |]))
+                1L
+                DateTime.UtcNow
+
+        let remoteRoot =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "remote-root-sha")
+                (Blake3Hash "remote-root-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>(
+                    [|
+                        remoteFile.ToLocalFileVersion DateTime.UtcNow
+                    |]
+                ))
+                1L
+                DateTime.UtcNow
+
+        try
+            Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+            let caseSensitivePlan =
+                Watch.buildCurrentBranchRemoteMaterializationPlanForWatchTests
+                    (graceStatusFromRootDirectory currentRoot)
+                    (graceStatusFromRootDirectory remoteRoot)
+
+            caseSensitivePlan.FileDeletes
+            |> Array.map string
+            |> should equal [| "Readme.txt" |]
+
+            caseSensitivePlan.FileWrites
+            |> Array.map (fun fileVersion -> string fileVersion.RelativePath)
+            |> should equal [| "README.txt" |]
+
+            Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
+
+            let caseInsensitivePlan =
+                Watch.buildCurrentBranchRemoteMaterializationPlanForWatchTests
+                    (graceStatusFromRootDirectory currentRoot)
+                    (graceStatusFromRootDirectory remoteRoot)
+
+            caseInsensitivePlan.FileDeletes
+            |> should equal Array.empty<RelativePath>
+
+            caseInsensitivePlan.FileWrites
+            |> should equal Array.empty<LocalFileVersion>
+        finally
+            Watch.clearPendingWatchWorkForTests ()
+
+    /// Verifies case-sensitive containment rejects paths that differ only by the root directory casing.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization containment respects case-sensitive root paths`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let rootName =
+                Path.GetFileName(
+                    root.TrimEnd(
+                        [|
+                            Path.DirectorySeparatorChar
+                            Path.AltDirectorySeparatorChar
+                        |]
+                    )
+                )
+
+            let differentlyCasedRootName = requireDifferentlyCasedPath rootName
+            let escapedRelativePath = RelativePath $"../{differentlyCasedRootName}/target.txt"
+
+            let remoteFile = FileVersion.CreateWithHashes escapedRelativePath (Sha256Hash "remote-sha") (Blake3Hash "remote-blake3") String.Empty false 1L
+
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let remoteRootId = Guid.NewGuid()
+            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath Array.empty [| remoteFile |]
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            try
+                Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+                let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+                Assert.ThrowsAsync<InvalidOperationException>(operation)
+                |> ignore
+
+                writtenStatuses.Count |> should equal 0
+
+                resyncRequests.ToArray()
+                |> should not' (equal Array.empty<string>)
+            finally
+                Watch.clearPendingWatchWorkForTests ())
 
     /// Verifies exact remote materialization handles file/directory swaps and leaves unchanged files alone.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
@@ -15186,8 +15441,23 @@ module WatchTests =
 
             writtenStatuses.Count |> should equal 1
 
+            let writtenUnchangedFile =
+                writtenStatuses[0].Index.Values
+                |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+                |> Seq.find (fun fileVersion -> fileVersion.RelativePath = RelativePath "unchanged.txt")
+
+            writtenUnchangedFile.LastWriteTimeUtc
+            |> should equal unchangedWriteTime
+
             writtenStatuses[0].RootDirectoryId
             |> should equal remoteRootId
+
+            let expectedDirectoryIds = HashSet<DirectoryVersionId>([| remoteRootId; remoteDirectoryId |])
+
+            Watch
+                .graceStatusDirectoryIdsForWatchTests()
+                .SetEquals(expectedDirectoryIds)
+            |> should equal true
 
             resyncRequests.Count |> should equal 0)
 
