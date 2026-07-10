@@ -99,3 +99,121 @@ type UsageAggregateMinuteEntity() =
 
     /// Stores the SQL-created or SQL-updated UTC timestamp for the aggregate row.
     member val UpdatedAtUtc = DateTime.MinValue with get, set
+
+/// Represents one effective-dated customer pricing plan.
+[<AllowNullLiteral>]
+type PricingPlanEntity() =
+
+    /// Stores the durable pricing plan identity used by assignments and rates.
+    member val PricingPlanId = Guid.Empty with get, set
+
+    /// Stores the operator-stable pricing plan code.
+    member val PlanCode = String.Empty with get, set
+
+    /// Stores the internal display label used by Operations tools.
+    member val DisplayName = String.Empty with get, set
+
+    /// Stores when the plan can first be selected for effective pricing.
+    member val EffectiveFromUtc = DateTime.MinValue with get, set
+
+    /// Stores the exclusive end of the plan selection window, or null for open-ended plans.
+    member val EffectiveToUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the SQL-created UTC timestamp for the pricing plan row.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+/// Represents an effective-dated mapping from a tracked usage fact kind to a billable line item kind.
+[<AllowNullLiteral>]
+type BillableUsageKindMappingEntity() =
+
+    /// Stores the durable billable mapping identity used for audit and seed maintenance.
+    member val BillableUsageKindMappingId = Guid.Empty with get, set
+
+    /// Stores the tracked UsageFactKind integer that becomes billable only while this row is effective.
+    member val FactKind = 0 with get, set
+
+    /// Stores the internal billable usage-kind integer selected by pricing rates.
+    member val BillableUsageKind = 0 with get, set
+
+    /// Stores the internal display label used by Operations tools.
+    member val DisplayName = String.Empty with get, set
+
+    /// Stores when the tracked fact kind first maps to the billable usage kind.
+    member val EffectiveFromUtc = DateTime.MinValue with get, set
+
+    /// Stores the exclusive end of the mapping window, or null for open-ended mappings.
+    member val EffectiveToUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the SQL-created UTC timestamp for the billable mapping row.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+/// Represents one effective-dated rate for a pricing plan and billable usage kind.
+[<AllowNullLiteral>]
+type PricingRateEntity() =
+
+    /// Stores the durable pricing rate identity selected by later preview and ledger slices.
+    member val PricingRateId = Guid.Empty with get, set
+
+    /// Stores the pricing plan whose customers can receive this rate.
+    member val PricingPlanId = Guid.Empty with get, set
+
+    /// Stores the internal billable usage-kind integer priced by this rate.
+    member val BillableUsageKind = 0 with get, set
+
+    /// Stores the customer billing currency for this rate without provider cost or margin data.
+    member val CurrencyCode = String.Empty with get, set
+
+    /// Stores the rate unit label, such as byte-minute.
+    member val UnitName = String.Empty with get, set
+
+    /// Stores the measured quantity represented by one billable unit.
+    member val UnitQuantity = 0L with get, set
+
+    /// Stores the customer price in micros of the configured currency per unit quantity.
+    member val UnitPriceMicros = 0L with get, set
+
+    /// Stores when the rate can first be selected.
+    member val EffectiveFromUtc = DateTime.MinValue with get, set
+
+    /// Stores the exclusive end of the rate window, or null for open-ended rates.
+    member val EffectiveToUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the SQL-created UTC timestamp for the pricing rate row.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+    /// References the pricing plan for EF schema relationship generation.
+    member val PricingPlan: PricingPlanEntity = null with get, set
+
+/// Represents one effective-dated assignment of a customer and repository scope to a pricing plan.
+[<AllowNullLiteral>]
+type CustomerPricingAssignmentEntity() =
+
+    /// Stores the durable assignment identity selected by later preview and ledger slices.
+    member val CustomerPricingAssignmentId = Guid.Empty with get, set
+
+    /// Stores the Operations customer identity receiving the assigned pricing plan.
+    member val CustomerId = Guid.Empty with get, set
+
+    /// Stores the Grace owner scope for the customer assignment.
+    member val OwnerId = Guid.Empty with get, set
+
+    /// Stores the Grace organization scope for the customer assignment.
+    member val OrganizationId = Guid.Empty with get, set
+
+    /// Stores the Grace repository scope for the customer assignment.
+    member val RepositoryId = Guid.Empty with get, set
+
+    /// Stores the pricing plan selected for this customer and repository scope.
+    member val PricingPlanId = Guid.Empty with get, set
+
+    /// Stores when the assignment can first be selected.
+    member val EffectiveFromUtc = DateTime.MinValue with get, set
+
+    /// Stores the exclusive end of the assignment window, or null for open-ended assignments.
+    member val EffectiveToUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the SQL-created UTC timestamp for the customer assignment row.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+    /// References the pricing plan for EF schema relationship generation.
+    member val PricingPlan: PricingPlanEntity = null with get, set

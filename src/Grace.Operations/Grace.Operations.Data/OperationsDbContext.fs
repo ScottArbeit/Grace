@@ -248,6 +248,330 @@ module OperationsModel =
             .HasDatabaseName("IX_ops_UsageAggregateMinute_ScopeKindBucket")
         |> ignore
 
+        let pricingPlan = modelBuilder.Entity<PricingPlanEntity>()
+
+        pricingPlan.ToTable(OperationsPricingSql.PricingPlanTableName, OperationsUsageSql.SchemaName)
+        |> ignore
+
+        pricingPlan
+            .HasKey([| "PricingPlanId" |])
+            .HasName("PK_ops_PricingPlan")
+        |> ignore
+
+        pricingPlan
+            .Property<System.Guid>("PricingPlanId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        pricingPlan
+            .Property<string>("PlanCode")
+            .HasMaxLength(OperationsPricingSql.PlanCodeMaxLength)
+            .IsRequired()
+        |> ignore
+
+        pricingPlan
+            .Property<string>("DisplayName")
+            .HasMaxLength(OperationsPricingSql.DisplayNameMaxLength)
+            .IsRequired()
+        |> ignore
+
+        pricingPlan
+            .Property<System.DateTime>("EffectiveFromUtc")
+            .HasColumnType("datetime2(7)")
+            .IsRequired()
+        |> ignore
+
+        pricingPlan
+            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        pricingPlan
+            .Property<System.DateTime>("CreatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        pricingPlan
+            .HasIndex([| "PlanCode"; "EffectiveFromUtc" |])
+            .HasDatabaseName("UX_ops_PricingPlan_CodeEffectiveFrom")
+            .IsUnique()
+        |> ignore
+
+        let mapping = modelBuilder.Entity<BillableUsageKindMappingEntity>()
+
+        mapping.ToTable(OperationsPricingSql.BillableUsageKindMappingTableName, OperationsUsageSql.SchemaName)
+        |> ignore
+
+        mapping
+            .HasKey([| "BillableUsageKindMappingId" |])
+            .HasName("PK_ops_BillableUsageKindMapping")
+        |> ignore
+
+        mapping
+            .Property<System.Guid>("BillableUsageKindMappingId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        mapping.Property<int>("FactKind").IsRequired()
+        |> ignore
+
+        mapping
+            .Property<int>("BillableUsageKind")
+            .IsRequired()
+        |> ignore
+
+        mapping
+            .Property<string>("DisplayName")
+            .HasMaxLength(OperationsPricingSql.DisplayNameMaxLength)
+            .IsRequired()
+        |> ignore
+
+        mapping
+            .Property<System.DateTime>("EffectiveFromUtc")
+            .HasColumnType("datetime2(7)")
+            .IsRequired()
+        |> ignore
+
+        mapping
+            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        mapping
+            .Property<System.DateTime>("CreatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        mapping
+            .HasIndex([| "FactKind"; "EffectiveFromUtc" |])
+            .HasDatabaseName("UX_ops_BillableUsageKindMapping_FactKindEffectiveFrom")
+            .IsUnique()
+        |> ignore
+
+        mapping
+            .HasIndex(
+                [|
+                    "FactKind"
+                    "EffectiveFromUtc"
+                    "EffectiveToUtc"
+                |]
+            )
+            .HasDatabaseName(OperationsPricingSql.BillableUsageKindMappingEffectiveIndexName)
+        |> ignore
+
+        let pricingRate = modelBuilder.Entity<PricingRateEntity>()
+
+        pricingRate.ToTable(OperationsPricingSql.PricingRateTableName, OperationsUsageSql.SchemaName)
+        |> ignore
+
+        pricingRate
+            .HasKey([| "PricingRateId" |])
+            .HasName("PK_ops_PricingRate")
+        |> ignore
+
+        pricingRate
+            .Property<System.Guid>("PricingRateId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        pricingRate
+            .Property<System.Guid>("PricingPlanId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .Property<int>("BillableUsageKind")
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .Property<string>("CurrencyCode")
+            .HasColumnType("varchar(3)")
+            .HasMaxLength(OperationsPricingSql.CurrencyCodeLength)
+            .IsUnicode(false)
+            .UseCollation("Latin1_General_100_BIN2")
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .Property<string>("UnitName")
+            .HasMaxLength(OperationsPricingSql.UnitNameMaxLength)
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .Property<int64>("UnitQuantity")
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .Property<int64>("UnitPriceMicros")
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .Property<System.DateTime>("EffectiveFromUtc")
+            .HasColumnType("datetime2(7)")
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        pricingRate
+            .Property<System.DateTime>("CreatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        pricingRate
+            .HasIndex(
+                [|
+                    "PricingPlanId"
+                    "BillableUsageKind"
+                    "EffectiveFromUtc"
+                |]
+            )
+            .HasDatabaseName("UX_ops_PricingRate_PlanUsageKindEffectiveFrom")
+            .IsUnique()
+        |> ignore
+
+        pricingRate
+            .HasIndex(
+                [|
+                    "PricingPlanId"
+                    "BillableUsageKind"
+                    "EffectiveFromUtc"
+                    "EffectiveToUtc"
+                |]
+            )
+            .HasDatabaseName(OperationsPricingSql.PricingRateEffectiveIndexName)
+        |> ignore
+
+        pricingRate
+            .HasOne(fun rate -> rate.PricingPlan)
+            .WithMany()
+            .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_PricingRate_PricingPlan")
+            .OnDelete(DeleteBehavior.Restrict)
+        |> ignore
+
+        let assignment = modelBuilder.Entity<CustomerPricingAssignmentEntity>()
+
+        assignment.ToTable(OperationsPricingSql.CustomerPricingAssignmentTableName, OperationsUsageSql.SchemaName)
+        |> ignore
+
+        assignment
+            .HasKey([| "CustomerPricingAssignmentId" |])
+            .HasName("PK_ops_CustomerPricingAssignment")
+        |> ignore
+
+        assignment
+            .Property<System.Guid>("CustomerPricingAssignmentId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        assignment
+            .Property<System.Guid>("CustomerId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        assignment
+            .Property<System.Guid>("OwnerId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        assignment
+            .Property<System.Guid>("OrganizationId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        assignment
+            .Property<System.Guid>("RepositoryId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        assignment
+            .Property<System.Guid>("PricingPlanId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        assignment
+            .Property<System.DateTime>("EffectiveFromUtc")
+            .HasColumnType("datetime2(7)")
+            .IsRequired()
+        |> ignore
+
+        assignment
+            .Property<Nullable<System.DateTime>>("EffectiveToUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        assignment
+            .Property<System.DateTime>("CreatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        assignment
+            .HasIndex([| "PricingPlanId" |])
+            .HasDatabaseName(OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName)
+        |> ignore
+
+        assignment
+            .HasIndex(
+                [|
+                    "CustomerId"
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "EffectiveFromUtc"
+                |]
+            )
+            .HasDatabaseName("UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom")
+            .IsUnique()
+        |> ignore
+
+        assignment
+            .HasIndex(
+                [|
+                    "CustomerId"
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "EffectiveFromUtc"
+                    "EffectiveToUtc"
+                |]
+            )
+            .HasDatabaseName(OperationsPricingSql.CustomerPricingAssignmentScopeIndexName)
+        |> ignore
+
+        assignment
+            .HasOne(fun assignment -> assignment.PricingPlan)
+            .WithMany()
+            .HasForeignKey("PricingPlanId")
+            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
+            .OnDelete(DeleteBehavior.Restrict)
+        |> ignore
+
 /// Owns the EF Core model for Grace Operations SQL Server schema evolution.
 type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     inherit DbContext(options)
@@ -260,6 +584,22 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     [<DefaultValue>]
     val mutable private usageAggregateMinutes: DbSet<UsageAggregateMinuteEntity>
 
+    /// Exposes pricing plans for EF migrations and schema inspection.
+    [<DefaultValue>]
+    val mutable private pricingPlans: DbSet<PricingPlanEntity>
+
+    /// Exposes billable usage-kind mappings for EF migrations and schema inspection.
+    [<DefaultValue>]
+    val mutable private billableUsageKindMappings: DbSet<BillableUsageKindMappingEntity>
+
+    /// Exposes pricing rates for EF migrations and schema inspection.
+    [<DefaultValue>]
+    val mutable private pricingRates: DbSet<PricingRateEntity>
+
+    /// Exposes customer pricing assignments for EF migrations and schema inspection.
+    [<DefaultValue>]
+    val mutable private customerPricingAssignments: DbSet<CustomerPricingAssignmentEntity>
+
     /// Provides the EF set for immutable usage fact rows.
     member this.RawUsageFacts
         with get () = this.rawUsageFacts
@@ -269,6 +609,26 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     member this.UsageAggregateMinutes
         with get () = this.usageAggregateMinutes
         and set value = this.usageAggregateMinutes <- value
+
+    /// Provides the EF set for effective-dated pricing plans.
+    member this.PricingPlans
+        with get () = this.pricingPlans
+        and set value = this.pricingPlans <- value
+
+    /// Provides the EF set for billable usage-kind mappings.
+    member this.BillableUsageKindMappings
+        with get () = this.billableUsageKindMappings
+        and set value = this.billableUsageKindMappings <- value
+
+    /// Provides the EF set for effective-dated pricing rates.
+    member this.PricingRates
+        with get () = this.pricingRates
+        and set value = this.pricingRates <- value
+
+    /// Provides the EF set for customer pricing assignments.
+    member this.CustomerPricingAssignments
+        with get () = this.customerPricingAssignments
+        and set value = this.customerPricingAssignments <- value
 
     /// Configures the Operations SQL Server schema shape that migrations must preserve.
     override _.OnModelCreating(modelBuilder: ModelBuilder) = OperationsModel.configure modelBuilder

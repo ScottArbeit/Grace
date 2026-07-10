@@ -6,12 +6,14 @@ open Aspire.Hosting.Testing
 open Aspire.Hosting.Azure
 open Azure.Messaging.ServiceBus
 open Grace.Shared
+open Microsoft.Data.SqlClient
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Data
 open System.Diagnostics
 open System.IO
 open System.Net.Http
@@ -71,6 +73,8 @@ module AspireTestHost =
     let private getTimeout (local: TimeSpan) (ci: TimeSpan) = if isCi then ci else local
 
     let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(3.0))
+
+    let private latestOperationsMigrationId = "20260709110000_AddPricingPlanRateAssignment"
 
     /// Defines log progress behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private logProgress (message: string) =
@@ -482,6 +486,90 @@ module AspireTestHost =
                         $"Last logs:{Environment.NewLine}{lastLines}"
 
                 raise (Exception($"{resourceName} failed to start. {details}{Environment.NewLine}{logDetails}", ex))
+        }
+
+    /// Waits until the operations worker has completed EF migrations that gate Service Bus processing.
+    let private waitForOperationsSchemaReadyAsync (connectionString: string) (ct: CancellationToken) =
+        task {
+            logProgress "waiting for Operations SQL schema migrations to complete."
+            let stopwatch = Stopwatch.StartNew()
+            let mutable ready = false
+            let mutable lastMigration = "<none>"
+            let mutable rawUsageFactPresent = false
+            let mutable usageAggregatePresent = false
+            let mutable lastError = String.Empty
+
+            while not ready && not ct.IsCancellationRequested do
+                try
+                    use connection = new SqlConnection(connectionString)
+                    do! connection.OpenAsync ct
+                    use command = connection.CreateCommand()
+                    command.CommandType <- CommandType.Text
+
+                    command.CommandText <-
+                        $"""
+DECLARE @LatestMigrationId nvarchar(150) = N'';
+
+IF OBJECT_ID(N'ops.__EFMigrationsHistory', N'U') IS NOT NULL
+BEGIN
+    EXEC sys.sp_executesql
+        N'SELECT TOP (1) @MigrationId = MigrationId FROM ops.__EFMigrationsHistory WITH (READCOMMITTEDLOCK) ORDER BY MigrationId DESC;',
+        N'@MigrationId nvarchar(150) OUTPUT',
+        @MigrationId = @LatestMigrationId OUTPUT;
+END;
+
+SELECT
+    CASE WHEN OBJECT_ID(N'ops.RawUsageFact', N'U') IS NULL THEN 0 ELSE 1 END AS RawUsageFactPresent,
+    CASE WHEN OBJECT_ID(N'ops.UsageAggregateMinute', N'U') IS NULL THEN 0 ELSE 1 END AS UsageAggregateMinutePresent,
+    @LatestMigrationId AS LatestMigrationId;
+"""
+
+                    use! reader = command.ExecuteReaderAsync ct
+                    let! hasRow = reader.ReadAsync ct
+
+                    if hasRow then
+                        rawUsageFactPresent <- reader.GetInt32(0) = 1
+                        usageAggregatePresent <- reader.GetInt32(1) = 1
+                        lastMigration <- reader.GetString(2)
+
+                        ready <-
+                            rawUsageFactPresent
+                            && usageAggregatePresent
+                            && String.Compare(lastMigration, latestOperationsMigrationId, StringComparison.Ordinal)
+                               >= 0
+                    else
+                        rawUsageFactPresent <- false
+                        usageAggregatePresent <- false
+                        lastMigration <- "<history table missing>"
+
+                    lastError <- String.Empty
+                with
+                | :? OperationCanceledException when ct.IsCancellationRequested -> ()
+                | ex ->
+                    lastError <- ex.Message
+                    rawUsageFactPresent <- false
+                    usageAggregatePresent <- false
+
+                if not ready && not ct.IsCancellationRequested then
+                    try
+                        do! Task.Delay(TimeSpan.FromSeconds(1.0), ct)
+                    with
+                    | :? OperationCanceledException when ct.IsCancellationRequested -> ()
+
+            if ct.IsCancellationRequested && not ready then
+                let errorSuffix =
+                    if String.IsNullOrWhiteSpace lastError then
+                        ""
+                    else
+                        $" Last SQL error: {lastError}"
+
+                raise (
+                    TimeoutException(
+                        $"Timed out after {stopwatch.Elapsed.TotalSeconds:n1}s waiting for Operations SQL schema migrations. Expected at least migration '{latestOperationsMigrationId}'; actual latest migration '{lastMigration}'. RawUsageFactPresent={rawUsageFactPresent}; UsageAggregateMinutePresent={usageAggregatePresent}.{errorSuffix}"
+                    )
+                )
+
+            logProgress $"Operations SQL schema migrations complete at '{lastMigration}'."
         }
 
     /// Groups shared helpers for fixture diagnostics.
@@ -1322,6 +1410,7 @@ module AspireTestHost =
 
                 use operationsWorkerReadinessCts = new CancellationTokenSource(defaultWaitTimeout)
                 do! waitForResourceHealthyAsync notificationService app operationsWorkerResourceName operationsWorkerReadinessCts.Token
+                do! waitForOperationsSchemaReadyAsync operationsSqlConnectionString operationsWorkerReadinessCts.Token
             else
                 Console.WriteLine("Skipping Service Bus functional readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
 

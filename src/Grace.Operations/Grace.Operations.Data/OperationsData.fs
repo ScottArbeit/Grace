@@ -48,6 +48,188 @@ type UsageAggregateMinuteKey =
 /// Describes the aggregate quantity projected for one Grace repository resource and UTC minute.
 type UsageAggregateMinute = { Key: UsageAggregateMinuteKey; Quantity: int64 }
 
+/// Carries one customer, repository scope, fact kind, and timestamp for effective pricing lookup.
+type PricingRateSelectionQuery =
+    {
+        CustomerId: Guid
+        OwnerId: OwnerId
+        OrganizationId: OrganizationId
+        RepositoryId: RepositoryId
+        FactKind: UsageFactKind
+        ObservedAt: Instant
+    }
+
+/// Describes the effective customer rate selected for a tracked usage fact.
+type EffectivePricingRate =
+    {
+        CustomerPricingAssignmentId: Guid
+        CustomerId: Guid
+        OwnerId: OwnerId
+        OrganizationId: OrganizationId
+        RepositoryId: RepositoryId
+        PricingPlanId: Guid
+        PlanCode: string
+        BillableUsageKindMappingId: Guid
+        BillableUsageKind: int
+        PricingRateId: Guid
+        CurrencyCode: string
+        UnitName: string
+        UnitQuantity: int64
+        UnitPriceMicros: int64
+        EffectiveFrom: Instant
+        EffectiveTo: Instant option
+    }
+
+/// Describes an effective-dated pricing plan used by deterministic selection tests and seed validation.
+type PricingPlan = { PricingPlanId: Guid; PlanCode: string; EffectiveFrom: Instant; EffectiveTo: Instant option }
+
+/// Describes an effective-dated mapping from tracked usage to an internal billable usage kind.
+type BillableUsageKindMapping =
+    {
+        BillableUsageKindMappingId: Guid
+        FactKind: UsageFactKind
+        BillableUsageKind: int
+        EffectiveFrom: Instant
+        EffectiveTo: Instant option
+    }
+
+/// Describes an effective-dated rate for one plan and billable usage kind.
+type PricingRate =
+    {
+        PricingRateId: Guid
+        PricingPlanId: Guid
+        BillableUsageKind: int
+        CurrencyCode: string
+        UnitName: string
+        UnitQuantity: int64
+        UnitPriceMicros: int64
+        EffectiveFrom: Instant
+        EffectiveTo: Instant option
+    }
+
+/// Describes an effective-dated customer assignment to one pricing plan for a Grace repository scope.
+type CustomerPricingAssignment =
+    {
+        CustomerPricingAssignmentId: Guid
+        CustomerId: Guid
+        OwnerId: OwnerId
+        OrganizationId: OrganizationId
+        RepositoryId: RepositoryId
+        PricingPlanId: Guid
+        EffectiveFrom: Instant
+        EffectiveTo: Instant option
+    }
+
+/// Carries the in-memory pricing rows used to prove the same invariant enforced by Operations SQL.
+type PricingCatalogSnapshot =
+    {
+        PricingPlans: PricingPlan list
+        BillableUsageKindMappings: BillableUsageKindMapping list
+        PricingRates: PricingRate list
+        CustomerPricingAssignments: CustomerPricingAssignment list
+    }
+
+/// Selects customer rates only when every effective-dated pricing prerequisite is present.
+[<RequireQualifiedAccess>]
+module PricingRateSelection =
+
+    /// Returns true when a half-open effective interval contains the supplied timestamp.
+    let contains observedAt effectiveFrom effectiveTo =
+        effectiveFrom <= observedAt
+        && (effectiveTo
+            |> Option.forall (fun ending -> observedAt < ending))
+
+    /// Selects the latest effective row by start time and stable identity.
+    let private latestBy effectiveFrom identity rows =
+        rows
+        |> List.sortWith (fun left right ->
+            let fromComparison = compare (effectiveFrom right) (effectiveFrom left)
+
+            if fromComparison <> 0 then
+                fromComparison
+            else
+                compare (identity left) (identity right))
+        |> List.tryHead
+
+    /// Intersects selected pricing prerequisites into the complete customer-price applicability window.
+    let private intersectEffectiveWindows windows =
+        let effectiveFrom = windows |> List.map fst |> List.max
+
+        let effectiveTo =
+            match windows |> List.choose snd with
+            | [] -> None
+            | finiteEnds -> finiteEnds |> List.min |> Some
+
+        effectiveFrom, effectiveTo
+
+    /// Selects the effective rate for a customer usage fact without making unmapped tracked facts billable.
+    let trySelect (query: PricingRateSelectionQuery) (catalog: PricingCatalogSnapshot) =
+        let assignment =
+            catalog.CustomerPricingAssignments
+            |> List.filter (fun candidate ->
+                candidate.CustomerId = query.CustomerId
+                && candidate.OwnerId = query.OwnerId
+                && candidate.OrganizationId = query.OrganizationId
+                && candidate.RepositoryId = query.RepositoryId
+                && contains query.ObservedAt candidate.EffectiveFrom candidate.EffectiveTo)
+            |> latestBy (fun candidate -> candidate.EffectiveFrom) (fun candidate -> candidate.CustomerPricingAssignmentId)
+
+        let plan =
+            assignment
+            |> Option.bind (fun selectedAssignment ->
+                catalog.PricingPlans
+                |> List.filter (fun candidate ->
+                    candidate.PricingPlanId = selectedAssignment.PricingPlanId
+                    && contains query.ObservedAt candidate.EffectiveFrom candidate.EffectiveTo)
+                |> latestBy (fun candidate -> candidate.EffectiveFrom) (fun candidate -> candidate.PricingPlanId))
+
+        let mapping =
+            catalog.BillableUsageKindMappings
+            |> List.filter (fun candidate ->
+                candidate.FactKind = query.FactKind
+                && contains query.ObservedAt candidate.EffectiveFrom candidate.EffectiveTo)
+            |> latestBy (fun candidate -> candidate.EffectiveFrom) (fun candidate -> candidate.BillableUsageKindMappingId)
+
+        let rate =
+            match plan, mapping with
+            | Some selectedPlan, Some selectedMapping ->
+                catalog.PricingRates
+                |> List.filter (fun candidate ->
+                    candidate.PricingPlanId = selectedPlan.PricingPlanId
+                    && candidate.BillableUsageKind = selectedMapping.BillableUsageKind
+                    && contains query.ObservedAt candidate.EffectiveFrom candidate.EffectiveTo)
+                |> latestBy (fun candidate -> candidate.EffectiveFrom) (fun candidate -> candidate.PricingRateId)
+            | _ -> None
+
+        match assignment, plan, mapping, rate with
+        | Some selectedAssignment, Some selectedPlan, Some selectedMapping, Some selectedRate ->
+            let effectiveFrom, effectiveTo =
+                intersectEffectiveWindows [ selectedAssignment.EffectiveFrom, selectedAssignment.EffectiveTo
+                                            selectedPlan.EffectiveFrom, selectedPlan.EffectiveTo
+                                            selectedMapping.EffectiveFrom, selectedMapping.EffectiveTo
+                                            selectedRate.EffectiveFrom, selectedRate.EffectiveTo ]
+
+            Some
+                {
+                    CustomerPricingAssignmentId = selectedAssignment.CustomerPricingAssignmentId
+                    CustomerId = selectedAssignment.CustomerId
+                    OwnerId = selectedAssignment.OwnerId
+                    OrganizationId = selectedAssignment.OrganizationId
+                    RepositoryId = selectedAssignment.RepositoryId
+                    PricingPlanId = selectedPlan.PricingPlanId
+                    PlanCode = selectedPlan.PlanCode
+                    BillableUsageKindMappingId = selectedMapping.BillableUsageKindMappingId
+                    BillableUsageKind = selectedMapping.BillableUsageKind
+                    PricingRateId = selectedRate.PricingRateId
+                    CurrencyCode = selectedRate.CurrencyCode
+                    UnitName = selectedRate.UnitName
+                    UnitQuantity = selectedRate.UnitQuantity
+                    UnitPriceMicros = selectedRate.UnitPriceMicros
+                    EffectiveFrom = effectiveFrom
+                    EffectiveTo = effectiveTo
+                }
+        | _ -> None
+
 /// Carries the raw insert and aggregate update that must commit or roll back together.
 type UsageFactPersistencePlan = { RawFact: RawUsageFact; Aggregate: UsageAggregateMinute }
 
@@ -165,6 +347,96 @@ type IOperationsUsageArchiveStore =
 
     /// Clears expired temporary support rehydrations left behind after caller or process failure.
     abstract CleanupExpiredRehydratedPayloadsAsync: expiresBefore: Instant * batchSize: int * cancellationToken: CancellationToken -> Task<int>
+
+/// Selects effective customer pricing rates from the Operations pricing catalog.
+type IOperationsPricingCatalog =
+
+    /// Returns a rate only when assignment, plan, usage-kind mapping, and rate rows are all effective.
+    abstract TrySelectEffectiveRateAsync: query: PricingRateSelectionQuery * cancellationToken: CancellationToken -> Task<EffectivePricingRate option>
+
+/// Executes effective-rate selection through reviewed Operations SQL.
+type SqlOperationsPricingCatalog(connectionString: string) =
+
+    /// Opens one SQL connection for an effective-rate lookup.
+    let openConnectionAsync cancellationToken =
+        task {
+            let connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync cancellationToken
+            return connection
+        }
+
+    /// Converts a NodaTime instant to the UTC SQL timestamp shape used by pricing tables.
+    let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
+
+    /// Converts a SQL UTC timestamp to the NodaTime shape returned to callers.
+    let toInstant (dateTime: DateTime) =
+        DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)
+        |> Instant.FromDateTimeUtc
+
+    /// Adds a SQL parameter and assigns the supplied value.
+    let addParameter (command: SqlCommand) name sqlDbType value =
+        let parameter = command.Parameters.Add(name, sqlDbType)
+        parameter.Value <- value
+
+    /// Adds the effective-rate lookup parameters with the repository scope required to prevent leakage.
+    let addSelectionParameters (command: SqlCommand) (query: PricingRateSelectionQuery) =
+        addParameter command "@CustomerId" SqlDbType.UniqueIdentifier query.CustomerId
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier query.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier query.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier query.RepositoryId
+        addParameter command "@FactKind" SqlDbType.Int (int query.FactKind)
+        addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime query.ObservedAt)
+
+    /// Reads the nullable effective end timestamp for the selected rate.
+    let readEffectiveTo (reader: SqlDataReader) ordinal =
+        if reader.IsDBNull ordinal then
+            None
+        else
+            reader.GetDateTime ordinal |> toInstant |> Some
+
+    /// Reads one effective pricing-rate result from the SQL reader.
+    let readEffectiveRate (reader: SqlDataReader) =
+        let effectiveToOrdinal = reader.GetOrdinal("EffectiveToUtc")
+
+        {
+            CustomerPricingAssignmentId = reader.GetGuid(reader.GetOrdinal("CustomerPricingAssignmentId"))
+            CustomerId = reader.GetGuid(reader.GetOrdinal("CustomerId"))
+            OwnerId = reader.GetGuid(reader.GetOrdinal("OwnerId"))
+            OrganizationId = reader.GetGuid(reader.GetOrdinal("OrganizationId"))
+            RepositoryId = reader.GetGuid(reader.GetOrdinal("RepositoryId"))
+            PricingPlanId = reader.GetGuid(reader.GetOrdinal("PricingPlanId"))
+            PlanCode = reader.GetString(reader.GetOrdinal("PlanCode"))
+            BillableUsageKindMappingId = reader.GetGuid(reader.GetOrdinal("BillableUsageKindMappingId"))
+            BillableUsageKind = reader.GetInt32(reader.GetOrdinal("BillableUsageKind"))
+            PricingRateId = reader.GetGuid(reader.GetOrdinal("PricingRateId"))
+            CurrencyCode = reader.GetString(reader.GetOrdinal("CurrencyCode"))
+            UnitName = reader.GetString(reader.GetOrdinal("UnitName"))
+            UnitQuantity = reader.GetInt64(reader.GetOrdinal("UnitQuantity"))
+            UnitPriceMicros = reader.GetInt64(reader.GetOrdinal("UnitPriceMicros"))
+            EffectiveFrom =
+                reader.GetDateTime(reader.GetOrdinal("EffectiveFromUtc"))
+                |> toInstant
+            EffectiveTo = readEffectiveTo reader effectiveToOrdinal
+        }
+
+    /// Returns the effective customer rate selected by SQL, or None for non-billable usage.
+    member _.TrySelectEffectiveRateAsync(query: PricingRateSelectionQuery, cancellationToken: CancellationToken) =
+        task {
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- OperationsPricingSql.SelectEffectivePricingRate
+            addSelectionParameters command query
+
+            use! reader = command.ExecuteReaderAsync cancellationToken
+            let! hasRow = reader.ReadAsync cancellationToken
+
+            if hasRow then return Some(readEffectiveRate reader) else return None
+        }
+
+    interface IOperationsPricingCatalog with
+
+        member this.TrySelectEffectiveRateAsync(query, cancellationToken) = this.TrySelectEffectiveRateAsync(query, cancellationToken)
 
 /// Chooses whether schema initialization may connect to `master` to create the operations database.
 type OperationsUsageSchemaBootstrapMode =
