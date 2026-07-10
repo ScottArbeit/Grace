@@ -103,8 +103,8 @@ SELECT TOP (1)
     rate.UnitName,
     rate.UnitQuantity,
     rate.UnitPriceMicros,
-    rate.EffectiveFromUtc,
-    rate.EffectiveToUtc
+    applicability.EffectiveFromUtc,
+    applicability.EffectiveToUtc
 FROM ops.CustomerPricingAssignment AS assignment WITH (READCOMMITTEDLOCK)
 INNER JOIN ops.PricingPlan AS plan WITH (READCOMMITTEDLOCK)
     ON plan.PricingPlanId = assignment.PricingPlanId
@@ -113,6 +113,20 @@ INNER JOIN ops.BillableUsageKindMapping AS mapping WITH (READCOMMITTEDLOCK)
 INNER JOIN ops.PricingRate AS rate WITH (READCOMMITTEDLOCK)
     ON rate.PricingPlanId = assignment.PricingPlanId
     AND rate.BillableUsageKind = mapping.BillableUsageKind
+CROSS APPLY
+(
+    SELECT
+        MAX(contributor.EffectiveFromUtc) AS EffectiveFromUtc,
+        MIN(contributor.EffectiveToUtc) AS EffectiveToUtc
+    FROM
+    (
+        VALUES
+            (assignment.EffectiveFromUtc, assignment.EffectiveToUtc),
+            (plan.EffectiveFromUtc, plan.EffectiveToUtc),
+            (mapping.EffectiveFromUtc, mapping.EffectiveToUtc),
+            (rate.EffectiveFromUtc, rate.EffectiveToUtc)
+    ) AS contributor(EffectiveFromUtc, EffectiveToUtc)
+) AS applicability
 WHERE assignment.CustomerId = @CustomerId
 AND assignment.OwnerId = @OwnerId
 AND assignment.OrganizationId = @OrganizationId

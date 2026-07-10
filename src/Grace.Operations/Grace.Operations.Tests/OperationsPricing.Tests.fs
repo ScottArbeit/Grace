@@ -167,6 +167,39 @@ type OperationsPricingTests() =
             |> Seq.exists (fun property -> property.Name = "PricingPlanId"))
         |> fun foreignKey -> foreignKey.GetConstraintName()
 
+    /// Narrows one contributor while leaving the selected pricing identities and amount unchanged.
+    let catalogWithContributorWindow contributor effectiveFrom effectiveTo =
+        match contributor with
+        | "assignment" ->
+            { OperationsPricingTestData.catalog with
+                CustomerPricingAssignments =
+                    [
+                        { OperationsPricingTestData.assignment with EffectiveFrom = effectiveFrom; EffectiveTo = effectiveTo }
+                    ]
+            }
+        | "plan" ->
+            { OperationsPricingTestData.catalog with
+                PricingPlans =
+                    [
+                        { OperationsPricingTestData.plan with EffectiveFrom = effectiveFrom; EffectiveTo = effectiveTo }
+                    ]
+            }
+        | "mapping" ->
+            { OperationsPricingTestData.catalog with
+                BillableUsageKindMappings =
+                    [
+                        { OperationsPricingTestData.mapping with EffectiveFrom = effectiveFrom; EffectiveTo = effectiveTo }
+                    ]
+            }
+        | "rate" ->
+            { OperationsPricingTestData.catalog with
+                PricingRates =
+                    [
+                        { OperationsPricingTestData.julyRate with EffectiveFrom = effectiveFrom; EffectiveTo = effectiveTo }
+                    ]
+            }
+        | _ -> invalidArg (nameof contributor) $"Unknown pricing contributor '{contributor}'."
+
     /// Verifies effective-rate selection requires customer assignment, mapping, and rate rows.
     [<Test>]
     member _.EffectiveRateSelectionFindsCustomerRateForBillableUsageKind() =
@@ -180,6 +213,93 @@ type OperationsPricingTests() =
                 Assert.That(selected.Value.PricingRateId, Is.EqualTo(OperationsPricingTestData.julyRate.PricingRateId))
                 Assert.That(selected.Value.BillableUsageKind, Is.EqualTo(OperationsPricingTestData.repositoryStorageBillableUsageKind))
                 Assert.That(selected.Value.UnitPriceMicros, Is.EqualTo(10L)))
+        )
+
+    /// Verifies every open-ended contributor produces an open-ended complete applicability window.
+    [<Test>]
+    member _.EffectiveRateSelectionReturnsOpenWindowOnlyWhenEveryContributorIsOpenEnded() =
+        let openRate = { OperationsPricingTestData.julyRate with EffectiveTo = None }
+
+        let catalog = { OperationsPricingTestData.catalog with PricingRates = [ openRate ] }
+
+        let selected = PricingRateSelection.trySelect (OperationsPricingTestData.query (Instant.FromUtc(2026, 7, 15, 12, 0))) catalog
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(selected.Value.EffectiveFrom, Is.EqualTo(OperationsPricingTestData.julyStart))
+                Assert.That(selected.Value.EffectiveTo, Is.EqualTo(None)))
+        )
+
+    /// Verifies each effective-dated prerequisite independently constrains the complete returned window.
+    [<TestCase("assignment")>]
+    [<TestCase("plan")>]
+    [<TestCase("mapping")>]
+    [<TestCase("rate")>]
+    member _.EffectiveRateSelectionIntersectsEachContributingWindow(contributor: string) =
+        let effectiveFrom = Instant.FromUtc(2026, 7, 10, 0, 0)
+        let effectiveTo = Some(Instant.FromUtc(2026, 7, 20, 0, 0))
+        let catalog = catalogWithContributorWindow contributor effectiveFrom effectiveTo
+
+        let selected = PricingRateSelection.trySelect (OperationsPricingTestData.query (Instant.FromUtc(2026, 7, 15, 12, 0))) catalog
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(selected.Value.EffectiveFrom, Is.EqualTo(effectiveFrom))
+                Assert.That(selected.Value.EffectiveTo, Is.EqualTo(effectiveTo))
+                Assert.That(selected.Value.CustomerPricingAssignmentId, Is.EqualTo(OperationsPricingTestData.assignment.CustomerPricingAssignmentId))
+                Assert.That(selected.Value.PricingPlanId, Is.EqualTo(OperationsPricingTestData.plan.PricingPlanId))
+                Assert.That(selected.Value.BillableUsageKindMappingId, Is.EqualTo(OperationsPricingTestData.mapping.BillableUsageKindMappingId))
+                Assert.That(selected.Value.PricingRateId, Is.EqualTo(OperationsPricingTestData.julyRate.PricingRateId))
+                Assert.That(selected.Value.UnitPriceMicros, Is.EqualTo(OperationsPricingTestData.julyRate.UnitPriceMicros)))
+        )
+
+    /// Verifies different contributors can independently provide the latest start and earliest finite end.
+    [<Test>]
+    member _.EffectiveRateSelectionUsesLatestStartAndEarliestFiniteEndAcrossContributors() =
+        let latestStart = Instant.FromUtc(2026, 7, 12, 0, 0)
+        let earliestEnd = Instant.FromUtc(2026, 7, 18, 0, 0)
+
+        let catalog =
+            { OperationsPricingTestData.catalog with
+                PricingPlans =
+                    [
+                        { OperationsPricingTestData.plan with EffectiveFrom = Instant.FromUtc(2026, 7, 5, 0, 0); EffectiveTo = Some earliestEnd }
+                    ]
+                BillableUsageKindMappings =
+                    [
+                        { OperationsPricingTestData.mapping with EffectiveFrom = latestStart; EffectiveTo = Some(Instant.FromUtc(2026, 7, 25, 0, 0)) }
+                    ]
+                PricingRates =
+                    [
+                        { OperationsPricingTestData.julyRate with EffectiveFrom = Instant.FromUtc(2026, 7, 8, 0, 0); EffectiveTo = None }
+                    ]
+            }
+
+        let selected = PricingRateSelection.trySelect (OperationsPricingTestData.query (Instant.FromUtc(2026, 7, 15, 12, 0))) catalog
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(selected.Value.EffectiveFrom, Is.EqualTo(latestStart))
+                Assert.That(selected.Value.EffectiveTo, Is.EqualTo(Some earliestEnd))
+                Assert.That(selected.Value.PricingRateId, Is.EqualTo(OperationsPricingTestData.julyRate.PricingRateId))
+                Assert.That(selected.Value.UnitPriceMicros, Is.EqualTo(OperationsPricingTestData.julyRate.UnitPriceMicros)))
+        )
+
+    /// Verifies an end instant is excluded even when every other contributor remains effective.
+    [<Test>]
+    member _.EffectiveRateSelectionExcludesContributorEndBoundary() =
+        let boundary = Instant.FromUtc(2026, 7, 20, 0, 0)
+        let catalog = catalogWithContributorWindow "assignment" OperationsPricingTestData.julyStart (Some boundary)
+
+        let beforeBoundary = PricingRateSelection.trySelect (OperationsPricingTestData.query (boundary - Duration.FromTicks(1L))) catalog
+
+        let atBoundary = PricingRateSelection.trySelect (OperationsPricingTestData.query boundary) catalog
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(beforeBoundary.IsSome, Is.True)
+                Assert.That(beforeBoundary.Value.EffectiveTo, Is.EqualTo(Some boundary))
+                Assert.That(atBoundary, Is.EqualTo(None)))
         )
 
     /// Verifies tracked usage is not billable unless an explicit usage-kind mapping exists.
@@ -391,6 +511,13 @@ type OperationsPricingTests() =
                 Assert.That(sql, Does.Contain("assignment.OrganizationId = @OrganizationId"))
                 Assert.That(sql, Does.Contain("assignment.RepositoryId = @RepositoryId"))
                 Assert.That(sql, Does.Contain("mapping.FactKind = @FactKind"))
+                Assert.That(sql, Does.Contain("MAX(contributor.EffectiveFromUtc) AS EffectiveFromUtc"))
+                Assert.That(sql, Does.Contain("MIN(contributor.EffectiveToUtc) AS EffectiveToUtc"))
+                Assert.That(sql, Does.Contain("assignment.EffectiveFromUtc, assignment.EffectiveToUtc"))
+                Assert.That(sql, Does.Contain("plan.EffectiveFromUtc, plan.EffectiveToUtc"))
+                Assert.That(sql, Does.Contain("mapping.EffectiveFromUtc, mapping.EffectiveToUtc"))
+                Assert.That(sql, Does.Contain("rate.EffectiveFromUtc, rate.EffectiveToUtc"))
+                Assert.That(sql, Does.Not.Contain("9999-12-31"))
                 Assert.That(sql, Does.Contain("ORDER BY")))
         )
 

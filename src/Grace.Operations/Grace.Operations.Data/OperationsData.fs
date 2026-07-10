@@ -151,6 +151,17 @@ module PricingRateSelection =
                 compare (identity left) (identity right))
         |> List.tryHead
 
+    /// Intersects selected pricing prerequisites into the complete customer-price applicability window.
+    let private intersectEffectiveWindows windows =
+        let effectiveFrom = windows |> List.map fst |> List.max
+
+        let effectiveTo =
+            match windows |> List.choose snd with
+            | [] -> None
+            | finiteEnds -> finiteEnds |> List.min |> Some
+
+        effectiveFrom, effectiveTo
+
     /// Selects the effective rate for a customer usage fact without making unmapped tracked facts billable.
     let trySelect (query: PricingRateSelectionQuery) (catalog: PricingCatalogSnapshot) =
         let assignment =
@@ -192,6 +203,12 @@ module PricingRateSelection =
 
         match assignment, plan, mapping, rate with
         | Some selectedAssignment, Some selectedPlan, Some selectedMapping, Some selectedRate ->
+            let effectiveFrom, effectiveTo =
+                intersectEffectiveWindows [ selectedAssignment.EffectiveFrom, selectedAssignment.EffectiveTo
+                                            selectedPlan.EffectiveFrom, selectedPlan.EffectiveTo
+                                            selectedMapping.EffectiveFrom, selectedMapping.EffectiveTo
+                                            selectedRate.EffectiveFrom, selectedRate.EffectiveTo ]
+
             Some
                 {
                     CustomerPricingAssignmentId = selectedAssignment.CustomerPricingAssignmentId
@@ -208,8 +225,8 @@ module PricingRateSelection =
                     UnitName = selectedRate.UnitName
                     UnitQuantity = selectedRate.UnitQuantity
                     UnitPriceMicros = selectedRate.UnitPriceMicros
-                    EffectiveFrom = selectedRate.EffectiveFrom
-                    EffectiveTo = selectedRate.EffectiveTo
+                    EffectiveFrom = effectiveFrom
+                    EffectiveTo = effectiveTo
                 }
         | _ -> None
 
