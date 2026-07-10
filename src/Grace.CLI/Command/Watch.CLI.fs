@@ -3234,7 +3234,7 @@ module Watch =
             ReadGraceStatus: unit -> Task<GraceStatus>
             WriteGraceStatus: GraceStatus -> Task<unit>
             RequestResync: string -> unit
-            WriteUpdateMarker: string -> string -> unit
+            TryCreateUpdateMarker: string -> string -> bool
             BeforeFinalVerification: unit -> Task<unit>
             BeforeStatusReplacementVerification: unit -> Task<unit>
         }
@@ -3422,6 +3422,37 @@ module Watch =
                 deleteMarker ()
             with
             | _ -> ()
+
+    /// Creates the shared update marker without replacing a marker owned by another Grace command.
+    let internal tryCreateCurrentBranchMaterializationMarkerForWatchTests (markerFileName: string) (content: string) =
+        let mutable markerCreated = false
+
+        try
+            use stream = new FileStream(markerFileName, FileMode.CreateNew, FileAccess.Write, FileShare.Read)
+            markerCreated <- true
+            use writer = new StreamWriter(stream, UTF8Encoding(false))
+            writer.Write(content)
+            writer.Flush()
+            stream.Flush(true)
+            true
+        with
+        | :? IOException when not markerCreated -> false
+        | ex ->
+            if markerCreated then
+                try
+                    File.Delete(markerFileName)
+                with
+                | _ -> ()
+
+            raise ex
+
+    /// Reports whether the shared marker still contains the purpose value written by this materialization.
+    let private currentBranchMaterializationMarkerIsOwned markerFileName expectedContent =
+        try
+            File.Exists(markerFileName)
+            && String.Equals(File.ReadAllText(markerFileName), expectedContent, StringComparison.Ordinal)
+        with
+        | _ -> false
 
     /// Reports whether a child materialization path is within a parent materialization path.
     let private materializationPathIsUnder parentPath childPath =
@@ -3994,23 +4025,22 @@ module Watch =
         task {
             let markerFileName = updateInProgressFileName ()
             let completedFileName = updateMarkerCompletedFileName ()
+            let markerContent = "`grace watch` remote materialization is in progress."
 
             Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
             |> ignore
 
-            try
-                clients.WriteUpdateMarker markerFileName "`grace watch` remote materialization is in progress."
-            with
-            | ex ->
-                try
-                    if File.Exists(markerFileName) then File.Delete(markerFileName)
-                with
-                | _ -> ()
+            let markerOwned = clients.TryCreateUpdateMarker markerFileName markerContent
 
-                raise ex
+            if not markerOwned then
+                invalidOp "Remote materialization cannot start because another Grace command created the shared update marker."
 
             try
                 do! clients.BeforeFinalVerification()
+
+                if not (currentBranchMaterializationMarkerIsOwned markerFileName markerContent) then
+                    invalidOp "Remote materialization cannot continue because its shared update marker was replaced."
+
                 do! verifyCurrentBranchMaterializationObjectCache plan
                 do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
                 do! verifyCurrentBranchMaterializationRetainedFiles plan
@@ -4103,17 +4133,20 @@ module Watch =
                 graceStatus <- remoteStatus
                 updateGraceStatusDirectoryIds remoteStatus
             finally
-                let completedUtc = DateTime.UtcNow
+                if currentBranchMaterializationMarkerIsOwned markerFileName markerContent then
+                    let completedUtc = DateTime.UtcNow
 
-                completeCurrentBranchMaterializationMarkerForWatchTests
-                    (fun () ->
-                        File.WriteAllText(
-                            completedFileName,
-                            serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
-                        )
+                    completeCurrentBranchMaterializationMarkerForWatchTests
+                        (fun () ->
+                            File.WriteAllText(
+                                completedFileName,
+                                serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+                            )
 
-                        recordGraceUpdateMarkerCompletedUtc completedUtc)
-                    (fun () -> if File.Exists(markerFileName) then File.Delete(markerFileName))
+                            recordGraceUpdateMarkerCompletedUtc completedUtc)
+                        (fun () ->
+                            if currentBranchMaterializationMarkerIsOwned markerFileName markerContent then
+                                File.Delete(markerFileName))
         }
 
     /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
@@ -4261,7 +4294,7 @@ module Watch =
                 ReadGraceStatus = readGraceStatusFile
                 WriteGraceStatus = writeGraceStatusFile
                 RequestResync = requestGraceWatchExplicitResync
-                WriteUpdateMarker = fun markerFileName content -> File.WriteAllText(markerFileName, content)
+                TryCreateUpdateMarker = tryCreateCurrentBranchMaterializationMarkerForWatchTests
                 BeforeFinalVerification = fun () -> Task.FromResult(())
                 BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
             }
