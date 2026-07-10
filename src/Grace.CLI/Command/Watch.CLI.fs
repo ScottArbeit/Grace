@@ -3234,6 +3234,7 @@ module Watch =
             ReadGraceStatus: unit -> Task<GraceStatus>
             WriteGraceStatus: GraceStatus -> Task<unit>
             RequestResync: string -> unit
+            WriteUpdateMarker: string -> string -> unit
             BeforeFinalVerification: unit -> Task<unit>
             BeforeStatusReplacementVerification: unit -> Task<unit>
         }
@@ -3259,9 +3260,17 @@ module Watch =
     /// Normalizes paths for exact materialization target comparisons.
     let private normalizedMaterializationPath (relativePath: RelativePath) = normalizeFilePath $"{relativePath}"
 
-    /// Compares an actual file identity with expected SHA-256 and optional BLAKE3 evidence.
-    let internal currentBranchMaterializationFileIdentityMatchesForWatchTests expectedSha256Hash expectedBlake3Hash actualSha256Hash actualBlake3Hash =
-        actualSha256Hash = expectedSha256Hash
+    /// Compares declared size and content hashes so equal hashes cannot conceal impossible file metadata.
+    let internal currentBranchMaterializationFileIdentityMatchesForWatchTests
+        expectedSize
+        expectedSha256Hash
+        expectedBlake3Hash
+        actualSize
+        actualSha256Hash
+        actualBlake3Hash
+        =
+        actualSize = expectedSize
+        && actualSha256Hash = expectedSha256Hash
         && (String.IsNullOrWhiteSpace(string expectedBlake3Hash)
             || actualBlake3Hash = expectedBlake3Hash)
 
@@ -3366,8 +3375,10 @@ module Watch =
         if
             currentFiles.TryGetValue(path, &currentFile)
             && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                fileVersion.Size
                 fileVersion.Sha256Hash
                 fileVersion.Blake3Hash
+                currentFile.Size
                 currentFile.Sha256Hash
                 currentFile.Blake3Hash
         then
@@ -3498,8 +3509,10 @@ module Watch =
                 || not (currentFiles.TryGetValue(path, &currentFile))
                 || not (
                     currentBranchMaterializationFileIdentityMatchesForWatchTests
+                        remoteFile.Size
                         remoteFile.Sha256Hash
                         remoteFile.Blake3Hash
+                        currentFile.Size
                         currentFile.Sha256Hash
                         currentFile.Blake3Hash
                 ))
@@ -3514,8 +3527,10 @@ module Watch =
                 not (currentDirectories.ContainsKey path)
                 && currentFiles.TryGetValue(path, &currentFile)
                 && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                    remoteFile.Size
                     remoteFile.Sha256Hash
                     remoteFile.Blake3Hash
+                    currentFile.Size
                     currentFile.Sha256Hash
                     currentFile.Blake3Hash)
             |> Seq.toArray
@@ -3540,8 +3555,10 @@ module Watch =
                 | Some actual ->
                     return
                         currentBranchMaterializationFileIdentityMatchesForWatchTests
+                            fileVersion.Size
                             fileVersion.Sha256Hash
                             fileVersion.Blake3Hash
+                            actual.Size
                             actual.Sha256Hash
                             actual.Blake3Hash
                 | None -> return false
@@ -3749,6 +3766,10 @@ module Watch =
                             yield DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
 
                         for fileVersion in directoryVersion.Files do
+                            if not (currentBranchMaterializationPathIsImmediateChildForWatchTests directoryVersion.RelativePath fileVersion.RelativePath) then
+                                invalidOp
+                                    $"Remote materialization FileVersion path {fileVersion.RelativePath} is not an immediate child of {directoryVersion.RelativePath}."
+
                             yield DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash
                     }
 
@@ -3830,6 +3851,7 @@ module Watch =
                     invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
                 else
                     try
+                        let actualSize = FileInfo(objectCachePath).Length
                         use stream = File.Open(objectCachePath, fileStreamOptionsRead)
                         let! sha256Hash = computeSha256ForFile stream fileVersion.RelativePath
                         stream.Position <- 0L
@@ -3839,8 +3861,10 @@ module Watch =
                             not
                                 (
                                     currentBranchMaterializationFileIdentityMatchesForWatchTests
+                                        fileVersion.Size
                                         fileVersion.Sha256Hash
                                         fileVersion.Blake3Hash
+                                        actualSize
                                         sha256Hash
                                         (Blake3Hash $"{blake3Hash}")
                                 )
@@ -3867,7 +3891,16 @@ module Watch =
             Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
             |> ignore
 
-            File.WriteAllText(markerFileName, "`grace watch` remote materialization is in progress.")
+            try
+                clients.WriteUpdateMarker markerFileName "`grace watch` remote materialization is in progress."
+            with
+            | ex ->
+                try
+                    if File.Exists(markerFileName) then File.Delete(markerFileName)
+                with
+                | _ -> ()
+
+                raise ex
 
             try
                 do! clients.BeforeFinalVerification()
@@ -3945,8 +3978,20 @@ module Watch =
                     File.Copy(sourcePath, targetPath, true)
                     File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
 
+                    let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                    if not copiedTargetMatches then
+                        invalidOp $"Remote materialization copied target did not match declared identity: {fileVersion.RelativePath}."
+
                 do! clients.BeforeStatusReplacementVerification()
                 do! verifyCurrentBranchMaterializationRetainedFiles plan
+
+                for fileVersion in plan.FileWrites do
+                    let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                    if not copiedTargetMatches then
+                        invalidOp $"Remote materialization copied target changed before status replacement: {fileVersion.RelativePath}."
+
                 do! clients.WriteGraceStatus remoteStatus
                 graceStatus <- remoteStatus
                 updateGraceStatusDirectoryIds remoteStatus
@@ -3974,7 +4019,15 @@ module Watch =
                 clients.RequestResync $"remote materialization metadata fetch failed before exact apply: {error.Error}"
                 raise (InvalidOperationException(error.Error))
             | Ok remoteDirectoryVersions ->
-                let! currentStatus = clients.ReadGraceStatus()
+                let! currentStatus =
+                    task {
+                        try
+                            return! clients.ReadGraceStatus()
+                        with
+                        | ex ->
+                            clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
+                            return raise ex
+                    }
 
                 try
                     validateCurrentBranchMaterializationDirectoryClosureAndHashes payload.DirectoryId remoteDirectoryVersions
@@ -3998,7 +4051,13 @@ module Watch =
                     clients.RequestResync $"remote materialization metadata missing requested root before exact apply: {payload.DirectoryId}"
                     invalidOp $"Remote materialization metadata did not include the requested root DirectoryVersionId {payload.DirectoryId}."
 
-                let plan = buildCurrentBranchRemoteMaterializationPlanForWatchTests currentStatus remoteStatus
+                let plan =
+                    try
+                        buildCurrentBranchRemoteMaterializationPlanForWatchTests currentStatus remoteStatus
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization plan construction failed before exact apply: {ex.Message}"
+                        raise ex
 
                 try
                     do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
@@ -4057,6 +4116,7 @@ module Watch =
                 ReadGraceStatus = readGraceStatusFile
                 WriteGraceStatus = writeGraceStatusFile
                 RequestResync = requestGraceWatchExplicitResync
+                WriteUpdateMarker = fun markerFileName content -> File.WriteAllText(markerFileName, content)
                 BeforeFinalVerification = fun () -> Task.FromResult(())
                 BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
             }
