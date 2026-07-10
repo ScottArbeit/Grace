@@ -3260,6 +3260,113 @@ module Watch =
     /// Normalizes paths for exact materialization target comparisons.
     let private normalizedMaterializationPath (relativePath: RelativePath) = normalizeFilePath $"{relativePath}"
 
+    /// Verifies that the persisted status still represents the clean snapshot accepted by the serialized coordinator gate.
+    let private validateCurrentBranchMaterializationAcceptedStatus (acceptedStatus: GraceWatchStatus) (currentStatus: GraceStatus) =
+        let currentDirectoryIds = currentStatus.Index.Keys.ToHashSet()
+
+        if
+            currentStatus.RootDirectoryId
+            <> acceptedStatus.RootDirectoryId
+            || currentStatus.RootDirectorySha256Hash
+               <> acceptedStatus.RootDirectorySha256Hash
+            || currentStatus.RootDirectoryBlake3Hash
+               <> acceptedStatus.RootDirectoryBlake3Hash
+            || not (currentDirectoryIds.SetEquals(acceptedStatus.DirectoryIds))
+        then
+            invalidOp "Remote materialization persisted status no longer matches the clean snapshot accepted by the coordinator gate."
+
+    /// Rejects fetched metadata that is not an exact canonical tree for the configured repository and worktree.
+    let private validateCurrentBranchMaterializationAcceptedMetadata (remoteDirectoryVersions: DirectoryVersion array) =
+        let current = Current()
+        let rootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(current.RootDirectory))
+
+        let reservedPaths =
+            [|
+                current.GraceDirectory
+                current.ObjectDirectory
+                current.DirectoryVersionCache
+                current.GraceStatusFile
+                current.GraceObjectCacheFile
+                current.ConfigurationDirectory
+            |]
+            |> Array.filter (String.IsNullOrWhiteSpace >> not)
+            |> Array.map (fun path -> Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)))
+            |> Array.distinct
+
+        let targetFullPath (relativePath: RelativePath) =
+            let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, string relativePath))
+            let rootWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
+
+            if
+                not (String.Equals(rootDirectory, fullPath, watchPathComparison))
+                && not (fullPath.StartsWith(rootWithSeparator, watchPathComparison))
+            then
+                invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
+
+            fullPath
+
+        let pathIsReserved (relativePath: RelativePath) =
+            let fullPath =
+                targetFullPath relativePath
+                |> Path.TrimEndingDirectorySeparator
+
+            reservedPaths
+            |> Array.exists (fun reservedPath ->
+                String.Equals(fullPath, reservedPath, watchPathComparison)
+                || fullPath.StartsWith(reservedPath + string Path.DirectorySeparatorChar, watchPathComparison))
+
+        let validateCanonicalPath allowRoot (relativePath: RelativePath) =
+            let rawPath = string relativePath
+            let normalizedPath = normalizedMaterializationPath relativePath
+
+            let isCanonical =
+                if allowRoot && rawPath = Constants.RootDirectoryPath then
+                    true
+                else
+                    not (String.IsNullOrWhiteSpace(rawPath))
+                    && rawPath = normalizedPath
+                    && not (Path.IsPathRooted(rawPath))
+                    && not (rawPath.StartsWith("/", StringComparison.Ordinal))
+                    && not (rawPath.EndsWith("/", StringComparison.Ordinal))
+                    && rawPath.Split('/', StringSplitOptions.None)
+                       |> Array.forall (fun segment ->
+                           not (String.IsNullOrWhiteSpace(segment))
+                           && segment <> "."
+                           && segment <> "..")
+
+            if not isCanonical then
+                invalidOp $"Remote materialization path is not in canonical repository-relative form: '{rawPath}'."
+
+            let fullPath =
+                targetFullPath relativePath
+                |> Path.TrimEndingDirectorySeparator
+
+            if
+                not allowRoot
+                && String.Equals(fullPath, rootDirectory, watchPathComparison)
+            then
+                invalidOp $"Remote materialization non-root target resolves to the repository root: '{rawPath}'."
+
+            if pathIsReserved relativePath then
+                invalidOp $"Remote materialization target overlaps Grace local storage: '{rawPath}'."
+
+        for directoryVersion in remoteDirectoryVersions do
+            if directoryVersion.OwnerId <> current.OwnerId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched owner id."
+
+            if directoryVersion.OrganizationId
+               <> current.OrganizationId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched organization id."
+
+            if directoryVersion.RepositoryId
+               <> current.RepositoryId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched repository id."
+
+            validateCanonicalPath true directoryVersion.RelativePath
+
+            for fileVersion in directoryVersion.Files do
+                validateCanonicalPath false fileVersion.RelativePath
+
     /// Compares declared size and content hashes so equal hashes cannot conceal impossible file metadata.
     let internal currentBranchMaterializationFileIdentityMatchesForWatchTests
         expectedSize
@@ -4010,7 +4117,7 @@ module Watch =
         }
 
     /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
-    let internal applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients payload =
+    let private applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus =
         task {
             configureWatchPathComparisonForCurrentRepository ()
 
@@ -4030,6 +4137,8 @@ module Watch =
                     }
 
                 try
+                    validateCurrentBranchMaterializationAcceptedStatus acceptedStatus currentStatus
+                    validateCurrentBranchMaterializationAcceptedMetadata remoteDirectoryVersions
                     validateCurrentBranchMaterializationDirectoryClosureAndHashes payload.DirectoryId remoteDirectoryVersions
                     validateCurrentBranchMaterializationPathRepresentability remoteDirectoryVersions
                     validateCurrentBranchMaterializationRootIdentity payload remoteDirectoryVersions
@@ -4082,9 +4191,45 @@ module Watch =
                     raise ex
         }
 
+    /// Applies exact materialization with an explicitly supplied coordinator-accepted status snapshot.
+    let internal applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests clients payload acceptedStatus =
+        applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
+
+    /// Preserves the direct apply test boundary by deriving an equivalent accepted snapshot from its configured local status.
+    let internal applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients payload =
+        task {
+            let! currentStatus =
+                task {
+                    try
+                        return! clients.ReadGraceStatus()
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
+                        return raise ex
+                }
+
+            let current = Current()
+
+            let acceptedStatus =
+                { GraceWatchStatus.Default with
+                    UpdatedAt = getCurrentInstant ()
+                    RepositoryId = current.RepositoryId
+                    RepositoryName = current.RepositoryName
+                    BranchId = current.BranchId
+                    BranchName = current.BranchName
+                    RootDirectory = current.RootDirectory
+                    RootDirectoryId = currentStatus.RootDirectoryId
+                    RootDirectorySha256Hash = currentStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = currentStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = currentStatus.Index.Keys.ToHashSet()
+                }
+
+            return! applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
+        }
+
     /// Applies one BranchDto-confirmed current-branch Reference without downloading missing object content.
-    let private applyCurrentBranchReferenceMaterialization payload _ =
-        applyCurrentBranchReferenceMaterializationWithClientsForWatchTests
+    let private applyCurrentBranchReferenceMaterialization payload acceptedStatus =
+        applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
             {
                 GetRemoteDirectoryVersions =
                     fun rootDirectoryId correlationId ->
@@ -4121,6 +4266,7 @@ module Watch =
                 BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
             }
             payload
+            acceptedStatus
 
     /// Publishes and verifies the dirty materialization boundary before target mutation can begin.
     let private tryPublishCurrentBranchMaterializationPendingStatus (_status: GraceWatchStatus) =
