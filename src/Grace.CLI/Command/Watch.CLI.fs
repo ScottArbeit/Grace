@@ -3259,6 +3259,54 @@ module Watch =
     /// Normalizes paths for exact materialization target comparisons.
     let private normalizedMaterializationPath (relativePath: RelativePath) = normalizeFilePath $"{relativePath}"
 
+    /// Compares an actual file identity with expected SHA-256 and optional BLAKE3 evidence.
+    let internal currentBranchMaterializationFileIdentityMatchesForWatchTests expectedSha256Hash expectedBlake3Hash actualSha256Hash actualBlake3Hash =
+        actualSha256Hash = expectedSha256Hash
+        && (String.IsNullOrWhiteSpace(string expectedBlake3Hash)
+            || actualBlake3Hash = expectedBlake3Hash)
+
+    /// Reports whether recursive metadata describes a normalized immediate child of its parent path.
+    let internal currentBranchMaterializationPathIsImmediateChildForWatchTests (parentPath: RelativePath) (childPath: RelativePath) =
+        let rawParentPath = string parentPath
+        let rawChildPath = string childPath
+
+        let hasTraversalSegment (path: string) =
+            path
+                .Replace('\\', '/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun segment -> segment = "." || segment = "..")
+
+        let isAbsolutePath (path: string) =
+            Path.IsPathRooted(path)
+            || path.StartsWith("/", StringComparison.Ordinal)
+            || path.StartsWith("\\", StringComparison.Ordinal)
+            || (path.Length >= 2
+                && Char.IsLetter(path[0])
+                && path[1] = ':')
+
+        let parent = normalizedMaterializationPath parentPath
+        let child = normalizedMaterializationPath childPath
+
+        not (String.IsNullOrWhiteSpace(rawChildPath))
+        && not (isAbsolutePath rawChildPath)
+        && not (hasTraversalSegment rawChildPath)
+        && (parent = Constants.RootDirectoryPath
+            && child <> Constants.RootDirectoryPath
+            && not (child.Contains('/'))
+            || parent <> Constants.RootDirectoryPath
+               && child.StartsWith(parent + "/", watchPathComparison)
+               && not (child.Substring(parent.Length + 1).Contains('/')))
+
+    /// Persists completion evidence and always attempts best-effort marker deletion without masking persistence failure.
+    let internal completeCurrentBranchMaterializationMarkerForWatchTests writeCompletion deleteMarker =
+        try
+            writeCompletion ()
+        finally
+            try
+                deleteMarker ()
+            with
+            | _ -> ()
+
     /// Reports whether a child materialization path is within a parent materialization path.
     let private materializationPathIsUnder parentPath childPath =
         let parentPath = normalizedMaterializationPath parentPath
@@ -3315,9 +3363,14 @@ module Watch =
         let path = normalizedMaterializationPath fileVersion.RelativePath
         let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
 
-        if currentFiles.TryGetValue(path, &currentFile)
-           && currentFile.Sha256Hash = fileVersion.Sha256Hash
-           && currentFile.Blake3Hash = fileVersion.Blake3Hash then
+        if
+            currentFiles.TryGetValue(path, &currentFile)
+            && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                fileVersion.Sha256Hash
+                fileVersion.Blake3Hash
+                currentFile.Sha256Hash
+                currentFile.Blake3Hash
+        then
             let fullPath = materializationTargetFullPath fileVersion.RelativePath
 
             if File.Exists(fullPath) then
@@ -3443,8 +3496,13 @@ module Watch =
 
                 currentDirectories.ContainsKey path
                 || not (currentFiles.TryGetValue(path, &currentFile))
-                || currentFile.Sha256Hash <> remoteFile.Sha256Hash
-                || currentFile.Blake3Hash <> remoteFile.Blake3Hash)
+                || not (
+                    currentBranchMaterializationFileIdentityMatchesForWatchTests
+                        remoteFile.Sha256Hash
+                        remoteFile.Blake3Hash
+                        currentFile.Sha256Hash
+                        currentFile.Blake3Hash
+                ))
             |> Seq.toArray
 
         let retainedFiles =
@@ -3455,8 +3513,11 @@ module Watch =
 
                 not (currentDirectories.ContainsKey path)
                 && currentFiles.TryGetValue(path, &currentFile)
-                && currentFile.Sha256Hash = remoteFile.Sha256Hash
-                && currentFile.Blake3Hash = remoteFile.Blake3Hash)
+                && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                    remoteFile.Sha256Hash
+                    remoteFile.Blake3Hash
+                    currentFile.Sha256Hash
+                    currentFile.Blake3Hash)
             |> Seq.toArray
 
         {
@@ -3478,8 +3539,11 @@ module Watch =
                 match! createLocalFileVersion (FileInfo fullPath) with
                 | Some actual ->
                     return
-                        actual.Sha256Hash = fileVersion.Sha256Hash
-                        && actual.Blake3Hash = fileVersion.Blake3Hash
+                        currentBranchMaterializationFileIdentityMatchesForWatchTests
+                            fileVersion.Sha256Hash
+                            fileVersion.Blake3Hash
+                            actual.Sha256Hash
+                            actual.Blake3Hash
                 | None -> return false
         }
 
@@ -3644,6 +3708,12 @@ module Watch =
         if not (versionsById.ContainsKey(rootDirectoryId)) then
             invalidOp $"Remote materialization metadata did not include requested root DirectoryVersionId {rootDirectoryId}."
 
+        let rootDirectoryVersion = versionsById[rootDirectoryId]
+
+        if normalizedMaterializationPath rootDirectoryVersion.RelativePath
+           <> Constants.RootDirectoryPath then
+            invalidOp $"Remote materialization root DirectoryVersion {rootDirectoryId} has non-root path {rootDirectoryVersion.RelativePath}."
+
         let visiting = HashSet<DirectoryVersionId>()
         let visited = HashSet<DirectoryVersionId>()
 
@@ -3665,6 +3735,10 @@ module Watch =
 
                     if not (versionsById.TryGetValue(childId, &child)) then
                         invalidOp $"Remote materialization metadata is missing child DirectoryVersion entry {directoryVersion.RelativePath}->{childId}."
+
+                    if not (currentBranchMaterializationPathIsImmediateChildForWatchTests directoryVersion.RelativePath child.RelativePath) then
+                        invalidOp
+                            $"Remote materialization child DirectoryVersion path {child.RelativePath} is not an immediate descendant of {directoryVersion.RelativePath}."
 
                     validate childId
                     children.Add(child)
@@ -3761,9 +3835,16 @@ module Watch =
                         stream.Position <- 0L
                         let! blake3Hash = computeBlake3ForFile stream
 
-                        if sha256Hash <> fileVersion.Sha256Hash
-                           || Blake3Hash $"{blake3Hash}"
-                              <> fileVersion.Blake3Hash then
+                        if
+                            not
+                                (
+                                    currentBranchMaterializationFileIdentityMatchesForWatchTests
+                                        fileVersion.Sha256Hash
+                                        fileVersion.Blake3Hash
+                                        sha256Hash
+                                        (Blake3Hash $"{blake3Hash}")
+                                )
+                        then
                             invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
                     with
                     | _ -> invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
@@ -3871,10 +3952,16 @@ module Watch =
                 updateGraceStatusDirectoryIds remoteStatus
             finally
                 let completedUtc = DateTime.UtcNow
-                File.WriteAllText(completedFileName, serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc)
-                recordGraceUpdateMarkerCompletedUtc completedUtc
 
-                if File.Exists(markerFileName) then File.Delete(markerFileName)
+                completeCurrentBranchMaterializationMarkerForWatchTests
+                    (fun () ->
+                        File.WriteAllText(
+                            completedFileName,
+                            serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+                        )
+
+                        recordGraceUpdateMarkerCompletedUtc completedUtc)
+                    (fun () -> if File.Exists(markerFileName) then File.Delete(markerFileName))
         }
 
     /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.

@@ -15573,6 +15573,102 @@ module WatchTests =
             resyncRequests.ToArray()
             |> should not' (equal Array.empty<string>))
 
+    /// Verifies completion persistence failures cannot prevent best-effort shared-marker cleanup or replace the original error.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization cleanup preserves sidecar failure and attempts marker deletion`` () =
+        let markerPath = Path.GetTempFileName()
+        let markerDeletionAttempts = ResizeArray<unit>()
+        let sidecarFailure = InvalidOperationException("injected completion sidecar failure")
+
+        let operation =
+            Action (fun () ->
+                Watch.completeCurrentBranchMaterializationMarkerForWatchTests
+                    (fun () -> raise sidecarFailure)
+                    (fun () ->
+                        markerDeletionAttempts.Add()
+                        File.Delete(markerPath)
+                        raise (IOException("injected marker deletion failure")))
+                |> ignore)
+
+        let observed = Assert.Throws<InvalidOperationException>(operation)
+        observed |> should be (sameAs sidecarFailure)
+        markerDeletionAttempts.Count |> should equal 1
+        File.Exists(markerPath) |> should equal false
+
+    /// Verifies SHA-only expected file identities accept any computed BLAKE3 while retaining strict SHA and present-BLAKE3 checks.
+    [<TestCase("matching-sha", "", "computed-blake3", true)>]
+    [<TestCase("matching-sha", "expected-blake3", "expected-blake3", true)>]
+    [<TestCase("matching-sha", "expected-blake3", "other-blake3", false)>]
+    [<TestCase("expected-sha", "", "computed-blake3", false)>]
+    [<Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization file identity honors optional expected Blake3``
+        (actualSha: string)
+        (expectedBlake3: string)
+        (actualBlake3: string)
+        expected
+        =
+        Watch.currentBranchMaterializationFileIdentityMatchesForWatchTests
+            (Sha256Hash "matching-sha")
+            (Blake3Hash expectedBlake3)
+            (Sha256Hash actualSha)
+            (Blake3Hash actualBlake3)
+        |> should equal expected
+
+    /// Verifies SHA-only remote identities classify matching files as retained and SHA mismatches as planned writes.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization plan supports SHA-only retained and target files`` () =
+        let relativePath = RelativePath "target.txt"
+        let currentFile = localFileVersion relativePath
+
+        let remoteFileWithSha sha256Hash =
+            LocalFileVersion.CreateWithHashes
+                relativePath
+                sha256Hash
+                (Blake3Hash String.Empty)
+                currentFile.IsBinary
+                currentFile.Size
+                currentFile.CreatedAt
+                currentFile.UploadedToObjectStorage
+                currentFile.LastWriteTimeUtc
+
+        let remoteFile = remoteFileWithSha currentFile.Sha256Hash
+        let currentRoot = localDirectoryVersion Constants.RootDirectoryPath (List<DirectoryVersionId>()) (List<LocalFileVersion>([| currentFile |]))
+        let remoteRoot = localDirectoryVersion Constants.RootDirectoryPath (List<DirectoryVersionId>()) (List<LocalFileVersion>([| remoteFile |]))
+
+        let retainedPlan =
+            Watch.buildCurrentBranchRemoteMaterializationPlanForWatchTests (graceStatusFromRootDirectory currentRoot) (graceStatusFromRootDirectory remoteRoot)
+
+        retainedPlan.RetainedFiles.Length
+        |> should equal 1
+
+        retainedPlan.FileWrites.Length |> should equal 0
+
+        let mismatchedRemoteFile = remoteFileWithSha (Sha256Hash "different-sha")
+
+        let mismatchedRemoteRoot =
+            localDirectoryVersion Constants.RootDirectoryPath (List<DirectoryVersionId>()) (List<LocalFileVersion>([| mismatchedRemoteFile |]))
+
+        let writePlan =
+            Watch.buildCurrentBranchRemoteMaterializationPlanForWatchTests
+                (graceStatusFromRootDirectory currentRoot)
+                (graceStatusFromRootDirectory mismatchedRemoteRoot)
+
+        writePlan.RetainedFiles.Length |> should equal 0
+        writePlan.FileWrites.Length |> should equal 1
+
+    /// Verifies recursive metadata accepts only normalized immediate child paths.
+    [<TestCase(".", "child", true)>]
+    [<TestCase("parent", "parent/child", true)>]
+    [<TestCase("parent", "other/child", false)>]
+    [<TestCase("parent", "parent/../child", false)>]
+    [<TestCase("parent", "parent/child/grandchild", false)>]
+    [<TestCase("parent", "C:/absolute", false)>]
+    [<TestCase("parent", "/absolute", false)>]
+    [<Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization validates immediate child paths`` (parentPath: string) (childPath: string) expected =
+        Watch.currentBranchMaterializationPathIsImmediateChildForWatchTests (RelativePath parentPath) (RelativePath childPath)
+        |> should equal expected
+
     /// Verifies recursive metadata is one exact acyclic root closure before status planning.
     [<TestCase("unreachable")>]
     [<TestCase("duplicate")>]
@@ -15580,6 +15676,10 @@ module WatchTests =
     [<TestCase("missing")>]
     [<TestCase("child-hash")>]
     [<TestCase("root-hash")>]
+    [<TestCase("unrelated-path")>]
+    [<TestCase("traversal-path")>]
+    [<TestCase("absolute-path")>]
+    [<TestCase("skipped-level-path")>]
     [<Category("CurrentBranchMaterializationApplyBoundary")>]
     let ``current branch remote materialization rejects untrusted recursive metadata before mutation`` invalidShape =
         withTempRepo (fun root ->
@@ -15587,11 +15687,40 @@ module WatchTests =
             let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
             let childId = Guid.NewGuid()
             let rootId = Guid.NewGuid()
-            let child = remoteDirectoryVersion childId "child" Array.empty Array.empty<FileVersion>
+
+            let childPath =
+                match invalidShape with
+                | "unrelated-path" -> "other/child"
+                | "traversal-path" -> "parent/../child"
+                | "absolute-path" -> Path.Combine(Path.GetPathRoot(root), "absolute-child")
+                | "skipped-level-path" -> "parent/child/grandchild"
+                | _ -> "child"
+
+            let parentPath =
+                match invalidShape with
+                | "unrelated-path"
+                | "traversal-path"
+                | "skipped-level-path" -> "parent"
+                | _ -> Constants.RootDirectoryPath
+
+            let child = remoteDirectoryVersion childId childPath Array.empty Array.empty<FileVersion>
             let remoteRoot = remoteDirectoryVersion rootId Constants.RootDirectoryPath [| childId |] Array.empty<FileVersion>
 
-            setCanonicalRemoteDirectoryHashes remoteRoot [| child |]
+            let remoteParent =
+                if parentPath = Constants.RootDirectoryPath then
+                    remoteRoot
+                else
+                    remoteDirectoryVersion (Guid.NewGuid()) parentPath [| childId |] Array.empty<FileVersion>
+
+            setCanonicalRemoteDirectoryHashes remoteParent [| child |]
             |> ignore
+
+            if remoteParent.DirectoryVersionId
+               <> remoteRoot.DirectoryVersionId then
+                remoteRoot.Directories <- List<DirectoryVersionId>([| remoteParent.DirectoryVersionId |])
+
+                setCanonicalRemoteDirectoryHashes remoteRoot [| remoteParent |]
+                |> ignore
 
             let acceptedSha256Hash = remoteRoot.Sha256Hash
             let acceptedBlake3Hash = remoteRoot.Blake3Hash
@@ -15600,7 +15729,14 @@ module WatchTests =
                 match invalidShape with
                 | "unreachable" ->
                     let extra = remoteDirectoryVersion (Guid.NewGuid()) "extra" Array.empty Array.empty<FileVersion>
-                    [| remoteRoot; child; extra |]
+
+                    [|
+                        remoteRoot
+                        remoteParent
+                        child
+                        extra
+                    |]
+                    |> Array.distinctBy (fun directoryVersion -> directoryVersion.DirectoryVersionId)
                 | "duplicate" -> [| remoteRoot; child; child |]
                 | "cycle" ->
                     child.Directories <- List<DirectoryVersionId>([| rootId |])
@@ -15612,6 +15748,12 @@ module WatchTests =
                 | "root-hash" ->
                     remoteRoot.Blake3Hash <- Blake3Hash "corrupt-root"
                     [| remoteRoot; child |]
+                | "unrelated-path"
+                | "traversal-path"
+                | "absolute-path"
+                | "skipped-level-path" ->
+                    [| remoteRoot; remoteParent; child |]
+                    |> Array.distinctBy (fun directoryVersion -> directoryVersion.DirectoryVersionId)
                 | _ -> failwith $"Unexpected invalid metadata shape: {invalidShape}."
 
             let writtenStatuses = ResizeArray<GraceStatus>()
