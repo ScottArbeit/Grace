@@ -3134,6 +3134,43 @@ module Services =
 
         updateInProgressFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
+    /// Identifies the internal operation that owns the shared working-directory update marker.
+    type internal GraceUpdateMarkerPurpose =
+        | BranchTransition
+        | ReferenceMaterialization
+
+    /// Serializes marker completion evidence so purpose survives marker deletion and Watch restart.
+    let internal serializeGraceUpdateMarkerCompletion purpose (completedUtc: DateTime) =
+        let purposeText =
+            match purpose with
+            | GraceUpdateMarkerPurpose.BranchTransition -> "branch-transition"
+            | GraceUpdateMarkerPurpose.ReferenceMaterialization -> "reference-materialization"
+
+        JsonSerializer.Serialize({| purpose = purposeText; completedUtc = completedUtc.ToString("O", CultureInfo.InvariantCulture) |})
+
+    /// Parses trusted marker completion evidence; legacy or malformed content has no completion authority.
+    let internal tryDeserializeGraceUpdateMarkerCompletion (content: string) =
+        try
+            use document = JsonDocument.Parse(content)
+            let root = document.RootElement
+            let purposeElement = root.GetProperty("purpose")
+            let completedUtcElement = root.GetProperty("completedUtc")
+
+            let purpose =
+                match purposeElement.GetString() with
+                | "branch-transition" -> Some GraceUpdateMarkerPurpose.BranchTransition
+                | "reference-materialization" -> Some GraceUpdateMarkerPurpose.ReferenceMaterialization
+                | _ -> None
+
+            match purpose, DateTime.TryParse(completedUtcElement.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
+            | Some parsedPurpose, (true, completedUtc) -> Some(parsedPurpose, completedUtc)
+            | _ -> None
+        with
+        | :? JsonException
+        | :? KeyNotFoundException
+        | :? InvalidOperationException
+        | :? FormatException -> None
+
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///
     /// In general, this means copying new and changed files into place, and removing deleted files and directories.

@@ -381,12 +381,11 @@ module Watch =
         recordGraceUpdateMarkerCompletedUtc deletedUtc
 
     /// Reads a marker completion sidecar for the specific marker path that produced the callback.
-    let private tryReadGraceUpdateMarkerCompletedUtcFrom completedFileName =
+    let private tryReadGraceUpdateMarkerCompletionFrom completedFileName =
         try
             if File.Exists(completedFileName) then
-                match DateTime.TryParse(File.ReadAllText(completedFileName), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
-                | true, completedUtc -> Some completedUtc
-                | false, _ -> None
+                File.ReadAllText(completedFileName)
+                |> tryDeserializeGraceUpdateMarkerCompletion
             else
                 None
         with
@@ -394,15 +393,15 @@ module Watch =
         | :? UnauthorizedAccessException -> None
 
     /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
-    let private tryReadGraceUpdateMarkerCompletedUtc () =
+    let private tryReadGraceUpdateMarkerCompletion () =
         updateMarkerCompletedFileName ()
-        |> tryReadGraceUpdateMarkerCompletedUtcFrom
+        |> tryReadGraceUpdateMarkerCompletionFrom
 
     /// Reads the completion instant for the marker whose deletion callback is being processed.
-    let private tryReadGraceUpdateMarkerCompletedUtcForMarker markerFileName =
+    let private tryReadGraceUpdateMarkerCompletionForMarker markerFileName =
         markerFileName
         |> updateMarkerCompletedFileNameForMarker
-        |> tryReadGraceUpdateMarkerCompletedUtcFrom
+        |> tryReadGraceUpdateMarkerCompletionFrom
 
     /// Records marker file freshness while the marker still exists so deletion cannot trust stale sidecars.
     let private observeGraceUpdateMarkerInstance markerFileName =
@@ -992,8 +991,8 @@ module Watch =
                 |> Seq.tryHead)
 
         let currentSidecarUtc =
-            match tryReadGraceUpdateMarkerCompletedUtc () with
-            | Some completedUtc when
+            match tryReadGraceUpdateMarkerCompletion () with
+            | Some (_, completedUtc) when
                 isRecentGraceUpdateMarkerCompletion completedUtc
                 && currentUpdateMarkerMatchesCompletedSidecar completedUtc
                 ->
@@ -3631,28 +3630,76 @@ module Watch =
                     invalidOp $"Remote materialization retained file changed before status replacement: {fileVersion.RelativePath}."
         }
 
-    /// Verifies recursive DirectoryVersion metadata includes every declared child directory.
-    let private validateCurrentBranchMaterializationDirectoryClosure (remoteDirectoryVersions: DirectoryVersion array) =
-        let directoryIds =
-            remoteDirectoryVersions
-            |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
-            |> HashSet<DirectoryVersionId>
+    /// Proves the recursive response is exactly one acyclic root closure and that every directory hash matches its canonical contents.
+    let private validateCurrentBranchMaterializationDirectoryClosureAndHashes
+        (rootDirectoryId: DirectoryVersionId)
+        (remoteDirectoryVersions: DirectoryVersion array)
+        =
+        let versionsById = Dictionary<DirectoryVersionId, DirectoryVersion>()
 
-        let missingChildIds =
-            remoteDirectoryVersions
-            |> Seq.collect (fun directoryVersion ->
-                directoryVersion.Directories
-                |> Seq.filter (directoryIds.Contains >> not)
-                |> Seq.map (fun childId -> directoryVersion.RelativePath, childId))
-            |> Seq.toArray
+        for directoryVersion in remoteDirectoryVersions do
+            if not (versionsById.TryAdd(directoryVersion.DirectoryVersionId, directoryVersion)) then
+                invalidOp $"Remote materialization metadata contains duplicate DirectoryVersionId {directoryVersion.DirectoryVersionId}."
 
-        if missingChildIds.Length > 0 then
-            let missingDescription =
-                missingChildIds
-                |> Array.map (fun (relativePath, childId) -> $"{relativePath}->{childId}")
+        if not (versionsById.ContainsKey(rootDirectoryId)) then
+            invalidOp $"Remote materialization metadata did not include requested root DirectoryVersionId {rootDirectoryId}."
+
+        let visiting = HashSet<DirectoryVersionId>()
+        let visited = HashSet<DirectoryVersionId>()
+
+        let rec validate directoryId =
+            if visiting.Contains(directoryId) then
+                invalidOp $"Remote materialization metadata contains a cycle through DirectoryVersionId {directoryId}."
+
+            if not (visited.Contains(directoryId)) then
+                let directoryVersion = versionsById[directoryId]
+                visiting.Add(directoryId) |> ignore
+                let childIds = HashSet<DirectoryVersionId>()
+                let children = ResizeArray<DirectoryVersion>()
+
+                for childId in directoryVersion.Directories do
+                    if not (childIds.Add(childId)) then
+                        invalidOp $"Remote materialization metadata contains duplicate child DirectoryVersionId {childId} under {directoryId}."
+
+                    let mutable child = Unchecked.defaultof<DirectoryVersion>
+
+                    if not (versionsById.TryGetValue(childId, &child)) then
+                        invalidOp $"Remote materialization metadata is missing child DirectoryVersion entry {directoryVersion.RelativePath}->{childId}."
+
+                    validate childId
+                    children.Add(child)
+
+                let entries =
+                    seq {
+                        for child in children do
+                            yield DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+
+                        for fileVersion in directoryVersion.Files do
+                            yield DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash
+                    }
+
+                let expectedSha256Hash = computeSha256ForDirectoryEntries directoryVersion.RelativePath entries
+                let expectedBlake3Hash = computeBlake3ForDirectory directoryVersion.RelativePath entries
+
+                if directoryVersion.Sha256Hash <> expectedSha256Hash then
+                    invalidOp $"Remote materialization DirectoryVersion {directoryId} has a mismatched SHA-256 hash."
+
+                if directoryVersion.Blake3Hash <> expectedBlake3Hash then
+                    invalidOp $"Remote materialization DirectoryVersion {directoryId} has a mismatched BLAKE3 hash."
+
+                visiting.Remove(directoryId) |> ignore
+                visited.Add(directoryId) |> ignore
+
+        validate rootDirectoryId
+
+        if visited.Count <> versionsById.Count then
+            let unreachable =
+                versionsById.Keys
+                |> Seq.filter (visited.Contains >> not)
+                |> Seq.map string
                 |> String.concat ", "
 
-            invalidOp $"Remote materialization metadata is missing child DirectoryVersion entries: {missingDescription}."
+            invalidOp $"Remote materialization metadata contains DirectoryVersion entries outside the accepted root closure: {unreachable}."
 
     /// Rejects remote paths that cannot map one-to-one onto the active worktree filesystem.
     let private validateCurrentBranchMaterializationPathRepresentability (remoteDirectoryVersions: DirectoryVersion array) =
@@ -3824,7 +3871,7 @@ module Watch =
                 updateGraceStatusDirectoryIds remoteStatus
             finally
                 let completedUtc = DateTime.UtcNow
-                File.WriteAllText(completedFileName, completedUtc.ToString("O", CultureInfo.InvariantCulture))
+                File.WriteAllText(completedFileName, serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc)
                 recordGraceUpdateMarkerCompletedUtc completedUtc
 
                 if File.Exists(markerFileName) then File.Delete(markerFileName)
@@ -3843,7 +3890,7 @@ module Watch =
                 let! currentStatus = clients.ReadGraceStatus()
 
                 try
-                    validateCurrentBranchMaterializationDirectoryClosure remoteDirectoryVersions
+                    validateCurrentBranchMaterializationDirectoryClosureAndHashes payload.DirectoryId remoteDirectoryVersions
                     validateCurrentBranchMaterializationPathRepresentability remoteDirectoryVersions
                     validateCurrentBranchMaterializationRootIdentity payload remoteDirectoryVersions
                 with
@@ -4886,8 +4933,8 @@ module Watch =
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
                 let hasCurrentCompletedSidecar =
-                    match tryReadGraceUpdateMarkerCompletedUtc () with
-                    | Some completedUtc -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
+                    match tryReadGraceUpdateMarkerCompletion () with
+                    | Some (_, completedUtc) -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
                     | None -> false
 
                 if not hasCurrentCompletedSidecar then
@@ -4908,8 +4955,8 @@ module Watch =
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if isUpdateMarkerPath args.FullPath then
             if not (File.Exists(args.FullPath)) then
-                match tryReadGraceUpdateMarkerCompletedUtcForMarker args.FullPath with
-                | Some completedUtc ->
+                match tryReadGraceUpdateMarkerCompletionForMarker args.FullPath with
+                | Some (GraceUpdateMarkerPurpose.BranchTransition, completedUtc) ->
                     match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
                     | ObservedCurrentMarker ->
                         if deletedMarkerCanCompleteCurrentTransition args.FullPath then
@@ -4937,6 +4984,10 @@ module Watch =
                         logToAnsiConsole
                             Colors.Important
                             $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
+                | Some (GraceUpdateMarkerPurpose.ReferenceMaterialization, completedUtc) ->
+                    forgetObservedGraceUpdateMarkerInstance args.FullPath
+                    recordGraceUpdateMarkerCompletedUtc completedUtc
+                    logToAnsiConsole Colors.Important $"Reference materialization update has finished."
                 | None ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
                     logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."

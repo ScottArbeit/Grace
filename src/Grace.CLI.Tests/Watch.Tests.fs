@@ -7,6 +7,7 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Storage
+open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Types.Automation
 open Grace.Types.Common
@@ -617,17 +618,49 @@ module WatchTests =
         =
         let current = Current()
 
+        let entries =
+            files
+            |> Seq.map (fun fileVersion ->
+                DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash)
+
+        let sha256Hash =
+            if childIds.Length = 0 then
+                computeSha256ForDirectoryEntries (RelativePath relativePath) entries
+            else
+                Sha256Hash $"remote-sha-{directoryId}"
+
+        let blake3Hash =
+            if childIds.Length = 0 then
+                computeBlake3ForDirectory (RelativePath relativePath) entries
+            else
+                Blake3Hash $"remote-blake3-{directoryId}"
+
         DirectoryVersion.CreateWithHashes
             directoryId
             current.OwnerId
             current.OrganizationId
             current.RepositoryId
             (RelativePath relativePath)
-            (Sha256Hash $"remote-sha-{directoryId}")
-            (Blake3Hash $"remote-blake3-{directoryId}")
+            sha256Hash
+            blake3Hash
             (List<DirectoryVersionId>(childIds))
             (List<FileVersion>(files))
             1L
+
+    /// Recomputes a test DirectoryVersion from the exact child records and files supplied to the metadata response.
+    let private setCanonicalRemoteDirectoryHashes (directoryVersion: DirectoryVersion) (children: DirectoryVersion array) =
+        let entries =
+            seq {
+                for child in children do
+                    yield DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+
+                for fileVersion in directoryVersion.Files do
+                    yield DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash
+            }
+
+        directoryVersion.Sha256Hash <- computeSha256ForDirectoryEntries directoryVersion.RelativePath entries
+        directoryVersion.Blake3Hash <- computeBlake3ForDirectory directoryVersion.RelativePath entries
+        directoryVersion
 
     /// Builds a GraceStatus snapshot around a caller-supplied root directory version.
     let private graceStatusFromRootDirectory (rootDirectory: LocalDirectoryVersion) =
@@ -673,7 +706,12 @@ module WatchTests =
         File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
         File.SetLastWriteTimeUtc(updateMarkerFile, markerCompletedUtc.AddSeconds(-1.0))
         Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
-        File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
+
+        File.WriteAllText(
+            updateMarkerFile + ".completed",
+            Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition markerCompletedUtc
+        )
+
         File.Delete(updateMarkerFile)
         Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
@@ -684,7 +722,12 @@ module WatchTests =
 
         File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
         File.SetLastWriteTimeUtc(updateMarkerFile, markerCompletedUtc.AddSeconds(-1.0))
-        File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
+
+        File.WriteAllText(
+            updateMarkerFile + ".completed",
+            Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition markerCompletedUtc
+        )
+
         File.Delete(updateMarkerFile)
         Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
@@ -761,7 +804,12 @@ module WatchTests =
             Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
             File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
             File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(-1.0))
-            File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
+
+            File.WriteAllText(
+                updateMarkerFile + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition markerCompletedUtc
+            )
+
             File.Delete(updateMarkerFile)
             Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking [| "delayed-grace-owned-write.txt" |] Array.empty<string>))
 
@@ -794,7 +842,11 @@ module WatchTests =
             File.SetLastWriteTimeUtc(updateMarkerFile, markerCompletedUtc.AddSeconds(-1.0))
             File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
             File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(-1.0))
-            File.WriteAllText(completedSidecar, markerCompletedUtc.ToString("O"))
+
+            File.WriteAllText(
+                completedSidecar,
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition markerCompletedUtc
+            )
 
             Watch.setReadGraceStatusFileForWatchTests (fun () ->
                 Task.FromResult(
@@ -835,7 +887,11 @@ module WatchTests =
             Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
             |> ignore
 
-            File.WriteAllText(completedSidecar, previousMarkerCompletedUtc.ToString("O"))
+            File.WriteAllText(
+                completedSidecar,
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition previousMarkerCompletedUtc
+            )
+
             File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
             File.SetLastWriteTimeUtc(updateMarkerFile, previousMarkerCompletedUtc.AddSeconds(5.0))
 
@@ -867,6 +923,71 @@ module WatchTests =
 
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
+
+    /// Verifies same-branch completion never executes branch-transition subscription effects, including restart recovery.
+    [<TestCase(true)>]
+    [<TestCase(false)>]
+    [<Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``reference materialization marker deletion preserves branch subscription`` observeCreation =
+        withTempRepo (fun _ ->
+            let branchId = Guid.NewGuid()
+            let parentBranchId = Guid.NewGuid()
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let completedUtc = DateTime.UtcNow
+
+            Watch.setSignalRBranchSubscriptionForWatchTests branchId parentBranchId
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
+            File.SetLastWriteTimeUtc(updateMarkerFile, completedUtc.AddSeconds(-1.0))
+
+            if observeCreation then
+                Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+
+            File.WriteAllText(
+                updateMarkerFile + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+            )
+
+            File.Delete(updateMarkerFile)
+            Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+            let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+            subscription.BranchId |> should equal branchId
+
+            subscription.ParentBranchId
+            |> should equal parentBranchId)
+
+    /// Verifies absent, legacy, unknown, and malformed purpose evidence cannot authorize branch-transition completion.
+    [<TestCase("2026-07-10T12:00:00.0000000Z")>]
+    [<TestCase("{\"purpose\":\"unknown\",\"completedUtc\":\"2026-07-10T12:00:00.0000000Z\"}")>]
+    [<TestCase("{}")>]
+    [<TestCase("{not-json")>]
+    [<Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``malformed update marker purpose fails closed`` (completedEvidence: string) =
+        withTempRepo (fun _ ->
+            let branchId = Guid.NewGuid()
+            let parentBranchId = Guid.NewGuid()
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            Watch.setSignalRBranchSubscriptionForWatchTests branchId parentBranchId
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "Grace update")
+            Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+            File.WriteAllText(updateMarkerFile + ".completed", completedEvidence)
+            File.Delete(updateMarkerFile)
+            Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+            let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+            subscription.BranchId |> should equal branchId
+
+            subscription.ParentBranchId
+            |> should equal parentBranchId)
 
     /// Verifies that marker deletion completes a same-process branch transition by reloading config and publishing branch B IPC.
     [<Test>]
@@ -1889,7 +2010,10 @@ module WatchTests =
             Directory.CreateDirectory(Path.GetDirectoryName(branchBMarker))
             |> ignore
 
-            File.WriteAllText(branchBMarker + ".completed", staleTargetBranchCompletedUtc.ToString("O"))
+            File.WriteAllText(
+                branchBMarker + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition staleTargetBranchCompletedUtc
+            )
 
             writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
             resetConfiguration ()
@@ -2018,7 +2142,12 @@ module WatchTests =
             File.WriteAllText(branchBMarker, "`grace switch` is in progress.")
             File.SetLastWriteTimeUtc(branchBMarker, branchBCompletedUtc.AddSeconds(-1.0))
             Watch.OnGraceUpdateInProgressCreated(createdEvent branchBMarker)
-            File.WriteAllText(branchBMarker + ".completed", branchBCompletedUtc.ToString("O"))
+
+            File.WriteAllText(
+                branchBMarker + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition branchBCompletedUtc
+            )
+
             File.WriteAllText(changedFilePath, "Grace-owned payload from the repeated transition")
             File.SetLastWriteTimeUtc(changedFilePath, branchBCompletedUtc.AddSeconds(-1.0))
 
@@ -2060,7 +2189,12 @@ module WatchTests =
             File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
             File.SetLastWriteTimeUtc(updateMarkerFile, currentCompletedUtc.AddSeconds(-1.0))
             Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
-            File.WriteAllText(updateMarkerFile + ".completed", currentCompletedUtc.ToString("O"))
+
+            File.WriteAllText(
+                updateMarkerFile + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition currentCompletedUtc
+            )
+
             File.WriteAllText(changedFilePath, "Grace-owned payload before marker deletion callback")
             File.SetLastWriteTimeUtc(changedFilePath, currentCompletedUtc.AddSeconds(-1.0))
 
@@ -2101,7 +2235,11 @@ module WatchTests =
             |> ignore
 
             File.WriteAllText(branchBMarker, "`grace switch` is in progress.")
-            File.WriteAllText(branchCCompletedSidecar, DateTime.UtcNow.ToString("O"))
+
+            File.WriteAllText(
+                branchCCompletedSidecar,
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition DateTime.UtcNow
+            )
 
             writeRepositoryConfiguration root repositoryId repositoryName branchCId branchCName
             resetConfiguration ()
@@ -2135,7 +2273,12 @@ module WatchTests =
             |> ignore
 
             File.WriteAllText(branchAMarker, "`grace switch` from branch A is finishing late.")
-            File.WriteAllText(branchAMarker + ".completed", staleTransitionCompletedUtc.ToString("O"))
+
+            File.WriteAllText(
+                branchAMarker + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition staleTransitionCompletedUtc
+            )
+
             File.WriteAllText(branchBMarker, "`grace switch` to branch C is still in progress.")
 
             writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
@@ -2169,7 +2312,11 @@ module WatchTests =
             File.Delete(updateMarkerFile)
             Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
-            File.WriteAllText(updateMarkerFile + ".completed", staleCompletedUtc.ToString("O"))
+            File.WriteAllText(
+                updateMarkerFile + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.BranchTransition staleCompletedUtc
+            )
+
             File.WriteAllText(updateMarkerFile, "`grace switch` is in progress without a new sidecar.")
 
             try
@@ -15426,6 +15573,105 @@ module WatchTests =
             resyncRequests.ToArray()
             |> should not' (equal Array.empty<string>))
 
+    /// Verifies recursive metadata is one exact acyclic root closure before status planning.
+    [<TestCase("unreachable")>]
+    [<TestCase("duplicate")>]
+    [<TestCase("cycle")>]
+    [<TestCase("missing")>]
+    [<TestCase("child-hash")>]
+    [<TestCase("root-hash")>]
+    [<Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization rejects untrusted recursive metadata before mutation`` invalidShape =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let childId = Guid.NewGuid()
+            let rootId = Guid.NewGuid()
+            let child = remoteDirectoryVersion childId "child" Array.empty Array.empty<FileVersion>
+            let remoteRoot = remoteDirectoryVersion rootId Constants.RootDirectoryPath [| childId |] Array.empty<FileVersion>
+
+            setCanonicalRemoteDirectoryHashes remoteRoot [| child |]
+            |> ignore
+
+            let acceptedSha256Hash = remoteRoot.Sha256Hash
+            let acceptedBlake3Hash = remoteRoot.Blake3Hash
+
+            let remoteVersions =
+                match invalidShape with
+                | "unreachable" ->
+                    let extra = remoteDirectoryVersion (Guid.NewGuid()) "extra" Array.empty Array.empty<FileVersion>
+                    [| remoteRoot; child; extra |]
+                | "duplicate" -> [| remoteRoot; child; child |]
+                | "cycle" ->
+                    child.Directories <- List<DirectoryVersionId>([| rootId |])
+                    [| remoteRoot; child |]
+                | "missing" -> [| remoteRoot |]
+                | "child-hash" ->
+                    child.Sha256Hash <- Sha256Hash "corrupt-child"
+                    [| remoteRoot; child |]
+                | "root-hash" ->
+                    remoteRoot.Blake3Hash <- Blake3Hash "corrupt-root"
+                    [| remoteRoot; child |]
+                | _ -> failwith $"Unexpected invalid metadata shape: {invalidShape}."
+
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients remoteVersions currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification currentRepositoryId currentBranchId ReferenceType.Save rootId acceptedSha256Hash acceptedBlake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            writtenStatuses.Count |> should equal 0
+            resyncRequests.Count |> should be (greaterThan 0))
+
+    /// Verifies canonical root-only and nested responses pass closure and bottom-up hash proof.
+    [<TestCase(false)>]
+    [<TestCase(true)>]
+    [<Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization accepts canonical recursive metadata`` nested =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let rootId = Guid.NewGuid()
+
+            let remoteVersions, remoteRoot =
+                if nested then
+                    let child = remoteDirectoryVersion (Guid.NewGuid()) "child" Array.empty Array.empty<FileVersion>
+                    let rootVersion = remoteDirectoryVersion rootId Constants.RootDirectoryPath [| child.DirectoryVersionId |] Array.empty<FileVersion>
+
+                    setCanonicalRemoteDirectoryHashes rootVersion [| child |]
+                    |> ignore
+
+                    [| rootVersion; child |], rootVersion
+                else
+                    let rootVersion = remoteDirectoryVersion rootId Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
+                    [| rootVersion |], rootVersion
+
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients remoteVersions currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    rootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
+                .GetAwaiter()
+                .GetResult()
+
+            writtenStatuses.Count |> should equal 1
+            resyncRequests.Count |> should equal 0)
+
     /// Verifies materialization planning does not collapse case-distinct paths under case-sensitive repository rules.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
     let ``current branch remote materialization plan respects case-sensitive path lookup`` () =
@@ -15592,6 +15838,9 @@ module WatchTests =
                         remoteFileForDirectoryPath
                         unchangedFile
                     |]
+
+            setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
+            |> ignore
 
             let writtenStatuses = ResizeArray<GraceStatus>()
             let resyncRequests = ResizeArray<string>()
@@ -15761,6 +16010,10 @@ module WatchTests =
                     let remoteDirectoryId = Guid.NewGuid()
                     let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath [| remoteDirectoryId |] Array.empty<FileVersion>
                     let remoteDirectory = remoteDirectoryVersion remoteDirectoryId "target" Array.empty Array.empty<FileVersion>
+
+                    setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
+                    |> ignore
+
                     hookMutation <- fun () -> File.WriteAllText(targetPath, "local edit before type swap")
                     currentStatus, [| remoteRoot; remoteDirectory |]
                 | "directory-to-file" ->

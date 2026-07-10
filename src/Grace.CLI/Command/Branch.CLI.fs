@@ -3040,7 +3040,7 @@ module Branch =
             Directory.CreateDirectory(Path.GetDirectoryName(completedFileName))
             |> ignore
 
-            File.WriteAllText(completedFileName, DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture))
+            File.WriteAllText(completedFileName, serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.BranchTransition DateTime.UtcNow)
         with
         | :? IOException -> ()
         | :? UnauthorizedAccessException -> ()
