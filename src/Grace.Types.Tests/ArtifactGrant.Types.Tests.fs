@@ -171,7 +171,11 @@ type ArtifactGrantValidationTests() =
 
         let longTtlGrant = signedGrant "key-1" key now (ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus(Duration.FromTicks 1L)) [ artifactIdentity ]
 
-        let expiredKey: ArtifactGrantValidationKey = { validationKey with ExpiresAt = now }
+        let boundaryKey: ArtifactGrantValidationKey = { validationKey with ExpiresAt = now.Minus ArtifactGrantContract.MaximumProofClockSkew }
+
+        let insideBoundaryKey: ArtifactGrantValidationKey = { boundaryKey with ExpiresAt = boundaryKey.ExpiresAt.Plus(Duration.FromTicks 1L) }
+
+        let expiredKey: ArtifactGrantValidationKey = { boundaryKey with ExpiresAt = boundaryKey.ExpiresAt.Minus(Duration.FromTicks 1L) }
 
         validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) expiredGrant
         |> assertError ExpiredGrant
@@ -184,8 +188,159 @@ type ArtifactGrantValidationTests() =
 
         let validGrant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
 
+        validateWithKeySet now (keySet [ insideBoundaryKey ]) (validationRequest ()) validGrant
+        |> assertOk
+
+        validateWithKeySet now (keySet [ boundaryKey ]) (validationRequest ()) validGrant
+        |> assertOk
+
         validateWithKeySet now (keySet [ expiredKey ]) (validationRequest ()) validGrant
         |> assertError ExpiredValidationKey
+
+    [<Test>]
+    member _.``grant and validation key clock tolerance is symmetric without extending declared grant ttl``() =
+        let tolerance = ArtifactGrantContract.MaximumProofClockSkew
+        let tick = Duration.FromTicks 1L
+        let key, validationKey = signingKey "key-1" (now.Plus tolerance) (now.Plus(Duration.FromHours 1))
+        use key = key
+        let insideFutureGrant = signedGrant "key-1" key (now.Plus(tolerance.Minus tick)) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+        let futureGrant = signedGrant "key-1" key (now.Plus tolerance) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+
+        validateWithKeySet
+            now
+            (keySet [ { validationKey with CreatedAt = validationKey.CreatedAt.Minus tick; NotBefore = validationKey.NotBefore.Minus tick } ])
+            (validationRequest ())
+            insideFutureGrant
+        |> assertOk
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) futureGrant
+        |> assertOk
+
+        let tooFutureKey = { validationKey with CreatedAt = validationKey.CreatedAt.Plus tick; NotBefore = validationKey.NotBefore.Plus tick }
+
+        validateWithKeySet now (keySet [ tooFutureKey ]) (validationRequest ()) futureGrant
+        |> assertError ValidationKeyNotYetValid
+
+        let tooFutureGrant = signedGrant "key-1" key (now.Plus(tolerance.Plus tick)) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) tooFutureGrant
+        |> assertError GrantNotYetValid
+
+        let expiredAtBoundary =
+            signedGrant
+                "key-1"
+                key
+                (now.Minus(ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus tolerance))
+                ArtifactGrantContract.MaximumAcceptedGrantTtl
+                [ artifactIdentity ]
+
+        let expiredJustInside =
+            signedGrant
+                "key-1"
+                key
+                (now.Minus(ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus(tolerance.Minus tick)))
+                ArtifactGrantContract.MaximumAcceptedGrantTtl
+                [ artifactIdentity ]
+
+        validateWithKeySet
+            now
+            (keySet [ { validationKey with CreatedAt = now.Minus(Duration.FromHours 1); NotBefore = now.Minus(Duration.FromHours 1) } ])
+            (validationRequest ())
+            expiredJustInside
+        |> assertOk
+
+        validateWithKeySet
+            now
+            (keySet [ { validationKey with CreatedAt = now.Minus(Duration.FromHours 1); NotBefore = now.Minus(Duration.FromHours 1) } ])
+            (validationRequest ())
+            expiredAtBoundary
+        |> assertOk
+
+        let overlong = signedGrant "key-1" key now (ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus tick) [ artifactIdentity ]
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) overlong
+        |> assertError GrantTtlTooLong
+
+    [<Test>]
+    member _.``malformed validation key sets fail closed with their typed contract``() =
+        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        use key = key
+        let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
+        let nullKey = Unchecked.defaultof<ArtifactGrantValidationKey>
+        let nullKeySet = Unchecked.defaultof<ArtifactGrantValidationKeySet>
+        let nullKeys = { keySet [] with Keys = null }
+        let malformedClass = { validationKey with Class = null }
+        let malformedCoordinates = { validationKey with PublicKeyX = "not-base64url" }
+        let missingCoordinate = { validationKey with PublicKeyY = null }
+
+        let nonImportablePoint =
+            { validationKey with
+                PublicKeyX = GrantCrypto.Base64Url.encode (Array.zeroCreate 32)
+                PublicKeyY = GrantCrypto.Base64Url.encode (Array.zeroCreate 32)
+            }
+
+        let malformedTimes = { validationKey with ExpiresAt = validationKey.NotBefore }
+
+        [
+            nullKeySet
+            nullKeys
+            keySet [ nullKey ]
+            keySet [ malformedClass ]
+            keySet [ malformedCoordinates ]
+            keySet [ missingCoordinate ]
+            keySet [ nonImportablePoint ]
+            keySet [ malformedTimes ]
+            keySet [ validationKey; validationKey ]
+        ]
+        |> List.iter (fun malformed ->
+            validateWithKeySet now malformed (validationRequest ()) grant
+            |> assertError InvalidValidationKeySet)
+
+    [<Test>]
+    member _.``grant validation entry points are total over null and malformed runtime shapes``() =
+        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        use key = key
+        let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
+        let keys = keySet [ validationKey ]
+        let nullGrant = Unchecked.defaultof<SignedArtifactGrant>
+        let nullRequest = Unchecked.defaultof<ArtifactGrantValidationRequest>
+
+        validateWithKeySet now keys (validationRequest ()) nullGrant
+        |> assertError MissingGrant
+
+        validateWithKeySet now keys nullRequest grant
+        |> assertError InvalidClass
+
+        validateWithKeySet now keys (validationRequest ()) { grant with Header = Unchecked.defaultof<ArtifactGrantHeader> }
+        |> assertError MissingHeader
+
+        validateWithKeySet now keys (validationRequest ()) { grant with Payload = Unchecked.defaultof<ArtifactGrantPayload> }
+        |> assertError MissingPayload
+
+        let malformedArtifacts = { grant with Payload = { grant.Payload with ArtifactIdentities = null } }
+
+        validateWithKeySet now keys (validationRequest ()) malformedArtifacts
+        |> assertError InvalidArtifactBinding
+
+        let malformedArtifactEntry = { grant with Payload = { grant.Payload with ArtifactIdentities = List<string>([ null ]) } }
+
+        validateWithKeySet now keys (validationRequest ()) malformedArtifactEntry
+        |> assertError InvalidArtifactBinding
+
+        validateWithKeySet now keys (validationRequest ()) { grant with Payload = { grant.Payload with Issuer = null } }
+        |> assertError InvalidIssuer
+
+        validateWithKeySet now keys (validationRequest ()) { grant with Payload = { grant.Payload with RequesterPrincipalId = null } }
+        |> assertError ArtifactGrantValidationError.InvalidRequesterPrincipal
+
+        validateWithKeySet now keys (validationRequest ()) { grant with Payload = { grant.Payload with HolderKeyThumbprint = null } }
+        |> assertError MissingHolderKeyBinding
+
+        validateRequiredForCacheMode now (fun _ -> RefreshSkipped) keys nullRequest (Some grant)
+        |> assertError InvalidClass
+
+        validateRequiredForCacheMode now (fun _ -> RefreshSkipped) keys (validationRequest ()) (Some nullGrant)
+        |> assertError MissingGrant
 
     [<Test>]
     member _.``current and overlap keys validate until old validation key expiry``() =
@@ -409,6 +564,14 @@ type ArtifactRequestProofValidationTests() =
 
         let exactAdmissionBoundary = proof.Payload.ExpiresAt.Plus ArtifactGrantContract.MaximumProofClockSkew
 
+        GrantCrypto.validateArtifactRequestWithKeySet
+            (exactAdmissionBoundary.Minus(Duration.FromTicks 1L))
+            keySet
+            (request "GET" route)
+            (Some grant)
+            (Some proof)
+        |> assertProofOk
+
         GrantCrypto.validateArtifactRequestWithKeySet exactAdmissionBoundary keySet (request "GET" route) (Some grant) (Some proof)
         |> assertProofOk
 
@@ -424,6 +587,100 @@ type ArtifactRequestProofValidationTests() =
 
         GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some overlongProof)
         |> assertProofError ProofLifetimeTooLong
+
+        let inside = ArtifactGrantContract.MaximumProofClockSkew.Minus(Duration.FromTicks 1L)
+
+        for offset in
+            [
+                inside
+                ArtifactGrantContract.MaximumProofClockSkew
+            ] do
+            let futureProof =
+                GrantCrypto.createRequestProof
+                    holderPrivateKey
+                    holderPublicKey
+                    grant
+                    "GET"
+                    route
+                    artifactIdentity
+                    (now.Plus offset)
+                    ArtifactGrantContract.MaximumProofPresentationLifetime
+
+            GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some futureProof)
+            |> assertProofOk
+
+        let outsideProof =
+            GrantCrypto.createRequestProof
+                holderPrivateKey
+                holderPublicKey
+                grant
+                "GET"
+                route
+                artifactIdentity
+                (now
+                    .Plus(ArtifactGrantContract.MaximumProofClockSkew)
+                    .Plus(Duration.FromTicks 1L))
+                ArtifactGrantContract.MaximumProofPresentationLifetime
+
+        GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some outsideProof)
+        |> assertProofError ProofNotYetValid
+
+    [<Test>]
+    member _.``request proof admission is total over null optional and nested envelopes``() =
+        let holderPrivateKey, holderPublicKey = holderKey ()
+        use holderPrivateKey = holderPrivateKey
+        let grant, keySet = grantForHolder holderPublicKey
+
+        let proof =
+            GrantCrypto.createRequestProof
+                holderPrivateKey
+                holderPublicKey
+                grant
+                "GET"
+                route
+                artifactIdentity
+                now
+                ArtifactGrantContract.MaximumProofPresentationLifetime
+
+        let nullGrant = Unchecked.defaultof<SignedArtifactGrant>
+        let nullProof = Unchecked.defaultof<SignedArtifactRequestProof>
+        let nullRequest = Unchecked.defaultof<ArtifactRequestValidationRequest>
+        let nullKeySet = Unchecked.defaultof<ArtifactGrantValidationKeySet>
+
+        GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some nullGrant) (Some proof)
+        |> assertProofError MissingGrant
+
+        GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some nullProof)
+        |> assertProofError MissingProof
+
+        GrantCrypto.validateArtifactRequestWithKeySet now keySet nullRequest (Some grant) (Some proof)
+        |> assertProofError InvalidClass
+
+        GrantCrypto.validateArtifactRequestWithKeySet now nullKeySet (request "GET" route) (Some grant) (Some proof)
+        |> assertProofError InvalidValidationKeySet
+
+        let missingHolder = { proof with HolderPublicKey = Unchecked.defaultof<ArtifactGrantHolderPublicKey> }
+
+        GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some missingHolder)
+        |> assertProofError MissingHolderPublicKey
+
+        let missingPayload = { proof with Payload = Unchecked.defaultof<ArtifactRequestProofPayload> }
+
+        GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some missingPayload)
+        |> assertProofError MissingPayload
+
+        let malformedPayloads =
+            [
+                { proof with Payload = { proof.Payload with GrantDigest = null } }, WrongGrantDigest
+                { proof with Payload = { proof.Payload with HttpMethod = null } }, WrongProofMethod
+                { proof with Payload = { proof.Payload with NormalizedRoute = null } }, WrongProofRoute
+                { proof with Payload = { proof.Payload with ArtifactIdentity = null } }, WrongProofArtifact
+            ]
+
+        malformedPayloads
+        |> List.iter (fun (malformedProof, expected) ->
+            GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some malformedProof)
+            |> assertProofError expected)
 
     [<Test>]
     member _.``direct mode bypass remains explicit and requires neither grant nor holder proof``() =

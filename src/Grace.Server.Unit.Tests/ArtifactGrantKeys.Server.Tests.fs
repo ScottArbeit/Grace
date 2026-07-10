@@ -211,6 +211,28 @@ type ArtifactGrantSigningKeyActorTests() =
         }
 
     [<Test>]
+    member _.``clock rollback retains but does not select a future-dated persisted key``() =
+        task {
+            let future = now.Plus(Duration.FromHours 1)
+            let seedState = FakePersistentState(ArtifactGrantSigningKeyRingState.Empty, false)
+            let seedStore = store seedState
+            let! futureGrantResult = seedStore.IssueGrant(issueRequest (), future)
+            let futureGrant = issuedGrant futureGrantResult
+            let state = FakePersistentState(seedState.State, true)
+            let keyStore = store state
+
+            let! currentGrantResult = keyStore.IssueGrant(issueRequest (), now)
+            let currentGrant = issuedGrant currentGrantResult
+            let! published = keyStore.PublishValidationKeys now
+
+            Assert.That(state.WriteCount, Is.EqualTo 1)
+            Assert.That(currentGrant.Header.KeyId, Is.Not.EqualTo futureGrant.Header.KeyId)
+            Assert.That(state.State.Keys, Has.Length.EqualTo 2)
+            Assert.That(published.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain futureGrant.Header.KeyId)
+            Assert.That(published.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain currentGrant.Header.KeyId)
+        }
+
+    [<Test>]
     member _.``concurrent signing and publication use isolated crypto objects and produce valid signatures``() =
         task {
             let state = FakePersistentState(ArtifactGrantSigningKeyRingState.Empty, false)

@@ -113,7 +113,9 @@ module ArtifactGrantSigningKeyActor =
 
                 let activeKey =
                     liveKeys
-                    |> Array.tryFind (fun key -> now < key.ActiveUntil)
+                    |> Array.filter (fun key -> key.CreatedAt <= now && now < key.ActiveUntil)
+                    |> Array.sortByDescending (fun key -> key.CreatedAt)
+                    |> Array.tryHead
 
                 let nextKeys, selectedKey, rotated =
                     match activeKey with

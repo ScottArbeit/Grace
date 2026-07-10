@@ -27,6 +27,7 @@ module ArtifactGrant =
         | GrantTtlTooLong
         | ExpiredValidationKey
         | ValidationKeyNotYetValid
+        | InvalidValidationKeySet
         | WrongCacheService
         | WrongTargetRoot
         | WrongExecutionMode
@@ -75,6 +76,7 @@ module ArtifactGrant =
             | GrantTtlTooLong -> "Artifact grant TTL exceeds the accepted maximum."
             | ExpiredValidationKey -> "Artifact grant validation key has expired."
             | ValidationKeyNotYetValid -> "Artifact grant validation key is not valid yet."
+            | InvalidValidationKeySet -> "Artifact grant validation-key set is malformed."
             | WrongCacheService -> "Artifact grant is not bound to this Cache service."
             | WrongTargetRoot -> "Artifact grant is not bound to the requested target root."
             | WrongExecutionMode -> "Artifact grant is not bound to the requested execution mode."
@@ -296,15 +298,75 @@ module ArtifactGrant =
 
     /// Creates a P-256 ECDSA verifier from one published validation key.
     let private tryCreateVerifier (validationKey: ArtifactGrantValidationKey) =
-        match Base64Url.tryDecode validationKey.PublicKeyX, Base64Url.tryDecode validationKey.PublicKeyY with
-        | Some x, Some y ->
-            try
-                let parameters = ECParameters(Curve = ECCurve.NamedCurves.nistP256, Q = ECPoint(X = x, Y = y))
+        if isNull (box validationKey) then
+            None
+        else
+            match Base64Url.tryDecode validationKey.PublicKeyX, Base64Url.tryDecode validationKey.PublicKeyY with
+            | Some x, Some y when
+                x.Length = 32
+                && y.Length = 32
+                && Base64Url.encode x = validationKey.PublicKeyX
+                && Base64Url.encode y = validationKey.PublicKeyY
+                ->
+                try
+                    let parameters = ECParameters(Curve = ECCurve.NamedCurves.nistP256, Q = ECPoint(X = x, Y = y))
 
-                Some(ECDsa.Create parameters)
-            with
-            | :? CryptographicException -> None
-        | _ -> None
+                    Some(ECDsa.Create parameters)
+                with
+                | :? CryptographicException
+                | :? ArgumentException
+                | :? PlatformNotSupportedException -> None
+            | _ -> None
+
+    /// Returns true only when an entire validation-key publication is canonical and importable.
+    let private isValidValidationKeySet (keySet: ArtifactGrantValidationKeySet) =
+        if isNull (box keySet)
+           || keySet.Class
+              <> nameof ArtifactGrantValidationKeySet
+           || keySet.Issuer <> ArtifactGrantContract.Issuer
+           || keySet.CacheTtl <= Duration.Zero
+           || isNull keySet.Keys then
+            false
+        else
+            let keys = keySet.Keys |> Seq.toArray
+
+            let structurallyValid =
+                keys
+                |> Array.forall (fun key ->
+                    not (isNull (box key))
+                    && key.Class = nameof ArtifactGrantValidationKey
+                    && not (String.IsNullOrWhiteSpace key.KeyId)
+                    && key.Algorithm = ArtifactGrantContract.Algorithm
+                    && key.CreatedAt = key.NotBefore
+                    && key.ExpiresAt > key.NotBefore
+                    && not (String.IsNullOrWhiteSpace key.PublicKeyX)
+                    && not (String.IsNullOrWhiteSpace key.PublicKeyY)
+                    && match tryCreateVerifier key with
+                       | Some verifier ->
+                           verifier.Dispose()
+                           true
+                       | None -> false)
+
+            structurallyValid
+            && (keys
+                |> Array.map (fun key -> key.KeyId)
+                |> Array.distinct
+                |> Array.length) = keys.Length
+
+    /// Contains malformed signature and key material inside the typed validation contract.
+    let private verifyData (verifier: ECDsa) (data: byte array) (signature: byte array) =
+        try
+            verifier.VerifyData(data, signature, HashAlgorithmName.SHA256)
+        with
+        | :? CryptographicException
+        | :? ArgumentException
+        | :? PlatformNotSupportedException -> false
+
+    /// Detects a future signed timestamp beyond the accepted tolerance without overflowing Instant arithmetic.
+    let private isBeyondFutureTolerance (now: Instant) (timestamp: Instant) (tolerance: Duration) = timestamp > now && timestamp - now > tolerance
+
+    /// Detects a past signed timestamp beyond the accepted tolerance without overflowing Instant arithmetic.
+    let private isBeyondPastTolerance (now: Instant) (timestamp: Instant) (tolerance: Duration) = now > timestamp && now - timestamp > tolerance
 
     /// Creates a verifier only for a canonical P-256 holder public key.
     let private tryCreateHolderVerifier (holderPublicKey: ArtifactGrantHolderPublicKey) =
@@ -328,7 +390,9 @@ module ArtifactGrant =
                     let parameters = ECParameters(Curve = ECCurve.NamedCurves.nistP256, Q = ECPoint(X = x, Y = y))
                     Some(ECDsa.Create parameters)
                 with
-                | :? CryptographicException -> None
+                | :? CryptographicException
+                | :? ArgumentException
+                | :? PlatformNotSupportedException -> None
             | _ -> None
 
     /// Returns true only for a canonical, importable P-256 holder public key.
@@ -341,17 +405,23 @@ module ArtifactGrant =
 
     /// Validates one artifact grant against a current validation-key publication and expected artifact request.
     let validateWithKeySet (now: Instant) (keySet: ArtifactGrantValidationKeySet) (request: ArtifactGrantValidationRequest) (grant: SignedArtifactGrant) =
-        if isNull (box grant) then
+        let clockTolerance = ArtifactGrantContract.MaximumProofClockSkew
+
+        if not (isValidValidationKeySet keySet) then
+            Error InvalidValidationKeySet
+        elif isNull (box grant) then
             Error MissingGrant
         elif isNull (box grant.Header) then
             Error MissingHeader
         elif isNull (box grant.Payload) then
             Error MissingPayload
-        elif
-            isNull (box request)
-            || request.Class
-               <> nameof ArtifactGrantValidationRequest
-        then
+        elif isNull (box request)
+             || request.Class
+                <> nameof ArtifactGrantValidationRequest
+             || String.IsNullOrWhiteSpace request.CacheServicePrincipalId
+             || request.TargetRootDirectoryVersionId = Guid.Empty
+             || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
+             || String.IsNullOrWhiteSpace request.ArtifactIdentity then
             Error InvalidClass
         elif String.IsNullOrWhiteSpace grant.Header.KeyId then
             Error MissingKeyId
@@ -371,9 +441,9 @@ module ArtifactGrant =
             Error InvalidRequesterPrincipal
         elif String.IsNullOrWhiteSpace grant.Payload.HolderKeyThumbprint then
             Error MissingHolderKeyBinding
-        elif now < grant.Payload.NotBefore then
+        elif isBeyondFutureTolerance now grant.Payload.NotBefore clockTolerance then
             Error GrantNotYetValid
-        elif now >= grant.Payload.ExpiresAt then
+        elif isBeyondPastTolerance now grant.Payload.ExpiresAt clockTolerance then
             Error ExpiredGrant
         elif (grant.Payload.ExpiresAt - grant.Payload.IssuedAt) > ArtifactGrantContract.MaximumAcceptedGrantTtl then
             Error GrantTtlTooLong
@@ -396,27 +466,19 @@ module ArtifactGrant =
             Error WrongArtifact
         else
             let key =
-                if isNull (box keySet) || isNull keySet.Keys then
-                    None
-                else
-                    keySet.Keys
-                    |> Seq.tryFind (fun key -> String.Equals(key.KeyId, grant.Header.KeyId, StringComparison.Ordinal))
+                keySet.Keys
+                |> Seq.tryFind (fun key -> String.Equals(key.KeyId, grant.Header.KeyId, StringComparison.Ordinal))
 
             match key with
             | None -> Error(UnknownKeyId grant.Header.KeyId)
-            | Some validationKey when
-                validationKey.Algorithm
-                <> ArtifactGrantContract.Algorithm
-                ->
-                Error(UnsupportedAlgorithm validationKey.Algorithm)
-            | Some validationKey when now < validationKey.NotBefore -> Error ValidationKeyNotYetValid
-            | Some validationKey when now >= validationKey.ExpiresAt -> Error ExpiredValidationKey
+            | Some validationKey when isBeyondFutureTolerance now validationKey.NotBefore clockTolerance -> Error ValidationKeyNotYetValid
+            | Some validationKey when isBeyondPastTolerance now validationKey.ExpiresAt clockTolerance -> Error ExpiredValidationKey
             | Some validationKey ->
                 match Base64Url.tryDecode grant.Signature, tryCreateVerifier validationKey with
                 | Some signature, Some verifier ->
                     use verifier = verifier
 
-                    if verifier.VerifyData(Canonical.signingInput grant.Header grant.Payload, signature, HashAlgorithmName.SHA256) then
+                    if verifyData verifier (Canonical.signingInput grant.Header grant.Payload) signature then
                         Ok()
                     else
                         Error InvalidSignature
@@ -430,7 +492,9 @@ module ArtifactGrant =
         (grant: SignedArtifactGrant option)
         (proof: SignedArtifactRequestProof option)
         =
-        if
+        if not (isValidValidationKeySet keySet) then
+            Error InvalidValidationKeySet
+        elif
             isNull (box request)
             || request.Class
                <> nameof ArtifactRequestValidationRequest
@@ -442,6 +506,8 @@ module ArtifactGrant =
             match grant, proof with
             | None, _ -> Error MissingGrant
             | _, None -> Error MissingProof
+            | Some signedGrant, _ when isNull (box signedGrant) -> Error MissingGrant
+            | _, Some signedProof when isNull (box signedProof) -> Error MissingProof
             | Some signedGrant, Some signedProof ->
                 let grantRequest =
                     ArtifactGrantValidationRequest.Create(
@@ -485,9 +551,9 @@ module ArtifactGrant =
                              || signedProof.Payload.ExpiresAt
                                 - signedProof.Payload.IssuedAt > ArtifactGrantContract.MaximumProofPresentationLifetime then
                             Error ProofLifetimeTooLong
-                        elif now.Plus(ArtifactGrantContract.MaximumProofClockSkew) < signedProof.Payload.IssuedAt then
+                        elif isBeyondFutureTolerance now signedProof.Payload.IssuedAt ArtifactGrantContract.MaximumProofClockSkew then
                             Error ProofNotYetValid
-                        elif now > signedProof.Payload.ExpiresAt.Plus ArtifactGrantContract.MaximumProofClockSkew then
+                        elif isBeyondPastTolerance now signedProof.Payload.ExpiresAt ArtifactGrantContract.MaximumProofClockSkew then
                             Error ExpiredProof
                         elif not (String.Equals(signedProof.Payload.GrantDigest, grantDigest signedGrant, StringComparison.Ordinal)) then
                             Error WrongGrantDigest
@@ -505,15 +571,7 @@ module ArtifactGrant =
                             Error WrongProofArtifact
                         else
                             match Base64Url.tryDecode signedProof.Signature with
-                            | Some signature when
-                                verifier.VerifyData
-                                    (
-                                        Canonical.requestProofPayloadBytes signedProof.Payload,
-                                        signature,
-                                        HashAlgorithmName.SHA256
-                                    )
-                                ->
-                                Ok()
+                            | Some signature when verifyData verifier (Canonical.requestProofPayloadBytes signedProof.Payload) signature -> Ok()
                             | _ -> Error InvalidProofSignature
 
     /// Validates with one throttled refresh attempt when a grant references an unknown key id.
@@ -539,9 +597,18 @@ module ArtifactGrant =
         (request: ArtifactGrantValidationRequest)
         (grant: SignedArtifactGrant option)
         =
-        if request.ExecutionMode = MaterializationExecutionMode.Direct then
+        if not (isValidValidationKeySet keySet) then
+            Error InvalidValidationKeySet
+        elif
+            isNull (box request)
+            || request.Class
+               <> nameof ArtifactGrantValidationRequest
+        then
+            Error InvalidClass
+        elif request.ExecutionMode = MaterializationExecutionMode.Direct then
             Ok()
         else
             match grant with
             | None -> Error MissingGrant
+            | Some signedGrant when isNull (box signedGrant) -> Error MissingGrant
             | Some signedGrant -> validateWithRefresh now refreshUnknownKey keySet request signedGrant
