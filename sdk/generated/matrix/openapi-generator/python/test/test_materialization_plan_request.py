@@ -52,7 +52,13 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                     cache_scope = '', ),
                 requested_artifact_kinds = [
                     'directoryVersionZip'
-                    ]
+                    ],
+                holder_public_key = grace_generated_openapi_probe.models.artifact_grant_holder_public_key.ArtifactGrantHolderPublicKey(
+                    class = 'ArtifactGrantHolderPublicKey', 
+                    algorithm = 'ES256', 
+                    curve = 'P-256', 
+                    public_key_x = '', 
+                    public_key_y = '', )
             )
         else:
             return MaterializationPlanRequest(

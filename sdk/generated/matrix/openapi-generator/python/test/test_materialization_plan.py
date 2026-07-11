@@ -58,7 +58,29 @@ class TestMaterializationPlan(unittest.TestCase):
                         content_block_address = null, 
                         storage_pool_id = null, 
                         source = null, )
-                    ]
+                    ],
+                artifact_grant = grace_generated_openapi_probe.models.signed_artifact_grant.SignedArtifactGrant(
+                    class = 'SignedArtifactGrant', 
+                    header = grace_generated_openapi_probe.models.artifact_grant_header.ArtifactGrantHeader(
+                        class = 'ArtifactGrantHeader', 
+                        algorithm = 'ES256', 
+                        key_id = '', ), 
+                    payload = grace_generated_openapi_probe.models.artifact_grant_payload.ArtifactGrantPayload(
+                        class = 'ArtifactGrantPayload', 
+                        issuer = 'Grace.Server.ArtifactGrant.v1', 
+                        requester_principal_type = 'user', 
+                        requester_principal_id = '', 
+                        holder_key_thumbprint = '', 
+                        cache_service_principal_id = '', 
+                        target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
+                        execution_mode = 'direct', 
+                        artifact_identities = [
+                            ''
+                            ], 
+                        issued_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                        not_before = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                        expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), ), 
+                    signature = '', )
             )
         else:
             return MaterializationPlan(

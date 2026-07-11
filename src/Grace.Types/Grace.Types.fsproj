@@ -39,8 +39,9 @@
         <Compile Include="Review.Types.fs" />
         <Compile Include="Queue.Types.fs" />
         <Compile Include="Artifact.Types.fs" />
-        <Compile Include="MaterializationPlan.Types.fs" />
+        <Compile Include="MaterializationExecutionMode.Types.fs" />
         <Compile Include="ArtifactGrant.Types.fs" />
+        <Compile Include="MaterializationPlan.Types.fs" />
         <Compile Include="CacheRegistration.Types.fs" />
         <Compile Include="Automation.Types.fs" />
         <Compile Include="Validation.Types.fs" />

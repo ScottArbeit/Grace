@@ -3986,6 +3986,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MaterializationArtifactKind'
+        HolderPublicKey:
+          $ref: '#/components/schemas/ArtifactGrantHolderPublicKey'
+          nullable: true
       required:
         - Class
         - TargetSelector
@@ -4075,6 +4078,17 @@ components:
         CacheKey:
           type: string
           nullable: true
+        CacheEndpoint:
+          type: string
+          format: uri
+          nullable: true
+        CacheServicePrincipalId:
+          type: string
+          nullable: true
+        DirectFallbackUri:
+          type: string
+          format: uri
+          nullable: true
       required:
         - Class
         - SourceKind
@@ -4141,6 +4155,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MaterializationArtifactDescriptor'
+        ArtifactGrant:
+          $ref: '#/components/schemas/SignedArtifactGrant'
+          nullable: true
       required:
         - Class
         - TargetRootDirectoryVersionId

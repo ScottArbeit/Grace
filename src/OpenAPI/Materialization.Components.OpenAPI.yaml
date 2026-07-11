@@ -83,6 +83,9 @@
           type: array
           items:
             $ref: '#/MaterializationArtifactKind'
+        HolderPublicKey:
+          $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantHolderPublicKey'
+          nullable: true
       required: [Class, TargetSelector, ExecutionMode, CacheSelection, RequestedArtifactKinds]
       example: &materializationPlanRequestExample
         Class: MaterializationPlanRequest
@@ -147,6 +150,17 @@
         CacheKey:
           type: string
           nullable: true
+        CacheEndpoint:
+          type: string
+          format: uri
+          nullable: true
+        CacheServicePrincipalId:
+          type: string
+          nullable: true
+        DirectFallbackUri:
+          type: string
+          format: uri
+          nullable: true
       required: [Class, SourceKind]
     MaterializationArtifactDescriptor:
       description: Stable artifact identity required to materialize a resolved target root.
@@ -208,6 +222,9 @@
           type: array
           items:
             $ref: '#/MaterializationArtifactDescriptor'
+        ArtifactGrant:
+          $ref: 'Cache.Components.OpenAPI.yaml#/SignedArtifactGrant'
+          nullable: true
       required: [Class, TargetRootDirectoryVersionId, ExecutionMode, CacheSelection, RequiredArtifacts]
     MaterializationPlanReturnValue:
       description: Grace response envelope whose ReturnValue contains a Materialization Plan.

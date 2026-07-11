@@ -106,11 +106,10 @@ docs-only classification with current evidence for the behavior they own.
   fall back to Direct only when the accepted contract allows it.
 - Proof seam: positive and negative tests for cache hit, cache miss, grant failure, cache outage,
   and fallback observability.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; the owning implementation issue or PR must add
-  current behavior and validation evidence.
-- Residual risk or rationale: do not claim CachePreferred support unless fallback rules and
-  user-visible status are proven together.
+- Status classification: `implemented and proven` for server-side plan selection and source shape.
+- Issue or PR evidence: #620 owns current-registration selection, ordinary-absence Direct fallback,
+  holder-bound grant issuance, complete-plan validation, generated contracts, and Fast validation.
+- Residual risk or rationale: #629 and #630 still own client private-key lifetime and cache execution.
 
 ### CacheRequired Materialization
 
@@ -118,9 +117,9 @@ docs-only classification with current evidence for the behavior they own.
   cannot serve the authorized content.
 - Proof seam: tests proving no Direct source is used when CacheRequired cannot satisfy the request,
   including cache miss, stale grant, malformed grant, and unavailable cache cases.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; the owning implementation issue or PR must add
-  current proof before any CacheRequired support claim.
+- Status classification: `implemented and proven` for server-side plan selection and source shape.
+- Issue or PR evidence: #620 proves selected-cache plans and retryable failure on ordinary absence,
+  selection failure, or post-selection grant failure without Direct retrieval details.
 - Residual risk or rationale: CacheRequired is a high-risk trust contract because a silent Direct
   fallback would violate the mode name and caller expectations.
 
@@ -172,9 +171,9 @@ docs-only classification with current evidence for the behavior they own.
 - Status classification: `implemented and proven`.
 - Issue or PR evidence: #619 and PR #697 own the grant/key contract, validation-key publication
   route, generated OpenAPI/SDK artifacts, focused proof, and passing `validate.ps1 -Full` evidence.
-- Residual risk or rationale: #620 still owns deriving `RequesterPrincipalId` from authenticated
-  server context and adding the holder public key and grant to cache-mode Materialization Plans.
-  #625 owns request admission and stream behavior; #629 and #630 own ephemeral private-key lifetime
+- Residual risk or rationale: #620 derives `RequesterPrincipalId` from authenticated server context
+  and adds the holder public key and grant to cache-mode Materialization Plans. #625 owns request
+  admission and stream behavior; #629 and #630 own ephemeral private-key lifetime
   and just-in-time proof generation. V1 intentionally has no nonce store, so replay of a captured
   complete request remains possible inside the narrow proof window; TLS protects it in transit.
 

@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **execution_mode** | [**MaterializationExecutionMode**](MaterializationExecutionMode.md) |  | 
 **cache_selection** | [**MaterializationCacheSelection**](MaterializationCacheSelection.md) |  | 
 **requested_artifact_kinds** | [**List[MaterializationArtifactKind]**](MaterializationArtifactKind.md) |  | 
+**holder_public_key** | [**ArtifactGrantHolderPublicKey**](ArtifactGrantHolderPublicKey.md) |  | [optional] 
 
 ## Example
 

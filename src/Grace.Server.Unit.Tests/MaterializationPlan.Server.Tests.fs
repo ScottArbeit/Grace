@@ -5,15 +5,19 @@ open Grace.Server
 open Grace.Shared
 open Grace.Shared.Parameters.Materialization
 open Grace.Types.Branch
+open Grace.Types.ArtifactGrant
+open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open Grace.Types.DirectoryVersion
 open Grace.Types.MaterializationPlan
 open Grace.Types.Reference
 open Grace.Types.Repository
 open NUnit.Framework
+open NodaTime
 open System
 open System.Collections.Generic
 open System.Reflection
+open System.Security.Cryptography
 open System.Text.Json
 open System.Threading.Tasks
 
@@ -31,6 +35,37 @@ type MaterializationPlanRouteTests() =
     let defaultBranchName = BranchName Constants.InitialBranchName
     let explicitBranchName = BranchName "feature"
     let correlationId = "corr-materialization-plan"
+
+    let holderPublicKey () =
+        use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        ArtifactGrant.exportHolderPublicKey key
+
+    let cacheRegistration mode =
+        CacheRegistration.Create(
+            "cache-service",
+            "https://cache.example.test",
+            Seq.empty,
+            [ Capability.ReadThrough ],
+            [ mode ],
+            Instant.FromUtc(2026, 7, 11, 20, 0),
+            Duration.FromHours 2,
+            Duration.FromHours 1
+        )
+
+    let signedGrant mode identities =
+        let payload =
+            ArtifactGrantPayload.Create(
+                "authenticated-user",
+                "holder-thumbprint",
+                "cache-service",
+                targetRootDirectoryVersionId,
+                mode,
+                identities,
+                Instant.FromUtc(2026, 7, 11, 20, 0),
+                Duration.FromMinutes 5L
+            )
+
+        SignedArtifactGrant.Create(ArtifactGrantHeader.Create "key-1", payload, "signature")
 
     /// Builds a Direct/Bypass request for a resolved immutable root.
     let directRootRequest () =
@@ -1047,3 +1082,68 @@ type MaterializationPlanRouteTests() =
         let parameters = methodInfo.GetParameters()
         Assert.That(parameters, Has.Length.EqualTo(1))
         Assert.That(parameters[0].ParameterType, Is.EqualTo(parameterType))
+
+    /// Verifies CacheRequired ordinary absence is a retryable plan failure instead of a Direct downgrade.
+    [<Test>]
+    member _.CacheRequiredEmptySelectionDoesNotDowngrade() =
+        task {
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    (MaterializationPlanRequest
+                        .Create(
+                            MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                            MaterializationExecutionMode.CacheRequired,
+                            MaterializationCacheSelection.Required,
+                            [
+                                MaterializationArtifactKind.DirectoryVersionZip
+                                MaterializationArtifactKind.RecursiveDirectoryMetadata
+                            ]
+                        )
+                        .WithHolderPublicKey(holderPublicKey ()))
+                    targetRootDirectoryVersionId
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun _ -> Task.FromResult(Array.empty))
+                    (fun _ _ -> Task.FromResult(Ok(Unchecked.defaultof<_>)))
+                    correlationId
+
+            assertErrorContains "No eligible Cache registration" result
+        }
+
+    /// Verifies a selected CacheRequired registration shapes every source and binds one exact grant.
+    [<Test>]
+    member _.CacheRequiredSelectedRegistrationProducesCacheOnlyPlan() =
+        task {
+            let mode = MaterializationExecutionMode.CacheRequired
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        mode,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    targetRootDirectoryVersionId
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun _ -> Task.FromResult([| cacheRegistration mode |]))
+                    (fun _ identities -> Task.FromResult(Ok(signedGrant mode identities)))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok plan ->
+                Assert.That(plan.ArtifactGrant.IsSome, Is.True)
+
+                for artifact in plan.RequiredArtifacts do
+                    Assert.That(artifact.Source.Value.SourceKind, Is.EqualTo(MaterializationArtifactSourceKind.CacheEntry))
+                    Assert.That(artifact.Source.Value.DirectUri.IsNone, Is.True)
+                    Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
+        }

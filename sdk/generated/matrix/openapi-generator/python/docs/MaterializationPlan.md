@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **execution_mode** | [**MaterializationExecutionMode**](MaterializationExecutionMode.md) |  | 
 **cache_selection** | [**MaterializationCacheSelection**](MaterializationCacheSelection.md) |  | 
 **required_artifacts** | [**List[MaterializationArtifactDescriptor]**](MaterializationArtifactDescriptor.md) |  | 
+**artifact_grant** | [**SignedArtifactGrant**](SignedArtifactGrant.md) |  | [optional] 
 
 ## Example
 
