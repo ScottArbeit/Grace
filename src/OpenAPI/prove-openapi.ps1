@@ -1157,6 +1157,29 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
     $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
     $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
+
+    Assert-TextContains $branchComponentsText 'ReferenceDefaultSentinel:' 'Type-specific latest Reference fields must expose the canonical ReferenceDto.Default sentinel.'
+    Assert-TextContains $branchComponentsText 'TypedReferenceApiDto:' 'Type-specific latest Reference fields must distinguish complete References from the canonical sentinel.'
+    Assert-TextContains $branchComponentsText 'enum: [00000000-0000-0000-0000-000000000000]' 'The canonical sentinel must use empty identifiers.'
+    Assert-TextContains $branchComponentsText "enum: ['']" 'The canonical sentinel must use empty hashes and text.'
+    Assert-TextContains $branchComponentsText 'additionalProperties: false' 'The canonical sentinel must reject arbitrary partial Reference properties.'
+
+    $typedReferenceCount = ([regex]::Matches($branchComponentsText, [regex]::Escape("`$ref: '#/TypedReferenceApiDto'"))).Count
+    if ($typedReferenceCount -ne 4) {
+        Add-Failure "BranchApiDto must use TypedReferenceApiDto for exactly four type-specific latest slots; found $typedReferenceCount."
+    }
+    else {
+        Add-Pass 'BranchApiDto confines the sentinel-capable union to exactly four type-specific latest slots.'
+    }
+
+    $sharedContractText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
+    $rawDirectoryRequired = [regex]::Match($sharedContractText, '(?s)DirectoryVersion:\s*.*?required:\s*(?<required>.*?)\s*example:').Groups['required'].Value
+    if ($rawDirectoryRequired -match '(?m)^\s*-\s+RecursiveSize\s*$') {
+        Add-Failure 'Raw DirectoryVersion must not require the DTO-only RecursiveSize field.'
+    }
+    else {
+        Add-Pass 'Raw DirectoryVersion leaves the DTO-only RecursiveSize field optional.'
+    }
     foreach ($requiredDirectoryContract in @(
             'DirectoryVersionId:',
             'DirectoryVersionApiDto:',
@@ -1280,6 +1303,8 @@ function Test-OpenApiSharedContractDetails {
         'Persisted DirectoryVersion.Sha256Hash must stay a strict full SHA-256 hash.'
 
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
         "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256Hash'" `
@@ -1573,6 +1598,21 @@ function Test-GeneratedClientMatrixProof {
             Add-Failure "Generator matrix deterministic hash is stale for $($entry.path). Expected $($entry.manifestSha256), actual $actualHash."
         }
     }
+
+    $generatedContractProofs = @(
+        @{ Path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/BranchApiDto.ts'; Strict = 'basedOn: ReferenceApiDto;'; Typed = 'latestCommit: TypedReferenceApiDto;' },
+        @{ Path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/branch_api_dto.py'; Strict = 'based_on: ReferenceApiDto = Field(alias="BasedOn")'; Typed = 'latest_commit: TypedReferenceApiDto = Field(alias="LatestCommit")' },
+        @{ Path = 'sdk/generated/matrix/openapi-generator/rust/src/models/branch_api_dto.rs'; Strict = 'pub based_on: Box<models::ReferenceApiDto>'; Typed = 'pub latest_commit: Box<models::TypedReferenceApiDto>' }
+    )
+
+    foreach ($proof in $generatedContractProofs) {
+        $generatedText = Get-Content -LiteralPath (Join-Path $RepoRoot $proof.Path) -Raw
+        Assert-TextContains $generatedText $proof.Strict "$($proof.Path) must keep BasedOn on the strict Reference schema."
+        Assert-TextContains $generatedText $proof.Typed "$($proof.Path) must deserialize typed latest slots through the sentinel-capable union."
+    }
+
+    $generatedDirectoryVersionText = Get-Content -LiteralPath (Join-Path $RepoRoot 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/DirectoryVersion.ts') -Raw
+    Assert-TextContains $generatedDirectoryVersionText 'recursiveSize?: number;' 'Generated raw DirectoryVersion must keep RecursiveSize optional.'
 
     Add-Pass 'Generated-client matrix accepts OpenAPI Generator TypeScript, Python, and Rust raw-client proof points with guardrails; Kiota and NSwag remain explicitly rejected.'
 }

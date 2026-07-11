@@ -37,25 +37,7 @@ class TestReferenceListReturnValue(unittest.TestCase):
         if include_optional:
             return ReferenceListReturnValue(
                 return_value = [
-                    grace_generated_openapi_probe.models.reference_api_dto.ReferenceApiDto(
-                        class = 'ReferenceDto', 
-                        reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a', 
-                        owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f', 
-                        organization_id = 'e35d64a9-b990-44f5-bf02-32ad7d15630c', 
-                        repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095', 
-                        branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d', 
-                        directory_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
-                        sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243', 
-                        blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d', 
-                        reference_type = 'Commit', 
-                        reference_text = '', 
-                        links = [
-                            ''
-                            ], 
-                        created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
-                        updated_at = null, 
-                        deleted_at = null, 
-                        delete_reason = '', )
+                    {Class=ReferenceDto, ReferenceId=c8f9bac8-d489-46c7-917f-b36b7d9efa9a, OwnerId=9dd5f81f-dc43-4839-9173-85d09394f30f, OrganizationId=e35d64a9-b990-44f5-bf02-32ad7d15630c, RepositoryId=ab6f35ef-6e01-440b-8f9b-c343a5272095, BranchId=de7bf47d-23ae-4599-af68-68a317ea390d, DirectoryId=33a4e36b-828f-4fae-9343-50b6560dc842, Sha256Hash=805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243, Blake3Hash=9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d, ReferenceType=Save, ReferenceText=Current branch reference, Links=[], CreatedAt=2026-06-04T18:15:00Z, DeleteReason=}
                     ],
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
@@ -66,25 +48,7 @@ class TestReferenceListReturnValue(unittest.TestCase):
         else:
             return ReferenceListReturnValue(
                 return_value = [
-                    grace_generated_openapi_probe.models.reference_api_dto.ReferenceApiDto(
-                        class = 'ReferenceDto', 
-                        reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a', 
-                        owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f', 
-                        organization_id = 'e35d64a9-b990-44f5-bf02-32ad7d15630c', 
-                        repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095', 
-                        branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d', 
-                        directory_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
-                        sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243', 
-                        blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d', 
-                        reference_type = 'Commit', 
-                        reference_text = '', 
-                        links = [
-                            ''
-                            ], 
-                        created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
-                        updated_at = null, 
-                        deleted_at = null, 
-                        delete_reason = '', )
+                    {Class=ReferenceDto, ReferenceId=c8f9bac8-d489-46c7-917f-b36b7d9efa9a, OwnerId=9dd5f81f-dc43-4839-9173-85d09394f30f, OrganizationId=e35d64a9-b990-44f5-bf02-32ad7d15630c, RepositoryId=ab6f35ef-6e01-440b-8f9b-c343a5272095, BranchId=de7bf47d-23ae-4599-af68-68a317ea390d, DirectoryId=33a4e36b-828f-4fae-9343-50b6560dc842, Sha256Hash=805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243, Blake3Hash=9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d, ReferenceType=Save, ReferenceText=Current branch reference, Links=[], CreatedAt=2026-06-04T18:15:00Z, DeleteReason=}
                     ],
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',

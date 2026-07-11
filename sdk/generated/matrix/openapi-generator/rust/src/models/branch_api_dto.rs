@@ -53,13 +53,13 @@ pub struct BranchApiDto {
     #[serde(rename = "LatestReference")]
     pub latest_reference: Box<models::ReferenceApiDto>,
     #[serde(rename = "LatestPromotion")]
-    pub latest_promotion: Box<models::ReferenceApiDto>,
+    pub latest_promotion: Box<models::TypedReferenceApiDto>,
     #[serde(rename = "LatestCommit")]
-    pub latest_commit: Box<models::ReferenceApiDto>,
+    pub latest_commit: Box<models::TypedReferenceApiDto>,
     #[serde(rename = "LatestCheckpoint")]
-    pub latest_checkpoint: Box<models::ReferenceApiDto>,
+    pub latest_checkpoint: Box<models::TypedReferenceApiDto>,
     #[serde(rename = "LatestSave")]
-    pub latest_save: Box<models::ReferenceApiDto>,
+    pub latest_save: Box<models::TypedReferenceApiDto>,
     #[serde(rename = "ShouldRecomputeLatestReferences")]
     pub should_recompute_latest_references: bool,
     #[serde(rename = "CreatedAt")]
@@ -74,7 +74,7 @@ pub struct BranchApiDto {
 
 impl BranchApiDto {
     /// Public branch DTO returned through branch endpoints.
-    pub fn new(class: String, branch_id: uuid::Uuid, branch_name: String, parent_branch_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, based_on: models::ReferenceApiDto, user_id: String, assign_enabled: bool, promotion_enabled: bool, commit_enabled: bool, checkpoint_enabled: bool, save_enabled: bool, tag_enabled: bool, external_enabled: bool, auto_rebase_enabled: bool, promotion_mode: String, latest_reference: models::ReferenceApiDto, latest_promotion: models::ReferenceApiDto, latest_commit: models::ReferenceApiDto, latest_checkpoint: models::ReferenceApiDto, latest_save: models::ReferenceApiDto, should_recompute_latest_references: bool, created_at: chrono::DateTime<chrono::FixedOffset>, delete_reason: String) -> BranchApiDto {
+    pub fn new(class: String, branch_id: uuid::Uuid, branch_name: String, parent_branch_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, based_on: models::ReferenceApiDto, user_id: String, assign_enabled: bool, promotion_enabled: bool, commit_enabled: bool, checkpoint_enabled: bool, save_enabled: bool, tag_enabled: bool, external_enabled: bool, auto_rebase_enabled: bool, promotion_mode: String, latest_reference: models::ReferenceApiDto, latest_promotion: models::TypedReferenceApiDto, latest_commit: models::TypedReferenceApiDto, latest_checkpoint: models::TypedReferenceApiDto, latest_save: models::TypedReferenceApiDto, should_recompute_latest_references: bool, created_at: chrono::DateTime<chrono::FixedOffset>, delete_reason: String) -> BranchApiDto {
         BranchApiDto {
             class,
             branch_id,

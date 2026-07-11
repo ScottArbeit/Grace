@@ -158,6 +158,7 @@ docs/PromotionSetApprovalSummary.md
 docs/RebaseParameters.md
 docs/RecordSavesParameters.md
 docs/ReferenceApiDto.md
+docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
 docs/ReferenceListReturnValue.md
 docs/ReferenceParameters.md
@@ -198,6 +199,7 @@ docs/StartUploadSession.md
 docs/StorageParameters.md
 docs/SwitchParameters.md
 docs/TestWebhookRuleParameters.md
+docs/TypedReferenceApiDto.md
 docs/UndeleteOrganizationParameters.md
 docs/UndeleteOwnerParameters.md
 docs/UndeleteRepositoryParameters.md
@@ -394,6 +396,7 @@ src/models/PromotionSetApprovalSummary.ts
 src/models/RebaseParameters.ts
 src/models/RecordSavesParameters.ts
 src/models/ReferenceApiDto.ts
+src/models/ReferenceDefaultSentinel.ts
 src/models/ReferenceDto.ts
 src/models/ReferenceListReturnValue.ts
 src/models/ReferenceParameters.ts
@@ -433,6 +436,7 @@ src/models/StartUploadSession.ts
 src/models/StorageParameters.ts
 src/models/SwitchParameters.ts
 src/models/TestWebhookRuleParameters.ts
+src/models/TypedReferenceApiDto.ts
 src/models/UndeleteOrganizationParameters.ts
 src/models/UndeleteOwnerParameters.ts
 src/models/UndeleteRepositoryParameters.ts

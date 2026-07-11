@@ -342,6 +342,25 @@ type AnnotationMaterializationServerTests() =
         materializeManifest metadata objects readPlacements target
         |> expectErrorContains "FileVersion.Blake3Hash"
 
+        Assert.That(readPlacements, Is.Empty)
+
+    /// Verifies that missing SHA-256 is rejected before annotation materialization reads storage.
+    [<Test>]
+    member _.MaterializationRejectsEmptyFileSha256BeforeStorageRead() =
+        let bytes = textBytes "missing sha256"
+        let target = fileVersion "/src/MissingSha.fs" false bytes
+        target.Sha256Hash <- Sha256Hash String.Empty
+        let mutable readerCalled = false
+
+        let reader _ _ _ =
+            readerCalled <- true
+            task { return Ok bytes }
+
+        materializeWholeFile reader target
+        |> expectErrorContains "FileVersion.Sha256Hash"
+
+        Assert.That(readerCalled, Is.False)
+
     /// Verifies that binary Target Is Rejected Before Storage Read.
     [<Test>]
     member _.BinaryTargetIsRejectedBeforeStorageRead() =

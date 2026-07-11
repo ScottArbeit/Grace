@@ -98,7 +98,7 @@ export interface DirectoryVersion {
      * @type {number}
      * @memberof DirectoryVersion
      */
-    recursiveSize: number;
+    recursiveSize?: number;
     /**
      * 
      * @type {Date}
@@ -128,7 +128,6 @@ export function instanceOfDirectoryVersion(value: object): value is DirectoryVer
     if (!('directories' in value) || value['directories'] === undefined) return false;
     if (!('files' in value) || value['files'] === undefined) return false;
     if (!('size' in value) || value['size'] === undefined) return false;
-    if (!('recursiveSize' in value) || value['recursiveSize'] === undefined) return false;
     if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
     if (!('hashesValidated' in value) || value['hashesValidated'] === undefined) return false;
     return true;
@@ -155,7 +154,7 @@ export function DirectoryVersionFromJSONTyped(json: any, ignoreDiscriminator: bo
         'directories': json['Directories'],
         'files': ((json['Files'] as Array<any>).map(FileVersionFromJSON)),
         'size': json['Size'],
-        'recursiveSize': json['RecursiveSize'],
+        'recursiveSize': json['RecursiveSize'] == null ? undefined : json['RecursiveSize'],
         'createdAt': (new Date(json['CreatedAt'])),
         'hashesValidated': json['HashesValidated'],
     };

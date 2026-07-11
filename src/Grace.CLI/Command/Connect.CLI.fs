@@ -313,17 +313,25 @@ module Connect =
     let internal tryGetDirectoryIdFromBranch (referenceType: ReferenceType) (branchDto: BranchDto) =
         match referenceType with
         | ReferenceType.Promotion when
-            branchDto.LatestPromotion.DirectoryId
-            <> Guid.Empty
+            branchDto.LatestPromotion.ReferenceId
+            <> ReferenceId.Empty
             ->
             Some branchDto.LatestPromotion.DirectoryId
-        | ReferenceType.Commit when branchDto.LatestCommit.DirectoryId <> Guid.Empty -> Some branchDto.LatestCommit.DirectoryId
+        | ReferenceType.Commit when
+            branchDto.LatestCommit.ReferenceId
+            <> ReferenceId.Empty
+            ->
+            Some branchDto.LatestCommit.DirectoryId
         | ReferenceType.Checkpoint when
-            branchDto.LatestCheckpoint.DirectoryId
-            <> Guid.Empty
+            branchDto.LatestCheckpoint.ReferenceId
+            <> ReferenceId.Empty
             ->
             Some branchDto.LatestCheckpoint.DirectoryId
-        | ReferenceType.Save when branchDto.LatestSave.DirectoryId <> Guid.Empty -> Some branchDto.LatestSave.DirectoryId
+        | ReferenceType.Save when
+            branchDto.LatestSave.ReferenceId
+            <> ReferenceId.Empty
+            ->
+            Some branchDto.LatestSave.DirectoryId
         | _ -> None
 
     /// Resolves default directory version id from command options, configuration, or local state.

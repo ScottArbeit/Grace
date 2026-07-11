@@ -23,10 +23,10 @@ Name | Type | Description | Notes
 **auto_rebase_enabled** | **bool** |  | 
 **promotion_mode** | **String** |  | 
 **latest_reference** | [**models::ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_promotion** | [**models::ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_commit** | [**models::ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_checkpoint** | [**models::ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_save** | [**models::ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**latest_promotion** | [**models::TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
+**latest_commit** | [**models::TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
+**latest_checkpoint** | [**models::TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
+**latest_save** | [**models::TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
 **should_recompute_latest_references** | **bool** |  | 
 **created_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **updated_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]

@@ -4,6 +4,8 @@ open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
 open Grace.Types.Common
+open Grace.Types.Branch
+open Grace.Types.Reference
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -91,3 +93,21 @@ module ConnectTests =
 
         Connect.existingFileMatchesRemoteVersion (Sha256Hash "sha") (Blake3Hash String.Empty) remoteFile
         |> should equal false
+
+    /// Verifies that a typed default sentinel is reported as no Reference even if another field is adversarially populated.
+    [<Test>]
+    let ``typed reference lookup rejects canonical sentinel and wrong type`` () =
+        let promotion =
+            { ReferenceDto.Default with
+                ReferenceId = ReferenceId.NewGuid()
+                DirectoryId = DirectoryVersionId.NewGuid()
+                ReferenceType = ReferenceType.Promotion
+            }
+
+        let branch = { BranchDto.Default with LatestPromotion = promotion; LatestCommit = ReferenceDto.Default }
+
+        Connect.tryGetDirectoryIdFromBranch ReferenceType.Commit branch
+        |> should equal None
+
+        Connect.tryGetDirectoryIdFromBranch ReferenceType.Promotion branch
+        |> should equal (Some promotion.DirectoryId)

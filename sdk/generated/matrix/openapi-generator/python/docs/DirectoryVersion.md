@@ -16,7 +16,7 @@ Name | Type | Description | Notes
 **directories** | **List[UUID]** |  | 
 **files** | [**List[FileVersion]**](FileVersion.md) |  | 
 **size** | **int** |  | 
-**recursive_size** | **int** |  | 
+**recursive_size** | **int** |  | [optional] 
 **created_at** | **datetime** |  | 
 **hashes_validated** | **bool** |  | 
 

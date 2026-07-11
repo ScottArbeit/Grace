@@ -13,6 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
+import type { TypedReferenceApiDto } from './TypedReferenceApiDto';
+import {
+    TypedReferenceApiDtoFromJSON,
+    TypedReferenceApiDtoFromJSONTyped,
+    TypedReferenceApiDtoToJSON,
+    TypedReferenceApiDtoToJSONTyped,
+} from './TypedReferenceApiDto';
 import type { ReferenceApiDto } from './ReferenceApiDto';
 import {
     ReferenceApiDtoFromJSON,
@@ -143,28 +150,28 @@ export interface BranchApiDto {
     latestReference: ReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestPromotion: ReferenceApiDto;
+    latestPromotion: TypedReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestCommit: ReferenceApiDto;
+    latestCommit: TypedReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestCheckpoint: ReferenceApiDto;
+    latestCheckpoint: TypedReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestSave: ReferenceApiDto;
+    latestSave: TypedReferenceApiDto;
     /**
      * 
      * @type {boolean}
@@ -259,10 +266,10 @@ export function BranchApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'autoRebaseEnabled': json['AutoRebaseEnabled'],
         'promotionMode': json['PromotionMode'],
         'latestReference': ReferenceApiDtoFromJSON(json['LatestReference']),
-        'latestPromotion': ReferenceApiDtoFromJSON(json['LatestPromotion']),
-        'latestCommit': ReferenceApiDtoFromJSON(json['LatestCommit']),
-        'latestCheckpoint': ReferenceApiDtoFromJSON(json['LatestCheckpoint']),
-        'latestSave': ReferenceApiDtoFromJSON(json['LatestSave']),
+        'latestPromotion': TypedReferenceApiDtoFromJSON(json['LatestPromotion']),
+        'latestCommit': TypedReferenceApiDtoFromJSON(json['LatestCommit']),
+        'latestCheckpoint': TypedReferenceApiDtoFromJSON(json['LatestCheckpoint']),
+        'latestSave': TypedReferenceApiDtoFromJSON(json['LatestSave']),
         'shouldRecomputeLatestReferences': json['ShouldRecomputeLatestReferences'],
         'createdAt': (new Date(json['CreatedAt'])),
         'updatedAt': json['UpdatedAt'] == null ? undefined : (new Date(json['UpdatedAt'])),
@@ -301,10 +308,10 @@ export function BranchApiDtoToJSONTyped(value?: BranchApiDto | null, ignoreDiscr
         'AutoRebaseEnabled': value['autoRebaseEnabled'],
         'PromotionMode': value['promotionMode'],
         'LatestReference': ReferenceApiDtoToJSON(value['latestReference']),
-        'LatestPromotion': ReferenceApiDtoToJSON(value['latestPromotion']),
-        'LatestCommit': ReferenceApiDtoToJSON(value['latestCommit']),
-        'LatestCheckpoint': ReferenceApiDtoToJSON(value['latestCheckpoint']),
-        'LatestSave': ReferenceApiDtoToJSON(value['latestSave']),
+        'LatestPromotion': TypedReferenceApiDtoToJSON(value['latestPromotion']),
+        'LatestCommit': TypedReferenceApiDtoToJSON(value['latestCommit']),
+        'LatestCheckpoint': TypedReferenceApiDtoToJSON(value['latestCheckpoint']),
+        'LatestSave': TypedReferenceApiDtoToJSON(value['latestSave']),
         'ShouldRecomputeLatestReferences': value['shouldRecomputeLatestReferences'],
         'CreatedAt': value['createdAt'].toISOString(),
         'UpdatedAt': value['updatedAt'] == null ? value['updatedAt'] : value['updatedAt'].toISOString(),

@@ -933,10 +933,6 @@ type BranchServer() =
             [|
                 parentBranch.BasedOn
                 parentBranch.LatestReference
-                parentBranch.LatestPromotion
-                parentBranch.LatestCommit
-                parentBranch.LatestCheckpoint
-                parentBranch.LatestSave
             |]
             |> Array.iter (fun reference ->
                 Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
@@ -953,15 +949,19 @@ type BranchServer() =
             [|
                 createdBranch.BasedOn
                 createdBranch.LatestReference
-                createdBranch.LatestPromotion
-                createdBranch.LatestCommit
-                createdBranch.LatestCheckpoint
-                createdBranch.LatestSave
             |]
             |> Array.iter (fun reference ->
                 Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
                 Assert.That(string reference.Sha256Hash, Is.Not.Empty)
                 Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
+            [|
+                createdBranch.LatestPromotion
+                createdBranch.LatestCommit
+                createdBranch.LatestCheckpoint
+                createdBranch.LatestSave
+            |]
+            |> Array.iter (fun reference -> Assert.That(reference, Is.EqualTo(Reference.ReferenceDto.Default)))
 
             let! fetchedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{createdBranch.BranchId}"
             BranchServerTestHelpers.assertBranchMatches repositoryId $"{createdBranch.BranchId}" branchName fetchedBranch

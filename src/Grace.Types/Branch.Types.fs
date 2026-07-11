@@ -213,6 +213,25 @@ module Branch =
                 DeleteReason = String.Empty
             }
 
+        /// Reports whether a BranchDto can cross the public boundary with strict real References and canonical typed sentinels.
+        static member IsValidPublicProjection(branchDto: BranchDto) =
+            let isRealReference (referenceDto: ReferenceDto) =
+                referenceDto.ReferenceId <> ReferenceId.Empty
+                && not (String.IsNullOrWhiteSpace(string referenceDto.Sha256Hash))
+                && not (String.IsNullOrWhiteSpace(string referenceDto.Blake3Hash))
+
+            let isTypedReferenceOrDefault expectedType (referenceDto: ReferenceDto) =
+                referenceDto = ReferenceDto.Default
+                || (isRealReference referenceDto
+                    && referenceDto.ReferenceType = expectedType)
+
+            isRealReference branchDto.BasedOn
+            && isRealReference branchDto.LatestReference
+            && isTypedReferenceOrDefault ReferenceType.Promotion branchDto.LatestPromotion
+            && isTypedReferenceOrDefault ReferenceType.Commit branchDto.LatestCommit
+            && isTypedReferenceOrDefault ReferenceType.Checkpoint branchDto.LatestCheckpoint
+            && isTypedReferenceOrDefault ReferenceType.Save branchDto.LatestSave
+
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto branchEvent currentBranchDto =
             let branchEventType = branchEvent.Event
@@ -235,10 +254,6 @@ module Branch =
                             ParentBranchId = parentBranchId
                             BasedOn = basedOnReferenceDto
                             LatestReference = basedOnReferenceDto
-                            LatestPromotion = basedOnReferenceDto
-                            LatestCommit = basedOnReferenceDto
-                            LatestCheckpoint = basedOnReferenceDto
-                            LatestSave = basedOnReferenceDto
                             OwnerId = ownerId
                             OrganizationId = organizationId
                             RepositoryId = repositoryId
@@ -269,19 +284,29 @@ module Branch =
                     { currentBranchDto with BasedOn = basedOnReferenceDto }
                 | NameSet branchName -> { currentBranchDto with BranchName = branchName }
                 | Assigned (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with
+                        BasedOn = referenceDto
+                        LatestReference = referenceDto
+                        LatestPromotion = referenceDto
+                        ShouldRecomputeLatestReferences = true
+                    }
 
                 | Promoted (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with
+                        BasedOn = referenceDto
+                        LatestReference = referenceDto
+                        LatestPromotion = referenceDto
+                        ShouldRecomputeLatestReferences = true
+                    }
 
                 | Committed (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with LatestReference = referenceDto; LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
 
                 | Checkpointed (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with LatestReference = referenceDto; LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
 
                 | Saved (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
-                    { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
+                    { currentBranchDto with LatestReference = referenceDto; LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
 
                 | Tagged (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with ShouldRecomputeLatestReferences = true }
@@ -305,26 +330,4 @@ module Branch =
                 | Undeleted -> { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
 
 
-            let initialReference =
-                if newBranchDto.BasedOn.ReferenceId
-                   <> ReferenceId.Empty then
-                    newBranchDto.BasedOn
-                else
-                    newBranchDto.LatestReference
-
-            /// Replaces an internal uninitialized slot with the branch's first valid Reference during replay projection.
-            let completeReference (referenceDto: ReferenceDto) =
-                if referenceDto.ReferenceId = ReferenceId.Empty then
-                    initialReference
-                else
-                    referenceDto
-
-            { newBranchDto with
-                BasedOn = completeReference newBranchDto.BasedOn
-                LatestReference = completeReference newBranchDto.LatestReference
-                LatestPromotion = completeReference newBranchDto.LatestPromotion
-                LatestCommit = completeReference newBranchDto.LatestCommit
-                LatestCheckpoint = completeReference newBranchDto.LatestCheckpoint
-                LatestSave = completeReference newBranchDto.LatestSave
-                UpdatedAt = Some branchEvent.Metadata.Timestamp
-            }
+            { newBranchDto with UpdatedAt = Some branchEvent.Metadata.Timestamp }

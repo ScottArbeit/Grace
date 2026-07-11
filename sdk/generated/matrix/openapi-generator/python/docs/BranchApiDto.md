@@ -25,10 +25,10 @@ Name | Type | Description | Notes
 **auto_rebase_enabled** | **bool** |  | 
 **promotion_mode** | **str** |  | 
 **latest_reference** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_promotion** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_commit** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_checkpoint** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
-**latest_save** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**latest_promotion** | [**TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
+**latest_commit** | [**TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
+**latest_checkpoint** | [**TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
+**latest_save** | [**TypedReferenceApiDto**](TypedReferenceApiDto.md) |  | 
 **should_recompute_latest_references** | **bool** |  | 
 **created_at** | **datetime** |  | 
 **updated_at** | **datetime** |  | [optional] 

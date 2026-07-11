@@ -20,7 +20,7 @@ import json
 
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.file_version import FileVersion
@@ -43,7 +43,7 @@ class DirectoryVersion(BaseModel):
     directories: List[UUID] = Field(alias="Directories")
     files: List[FileVersion] = Field(alias="Files")
     size: StrictInt = Field(alias="Size")
-    recursive_size: StrictInt = Field(alias="RecursiveSize")
+    recursive_size: Optional[StrictInt] = Field(default=None, alias="RecursiveSize")
     created_at: datetime = Field(alias="CreatedAt")
     hashes_validated: StrictBool = Field(alias="HashesValidated")
     __properties: ClassVar[List[str]] = ["Class", "DirectoryVersionId", "OwnerId", "OrganizationId", "RepositoryId", "RelativePath", "Sha256Hash", "Blake3Hash", "Directories", "Files", "Size", "RecursiveSize", "CreatedAt", "HashesValidated"]

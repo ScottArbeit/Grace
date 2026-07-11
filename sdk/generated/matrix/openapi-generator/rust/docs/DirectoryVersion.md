@@ -15,7 +15,7 @@ Name | Type | Description | Notes
 **directories** | **Vec<uuid::Uuid>** |  | 
 **files** | [**Vec<models::FileVersion>**](FileVersion.md) |  | 
 **size** | **i64** |  | 
-**recursive_size** | **i64** |  | 
+**recursive_size** | Option<**i64**> |  | [optional]
 **created_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **hashes_validated** | **bool** |  | 
 

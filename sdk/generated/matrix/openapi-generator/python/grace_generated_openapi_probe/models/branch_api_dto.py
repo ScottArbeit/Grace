@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 from grace_generated_openapi_probe.models.reference_api_dto import ReferenceApiDto
+from grace_generated_openapi_probe.models.typed_reference_api_dto import TypedReferenceApiDto
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -50,10 +51,10 @@ class BranchApiDto(BaseModel):
     auto_rebase_enabled: StrictBool = Field(alias="AutoRebaseEnabled")
     promotion_mode: StrictStr = Field(alias="PromotionMode")
     latest_reference: ReferenceApiDto = Field(alias="LatestReference")
-    latest_promotion: ReferenceApiDto = Field(alias="LatestPromotion")
-    latest_commit: ReferenceApiDto = Field(alias="LatestCommit")
-    latest_checkpoint: ReferenceApiDto = Field(alias="LatestCheckpoint")
-    latest_save: ReferenceApiDto = Field(alias="LatestSave")
+    latest_promotion: TypedReferenceApiDto = Field(alias="LatestPromotion")
+    latest_commit: TypedReferenceApiDto = Field(alias="LatestCommit")
+    latest_checkpoint: TypedReferenceApiDto = Field(alias="LatestCheckpoint")
+    latest_save: TypedReferenceApiDto = Field(alias="LatestSave")
     should_recompute_latest_references: StrictBool = Field(alias="ShouldRecomputeLatestReferences")
     created_at: datetime = Field(alias="CreatedAt")
     updated_at: Optional[datetime] = Field(default=None, alias="UpdatedAt")
@@ -149,10 +150,10 @@ class BranchApiDto(BaseModel):
             "AutoRebaseEnabled": obj.get("AutoRebaseEnabled"),
             "PromotionMode": obj.get("PromotionMode"),
             "LatestReference": ReferenceApiDto.from_dict(obj["LatestReference"]) if obj.get("LatestReference") is not None else None,
-            "LatestPromotion": ReferenceApiDto.from_dict(obj["LatestPromotion"]) if obj.get("LatestPromotion") is not None else None,
-            "LatestCommit": ReferenceApiDto.from_dict(obj["LatestCommit"]) if obj.get("LatestCommit") is not None else None,
-            "LatestCheckpoint": ReferenceApiDto.from_dict(obj["LatestCheckpoint"]) if obj.get("LatestCheckpoint") is not None else None,
-            "LatestSave": ReferenceApiDto.from_dict(obj["LatestSave"]) if obj.get("LatestSave") is not None else None,
+            "LatestPromotion": TypedReferenceApiDto.from_dict(obj["LatestPromotion"]) if obj.get("LatestPromotion") is not None else None,
+            "LatestCommit": TypedReferenceApiDto.from_dict(obj["LatestCommit"]) if obj.get("LatestCommit") is not None else None,
+            "LatestCheckpoint": TypedReferenceApiDto.from_dict(obj["LatestCheckpoint"]) if obj.get("LatestCheckpoint") is not None else None,
+            "LatestSave": TypedReferenceApiDto.from_dict(obj["LatestSave"]) if obj.get("LatestSave") is not None else None,
             "ShouldRecomputeLatestReferences": obj.get("ShouldRecomputeLatestReferences"),
             "CreatedAt": obj.get("CreatedAt"),
             "UpdatedAt": obj.get("UpdatedAt"),

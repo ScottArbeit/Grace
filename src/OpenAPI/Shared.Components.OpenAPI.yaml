@@ -247,7 +247,6 @@ components:
         - Directories
         - Files
         - Size
-        - RecursiveSize
         - CreatedAt
         - HashesValidated
       example:

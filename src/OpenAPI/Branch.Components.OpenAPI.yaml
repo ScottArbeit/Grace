@@ -302,6 +302,108 @@
         - Links
         - CreatedAt
         - DeleteReason
+      example: &referenceApiDtoExample
+        Class: ReferenceDto
+        ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+        DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
+        Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
+        Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
+        ReferenceType: Save
+        ReferenceText: Current branch reference
+        Links: []
+        CreatedAt: '2026-06-04T18:15:00Z'
+        DeleteReason: ''
+    ReferenceDefaultSentinel:
+      description: Canonical ReferenceDto.Default value used only when a type-specific latest Reference does not yet exist.
+      type: object
+      additionalProperties: false
+      properties:
+        Class:
+          type: string
+          enum: [ReferenceDto]
+        ReferenceId:
+          type: string
+          format: uuid
+          enum: [00000000-0000-0000-0000-000000000000]
+        OwnerId:
+          type: string
+          format: uuid
+          enum: [00000000-0000-0000-0000-000000000000]
+        OrganizationId:
+          type: string
+          format: uuid
+          enum: [00000000-0000-0000-0000-000000000000]
+        RepositoryId:
+          type: string
+          format: uuid
+          enum: [00000000-0000-0000-0000-000000000000]
+        BranchId:
+          type: string
+          format: uuid
+          enum: [00000000-0000-0000-0000-000000000000]
+        DirectoryId:
+          type: string
+          format: uuid
+          enum: [00000000-0000-0000-0000-000000000000]
+        Sha256Hash:
+          type: string
+          enum: ['']
+        Blake3Hash:
+          type: string
+          enum: ['']
+        ReferenceType:
+          type: string
+          enum: [Save]
+        ReferenceText:
+          type: string
+          enum: ['']
+        Links:
+          type: array
+          maxItems: 0
+          items:
+            type: string
+        CreatedBy:
+          type: string
+          nullable: true
+        CreatedAt:
+          type: string
+          enum: ['2000-01-01T00:00:00Z']
+        UpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        DeletedAt:
+          type: string
+          format: date-time
+          nullable: true
+        DeleteReason:
+          type: string
+          enum: ['']
+      required: [Class, ReferenceId, OwnerId, OrganizationId, RepositoryId, BranchId, DirectoryId, Sha256Hash, Blake3Hash, ReferenceType, ReferenceText, Links, CreatedAt, DeleteReason]
+      example: &referenceDefaultSentinelExample
+        Class: ReferenceDto
+        ReferenceId: 00000000-0000-0000-0000-000000000000
+        OwnerId: 00000000-0000-0000-0000-000000000000
+        OrganizationId: 00000000-0000-0000-0000-000000000000
+        RepositoryId: 00000000-0000-0000-0000-000000000000
+        BranchId: 00000000-0000-0000-0000-000000000000
+        DirectoryId: 00000000-0000-0000-0000-000000000000
+        Sha256Hash: ''
+        Blake3Hash: ''
+        ReferenceType: Save
+        ReferenceText: ''
+        Links: []
+        CreatedAt: '2000-01-01T00:00:00Z'
+        DeleteReason: ''
+    TypedReferenceApiDto:
+      description: A complete real Reference or the canonical absence sentinel for one type-specific latest slot.
+      oneOf:
+        - $ref: '#/ReferenceApiDto'
+        - $ref: '#/ReferenceDefaultSentinel'
     BranchApiDto:
       description: Public branch DTO returned through branch endpoints.
       type: object
@@ -347,13 +449,13 @@
         LatestReference:
           $ref: '#/ReferenceApiDto'
         LatestPromotion:
-          $ref: '#/ReferenceApiDto'
+          $ref: '#/TypedReferenceApiDto'
         LatestCommit:
-          $ref: '#/ReferenceApiDto'
+          $ref: '#/TypedReferenceApiDto'
         LatestCheckpoint:
-          $ref: '#/ReferenceApiDto'
+          $ref: '#/TypedReferenceApiDto'
         LatestSave:
-          $ref: '#/ReferenceApiDto'
+          $ref: '#/TypedReferenceApiDto'
         ShouldRecomputeLatestReferences:
           type: boolean
         CreatedAt:
@@ -417,8 +519,7 @@
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
           OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
           RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
-          BasedOn:
-            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          BasedOn: *referenceApiDtoExample
           UserId: user:alice
           AssignEnabled: false
           PromotionEnabled: true
@@ -429,16 +530,11 @@
           ExternalEnabled: false
           AutoRebaseEnabled: true
           PromotionMode: IndividualOnly
-          LatestReference:
-            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-          LatestPromotion:
-            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-          LatestCommit:
-            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-          LatestCheckpoint:
-            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-          LatestSave:
-            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestReference: *referenceApiDtoExample
+          LatestPromotion: *referenceDefaultSentinelExample
+          LatestCommit: *referenceDefaultSentinelExample
+          LatestCheckpoint: *referenceDefaultSentinelExample
+          LatestSave: *referenceDefaultSentinelExample
           ShouldRecomputeLatestReferences: false
           CreatedAt: '2026-06-04T18:15:00Z'
           DeleteReason: ''
