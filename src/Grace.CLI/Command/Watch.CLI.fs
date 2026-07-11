@@ -3235,6 +3235,9 @@ module Watch =
             WriteGraceStatus: GraceStatus -> Task<unit>
             RequestResync: string -> unit
             TryCreateUpdateMarker: string -> string -> bool
+            IsUpdateMarkerOwned: string -> string -> bool
+            BeforeTargetMutation: string -> unit
+            DeleteUpdateMarker: string -> unit
             BeforeFinalVerification: unit -> Task<unit>
             BeforeStatusReplacementVerification: unit -> Task<unit>
         }
@@ -3413,15 +3416,24 @@ module Watch =
                && child.StartsWith(parent + "/", watchPathComparison)
                && not (child.Substring(parent.Length + 1).Contains('/')))
 
-    /// Persists completion evidence and always attempts best-effort marker deletion without masking persistence failure.
+    /// Persists completion evidence and retires the marker while preserving the first cleanup failure.
     let internal completeCurrentBranchMaterializationMarkerForWatchTests writeCompletion deleteMarker =
+        let mutable completionFailure = None
+
         try
             writeCompletion ()
-        finally
-            try
-                deleteMarker ()
-            with
-            | _ -> ()
+        with
+        | ex -> completionFailure <- Some ex
+
+        try
+            deleteMarker ()
+        with
+        | ex when completionFailure.IsNone -> completionFailure <- Some ex
+        | _ -> ()
+
+        match completionFailure with
+        | Some ex -> raise ex
+        | None -> ()
 
     /// Creates the shared update marker without replacing a marker owned by another Grace command.
     let internal tryCreateCurrentBranchMaterializationMarkerForWatchTests (markerFileName: string) (content: string) =
@@ -3569,6 +3581,8 @@ module Watch =
             RootDirectoryId = rootDirectoryVersion.DirectoryVersionId
             RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash
             RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
+            LastSuccessfulFileUpload = currentStatus.LastSuccessfulFileUpload
+            LastSuccessfulDirectoryVersionUpload = currentStatus.LastSuccessfulDirectoryVersionUpload
         }
 
     /// Chooses only paths that are not already covered by an ancestor directory delete.
@@ -4035,118 +4049,153 @@ module Watch =
             if not markerOwned then
                 invalidOp "Remote materialization cannot start because another Grace command created the shared update marker."
 
-            try
-                do! clients.BeforeFinalVerification()
+            let ensureMarkerOwned mutation =
+                clients.BeforeTargetMutation mutation
 
-                if not (currentBranchMaterializationMarkerIsOwned markerFileName markerContent) then
+                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
                     invalidOp "Remote materialization cannot continue because its shared update marker was replaced."
 
-                do! verifyCurrentBranchMaterializationObjectCache plan
-                do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
-                do! verifyCurrentBranchMaterializationRetainedFiles plan
-                let currentFiles = materializationFilesByPath currentStatus
+            let mutable applyFailure = None
 
-                for relativePath in plan.FileDeletes do
-                    let fullPath = materializationTargetFullPath relativePath
-                    let path = normalizedMaterializationPath relativePath
-                    let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+            try
+                try
+                    do! clients.BeforeFinalVerification()
 
-                    if currentFiles.TryGetValue(path, &currentFile) then
-                        let! matchesStatus = targetFileStillMatchesStatus currentFile
+                    ensureMarkerOwned "final verification"
 
-                        if not matchesStatus then
-                            invalidOp $"Remote materialization delete target changed at mutation boundary: {relativePath}."
+                    do! verifyCurrentBranchMaterializationObjectCache plan
+                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+                    let currentFiles = materializationFilesByPath currentStatus
 
-                    if File.Exists(fullPath) then File.Delete(fullPath)
+                    for relativePath in plan.FileDeletes do
+                        let fullPath = materializationTargetFullPath relativePath
+                        let path = normalizedMaterializationPath relativePath
+                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
 
-                for relativePath in
-                    plan.DirectoryDeletes
-                    |> Array.sortByDescending (fun path -> (normalizedMaterializationPath path).Length) do
-                    let fullPath = materializationTargetFullPath relativePath
-                    let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
+                        if currentFiles.TryGetValue(path, &currentFile) then
+                            let! matchesStatus = targetFileStillMatchesStatus currentFile
 
-                    if not matchesStatus then
-                        invalidOp $"Remote materialization directory target changed at mutation boundary: {relativePath}."
+                            if not matchesStatus then
+                                invalidOp $"Remote materialization delete target changed at mutation boundary: {relativePath}."
 
-                    if Directory.Exists(fullPath) then Directory.Delete(fullPath, true)
+                        if File.Exists(fullPath) then
+                            ensureMarkerOwned $"delete file {relativePath}"
+                            File.Delete(fullPath)
 
-                for relativePath in plan.DirectoryCreates do
-                    let fullPath = materializationTargetFullPath relativePath
-
-                    if
-                        File.Exists(fullPath)
-                        || Directory.Exists(fullPath)
-                    then
-                        invalidOp $"Remote materialization directory create target appeared at mutation boundary: {relativePath}."
-
-                    Directory.CreateDirectory(fullPath) |> ignore
-
-                for fileVersion in plan.FileWrites do
-                    let targetPath = materializationTargetFullPath fileVersion.RelativePath
-                    let sourcePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
-                    let path = normalizedMaterializationPath fileVersion.RelativePath
-                    let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
-
-                    let removedByDirectoryDelete =
+                    for relativePath in
                         plan.DirectoryDeletes
-                        |> Array.exists (fun directoryPath ->
-                            normalizedMaterializationPath directoryPath = path
-                            || materializationPathIsUnder directoryPath fileVersion.RelativePath)
-
-                    if
-                        currentFiles.TryGetValue(path, &currentFile)
-                        && not removedByDirectoryDelete
-                    then
-                        let! matchesStatus = targetFileStillMatchesStatus currentFile
+                        |> Array.sortByDescending (fun path -> (normalizedMaterializationPath path).Length) do
+                        let fullPath = materializationTargetFullPath relativePath
+                        let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
 
                         if not matchesStatus then
-                            invalidOp $"Remote materialization write target changed at mutation boundary: {fileVersion.RelativePath}."
-                    elif
-                        File.Exists(targetPath)
-                        || Directory.Exists(targetPath)
-                    then
-                        invalidOp $"Remote materialization write target appeared at mutation boundary: {fileVersion.RelativePath}."
+                            invalidOp $"Remote materialization directory target changed at mutation boundary: {relativePath}."
 
-                    do! verifyCurrentBranchMaterializationObjectCache { plan with FileWrites = [| fileVersion |] }
+                        if Directory.Exists(fullPath) then
+                            ensureMarkerOwned $"delete directory {relativePath}"
+                            Directory.Delete(fullPath, true)
 
-                    Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
-                    |> ignore
+                    for relativePath in plan.DirectoryCreates do
+                        let fullPath = materializationTargetFullPath relativePath
 
-                    File.Copy(sourcePath, targetPath, true)
-                    File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
+                        if
+                            File.Exists(fullPath)
+                            || Directory.Exists(fullPath)
+                        then
+                            invalidOp $"Remote materialization directory create target appeared at mutation boundary: {relativePath}."
 
-                    let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+                        ensureMarkerOwned $"create directory {relativePath}"
+                        Directory.CreateDirectory(fullPath) |> ignore
 
-                    if not copiedTargetMatches then
-                        invalidOp $"Remote materialization copied target did not match declared identity: {fileVersion.RelativePath}."
+                    for fileVersion in plan.FileWrites do
+                        let targetPath = materializationTargetFullPath fileVersion.RelativePath
+                        let sourcePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+                        let path = normalizedMaterializationPath fileVersion.RelativePath
+                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
 
-                do! clients.BeforeStatusReplacementVerification()
-                do! verifyCurrentBranchMaterializationRetainedFiles plan
+                        let removedByDirectoryDelete =
+                            plan.DirectoryDeletes
+                            |> Array.exists (fun directoryPath ->
+                                normalizedMaterializationPath directoryPath = path
+                                || materializationPathIsUnder directoryPath fileVersion.RelativePath)
 
-                for fileVersion in plan.FileWrites do
-                    let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+                        if
+                            currentFiles.TryGetValue(path, &currentFile)
+                            && not removedByDirectoryDelete
+                        then
+                            let! matchesStatus = targetFileStillMatchesStatus currentFile
 
-                    if not copiedTargetMatches then
-                        invalidOp $"Remote materialization copied target changed before status replacement: {fileVersion.RelativePath}."
+                            if not matchesStatus then
+                                invalidOp $"Remote materialization write target changed at mutation boundary: {fileVersion.RelativePath}."
+                        elif
+                            File.Exists(targetPath)
+                            || Directory.Exists(targetPath)
+                        then
+                            invalidOp $"Remote materialization write target appeared at mutation boundary: {fileVersion.RelativePath}."
 
-                do! clients.WriteGraceStatus remoteStatus
-                graceStatus <- remoteStatus
-                updateGraceStatusDirectoryIds remoteStatus
-            finally
-                if currentBranchMaterializationMarkerIsOwned markerFileName markerContent then
+                        do! verifyCurrentBranchMaterializationObjectCache { plan with FileWrites = [| fileVersion |] }
+
+                        ensureMarkerOwned $"create parent directory {fileVersion.RelativePath}"
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
+                        |> ignore
+
+                        ensureMarkerOwned $"copy file {fileVersion.RelativePath}"
+                        File.Copy(sourcePath, targetPath, true)
+                        ensureMarkerOwned $"set file timestamp {fileVersion.RelativePath}"
+                        File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
+
+                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                        if not copiedTargetMatches then
+                            invalidOp $"Remote materialization copied target did not match declared identity: {fileVersion.RelativePath}."
+
+                    do! clients.BeforeStatusReplacementVerification()
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+
+                    for fileVersion in plan.FileWrites do
+                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                        if not copiedTargetMatches then
+                            invalidOp $"Remote materialization copied target changed before status replacement: {fileVersion.RelativePath}."
+
+                    ensureMarkerOwned "write replacement status"
+                    do! clients.WriteGraceStatus remoteStatus
+                    ensureMarkerOwned "publish replacement status in memory"
+                    graceStatus <- remoteStatus
+                    updateGraceStatusDirectoryIds remoteStatus
+                with
+                | ex -> applyFailure <- Some ex
+
+                if clients.IsUpdateMarkerOwned markerFileName markerContent then
                     let completedUtc = DateTime.UtcNow
 
-                    completeCurrentBranchMaterializationMarkerForWatchTests
-                        (fun () ->
-                            File.WriteAllText(
-                                completedFileName,
-                                serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
-                            )
+                    try
+                        completeCurrentBranchMaterializationMarkerForWatchTests
+                            (fun () ->
+                                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
+                                    invalidOp "Remote materialization cannot complete because its shared update marker was replaced."
 
-                            recordGraceUpdateMarkerCompletedUtc completedUtc)
-                        (fun () ->
-                            if currentBranchMaterializationMarkerIsOwned markerFileName markerContent then
-                                File.Delete(markerFileName))
+                                File.WriteAllText(
+                                    completedFileName,
+                                    serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+                                )
+
+                                recordGraceUpdateMarkerCompletedUtc completedUtc)
+                            (fun () ->
+                                if clients.IsUpdateMarkerOwned markerFileName markerContent then
+                                    clients.DeleteUpdateMarker markerFileName)
+                    with
+                    | ex when applyFailure.IsNone -> applyFailure <- Some ex
+                    | _ -> ()
+            with
+            | ex when applyFailure.IsNone -> applyFailure <- Some ex
+            | _ -> ()
+
+            match applyFailure with
+            | Some ex -> raise ex
+            | None -> ()
         }
 
     /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
@@ -4295,6 +4344,9 @@ module Watch =
                 WriteGraceStatus = writeGraceStatusFile
                 RequestResync = requestGraceWatchExplicitResync
                 TryCreateUpdateMarker = tryCreateCurrentBranchMaterializationMarkerForWatchTests
+                IsUpdateMarkerOwned = currentBranchMaterializationMarkerIsOwned
+                BeforeTargetMutation = ignore
+                DeleteUpdateMarker = File.Delete
                 BeforeFinalVerification = fun () -> Task.FromResult(())
                 BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
             }

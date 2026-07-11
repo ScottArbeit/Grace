@@ -695,6 +695,12 @@ module WatchTests =
                     }
             RequestResync = fun reason -> resyncRequests.Add(reason)
             TryCreateUpdateMarker = Watch.tryCreateCurrentBranchMaterializationMarkerForWatchTests
+            IsUpdateMarkerOwned =
+                fun markerFileName expectedContent ->
+                    File.Exists(markerFileName)
+                    && File.ReadAllText(markerFileName) = expectedContent
+            BeforeTargetMutation = ignore
+            DeleteUpdateMarker = File.Delete
             BeforeFinalVerification = fun () -> Task.FromResult(())
             BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
         }
@@ -16750,6 +16756,229 @@ module WatchTests =
 
             File.ReadAllText(targetPath)
             |> should equal "local payload"
+
+            writtenStatuses.Count |> should equal 0
+            resyncRequests.Count |> should equal 1)
+
+    /// Verifies ownership replacement between sequential writes prevents every later target mutation.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization stops sequential mutations after marker replacement`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let firstFile = cacheRemoteFileVersion root "first.txt" "first remote payload"
+            let secondFile = cacheRemoteFileVersion root "second.txt" "second remote payload"
+            File.Delete(Path.Combine(root, "first.txt"))
+            File.Delete(Path.Combine(root, "second.txt"))
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| firstFile; secondFile |]
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let replacementMarker = "`grace rebase` is in progress."
+
+            let clients =
+                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
+                    BeforeTargetMutation =
+                        fun mutation ->
+                            if mutation = "copy file second.txt" then
+                                File.WriteAllText(Services.updateInProgressFileName (), replacementMarker)
+                }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRoot.DirectoryVersionId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            File.ReadAllText(Path.Combine(root, "first.txt"))
+            |> should equal "first remote payload"
+
+            File.Exists(Path.Combine(root, "second.txt"))
+            |> should equal false
+
+            File.ReadAllText(Services.updateInProgressFileName ())
+            |> should equal replacementMarker
+
+            writtenStatuses.Count |> should equal 0
+            resyncRequests.Count |> should equal 1)
+
+    /// Verifies ownership is revalidated after final target proof and immediately before status replacement.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization refuses status replacement after marker replacement`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
+            File.Delete(Path.Combine(root, "target.txt"))
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let replacementMarker = "`grace rebase` is in progress."
+
+            let clients =
+                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
+                    BeforeStatusReplacementVerification =
+                        fun () ->
+                            File.WriteAllText(Services.updateInProgressFileName (), replacementMarker)
+                            Task.FromResult(())
+                }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRoot.DirectoryVersionId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            File.ReadAllText(Path.Combine(root, "target.txt"))
+            |> should equal "remote payload"
+
+            File.ReadAllText(Services.updateInProgressFileName ())
+            |> should equal replacementMarker
+
+            writtenStatuses.Count |> should equal 0
+            resyncRequests.Count |> should equal 1)
+
+    /// Verifies remote apply carries forward local-upload timestamps from the accepted persisted status.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization preserves successful upload timestamps`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let remoteFile = cacheRemoteFileVersion root "target.txt" "remote payload"
+            File.Delete(Path.Combine(root, "target.txt"))
+
+            let fileUpload =
+                getCurrentInstant()
+                    .Minus(Duration.FromMinutes(17L))
+
+            let directoryUpload =
+                getCurrentInstant()
+                    .Minus(Duration.FromMinutes(11L))
+
+            let currentStatus =
+                { graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string> with
+                    LastSuccessfulFileUpload = fileUpload
+                    LastSuccessfulDirectoryVersionUpload = directoryUpload
+                }
+
+            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty [| remoteFile |]
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRoot.DirectoryVersionId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
+                .GetAwaiter()
+                .GetResult()
+
+            writtenStatuses.Count |> should equal 1
+
+            writtenStatuses[0].LastSuccessfulFileUpload
+            |> should equal fileUpload
+
+            writtenStatuses[0]
+                .LastSuccessfulDirectoryVersionUpload
+            |> should equal directoryUpload
+
+            resyncRequests.Count |> should equal 0)
+
+    /// Verifies successful completion evidence cannot hide failure to retire the still-owned marker.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization fails when final owned marker deletion fails`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+
+            let clients =
+                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
+                    DeleteUpdateMarker = fun _ -> raise (IOException("injected final marker deletion failure"))
+                }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRoot.DirectoryVersionId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+            let observed = Assert.ThrowsAsync<IOException>(operation)
+
+            observed.Message
+            |> should equal "injected final marker deletion failure"
+
+            File.Exists(Services.updateInProgressFileName ())
+            |> should equal true
+
+            File.Exists(
+                Services.updateInProgressFileName ()
+                + ".completed"
+            )
+            |> should equal true
+
+            writtenStatuses.Count |> should equal 1
+            resyncRequests.Count |> should equal 1)
+
+    /// Verifies marker-retirement failure does not replace an earlier apply failure.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization preserves primary failure over marker deletion failure`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let remoteRoot = remoteDirectoryVersion (Guid.NewGuid()) Constants.RootDirectoryPath Array.empty Array.empty<FileVersion>
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+
+            let clients =
+                { remoteMaterializationClients [| remoteRoot |] currentStatus writtenStatuses resyncRequests with
+                    BeforeStatusReplacementVerification = fun () -> Task.FromException<unit>(InvalidOperationException("injected primary apply failure"))
+                    DeleteUpdateMarker = fun _ -> raise (IOException("injected secondary marker deletion failure"))
+                }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRoot.DirectoryVersionId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+            let observed = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+            observed.Message
+            |> should equal "injected primary apply failure"
+
+            File.Exists(Services.updateInProgressFileName ())
+            |> should equal true
 
             writtenStatuses.Count |> should equal 0
             resyncRequests.Count |> should equal 1)
