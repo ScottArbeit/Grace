@@ -15,6 +15,7 @@ open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Security
 open Grace.Server.Services
+open Grace.Shared.Authorization
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Shared
@@ -24,9 +25,12 @@ open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Common
+open Grace.Types.Authorization
+open Grace.Types.BillingAccount
 open Grace.Types.Reference
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
+open Microsoft.Extensions.DependencyInjection
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -47,6 +51,62 @@ module StorageParameterContracts = Grace.Shared.Parameters.Storage
 module Storage =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Storage.Server")
+
+    [<Literal>]
+    let StandardMaximumFileBytes = Grace.Types.StorageAdmission.StandardMaximumFileBytes
+
+    [<Literal>]
+    let DefaultLargeFileMaximumBytes = Grace.Types.StorageAdmission.DefaultLargeFileMaximumBytes
+
+    /// Returns the finite server maximum used when a repository enables large files.
+    let largeFileMaximumBytes () = Grace.Types.StorageAdmission.largeFileMaximumBytes ()
+
+    /// Rejects a logical file size outside the repository's configured admission tier.
+    let validateFileSizeAdmission (repositoryDto: RepositoryDto) expectedSize correlationId =
+        Grace.Types.StorageAdmission.validateFileSize repositoryDto expectedSize correlationId
+
+    /// Builds the stable BillingAccount operation id for one manifest upload reservation.
+    let reservationOperationId (uploadSessionId: UploadSessionId) = $"upload-session-{uploadSessionId:N}-reserve"
+
+    /// Reserves pooled capacity immediately before the first manifest upload credential is issued.
+    let private reserveUploadCapacity (context: HttpContext) (repositoryDto: RepositoryDto) (session: UploadSessionDto) correlationId =
+        task {
+            match validateFileSizeAdmission repositoryDto session.ExpectedSize correlationId with
+            | Error error -> return Error error
+            | Ok () ->
+                match PrincipalMapper.tryGetUserId context.User with
+                | None -> return Error(GraceError.Create "An authenticated user is required for storage admission." correlationId)
+                | Some userId ->
+                    let principals = PrincipalMapper.getPrincipals context.User
+                    let claims = PrincipalMapper.getEffectiveClaims context.User
+                    let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+                    let resource = Resource.Repository(repositoryDto.OwnerId, repositoryDto.OrganizationId, repositoryDto.RepositoryId)
+                    let! repositoryWrite = evaluator.CheckAsync(principals, claims, Operation.RepositoryWrite, resource)
+
+                    let storageClass =
+                        match repositoryWrite with
+                        | Allowed _ -> StorageClass.Repository
+                        | Denied _ -> StorageClass.ExternalContribution
+
+                    if storageClass = StorageClass.ExternalContribution
+                       && not repositoryDto.AllowExternalContributions then
+                        return Error(GraceError.Create "This repository does not allow external contributions." correlationId)
+                    else
+                        let billingAccount = Grace.Actors.Extensions.ActorProxy.BillingAccount.CreateActorProxy repositoryDto.OwnerId correlationId
+
+                        let command =
+                            BillingAccountCommand.Reserve(
+                                reservationOperationId session.UploadSessionId,
+                                repositoryDto.OwnerId,
+                                repositoryDto.RepositoryId,
+                                UserId userId,
+                                session.ExpectedSize,
+                                storageClass
+                            )
+
+                        let! result = billingAccount.Handle command (createMetadata context)
+                        return result |> Result.map ignore
+        }
 
     /// Normalizes normalize whole file content reference data for stable server comparisons.
     let private normalizeWholeFileContentReference (fileVersion: FileVersion) =
@@ -874,7 +934,7 @@ module Storage =
                         | Some authoritativeMetadata when not (rangeMatches claimedRange authoritativeMetadata) ->
                             if firstError.IsNone then
                                 firstError <- Some(GraceError.Create $"{staleOrIncompleteMessage} {claimedRange.ContentBlockAddress}." correlationId)
-                        | Some authoritativeMetadata -> validatedCandidates.Add(claimedRange, authoritativeMetadata)
+                        | Some authoritativeMetadata -> validatedCandidates.Add((claimedRange, authoritativeMetadata))
 
                     candidateIndex <- candidateIndex + 1
 
@@ -1752,23 +1812,34 @@ module Storage =
                         match! validateUploadSessionForContentBlockUpload parameters repositoryId correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok session ->
-                            match resolveUploadSessionStoragePoolRoute session.RepositoryId session.StoragePoolId correlationId with
-                            | Error error -> return! context |> result400BadRequest error
-                            | Ok route ->
-                                let stagingPlacement =
-                                    expectedContentBlockStagingPlacement
-                                        route
-                                        session.RepositoryId
-                                        parameters.UploadSessionId
-                                        parameters.ContentBlockAddress
-                                        None
+                            let repositoryActor = Repository.CreateActorProxy session.OrganizationId session.RepositoryId correlationId
+                            let! repositoryDto = repositoryActor.Get correlationId
 
-                                match! createAzureContentBlockSasUriForObjectKey route stagingPlacement.ObjectKey azureBlobCreatePermissions correlationId with
+                            match validateRepositoryExistsForStorageRequest session.RepositoryId repositoryDto correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                match! reserveUploadCapacity context repositoryDto session correlationId with
                                 | Error error -> return! context |> result400BadRequest error
-                                | Ok uploadUri ->
-                                    let uploadUri = appendShardEvidenceFragment route.Shard.StorageAccountName uploadUri
-                                    context.SetStatusCode StatusCodes.Status200OK
-                                    return! context.WriteStringAsync uploadUri.AbsoluteUri
+                                | Ok () ->
+                                    match resolveUploadSessionStoragePoolRoute session.RepositoryId session.StoragePoolId correlationId with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok route ->
+                                        let stagingPlacement =
+                                            expectedContentBlockStagingPlacement
+                                                route
+                                                session.RepositoryId
+                                                parameters.UploadSessionId
+                                                parameters.ContentBlockAddress
+                                                None
+
+                                        match!
+                                            createAzureContentBlockSasUriForObjectKey route stagingPlacement.ObjectKey azureBlobCreatePermissions correlationId
+                                            with
+                                        | Error error -> return! context |> result400BadRequest error
+                                        | Ok uploadUri ->
+                                            let uploadUri = appendShardEvidenceFragment route.Shard.StorageAccountName uploadUri
+                                            context.SetStatusCode StatusCodes.Status200OK
+                                            return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError

@@ -8,6 +8,7 @@ Name | Type
 ------------ | -------------
 `correlationId` | string
 `principal` | string
+`properties` | { [key: string]: string; }
 `ownerId` | string
 `ownerName` | string
 `organizationId` | string
@@ -26,6 +27,7 @@ import type { UploadSessionStorageParameters } from '@grace-vcs/generated-openap
 const example = {
   "correlationId": null,
   "principal": null,
+  "properties": null,
   "ownerId": null,
   "ownerName": null,
   "organizationId": null,

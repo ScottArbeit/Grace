@@ -38,6 +38,9 @@ class TestApprovalPolicyParameters(unittest.TestCase):
             return ApprovalPolicyParameters(
                 correlation_id = '',
                 principal = '',
+                properties = {
+                    'key' : ''
+                    },
                 owner_id = '',
                 owner_name = '',
                 organization_id = '',

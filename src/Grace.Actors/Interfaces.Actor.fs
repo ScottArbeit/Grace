@@ -23,6 +23,7 @@ open Grace.Types.Validation
 open Grace.Types.Visibility
 open Grace.Types.Artifact
 open Grace.Types.UploadSession
+open Grace.Types.BillingAccount
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
 open Grace.Types.Common
@@ -775,6 +776,20 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
+    /// Defines the persistent pooled-storage accounting aggregate for one repository owner.
+    [<Interface>]
+    type IBillingAccountActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns the current BillingAccount snapshot.
+        abstract member Get: correlationId: CorrelationId -> Task<BillingAccountDto>
+
+        /// Returns the persisted BillingAccount events used for retry and audit evidence.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<BillingAccountEvent>>
+
+        /// Atomically validates and persists a storage reservation lifecycle command.
+        abstract member Handle: command: BillingAccountCommand -> eventMetadata: EventMetadata -> Task<GraceResult<BillingAccountDecision>>
 
     /// Defines the operations for the ManifestContributionWorkflow actor.
     [<Interface>]

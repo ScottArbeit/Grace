@@ -860,6 +860,8 @@ module Watch =
 
             match! uploadFileVersions getUploadMetadataForFilesParameters with
             | Ok returnValue ->
+                rememberUploadSessionIds returnValue
+
                 for uploadedFileVersion in returnValue.ReturnValue do
                     uploadedFileVersions[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
 

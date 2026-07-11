@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **correlation_id** | **str** | Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header. | [optional] 
 **principal** | **str** | The entity on whose behalf the action is being performed. | [optional] 
+**properties** | **Dict[str, str]** | Allow-listed event properties. UploadSessionIds is the only client-settable key. | [optional] 
 **owner_id** | **UUID** |  | [optional] 
 **owner_name** | **str** |  | [optional] 
 **description** | **str** |  | [optional] 

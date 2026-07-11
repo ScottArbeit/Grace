@@ -32,12 +32,13 @@ class ReferenceParameters(BaseModel):
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
+    properties: Optional[Dict[str, StrictStr]] = Field(default=None, description="Allow-listed event properties. UploadSessionIds is the only client-settable key.", alias="Properties")
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
     reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
     reference_text: Optional[StrictStr] = Field(default=None, alias="ReferenceText")
     repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "ReferenceId", "ReferenceType", "ReferenceText", "RepositoryId", "RepositoryName"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "Properties", "ReferenceId", "ReferenceType", "ReferenceText", "RepositoryId", "RepositoryName"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -92,6 +93,7 @@ class ReferenceParameters(BaseModel):
         _obj = cls.model_validate({
             "CorrelationId": obj.get("CorrelationId"),
             "Principal": obj.get("Principal"),
+            "Properties": obj.get("Properties"),
             "ReferenceId": obj.get("ReferenceId"),
             "ReferenceType": obj.get("ReferenceType"),
             "ReferenceText": obj.get("ReferenceText"),

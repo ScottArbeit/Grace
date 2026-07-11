@@ -30,13 +30,14 @@ class StorageParameters(BaseModel):
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
+    properties: Optional[Dict[str, StrictStr]] = Field(default=None, description="Allow-listed event properties. UploadSessionIds is the only client-settable key.", alias="Properties")
     owner_id: Optional[StrictStr] = Field(default=None, alias="OwnerId")
     owner_name: Optional[StrictStr] = Field(default=None, alias="OwnerName")
     organization_id: Optional[StrictStr] = Field(default=None, alias="OrganizationId")
     organization_name: Optional[StrictStr] = Field(default=None, alias="OrganizationName")
     repository_id: Optional[StrictStr] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "Properties", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -91,6 +92,7 @@ class StorageParameters(BaseModel):
         _obj = cls.model_validate({
             "CorrelationId": obj.get("CorrelationId"),
             "Principal": obj.get("Principal"),
+            "Properties": obj.get("Properties"),
             "OwnerId": obj.get("OwnerId"),
             "OwnerName": obj.get("OwnerName"),
             "OrganizationId": obj.get("OrganizationId"),

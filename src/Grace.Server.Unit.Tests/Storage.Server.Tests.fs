@@ -4,6 +4,7 @@ open Grace.Server
 open Grace.Server.Security
 open Grace.Actors.Interfaces
 open Grace.Shared
+open Grace.Types
 open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Repository
@@ -15,6 +16,7 @@ open Microsoft.AspNetCore.Http
 open System.Reflection
 open System.Text
 open System.Threading.Tasks
+open System.Collections.Generic
 
 /// Covers storage Content Block Sdk Contract behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
@@ -1149,3 +1151,75 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Not.Contain("shouldDeleteCreatedFinalContentBlockPayload"))
         Assert.That(compactedSource, Does.Not.Contain("deleteContentBlockPayloadBestEffortfinalMaterialization.StoragePlacement"))
         Assert.That(compactedSource, Does.Contain("deleteContentBlockStagingPayloadparameters.StoragePlacement"))
+
+/// Proves storage admission size boundaries and the untrusted event-property allow list.
+[<TestFixture; NonParallelizable>]
+type StorageAdmissionContractTests() =
+
+    [<TestCase(1_048_576L, true)>]
+    [<TestCase(1_048_577L, false)>]
+    member _.StandardFileTierUsesExactOneMiBBoundary(size: int64, expected: bool) =
+        let result = StorageAdmission.validateFileSize RepositoryDto.Default size "correlation"
+        Assert.That(result.IsOk, Is.EqualTo expected)
+
+    [<Test>]
+    member _.LargeFileTierRemainsFinite() =
+        let repository = { RepositoryDto.Default with AllowsLargeFiles = true }
+        let maximum = StorageAdmission.largeFileMaximumBytes ()
+
+        Assert.That(
+            StorageAdmission.validateFileSize repository maximum "correlation"
+            |> Result.isOk,
+            Is.True
+        )
+
+        Assert.That(
+            StorageAdmission.validateFileSize repository (maximum + 1L) "correlation"
+            |> Result.isError,
+            Is.True
+        )
+
+    [<Test>]
+    member _.CanonicalUploadSessionIdsAcceptZeroOneAndSortedMany() =
+        let empty = StorageAdmission.canonicalizeClientProperties "correlation" (Dictionary<string, string>())
+
+        match empty with
+        | Ok properties -> Assert.That(properties.Count, Is.Zero)
+        | Error error -> Assert.Fail(error.Error)
+
+        let first = Guid.Parse "11111111-1111-1111-1111-111111111111"
+        let second = Guid.Parse "22222222-2222-2222-2222-222222222222"
+        let properties = Dictionary<string, string>()
+        properties.Add(StorageAdmission.UploadSessionIdsProperty, $"{first:N},{second:N}")
+
+        Assert.That(
+            StorageAdmission.canonicalizeClientProperties "correlation" properties
+            |> Result.isOk,
+            Is.True
+        )
+
+    [<TestCase("11111111-1111-1111-1111-111111111111")>]
+    [<TestCase("1111111111111111111111111111111A")>]
+    [<TestCase("11111111111111111111111111111111,11111111111111111111111111111111")>]
+    [<TestCase("22222222222222222222222222222222,11111111111111111111111111111111")>]
+    [<TestCase("11111111111111111111111111111111, 22222222222222222222222222222222")>]
+    member _.MalformedDuplicateOrNonCanonicalUploadSessionIdsAreRejected(value) =
+        let properties = Dictionary<string, string>()
+        properties.Add(StorageAdmission.UploadSessionIdsProperty, value)
+
+        Assert.That(
+            StorageAdmission.canonicalizeClientProperties "correlation" properties
+            |> Result.isError,
+            Is.True
+        )
+
+    [<Test>]
+    member _.ProtectedClientPropertyInjectionIsRejected() =
+        let properties = Dictionary<string, string>()
+        properties.Add("Principal", "attacker")
+
+        Assert.That(
+            StorageAdmission.canonicalizeClientProperties "correlation" properties
+            |> Result.isError,
+            Is.True
+        )

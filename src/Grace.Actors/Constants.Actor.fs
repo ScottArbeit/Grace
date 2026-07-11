@@ -99,6 +99,9 @@ module Constants =
         let UploadSession = "UploadSessionActor"
 
         [<Literal>]
+        let BillingAccount = "BillingAccountActor"
+
+        [<Literal>]
         let Reference = "ReferenceActor"
 
         [<Literal>]
@@ -198,6 +201,9 @@ module Constants =
 
         [<Literal>]
         let UploadSession = "UploadSession"
+
+        [<Literal>]
+        let BillingAccount = "BillingAccount"
 
         [<Literal>]
         let Reference = "Ref"

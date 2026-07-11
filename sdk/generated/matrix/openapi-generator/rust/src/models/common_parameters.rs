@@ -20,6 +20,9 @@ pub struct CommonParameters {
     /// The entity on whose behalf the action is being performed.
     #[serde(rename = "Principal", skip_serializing_if = "Option::is_none")]
     pub principal: Option<String>,
+    /// Allow-listed event properties. UploadSessionIds is the only client-settable key.
+    #[serde(rename = "Properties", skip_serializing_if = "Option::is_none")]
+    pub properties: Option<std::collections::HashMap<String, String>>,
 }
 
 impl CommonParameters {
@@ -28,6 +31,7 @@ impl CommonParameters {
         CommonParameters {
             correlation_id: None,
             principal: None,
+            properties: None,
         }
     }
 }

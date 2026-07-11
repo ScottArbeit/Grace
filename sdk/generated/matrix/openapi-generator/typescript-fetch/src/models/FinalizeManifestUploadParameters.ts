@@ -47,6 +47,12 @@ export interface FinalizeManifestUploadParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof FinalizeManifestUploadParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof FinalizeManifestUploadParameters
@@ -133,6 +139,7 @@ export function FinalizeManifestUploadParametersFromJSONTyped(json: any, ignoreD
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
         'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
@@ -160,6 +167,7 @@ export function FinalizeManifestUploadParametersToJSONTyped(value?: FinalizeMani
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
         'OrganizationId': value['organizationId'],

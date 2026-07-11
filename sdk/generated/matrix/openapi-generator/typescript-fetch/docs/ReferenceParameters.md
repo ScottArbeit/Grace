@@ -8,6 +8,7 @@ Name | Type
 ------------ | -------------
 `correlationId` | string
 `principal` | string
+`properties` | { [key: string]: string; }
 `referenceId` | string
 `referenceType` | [ReferenceType](ReferenceType.md)
 `referenceText` | string
@@ -23,6 +24,7 @@ import type { ReferenceParameters } from '@grace-vcs/generated-openapi-probe'
 const example = {
   "correlationId": null,
   "principal": null,
+  "properties": null,
   "referenceId": c8f9bac8-d489-46c7-917f-b36b7d9efa9a,
   "referenceType": null,
   "referenceText": null,

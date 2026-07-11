@@ -38,6 +38,9 @@ class TestListApprovalRequestsParameters(unittest.TestCase):
             return ListApprovalRequestsParameters(
                 correlation_id = '',
                 principal = '',
+                properties = {
+                    'key' : ''
+                    },
                 owner_id = '',
                 owner_name = '',
                 organization_id = '',

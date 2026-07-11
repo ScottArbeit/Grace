@@ -82,6 +82,7 @@ module Orleans =
                             | StateName.Review -> repositoryId ()
                             | StateName.User -> StateName.User
                             | StateName.UploadSession -> repositoryId ()
+                            | StateName.BillingAccount -> StateName.BillingAccount
                             | StateName.WorkItem -> repositoryId ()
                             | StateName.WorkItemNumberCounter -> repositoryId ()
                             | _ ->

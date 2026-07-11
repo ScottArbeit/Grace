@@ -516,6 +516,8 @@ module Repository =
                                     | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
                                     | SetRepositoryType repositoryType -> return RepositoryTypeSet repositoryType
                                     | SetAllowsLargeFiles allowsLargeFiles -> return AllowsLargeFilesSet allowsLargeFiles
+                                    | SetAllowExternalContributions allowExternalContributions ->
+                                        return AllowExternalContributionsSet allowExternalContributions
                                     | SetAnonymousAccess anonymousAccess -> return AnonymousAccessSet anonymousAccess
                                     | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
                                     | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version

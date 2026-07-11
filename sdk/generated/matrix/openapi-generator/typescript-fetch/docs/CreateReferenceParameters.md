@@ -9,6 +9,7 @@ Name | Type
 ------------ | -------------
 `correlationId` | string
 `principal` | string
+`properties` | { [key: string]: string; }
 `ownerId` | string
 `ownerName` | string
 `organizationId` | string
@@ -31,6 +32,7 @@ import type { CreateReferenceParameters } from '@grace-vcs/generated-openapi-pro
 const example = {
   "correlationId": null,
   "principal": null,
+  "properties": null,
   "ownerId": 9dd5f81f-dc43-4839-9173-85d09394f30f,
   "ownerName": null,
   "organizationId": e35d64a9-b990-44f5-bf02-32ad7d15630c,

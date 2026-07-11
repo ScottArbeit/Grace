@@ -17,6 +17,8 @@ Name | Type | Description | Notes
 **storage_container_name** | **str** |  | [optional] 
 **repository_visibility** | [**RepositoryVisibility**](RepositoryVisibility.md) |  | [optional] 
 **repository_status** | [**RepositoryStatus**](RepositoryStatus.md) |  | [optional] 
+**allows_large_files** | **bool** |  | [optional] 
+**allow_external_contributions** | **bool** |  | [optional] 
 **branches** | **List[str]** |  | [optional] 
 **default_server_api_version** | **str** |  | [optional] 
 **default_branch_name** | **str** |  | [optional] 

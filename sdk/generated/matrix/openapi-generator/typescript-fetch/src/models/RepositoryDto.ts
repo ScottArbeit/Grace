@@ -109,6 +109,18 @@ export interface RepositoryDto {
     repositoryStatus?: RepositoryStatus;
     /**
      * 
+     * @type {boolean}
+     * @memberof RepositoryDto
+     */
+    allowsLargeFiles?: boolean;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof RepositoryDto
+     */
+    allowExternalContributions?: boolean;
+    /**
+     * 
      * @type {Array<string>}
      * @memberof RepositoryDto
      */
@@ -169,6 +181,8 @@ export function RepositoryDtoFromJSONTyped(json: any, ignoreDiscriminator: boole
         'storageContainerName': json['StorageContainerName'] == null ? undefined : json['StorageContainerName'],
         'repositoryVisibility': json['RepositoryVisibility'] == null ? undefined : RepositoryVisibilityFromJSON(json['RepositoryVisibility']),
         'repositoryStatus': json['RepositoryStatus'] == null ? undefined : RepositoryStatusFromJSON(json['RepositoryStatus']),
+        'allowsLargeFiles': json['AllowsLargeFiles'] == null ? undefined : json['AllowsLargeFiles'],
+        'allowExternalContributions': json['AllowExternalContributions'] == null ? undefined : json['AllowExternalContributions'],
         'branches': json['Branches'] == null ? undefined : json['Branches'],
         'defaultServerApiVersion': json['DefaultServerApiVersion'] == null ? undefined : json['DefaultServerApiVersion'],
         'defaultBranchName': json['DefaultBranchName'] == null ? undefined : json['DefaultBranchName'],
@@ -199,6 +213,8 @@ export function RepositoryDtoToJSONTyped(value?: RepositoryDto | null, ignoreDis
         'StorageContainerName': value['storageContainerName'],
         'RepositoryVisibility': RepositoryVisibilityToJSON(value['repositoryVisibility']),
         'RepositoryStatus': RepositoryStatusToJSON(value['repositoryStatus']),
+        'AllowsLargeFiles': value['allowsLargeFiles'],
+        'AllowExternalContributions': value['allowExternalContributions'],
         'Branches': value['branches'],
         'DefaultServerApiVersion': value['defaultServerApiVersion'],
         'DefaultBranchName': value['defaultBranchName'],

@@ -537,6 +537,25 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Sets whether the repository accepts external contributions on private branches.
+    let SetAllowExternalContributions: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                /// Validates that the repository may still accept setting changes.
+                let validations (parameters: SetAllowExternalContributionsParameters) =
+                    [|
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
+
+                /// Creates the durable repository setting command.
+                let command (parameters: SetAllowExternalContributionsParameters) =
+                    SetAllowExternalContributions(parameters.AllowExternalContributions)
+                    |> returnValueTask
+
+                context.Items.Add("Command", nameof SetAllowExternalContributions)
+                return! processCommand context validations command
+            }
+
     /// Sets whether the repository allows anonymous access.
     let SetAnonymousAccess: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->

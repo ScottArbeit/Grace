@@ -37,7 +37,10 @@ class TestCommonParameters(unittest.TestCase):
         if include_optional:
             return CommonParameters(
                 correlation_id = '',
-                principal = ''
+                principal = '',
+                properties = {
+                    'key' : ''
+                    }
             )
         else:
             return CommonParameters(

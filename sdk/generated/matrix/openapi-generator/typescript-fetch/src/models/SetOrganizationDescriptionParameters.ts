@@ -32,6 +32,12 @@ export interface SetOrganizationDescriptionParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof SetOrganizationDescriptionParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof SetOrganizationDescriptionParameters
@@ -82,6 +88,7 @@ export function SetOrganizationDescriptionParametersFromJSONTyped(json: any, ign
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
         'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
@@ -103,6 +110,7 @@ export function SetOrganizationDescriptionParametersToJSONTyped(value?: SetOrgan
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
         'OrganizationId': value['organizationId'],

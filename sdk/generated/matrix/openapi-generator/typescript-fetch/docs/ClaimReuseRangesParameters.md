@@ -8,6 +8,7 @@ Name | Type
 ------------ | -------------
 `correlationId` | string
 `principal` | string
+`properties` | { [key: string]: string; }
 `ownerId` | string
 `ownerName` | string
 `organizationId` | string
@@ -29,6 +30,7 @@ import type { ClaimReuseRangesParameters } from '@grace-vcs/generated-openapi-pr
 const example = {
   "correlationId": null,
   "principal": null,
+  "properties": null,
   "ownerId": null,
   "ownerName": null,
   "organizationId": null,

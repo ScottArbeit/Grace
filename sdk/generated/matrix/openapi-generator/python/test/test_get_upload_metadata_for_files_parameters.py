@@ -38,6 +38,9 @@ class TestGetUploadMetadataForFilesParameters(unittest.TestCase):
             return GetUploadMetadataForFilesParameters(
                 correlation_id = '',
                 principal = '',
+                properties = {
+                    'key' : ''
+                    },
                 owner_id = '',
                 owner_name = '',
                 organization_id = '',

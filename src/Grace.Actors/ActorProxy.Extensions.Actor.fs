@@ -277,6 +277,17 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
+    /// Groups Orleans actor helpers for BillingAccount keys and proxies.
+    module BillingAccount =
+        /// Creates the owner-keyed BillingAccount actor proxy used by storage lifecycle boundaries.
+        let CreateActorProxy (ownerId: OwnerId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IBillingAccountActor>(ownerId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof OwnerId, ownerId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.BillingAccount)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
     /// Groups Orleans actor helpers for repository name keys, proxies, state, or workflow transitions.
     module RepositoryName =
         /// Gets an ActorId for a RepositoryName actor.

@@ -140,6 +140,107 @@ module Branch =
             return! directoryActorProxy.GetRecursiveDirectoryVersions false correlationId
         }
 
+    /// Returns the retained directory root carried by a branch reference command.
+    let private tryGetRetainingDirectoryId (command: BranchCommand) =
+        match command with
+        | BranchCommand.Assign (directoryId, _, _, _)
+        | BranchCommand.Promote (directoryId, _, _, _)
+        | BranchCommand.Commit (directoryId, _, _, _)
+        | BranchCommand.Checkpoint (directoryId, _, _, _)
+        | BranchCommand.Save (directoryId, _, _, _)
+        | BranchCommand.Tag (directoryId, _, _, _)
+        | BranchCommand.CreateExternal (directoryId, _, _, _) -> Some directoryId
+        | _ -> None
+
+    /// Validates all client-declared upload sessions against the exact retained file graph.
+    let private validateRetainedUploadSessions (graceIds: GraceIds) correlationId (properties: Dictionary<string, string>) command =
+        task {
+            match properties.TryGetValue UploadSessionIdsProperty with
+            | false, _ -> return Ok []
+            | true, _ when
+                tryGetRetainingDirectoryId command
+                |> Option.isNone
+                ->
+                return Error(GraceError.Create "UploadSessionIds is only valid on a command that creates a retaining reference." correlationId)
+            | true, canonicalIds ->
+                let directoryId = tryGetRetainingDirectoryId command |> Option.get
+                let directoryActor = DirectoryVersion.CreateActorProxy directoryId graceIds.RepositoryId correlationId
+                let! contents = directoryActor.GetRecursiveDirectoryVersions false correlationId
+                let sessions = ResizeArray<Grace.Types.UploadSession.UploadSessionDto>()
+                let mutable validationError: GraceError option = None
+
+                for uploadSessionIdText in canonicalIds.Split(',', StringSplitOptions.None) do
+                    if validationError.IsNone then
+                        let uploadSessionId = Guid.ParseExact(uploadSessionIdText, "N")
+
+                        let uploadSessionActor =
+                            Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy uploadSessionId graceIds.RepositoryId correlationId
+
+                        let! session = uploadSessionActor.Get correlationId
+
+                        let finalizedLifecycle =
+                            session.LifecycleState = Grace.Types.UploadSession.UploadSessionLifecycleState.Finalized
+                            || session.LifecycleState = Grace.Types.UploadSession.UploadSessionLifecycleState.RetentionPending
+
+                        if session.UploadSessionId <> uploadSessionId
+                           || session.OwnerId <> graceIds.OwnerId
+                           || session.OrganizationId <> graceIds.OrganizationId
+                           || session.RepositoryId <> graceIds.RepositoryId then
+                            validationError <- Some(GraceError.Create "UploadSessionIds contains a session outside the retaining command scope." correlationId)
+                        elif not finalizedLifecycle then
+                            validationError <-
+                                Some(GraceError.Create $"Upload session {uploadSessionId:N} is not in an allowed finalized lifecycle." correlationId)
+                        else
+                            match tryFindFileVersion session.AuthorizedScope contents, session.FinalizedManifestAddress with
+                            | Some fileVersion, Some manifestAddress when
+                                fileVersion.Size = session.ExpectedSize
+                                && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest
+                                && fileVersion.ContentReference.Manifest
+                                   |> Option.exists (fun manifest ->
+                                       manifest.ManifestAddress = manifestAddress
+                                       && manifest.Size = session.ExpectedSize)
+                                ->
+                                sessions.Add session
+                            | _ ->
+                                validationError <-
+                                    Some(
+                                        GraceError.Create
+                                            $"Upload session {uploadSessionId:N} does not match the retained path, manifest address, and logical size."
+                                            correlationId
+                                    )
+
+                match validationError with
+                | Some error -> return Error error
+                | None -> return Ok(List.ofSeq sessions)
+        }
+
+    /// Settles validated reservations after the retaining branch event is durable.
+    let private settleRetainedUploadSessions (graceIds: GraceIds) correlationId directoryId sessions metadata =
+        task {
+            let billingAccount = Grace.Actors.Extensions.ActorProxy.BillingAccount.CreateActorProxy graceIds.OwnerId correlationId
+
+            let mutable settlementError: GraceError option = None
+
+            for session: Grace.Types.UploadSession.UploadSessionDto in sessions do
+                if settlementError.IsNone then
+                    let reservationId = $"upload-session-{session.UploadSessionId:N}-reserve"
+                    let settlementId = $"{reservationId}-settle-{graceIds.BranchId:N}-{directoryId:N}"
+
+                    let! result =
+                        billingAccount.Handle
+                            (Grace.Types.BillingAccount.BillingAccountCommand.Settle(settlementId, reservationId, graceIds.RepositoryId, graceIds.BranchId))
+                            metadata
+
+                    match result with
+                    | Ok _ -> ()
+                    | Error error -> settlementError <- Some error
+
+            return
+                match settlementError with
+                | Some error -> Error error
+                | None -> Ok()
+        }
+
     /// Checks authorization needed for can read reference branch server behavior.
     let private canReadReferenceBranch (context: HttpContext) (referenceDto: Reference.ReferenceDto) =
         task {
@@ -855,6 +956,13 @@ module Branch =
                 let commandName = context.Items["Command"] :?> string
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
+
+                let canonicalProperties =
+                    match canonicalizeClientProperties correlationId parameters.Properties with
+                    | Ok properties -> properties
+                    | Error error -> raise (ClientPropertiesValidationException error)
+
+                parameters.Properties <- canonicalProperties
                 parameterDictionary.AddRange(getParametersAsDictionary parameters)
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
@@ -864,14 +972,16 @@ module Branch =
                 parameters.BranchId <- graceIds.BranchIdString
 
                 /// Coordinates handle command processing for Grace Server.
-                let handleCommand cmd =
+                let handleCommand cmd retainedUploadSessions =
                     task {
                         let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
 
                         //logToConsole
                         //    $"In Branch.Server.processCommand: command: {commandName}; OwnerId: {graceIds.OwnerIdString}; OrganizationId: {graceIds.OrganizationIdString}; RepositoryId: {graceIds.RepositoryIdString}; BranchId: {graceIds.BranchIdString}."
 
-                        match! actorProxy.Handle cmd (createMetadata context) with
+                        let metadata = metadataWithClientProperties (createMetadata context) parameters.Properties
+
+                        match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
                             graceReturnValue
                                 .enhance(parameterDictionary)
@@ -883,8 +993,12 @@ module Branch =
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
-                            match! postSuccess () with
-                            | Ok () -> return! context |> result200Ok graceReturnValue
+                            let! settlement =
+                                match tryGetRetainingDirectoryId cmd with
+                                | Some directoryId -> settleRetainedUploadSessions graceIds correlationId directoryId retainedUploadSessions metadata
+                                | None -> Task.FromResult(Ok())
+
+                            match settlement with
                             | Error graceError ->
                                 graceError
                                     .enhance(parameterDictionary)
@@ -897,6 +1011,21 @@ module Branch =
                                 |> ignore
 
                                 return! context |> result500ServerError graceError
+                            | Ok () ->
+                                match! postSuccess () with
+                                | Ok () -> return! context |> result200Ok graceReturnValue
+                                | Error graceError ->
+                                    graceError
+                                        .enhance(parameterDictionary)
+                                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                        .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                        .enhance(nameof BranchId, graceIds.BranchId)
+                                        .enhance("Command", commandName)
+                                        .enhance ("Path", context.Request.Path.Value)
+                                    |> ignore
+
+                                    return! context |> result500ServerError graceError
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
@@ -927,24 +1056,27 @@ module Branch =
                     match tryGetBranchHashLookupError context with
                     | Some graceError -> return! context |> result400BadRequest graceError
                     | None ->
-                        let! result = handleCommand cmd
-                        let duration = getDurationRightAligned_ms startTime
+                        match! validateRetainedUploadSessions graceIds correlationId parameters.Properties cmd with
+                        | Error graceError -> return! context |> result400BadRequest graceError
+                        | Ok retainedUploadSessions ->
+                            let! result = handleCommand cmd retainedUploadSessions
+                            let duration = getDurationRightAligned_ms startTime
 
-                        log.LogInformation(
-                            "{CurrentInstant}: Node: {hostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
-                            getCurrentInstantExtended (),
-                            getMachineName,
-                            duration,
-                            correlationId,
-                            context.Request.Path,
-                            context.Response.StatusCode,
-                            graceIds.OwnerIdString,
-                            graceIds.OrganizationIdString,
-                            graceIds.RepositoryIdString,
-                            graceIds.BranchIdString
-                        )
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {hostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                duration,
+                                correlationId,
+                                context.Request.Path,
+                                context.Response.StatusCode,
+                                graceIds.OwnerIdString,
+                                graceIds.OrganizationIdString,
+                                graceIds.RepositoryIdString,
+                                graceIds.BranchIdString
+                            )
 
-                        return result
+                            return result
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error
@@ -962,6 +1094,7 @@ module Branch =
 
                     return! context |> result400BadRequest graceError
             with
+            | ClientPropertiesValidationException graceError -> return! context |> result400BadRequest graceError
             | ex ->
                 log.LogError(
                     ex,

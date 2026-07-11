@@ -1240,6 +1240,7 @@ module Branch =
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                         let rootDirectoryVersion = ref (DirectoryVersionId.Empty, Sha256Hash String.Empty, Blake3Hash String.Empty)
                                         let mutable applyLocalStatusAfterReferenceSave = fun () -> Task.FromResult(())
+                                        let mutable uploadSessionIds: string option = None
 
                                         match! getGraceWatchStatus () with
                                         | Some graceWatchStatus ->
@@ -1305,7 +1306,12 @@ module Branch =
                                                     )
 
                                                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                                | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
+                                                | Ok returnValue ->
+                                                    uploadedFileVersions <- returnValue.ReturnValue
+                                                    let mutable property = Unchecked.defaultof<obj>
+
+                                                    if returnValue.Properties.TryGetValue("UploadSessionIds", &property) then
+                                                        uploadSessionIds <- Some(string property)
                                                 | Error error -> raise (InvalidOperationException($"Error uploading files to object storage: {error.Error}"))
 
                                                 lastFileUploadInstant <- getCurrentInstant ()
@@ -1388,6 +1394,9 @@ module Branch =
                                                 Message = referenceMessage,
                                                 CorrelationId = graceIds.CorrelationId
                                             )
+
+                                        uploadSessionIds
+                                        |> Option.iter (fun value -> sdkParameters.Properties[ "UploadSessionIds" ] <- value)
 
                                         let! result = command sdkParameters
 
@@ -1475,6 +1484,10 @@ module Branch =
                                 Message = referenceMessage,
                                 CorrelationId = graceIds.CorrelationId
                             )
+
+                        match uploadResult with
+                        | Ok uploadReturnValue -> copyUploadSessionIdsToParameters uploadReturnValue sdkParameters
+                        | Error _ -> ()
 
                         let! result = command sdkParameters
                         return result

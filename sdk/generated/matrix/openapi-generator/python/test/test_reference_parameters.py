@@ -38,6 +38,9 @@ class TestReferenceParameters(unittest.TestCase):
             return ReferenceParameters(
                 correlation_id = '',
                 principal = '',
+                properties = {
+                    'key' : ''
+                    },
                 reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 reference_type = 'Commit',
                 reference_text = '',

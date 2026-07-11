@@ -15,6 +15,8 @@ Name | Type | Description | Notes
 **storage_container_name** | Option<**String**> |  | [optional]
 **repository_visibility** | Option<[**models::RepositoryVisibility**](RepositoryVisibility.md)> |  | [optional]
 **repository_status** | Option<[**models::RepositoryStatus**](RepositoryStatus.md)> |  | [optional]
+**allows_large_files** | Option<**bool**> |  | [optional]
+**allow_external_contributions** | Option<**bool**> |  | [optional]
 **branches** | Option<**Vec<String>**> |  | [optional]
 **default_server_api_version** | Option<**String**> |  | [optional]
 **default_branch_name** | Option<**String**> |  | [optional]

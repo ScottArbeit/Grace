@@ -32,6 +32,12 @@ export interface UndeleteOwnerParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof UndeleteOwnerParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof UndeleteOwnerParameters
@@ -64,6 +70,7 @@ export function UndeleteOwnerParametersFromJSONTyped(json: any, ignoreDiscrimina
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
     };
@@ -82,6 +89,7 @@ export function UndeleteOwnerParametersToJSONTyped(value?: UndeleteOwnerParamete
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
     };

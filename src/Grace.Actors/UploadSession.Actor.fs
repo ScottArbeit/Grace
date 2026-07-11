@@ -12,6 +12,7 @@ open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
 open Grace.Types.Common
 open Grace.Types.UploadSession
+open Grace.Types.BillingAccount
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -1975,28 +1976,38 @@ module UploadSession =
                             if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
                             match command with
-                            | UploadSessionCommand.Abandon operationId when not decision.WasIdempotentReplay ->
-                                let reminderState =
-                                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
+                            | UploadSessionCommand.Abandon operationId
+                            | UploadSessionCommand.Expire operationId ->
+                                let reservationId = $"upload-session-{decision.Session.UploadSessionId:N}-reserve"
+                                let billingAccount = BillingAccount.CreateActorProxy decision.Session.OwnerId metadata.CorrelationId
+                                let! account = billingAccount.Get metadata.CorrelationId
 
-                                do!
-                                    (this :> IGraceReminderWithGuidKey)
-                                        .ScheduleReminderAsync
-                                        ReminderTypes.PhysicalDeletion
-                                        DefaultPhysicalDeletionReminderDuration
-                                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                                        metadata.CorrelationId
-                            | UploadSessionCommand.Expire operationId when not decision.WasIdempotentReplay ->
-                                let reminderState =
-                                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
+                                if account.Reservations.ContainsKey reservationId then
+                                    let releaseId = $"{reservationId}-release-{operationId}"
 
-                                do!
-                                    (this :> IGraceReminderWithGuidKey)
-                                        .ScheduleReminderAsync
-                                        ReminderTypes.PhysicalDeletion
-                                        DefaultPhysicalDeletionReminderDuration
-                                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                                        metadata.CorrelationId
+                                    match!
+                                        billingAccount.Handle
+                                            (BillingAccountCommand.Release(releaseId, reservationId, decision.Session.RepositoryId, BranchId.Empty))
+                                            metadata
+                                        with
+                                    | Error error -> raise (InvalidOperationException(error.Error))
+                                    | Ok _ -> ()
+
+                                if not decision.WasIdempotentReplay then
+                                    let reminderState =
+                                        createCleanupReminderState
+                                            decision.Session.UploadSessionId
+                                            decision.Session.RepositoryId
+                                            operationId
+                                            metadata.CorrelationId
+
+                                    do!
+                                        (this :> IGraceReminderWithGuidKey)
+                                            .ScheduleReminderAsync
+                                            ReminderTypes.PhysicalDeletion
+                                            DefaultPhysicalDeletionReminderDuration
+                                            (ReminderState.UploadSessionPhysicalDeletion reminderState)
+                                            metadata.CorrelationId
                             | UploadSessionCommand.DeletePhysicalState _ ->
                                 do! this.CompactPhysicalStateEvents()
                                 this.DeactivateOnIdle()

@@ -27,6 +27,7 @@
         <Compile Include="Owner.Types.fs" />
         <Compile Include="Organization.Types.fs" />
         <Compile Include="Repository.Types.fs" />
+        <Compile Include="StorageAdmission.Types.fs" />
         <Compile Include="Visibility.Types.fs" />
         <Compile Include="Reference.Types.fs" />
         <Compile Include="Annotation.Types.fs" />
@@ -45,7 +46,8 @@
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
         <Compile Include="UploadSession.Types.fs" />
-        <Compile Include="RepositoryContentCounter.Types.fs" />
+    <Compile Include="RepositoryContentCounter.Types.fs" />
+    <Compile Include="BillingAccount.Types.fs" />
         <Compile Include="Usage.Types.fs" />
         <Compile Include="ManifestContributionWorkflow.Types.fs" />
         <Compile Include="Reminder.Types.fs" />

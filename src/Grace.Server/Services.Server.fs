@@ -30,6 +30,12 @@ open System.Text.Json
 /// Contains Grace Server services behavior and supporting helpers.
 module Services =
 
+    /// Stops request processing when untrusted event properties fail the public allow-list contract.
+    exception ClientPropertiesValidationException of GraceError
+
+    [<Literal>]
+    let UploadSessionIdsProperty = Grace.Types.StorageAdmission.UploadSessionIdsProperty
+
     let log = ApplicationContext.loggerFactory.CreateLogger("Server.Services")
 
     /// Defines the type of all server queries in Grace.
@@ -91,6 +97,22 @@ module Services =
             metadata.Properties[ nameof RepositoryId ] <- $"{graceIds.RepositoryId}"
 
         metadata
+
+    /// Validates the only client-settable event property and returns canonical metadata text.
+    let canonicalizeClientProperties correlationId (properties: Dictionary<string, string>) =
+        Grace.Types.StorageAdmission.canonicalizeClientProperties correlationId properties
+
+    /// Copies allow-listed client properties into event metadata without replacing server-owned values.
+    let metadataWithClientProperties (metadata: EventMetadata) (properties: Dictionary<string, string>) =
+        let merged = Dictionary<string, string>(metadata.Properties, StringComparer.Ordinal)
+
+        for property in properties do
+            if merged.ContainsKey property.Key then
+                invalidOp $"Client event property '{property.Key}' conflicts with server metadata."
+
+            merged.Add(property.Key, property.Value)
+
+        { metadata with Properties = merged }
 
     /// Binds and validates a JSON request body before handlers forward parameters to actors.
     let parse<'T when 'T :> CommonParameters> (context: HttpContext) =

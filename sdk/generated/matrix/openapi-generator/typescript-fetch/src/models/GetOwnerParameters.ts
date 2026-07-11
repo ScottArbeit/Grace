@@ -32,6 +32,12 @@ export interface GetOwnerParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof GetOwnerParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof GetOwnerParameters
@@ -70,6 +76,7 @@ export function GetOwnerParametersFromJSONTyped(json: any, ignoreDiscriminator: 
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
         'includeDeleted': json['IncludeDeleted'] == null ? undefined : json['IncludeDeleted'],
@@ -89,6 +96,7 @@ export function GetOwnerParametersToJSONTyped(value?: GetOwnerParameters | null,
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
         'IncludeDeleted': value['includeDeleted'],
