@@ -441,6 +441,8 @@ module ArtifactGrant =
             Error InvalidRequesterPrincipal
         elif String.IsNullOrWhiteSpace grant.Payload.HolderKeyThumbprint then
             Error MissingHolderKeyBinding
+        elif grant.Payload.NotBefore <> grant.Payload.IssuedAt then
+            Error GrantTtlTooLong
         elif isBeyondFutureTolerance now grant.Payload.NotBefore clockTolerance then
             Error GrantNotYetValid
         elif isBeyondPastTolerance now grant.Payload.ExpiresAt clockTolerance then

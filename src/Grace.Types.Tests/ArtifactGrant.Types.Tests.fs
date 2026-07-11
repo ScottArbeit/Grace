@@ -265,6 +265,31 @@ type ArtifactGrantValidationTests() =
         |> assertError GrantTtlTooLong
 
     [<Test>]
+    member _.``signed grant start must equal issuance while ttl boundaries remain independent of clock tolerance``() =
+        let precisionStep = Duration.FromMilliseconds 1L
+        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        use key = key
+        let valid = signedGrant "key-1" key now ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+
+        let resign payload = GrantCrypto.sign key valid.Header payload
+        let earlier = resign { valid.Payload with NotBefore = valid.Payload.IssuedAt.Minus precisionStep }
+        let later = resign { valid.Payload with NotBefore = valid.Payload.IssuedAt.Plus precisionStep }
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) valid
+        |> assertOk
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) earlier
+        |> assertError GrantTtlTooLong
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) later
+        |> assertError GrantTtlTooLong
+
+        let overlong = resign { valid.Payload with ExpiresAt = valid.Payload.ExpiresAt.Plus precisionStep }
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) overlong
+        |> assertError GrantTtlTooLong
+
+    [<Test>]
     member _.``malformed validation key sets fail closed with their typed contract``() =
         let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
         use key = key

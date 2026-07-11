@@ -91,7 +91,11 @@ module ArtifactGrantSigningKeyActor =
                    || isNull keyState.PrivateKeyPkcs8
                    || keyState.PrivateKeyPkcs8.Length = 0
                    || keyState.ActiveUntil <= keyState.CreatedAt
-                   || keyState.ExpiresAt <= keyState.ActiveUntil then
+                   || keyState.ExpiresAt <= keyState.ActiveUntil
+                   || keyState.ActiveUntil - keyState.CreatedAt
+                      <> ArtifactGrantContract.SigningKeyActiveLifetime
+                   || keyState.ExpiresAt - keyState.ActiveUntil
+                      <> ArtifactGrantContract.MaximumAcceptedGrantTtl then
                     true
                 else
                     try
@@ -100,11 +104,22 @@ module ArtifactGrantSigningKeyActor =
                     with
                     | _ -> true
 
-            if isNull (box currentState)
-               || currentState.Class
-                  <> nameof ArtifactGrantSigningKeyRingState
-               || isNull currentState.Keys
-               || currentState.Keys |> Array.exists malformedEntry then
+            let malformedRing =
+                isNull (box currentState)
+                || currentState.Class
+                   <> nameof ArtifactGrantSigningKeyRingState
+                || isNull currentState.Keys
+
+            let malformedKeys =
+                not malformedRing
+                && (currentState.Keys |> Array.exists malformedEntry
+                    || (currentState.Keys
+                        |> Array.map (fun key -> key.KeyId)
+                        |> Array.distinct
+                        |> Array.length)
+                       <> currentState.Keys.Length)
+
+            if malformedRing || malformedKeys then
                 invalidOp "Artifact grant signing-key actor state is malformed."
 
         /// Writes a complete next state before exposing any key derived from it.

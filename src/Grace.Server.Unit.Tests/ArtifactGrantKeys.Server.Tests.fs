@@ -159,6 +159,7 @@ type ArtifactGrantSigningKeyActorTests() =
             Assert.That(keys.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain grant.Header.KeyId)
             Assert.That(grant.Payload.RequesterPrincipalId, Is.EqualTo request.RequesterPrincipalId)
             Assert.That(grant.Payload.HolderKeyThumbprint, Is.EqualTo(holderKeyThumbprint request.HolderPublicKey))
+            Assert.That(grant.Payload.NotBefore, Is.EqualTo grant.Payload.IssuedAt)
         }
 
     [<Test>]
@@ -349,6 +350,121 @@ type ArtifactGrantSigningKeyActorTests() =
             Assert.That(grant.Header.KeyId, Is.EqualTo retained.KeyId)
             Assert.That(publication.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain retained.KeyId)
             Assert.That(state.WriteCount, Is.EqualTo 0)
+        }
+
+    [<Test>]
+    member _.``adjacent and non-adjacent duplicate key ids fail the whole ring without writes or results``() =
+        task {
+            let activeUntil = now.Plus ArtifactGrantContract.SigningKeyActiveLifetime
+            let first = persistedKey ECCurve.NamedCurves.nistP256 now activeUntil
+            let second = persistedKey ECCurve.NamedCurves.nistP256 now activeUntil
+            let duplicate = { persistedKey ECCurve.NamedCurves.nistP256 now activeUntil with KeyId = first.KeyId }
+            let uniqueState = FakePersistentState(persistedRing [| first; second |], true)
+            let uniqueStore = store uniqueState
+
+            let! uniqueGrantResult = uniqueStore.IssueGrant(issueRequest (), now)
+            let! uniquePublication = uniqueStore.PublishValidationKeys now
+            let uniqueGrant = issuedGrant uniqueGrantResult
+
+            Assert.That(
+                uniquePublication.Keys
+                |> Seq.map (fun key -> key.KeyId),
+                Does.Contain uniqueGrant.Header.KeyId
+            )
+
+            Assert.That(
+                uniquePublication.Keys
+                |> Seq.map (fun key -> key.KeyId),
+                Is.EquivalentTo [| first.KeyId
+                                   second.KeyId |]
+            )
+
+            Assert.That(uniqueState.WriteCount, Is.EqualTo 0)
+
+            let rings =
+                [|
+                    persistedRing [| first; duplicate |]
+                    persistedRing [| first
+                                     second
+                                     duplicate |]
+                    persistedRing [| second
+                                     first
+                                     duplicate
+                                     persistedKey ECCurve.NamedCurves.nistP256 now activeUntil |]
+                |]
+
+            for durable in rings do
+                let publicationState = FakePersistentState(durable, true)
+                let issuanceState = FakePersistentState(durable, true)
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        store publicationState
+                        |> fun keyStore -> keyStore.PublishValidationKeys(now) :> Task)
+                )
+                |> ignore
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        store issuanceState
+                        |> fun keyStore -> keyStore.IssueGrant(issueRequest (), now) :> Task)
+                )
+                |> ignore
+
+                Assert.That(publicationState.WriteCount, Is.EqualTo 0)
+                Assert.That(issuanceState.WriteCount, Is.EqualTo 0)
+                Assert.That(publicationState.State, Is.SameAs durable)
+                Assert.That(issuanceState.State, Is.SameAs durable)
+        }
+
+    [<Test>]
+    member _.``canonical key lifetimes recover while every mismatched duration fails the whole ring``() =
+        task {
+            let precisionStep = Duration.FromMilliseconds 1L
+            let activeUntil = now.Plus ArtifactGrantContract.SigningKeyActiveLifetime
+            let valid = persistedKey ECCurve.NamedCurves.nistP256 now activeUntil
+            let validState = FakePersistentState(persistedRing [| valid |], true)
+            let validStore = store validState
+
+            let! grantResult = validStore.IssueGrant(issueRequest (), now)
+            let! publication = validStore.PublishValidationKeys now
+
+            Assert.That((issuedGrant grantResult).Header.KeyId, Is.EqualTo valid.KeyId)
+            Assert.That(publication.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain valid.KeyId)
+            Assert.That(validState.WriteCount, Is.EqualTo 0)
+
+            let invalidKeys =
+                [|
+                    { valid with KeyId = "short-active"; ActiveUntil = valid.ActiveUntil.Minus precisionStep }
+                    { valid with KeyId = "long-active"; ActiveUntil = valid.ActiveUntil.Plus precisionStep }
+                    { valid with KeyId = "short-overlap"; ExpiresAt = valid.ExpiresAt.Minus precisionStep }
+                    { valid with KeyId = "long-overlap"; ExpiresAt = valid.ExpiresAt.Plus precisionStep }
+                    { valid with KeyId = "shifted-created"; CreatedAt = valid.CreatedAt.Plus precisionStep }
+                |]
+
+            for invalid in invalidKeys do
+                let durable = persistedRing [| valid; invalid |]
+                let publicationState = FakePersistentState(durable, true)
+                let issuanceState = FakePersistentState(durable, true)
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        store publicationState
+                        |> fun keyStore -> keyStore.PublishValidationKeys(now) :> Task)
+                )
+                |> ignore
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        store issuanceState
+                        |> fun keyStore -> keyStore.IssueGrant(issueRequest (), now) :> Task)
+                )
+                |> ignore
+
+                Assert.That(publicationState.WriteCount, Is.EqualTo 0)
+                Assert.That(issuanceState.WriteCount, Is.EqualTo 0)
+                Assert.That(publicationState.State, Is.SameAs durable)
+                Assert.That(issuanceState.State, Is.SameAs durable)
         }
 
     [<Test>]
