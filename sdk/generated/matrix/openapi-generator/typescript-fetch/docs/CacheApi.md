@@ -4,9 +4,76 @@ All URIs are relative to *http://localhost:5000*
 
 | Method | HTTP request | Description |
 |------------- | ------------- | -------------|
+| [**getArtifactGrantValidationKeys**](CacheApi.md#getartifactgrantvalidationkeys) | **GET** /cache/validation-keys | Publish artifact grant validation keys. |
 | [**refreshCacheService**](CacheApi.md#refreshcacheservice) | **POST** /cache/refresh | Refresh a Grace Cache service registration. |
 | [**registerCacheService**](CacheApi.md#registercacheservice) | **POST** /cache/register | Register a Grace Cache service. |
 
+
+
+## getArtifactGrantValidationKeys
+
+> ArtifactGrantValidationKeySet getArtifactGrantValidationKeys()
+
+Publish artifact grant validation keys.
+
+Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  CacheApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { GetArtifactGrantValidationKeysRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new CacheApi(config);
+
+  try {
+    const data = await api.getArtifactGrantValidationKeys();
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**ArtifactGrantValidationKeySet**](ArtifactGrantValidationKeySet.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: `application/json`, `text/plain`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
 ## refreshCacheService

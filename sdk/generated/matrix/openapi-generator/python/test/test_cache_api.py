@@ -27,6 +27,13 @@ class TestCacheApi(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
+    def test_get_artifact_grant_validation_keys(self) -> None:
+        """Test case for get_artifact_grant_validation_keys
+
+        Publish artifact grant validation keys.
+        """
+        pass
+
     def test_refresh_cache_service(self) -> None:
         """Test case for refresh_cache_service
 

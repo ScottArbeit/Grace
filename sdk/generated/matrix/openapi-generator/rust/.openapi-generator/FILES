@@ -22,6 +22,13 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/ArtifactGrantHeader.md
+docs/ArtifactGrantHolderPublicKey.md
+docs/ArtifactGrantPayload.md
+docs/ArtifactGrantRequesterPrincipalType.md
+docs/ArtifactGrantValidationKey.md
+docs/ArtifactGrantValidationKeySet.md
+docs/ArtifactRequestProofPayload.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
 docs/BranchAnnotationReturnValue.md
@@ -215,6 +222,8 @@ docs/SetRepositoryNameParameters.md
 docs/SetRepositoryStatusParameters.md
 docs/SetRepositoryVisibilityParameters.md
 docs/SetSaveDaysParameters.md
+docs/SignedArtifactGrant.md
+docs/SignedArtifactRequestProof.md
 docs/StartManifestUploadSessionParameters.md
 docs/StartUploadSession.md
 docs/StorageParameters.md
@@ -288,6 +297,13 @@ src/models/approval_request_status.rs
 src/models/approval_scope.rs
 src/models/approval_timeout_action.rs
 src/models/approve_approval_request_parameters.rs
+src/models/artifact_grant_header.rs
+src/models/artifact_grant_holder_public_key.rs
+src/models/artifact_grant_payload.rs
+src/models/artifact_grant_requester_principal_type.rs
+src/models/artifact_grant_validation_key.rs
+src/models/artifact_grant_validation_key_set.rs
+src/models/artifact_request_proof_payload.rs
 src/models/block_upload_intent.rs
 src/models/branch_annotation_api_dto.rs
 src/models/branch_annotation_return_value.rs
@@ -473,6 +489,8 @@ src/models/set_repository_name_parameters.rs
 src/models/set_repository_status_parameters.rs
 src/models/set_repository_visibility_parameters.rs
 src/models/set_save_days_parameters.rs
+src/models/signed_artifact_grant.rs
+src/models/signed_artifact_request_proof.rs
 src/models/start_manifest_upload_session_parameters.rs
 src/models/start_upload_session.rs
 src/models/storage_parameters.rs

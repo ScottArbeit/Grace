@@ -4,9 +4,37 @@ All URIs are relative to *http://localhost:5000*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**get_artifact_grant_validation_keys**](CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 [**refresh_cache_service**](CacheApi.md#refresh_cache_service) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
 [**register_cache_service**](CacheApi.md#register_cache_service) | **POST** /cache/register | Register a Grace Cache service.
 
+
+
+## get_artifact_grant_validation_keys
+
+> models::ArtifactGrantValidationKeySet get_artifact_grant_validation_keys()
+Publish artifact grant validation keys.
+
+Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**models::ArtifactGrantValidationKeySet**](ArtifactGrantValidationKeySet.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json, text/plain
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
 ## refresh_cache_service

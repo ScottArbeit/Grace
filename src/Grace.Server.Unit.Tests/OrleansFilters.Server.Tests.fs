@@ -52,3 +52,19 @@ type OrleansPartitionKeyProviderTests() =
 
         Assert.That(sourceText, Does.Contain("| StateName.RepositoryContentCounter -> firstGrainKeySegment ()"))
         Assert.That(sourceText, Does.Contain("| StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()"))
+
+    /// Verifies that the deployment-wide signing-key actor uses one stable Cosmos partition.
+    [<Test>]
+    member _.ArtifactGrantSigningKeyMapsToDeploymentPartition() =
+        let filePath = tryResolveSourcePath ()
+        let sourceText = File.ReadAllText(filePath)
+
+        Assert.That(sourceText, Does.Contain("| StateName.ArtifactGrantSigningKey -> StateName.ArtifactGrantSigningKey"))
+
+    /// Verifies that shared Orleans invocation failures are never converted into default successful results.
+    [<Test>]
+    member _.CorrelationLoggingFilterRethrowsInvocationFailures() =
+        let filePath = tryResolveSourcePath ()
+        let sourceText = File.ReadAllText(filePath)
+
+        Assert.That(sourceText, Does.Contain("return raise ex"))

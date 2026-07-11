@@ -142,6 +142,7 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**get_artifact_grant_validation_keys**](docs/CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 *CacheApi* | [**refresh_cache_service**](docs/CacheApi.md#refresh_cache_service) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
 *CacheApi* | [**register_cache_service**](docs/CacheApi.md#register_cache_service) | **POST** /cache/register | Register a Grace Cache service.
 *DiffsApi* | [**get_diff**](docs/DiffsApi.md#get_diff) | **POST** /diff/getDiff | Get a diff.
@@ -236,6 +237,13 @@ Class | Method | HTTP request | Description
  - [ApprovalScope](docs/ApprovalScope.md)
  - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
  - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
+ - [ArtifactGrantHeader](docs/ArtifactGrantHeader.md)
+ - [ArtifactGrantHolderPublicKey](docs/ArtifactGrantHolderPublicKey.md)
+ - [ArtifactGrantPayload](docs/ArtifactGrantPayload.md)
+ - [ArtifactGrantRequesterPrincipalType](docs/ArtifactGrantRequesterPrincipalType.md)
+ - [ArtifactGrantValidationKey](docs/ArtifactGrantValidationKey.md)
+ - [ArtifactGrantValidationKeySet](docs/ArtifactGrantValidationKeySet.md)
+ - [ArtifactRequestProofPayload](docs/ArtifactRequestProofPayload.md)
  - [BlockUploadIntent](docs/BlockUploadIntent.md)
  - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
  - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)
@@ -420,6 +428,8 @@ Class | Method | HTTP request | Description
  - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
  - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
  - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
+ - [SignedArtifactGrant](docs/SignedArtifactGrant.md)
+ - [SignedArtifactRequestProof](docs/SignedArtifactRequestProof.md)
  - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
  - [StartUploadSession](docs/StartUploadSession.md)
  - [StorageParameters](docs/StorageParameters.md)

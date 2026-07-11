@@ -142,17 +142,41 @@ docs-only classification with current evidence for the behavior they own.
 
 ### ContentAccessGrant Issuance And Validation
 
-- Implementation seam: Grace Server grant issuance, grant binding, grant expiry, resolved content
-  scope, resolved path scope, and Grace Cache local validation.
-- Proof seam: tests for caller binding, cache audience binding, expired grants, wrong repository,
-  wrong reference or DirectoryVersion, artifact completeness, whole-target-root authorization,
-  narrowed path-scope rejection, and malformed grant data.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; later grant work must cite the issue or PR that
-  owns the current grant contract.
-- Residual risk or rationale: ContentAccessGrant proof must pair complete Materialization Plan
-  artifacts with current whole-target-root authorization and per-call artifact grant validation; a
-  complete local artifact or bearer-like token is never enough to serve content.
+- Implementation seam: #619 defines `Grace.Types.ArtifactGrant`, `Grace.Shared.ArtifactGrant`,
+  `Grace.Actors.ArtifactGrantSigningKeyActor`, and `Grace.Server.Security.ArtifactGrantKeys` as the
+  signed artifact grant contract. One fixed-key Orleans actor backed by `GraceActorStorage` persists
+  P-256 private keys before use and owns rotation for every Grace Server instance. Grants bind the
+  authenticated `grace_user_id` as a `User` requester, the canonical ephemeral holder-key
+  thumbprint, selected Cache service principal, immutable target root, non-Direct execution mode,
+  and explicit artifact identities. Each cache artifact request carries a stateless holder proof
+  over the grant digest, normalized method and route, artifact identity, and a presentation window
+  of at most 30 seconds with at most 30 seconds of clock-skew tolerance. Canonical request encoding
+  uppercases and trims the HTTP method; it trims the route, excludes query and fragment text, adds a
+  leading slash when absent, and otherwise preserves path case and trailing-slash meaning.
+- Lifecycle seam: the default grant TTL is 5 minutes, the maximum accepted grant TTL is 15 minutes,
+  signing keys are active for 2 hours, old validation keys remain published through the final grant
+  overlap window, and `/cache/validation-keys` advertises a 15-minute cache TTL. Grant and proof
+  expiry are checked when a request is admitted; #625 owns allowing an admitted response to stream
+  to completion and requiring fresh proof for every retry, resume, range, parallel, or later request.
+- Proof seam: `ArtifactGrantValidationTests` covers valid grants, Direct mode skipping grant
+  validation, unsigned grants, missing key ids, unsupported algorithms, wrong cache, wrong target
+  root, wrong execution mode, wrong artifact, wrong signatures, expired grants, overlong TTLs,
+  expired keys, current/overlap key validation, and one-attempt unknown-key refresh fail-closed
+  behavior. `ArtifactRequestProofValidationTests` covers matching holder proof, copied-grant use with
+  another key, exact grant/method/route/artifact binding, tampering, proof lifetime and skew
+  boundaries, and explicit Direct bypass. `ArtifactGrantSigningKeyActorTests` covers
+  persist-before-use, activation recovery, storage-write failure without local fallback, 2-hour
+  rotation, overlap retirement, concurrent signing/publication, and malformed issuance boundaries.
+  `ArtifactGrantKeysIntegrationTests` proves the HTTP publication route resolves stable actor-backed
+  keys through the Aspire-hosted server.
+- Status classification: `implemented and proven`.
+- Issue or PR evidence: #619 and PR #697 own the grant/key contract, validation-key publication
+  route, generated OpenAPI/SDK artifacts, focused proof, and passing `validate.ps1 -Full` evidence.
+- Residual risk or rationale: #620 still owns deriving `RequesterPrincipalId` from authenticated
+  server context and adding the holder public key and grant to cache-mode Materialization Plans.
+  #625 owns request admission and stream behavior; #629 and #630 own ephemeral private-key lifetime
+  and just-in-time proof generation. V1 intentionally has no nonce store, so replay of a captured
+  complete request remains possible inside the narrow proof window; TLS protects it in transit.
 
 ### Cache Service Registration And Identity
 

@@ -18,6 +18,7 @@
     <Compile Include="AspireTestHost.Diagnostics.Tests.fs" />
     <Compile Include="OperationalFactsPublisher.AppHost.Tests.fs" />
     <Compile Include="General.Server.Tests.fs" />
+    <Compile Include="ArtifactGrantKeys.Integration.Server.Tests.fs" />
     <Compile Include="OperationsTracerBullet.Server.Tests.fs" />
     <Compile Include="Smoke.Server.Tests.fs" />
     <Compile Include="Slop.Server.Tests.fs" />

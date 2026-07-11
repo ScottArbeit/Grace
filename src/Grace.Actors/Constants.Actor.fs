@@ -96,6 +96,9 @@ module Constants =
         let CacheRegistration = "CacheRegistrationActor"
 
         [<Literal>]
+        let ArtifactGrantSigningKey = "ArtifactGrantSigningKeyActor"
+
+        [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadataActor"
 
         [<Literal>]
@@ -195,6 +198,9 @@ module Constants =
 
         [<Literal>]
         let CacheRegistration = "CacheRegistration"
+
+        [<Literal>]
+        let ArtifactGrantSigningKey = "ArtifactGrantSigningKey"
 
         [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadata"

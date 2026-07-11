@@ -57,6 +57,13 @@ __all__ = [
     "ApprovalScope",
     "ApprovalTimeoutAction",
     "ApproveApprovalRequestParameters",
+    "ArtifactGrantHeader",
+    "ArtifactGrantHolderPublicKey",
+    "ArtifactGrantPayload",
+    "ArtifactGrantRequesterPrincipalType",
+    "ArtifactGrantValidationKey",
+    "ArtifactGrantValidationKeySet",
+    "ArtifactRequestProofPayload",
     "BlockUploadIntent",
     "BranchAnnotationApiDto",
     "BranchAnnotationReturnValue",
@@ -241,6 +248,8 @@ __all__ = [
     "SetRepositoryStatusParameters",
     "SetRepositoryVisibilityParameters",
     "SetSaveDaysParameters",
+    "SignedArtifactGrant",
+    "SignedArtifactRequestProof",
     "StartManifestUploadSessionParameters",
     "StartUploadSession",
     "StorageParameters",
@@ -325,6 +334,13 @@ from grace_generated_openapi_probe.models.approval_request_status import Approva
 from grace_generated_openapi_probe.models.approval_scope import ApprovalScope as ApprovalScope
 from grace_generated_openapi_probe.models.approval_timeout_action import ApprovalTimeoutAction as ApprovalTimeoutAction
 from grace_generated_openapi_probe.models.approve_approval_request_parameters import ApproveApprovalRequestParameters as ApproveApprovalRequestParameters
+from grace_generated_openapi_probe.models.artifact_grant_header import ArtifactGrantHeader as ArtifactGrantHeader
+from grace_generated_openapi_probe.models.artifact_grant_holder_public_key import ArtifactGrantHolderPublicKey as ArtifactGrantHolderPublicKey
+from grace_generated_openapi_probe.models.artifact_grant_payload import ArtifactGrantPayload as ArtifactGrantPayload
+from grace_generated_openapi_probe.models.artifact_grant_requester_principal_type import ArtifactGrantRequesterPrincipalType as ArtifactGrantRequesterPrincipalType
+from grace_generated_openapi_probe.models.artifact_grant_validation_key import ArtifactGrantValidationKey as ArtifactGrantValidationKey
+from grace_generated_openapi_probe.models.artifact_grant_validation_key_set import ArtifactGrantValidationKeySet as ArtifactGrantValidationKeySet
+from grace_generated_openapi_probe.models.artifact_request_proof_payload import ArtifactRequestProofPayload as ArtifactRequestProofPayload
 from grace_generated_openapi_probe.models.block_upload_intent import BlockUploadIntent as BlockUploadIntent
 from grace_generated_openapi_probe.models.branch_annotation_api_dto import BranchAnnotationApiDto as BranchAnnotationApiDto
 from grace_generated_openapi_probe.models.branch_annotation_return_value import BranchAnnotationReturnValue as BranchAnnotationReturnValue
@@ -509,6 +525,8 @@ from grace_generated_openapi_probe.models.set_repository_name_parameters import 
 from grace_generated_openapi_probe.models.set_repository_status_parameters import SetRepositoryStatusParameters as SetRepositoryStatusParameters
 from grace_generated_openapi_probe.models.set_repository_visibility_parameters import SetRepositoryVisibilityParameters as SetRepositoryVisibilityParameters
 from grace_generated_openapi_probe.models.set_save_days_parameters import SetSaveDaysParameters as SetSaveDaysParameters
+from grace_generated_openapi_probe.models.signed_artifact_grant import SignedArtifactGrant as SignedArtifactGrant
+from grace_generated_openapi_probe.models.signed_artifact_request_proof import SignedArtifactRequestProof as SignedArtifactRequestProof
 from grace_generated_openapi_probe.models.start_manifest_upload_session_parameters import StartManifestUploadSessionParameters as StartManifestUploadSessionParameters
 from grace_generated_openapi_probe.models.start_upload_session import StartUploadSession as StartUploadSession
 from grace_generated_openapi_probe.models.storage_parameters import StorageParameters as StorageParameters

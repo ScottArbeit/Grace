@@ -57,6 +57,7 @@
 		<Compile Include="Security\TelemetryEnrichment.Server.fs" />
 		<Compile Include="Security\ExternalAuthConfig.Server.fs" />
 		<Compile Include="Security\CacheServiceIdentity.Server.fs" />
+		<Compile Include="Security\ArtifactGrantKeys.Server.fs" />
                 <Compile Include="Security\ClaimMapping.Server.fs" />
                 <Compile Include="Security\ClaimsTransformation.Server.fs" />
                 <Compile Include="Security\TestAuth.Server.fs" />
