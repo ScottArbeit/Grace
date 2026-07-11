@@ -32,91 +32,105 @@ export interface DirectoryVersion {
      * @type {string}
      * @memberof DirectoryVersion
      */
-    _class?: string;
+    _class: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersion
      */
-    directoryVersionId?: string;
+    directoryVersionId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersion
      */
-    ownerId?: string;
+    ownerId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersion
      */
-    organizationId?: string;
+    organizationId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersion
      */
-    repositoryId?: string;
+    repositoryId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersion
      */
-    relativePath?: string;
+    relativePath: string;
     /**
      * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof DirectoryVersion
      */
-    sha256Hash?: string;
+    sha256Hash: string;
     /**
      * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
      * @memberof DirectoryVersion
      */
-    blake3Hash?: string;
+    blake3Hash: string;
     /**
      * 
      * @type {Array<string>}
      * @memberof DirectoryVersion
      */
-    directories?: Array<string>;
+    directories: Array<string>;
     /**
      * 
      * @type {Array<FileVersion>}
      * @memberof DirectoryVersion
      */
-    files?: Array<FileVersion>;
+    files: Array<FileVersion>;
     /**
      * 
      * @type {number}
      * @memberof DirectoryVersion
      */
-    size?: number;
+    size: number;
     /**
      * 
      * @type {number}
      * @memberof DirectoryVersion
      */
-    recursiveSize?: number;
+    recursiveSize: number;
     /**
      * 
      * @type {Date}
      * @memberof DirectoryVersion
      */
-    createdAt?: Date;
+    createdAt: Date;
     /**
      * 
      * @type {boolean}
      * @memberof DirectoryVersion
      */
-    hashesValidated?: boolean;
+    hashesValidated: boolean;
 }
 
 /**
  * Check if a given object implements the DirectoryVersion interface.
  */
 export function instanceOfDirectoryVersion(value: object): value is DirectoryVersion {
+    if (!('_class' in value) || value['_class'] === undefined) return false;
+    if (!('directoryVersionId' in value) || value['directoryVersionId'] === undefined) return false;
+    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
+    if (!('organizationId' in value) || value['organizationId'] === undefined) return false;
+    if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
+    if (!('relativePath' in value) || value['relativePath'] === undefined) return false;
+    if (!('sha256Hash' in value) || value['sha256Hash'] === undefined) return false;
+    if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
+    if (!('directories' in value) || value['directories'] === undefined) return false;
+    if (!('files' in value) || value['files'] === undefined) return false;
+    if (!('size' in value) || value['size'] === undefined) return false;
+    if (!('recursiveSize' in value) || value['recursiveSize'] === undefined) return false;
+    if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
+    if (!('hashesValidated' in value) || value['hashesValidated'] === undefined) return false;
     return true;
 }
 
@@ -130,20 +144,20 @@ export function DirectoryVersionFromJSONTyped(json: any, ignoreDiscriminator: bo
     }
     return {
         
-        '_class': json['Class'] == null ? undefined : json['Class'],
-        'directoryVersionId': json['DirectoryVersionId'] == null ? undefined : json['DirectoryVersionId'],
-        'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
-        'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
-        'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
-        'relativePath': json['RelativePath'] == null ? undefined : json['RelativePath'],
-        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
-        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
-        'directories': json['Directories'] == null ? undefined : json['Directories'],
-        'files': json['Files'] == null ? undefined : ((json['Files'] as Array<any>).map(FileVersionFromJSON)),
-        'size': json['Size'] == null ? undefined : json['Size'],
-        'recursiveSize': json['RecursiveSize'] == null ? undefined : json['RecursiveSize'],
-        'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
-        'hashesValidated': json['HashesValidated'] == null ? undefined : json['HashesValidated'],
+        '_class': json['Class'],
+        'directoryVersionId': json['DirectoryVersionId'],
+        'ownerId': json['OwnerId'],
+        'organizationId': json['OrganizationId'],
+        'repositoryId': json['RepositoryId'],
+        'relativePath': json['RelativePath'],
+        'sha256Hash': json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'],
+        'directories': json['Directories'],
+        'files': ((json['Files'] as Array<any>).map(FileVersionFromJSON)),
+        'size': json['Size'],
+        'recursiveSize': json['RecursiveSize'],
+        'createdAt': (new Date(json['CreatedAt'])),
+        'hashesValidated': json['HashesValidated'],
     };
 }
 
@@ -167,10 +181,10 @@ export function DirectoryVersionToJSONTyped(value?: DirectoryVersion | null, ign
         'Sha256Hash': value['sha256Hash'],
         'Blake3Hash': value['blake3Hash'],
         'Directories': value['directories'],
-        'Files': value['files'] == null ? undefined : ((value['files'] as Array<any>).map(FileVersionToJSON)),
+        'Files': ((value['files'] as Array<any>).map(FileVersionToJSON)),
         'Size': value['size'],
         'RecursiveSize': value['recursiveSize'],
-        'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
+        'CreatedAt': value['createdAt'].toISOString(),
         'HashesValidated': value['hashesValidated'],
     };
 }

@@ -84,7 +84,7 @@ module Branch =
                     latestReferences
                         .Values
                         .OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt)
-                        .FirstOrDefault(ReferenceDto.Default)
+                        .FirstOrDefault(branchDto.BasedOn)
 
                 newBranchDto <- { newBranchDto with LatestReference = latestReference }
 
@@ -117,8 +117,29 @@ module Branch =
                     | External -> ()
                     | Tag -> ()
 
-                return { newBranchDto with ShouldRecomputeLatestReferences = false }
+                let fallback (referenceDto: ReferenceDto) =
+                    if referenceDto.ReferenceId = ReferenceId.Empty then
+                        latestReference
+                    else
+                        referenceDto
+
+                return
+                    { newBranchDto with
+                        BasedOn = fallback newBranchDto.BasedOn
+                        LatestReference = fallback newBranchDto.LatestReference
+                        LatestPromotion = fallback newBranchDto.LatestPromotion
+                        LatestCommit = fallback newBranchDto.LatestCommit
+                        LatestCheckpoint = fallback newBranchDto.LatestCheckpoint
+                        LatestSave = fallback newBranchDto.LatestSave
+                        ShouldRecomputeLatestReferences = false
+                    }
             }
+
+        /// Reports whether a Reference is complete enough to cross the public BranchDto boundary.
+        let isPublicReference (referenceDto: ReferenceDto) =
+            referenceDto.ReferenceId <> ReferenceId.Empty
+            && not (String.IsNullOrWhiteSpace(string referenceDto.Sha256Hash))
+            && not (String.IsNullOrWhiteSpace(string referenceDto.Blake3Hash))
 
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
@@ -736,6 +757,22 @@ module Branch =
                     if branchDto.ShouldRecomputeLatestReferences then
                         let! branchDtoWithLatestReferences = updateLatestReferences branchDto correlationId
                         branchDto <- branchDtoWithLatestReferences
+
+                    let publicReferences =
+                        [|
+                            branchDto.BasedOn
+                            branchDto.LatestReference
+                            branchDto.LatestPromotion
+                            branchDto.LatestCommit
+                            branchDto.LatestCheckpoint
+                            branchDto.LatestSave
+                        |]
+
+                    if
+                        publicReferences
+                        |> Array.exists (isPublicReference >> not)
+                    then
+                        raise (InvalidOperationException $"Branch '{branchDto.BranchId}' cannot be returned before its initial Reference is complete.")
 
                     return branchDto
                 }

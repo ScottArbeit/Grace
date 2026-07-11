@@ -929,12 +929,39 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let parentBranchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+
+            [|
+                parentBranch.BasedOn
+                parentBranch.LatestReference
+                parentBranch.LatestPromotion
+                parentBranch.LatestCommit
+                parentBranch.LatestCheckpoint
+                parentBranch.LatestSave
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
             let branchName = $"Branch{Guid.NewGuid():N}"
 
             let! createdBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch branchName
             BranchServerTestHelpers.assertBranchMatches repositoryId $"{createdBranch.BranchId}" branchName createdBranch
             Assert.That(createdBranch.ParentBranchId, Is.EqualTo(parentBranch.BranchId))
             Assert.That(createdBranch.BasedOn.ReferenceId, Is.EqualTo(parentBranch.BasedOn.ReferenceId))
+
+            [|
+                createdBranch.BasedOn
+                createdBranch.LatestReference
+                createdBranch.LatestPromotion
+                createdBranch.LatestCommit
+                createdBranch.LatestCheckpoint
+                createdBranch.LatestSave
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
 
             let! fetchedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{createdBranch.BranchId}"
             BranchServerTestHelpers.assertBranchMatches repositoryId $"{createdBranch.BranchId}" branchName fetchedBranch

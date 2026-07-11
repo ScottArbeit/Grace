@@ -149,7 +149,7 @@
         DirectoryId:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId
         Sha256Hash:
-          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashReferenceCompatibility
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash
         Blake3Hash:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash
         ReferenceType:
@@ -161,6 +161,7 @@
           nullable: true
         CreatedAt:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+      required: [Class, ReferenceId, BranchId, DirectoryId, Sha256Hash, Blake3Hash, ReferenceType, ReferenceText, CreatedAt]
 
     RepositoryDto:
       description: (automatically generated)

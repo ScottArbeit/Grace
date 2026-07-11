@@ -32,43 +32,37 @@ class ReferenceApiDto(BaseModel):
     """
     Public reference DTO returned through branch reference endpoints.
     """ # noqa: E501
-    var_class: Optional[StrictStr] = Field(default=None, alias="Class")
-    reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
-    owner_id: Optional[UUID] = Field(default=None, alias="OwnerId")
-    organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
-    repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
-    branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
-    directory_id: Optional[UUID] = Field(default=None, description="DirectoryVersionId represented by the current server DTO field name.", alias="DirectoryId")
-    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.", alias="Sha256Hash")
-    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
-    reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
-    reference_text: Optional[StrictStr] = Field(default=None, alias="ReferenceText")
-    links: Optional[List[StrictStr]] = Field(default=None, alias="Links")
-    created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
+    var_class: StrictStr = Field(alias="Class")
+    reference_id: UUID = Field(alias="ReferenceId")
+    owner_id: UUID = Field(alias="OwnerId")
+    organization_id: UUID = Field(alias="OrganizationId")
+    repository_id: UUID = Field(alias="RepositoryId")
+    branch_id: UUID = Field(alias="BranchId")
+    directory_id: UUID = Field(description="DirectoryVersionId represented by the current server DTO field name.", alias="DirectoryId")
+    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
+    reference_type: ReferenceType = Field(alias="ReferenceType")
+    reference_text: StrictStr = Field(alias="ReferenceText")
+    links: List[StrictStr] = Field(alias="Links")
+    created_at: datetime = Field(alias="CreatedAt")
     updated_at: Optional[datetime] = Field(default=None, alias="UpdatedAt")
     deleted_at: Optional[datetime] = Field(default=None, alias="DeletedAt")
-    delete_reason: Optional[StrictStr] = Field(default=None, alias="DeleteReason")
+    delete_reason: StrictStr = Field(alias="DeleteReason")
     __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "OwnerId", "OrganizationId", "RepositoryId", "BranchId", "DirectoryId", "Sha256Hash", "Blake3Hash", "ReferenceType", "ReferenceText", "Links", "CreatedAt", "UpdatedAt", "DeletedAt", "DeleteReason"]
 
     @field_validator('sha256_hash')
     def sha256_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
-        if value is None:
-            return value
-
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^$|^[a-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
     @field_validator('blake3_hash')
     def blake3_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
-        if value is None:
-            return value
-
         if not isinstance(value, str):
             value = str(value)
 

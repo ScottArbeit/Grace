@@ -266,7 +266,7 @@
           description: DirectoryVersionId represented by the current server DTO field name.
           example: 33a4e36b-828f-4fae-9343-50b6560dc842
         Sha256Hash:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashReferenceCompatibility'
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
         Blake3Hash:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
         ReferenceType:
@@ -287,6 +287,21 @@
           nullable: true
         DeleteReason:
           type: string
+      required:
+        - Class
+        - ReferenceId
+        - OwnerId
+        - OrganizationId
+        - RepositoryId
+        - BranchId
+        - DirectoryId
+        - Sha256Hash
+        - Blake3Hash
+        - ReferenceType
+        - ReferenceText
+        - Links
+        - CreatedAt
+        - DeleteReason
     BranchApiDto:
       description: Public branch DTO returned through branch endpoints.
       type: object
@@ -351,6 +366,33 @@
           nullable: true
         DeleteReason:
           type: string
+      required:
+        - Class
+        - BranchId
+        - BranchName
+        - ParentBranchId
+        - OwnerId
+        - OrganizationId
+        - RepositoryId
+        - BasedOn
+        - UserId
+        - AssignEnabled
+        - PromotionEnabled
+        - CommitEnabled
+        - CheckpointEnabled
+        - SaveEnabled
+        - TagEnabled
+        - ExternalEnabled
+        - AutoRebaseEnabled
+        - PromotionMode
+        - LatestReference
+        - LatestPromotion
+        - LatestCommit
+        - LatestCheckpoint
+        - LatestSave
+        - ShouldRecomputeLatestReferences
+        - CreatedAt
+        - DeleteReason
     BranchReturnValue:
       description: Grace response envelope whose ReturnValue contains a branch.
       type: object

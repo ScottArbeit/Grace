@@ -290,6 +290,26 @@ type NormalFileMaterializationServerTests() =
         Assert.That(metadataRequests, Has.Count.EqualTo(1))
         Assert.That((metadataRequests[0] = [| blocks[0].Address |]), Is.True)
 
+    /// Verifies that manifest-backed materialization rejects a missing SHA-256 before accepting reconstructed bytes.
+    [<Test>]
+    member _.ManifestBackedNormalDownloadRejectsMissingSha256() =
+        let payload = bytes "manifest missing sha256"
+        let target, manifest, blocks = manifestFile "/missing-sha256.bin" (StoragePoolId "pool-missing-sha256") payload
+        target.Sha256Hash <- Sha256Hash String.Empty
+        let placement = placementFor manifest.StoragePoolId blocks[0].Address "stored/missing-sha256"
+        let objects = Dictionary<string, byte array>()
+        objects[placement.ObjectKey] <- blocks[0].Payload
+        let metadata = Dictionary<StoragePoolId * ManifestAddress * ContentBlockAddress, ContentBlockMetadata>()
+        addMetadata metadata manifest manifest.StoragePoolId manifest.Blocks[0] placement
+
+        materializeBytes
+            failingWholeFileReader
+            (metadataResolverFrom metadata (ResizeArray()))
+            (contentBlockReaderFrom objects (ResizeArray()))
+            target
+            "normal/missing-sha256.bin"
+        |> expectErrorContains "FileVersion.Sha256Hash"
+
     /// Verifies that manifest Backed Non Binary Normal Download Publishes Gzip Payload For Whole File Compatibility.
     [<Test>]
     member _.ManifestBackedNonBinaryNormalDownloadPublishesGzipPayloadForWholeFileCompatibility() =

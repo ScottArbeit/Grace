@@ -46,6 +46,83 @@ type BranchDtoHashTests() =
     /// Exercises branch event coverage for the types branch contract.
     let branchEvent (eventType: BranchEventType) : BranchEvent = { Event = eventType; Metadata = metadata }
 
+    /// Builds isolated branch-event metadata carrying the Reference used by creation replay.
+    let branchEventWithBasedOn (eventType: BranchEventType) (basedOnReference: ReferenceDto) : BranchEvent =
+        let properties = Dictionary<string, string>()
+        properties["basedOnReferenceDto"] <- Utilities.serialize basedOnReference
+        { Event = eventType; Metadata = { metadata with Properties = properties } }
+
+    /// Verifies that branch creation projection starts every public Reference field from the valid initial Reference.
+    [<Test>]
+    member _.CreatedProjectionContainsNoDefaultReferences() =
+        let initialReference = referenceDto ReferenceType.Rebase
+
+        let created =
+            BranchDto.UpdateDto
+                (branchEventWithBasedOn
+                    (BranchEventType.Created(
+                        branchId,
+                        BranchName "feature",
+                        BranchId.Empty,
+                        initialReference.ReferenceId,
+                        OwnerId.NewGuid(),
+                        OrganizationId.NewGuid(),
+                        RepositoryId.NewGuid(),
+                        [| ReferenceType.Promotion |]
+                    ))
+                    initialReference)
+                BranchDto.Default
+
+        [|
+            created.BasedOn
+            created.LatestReference
+            created.LatestPromotion
+            created.LatestCommit
+            created.LatestCheckpoint
+            created.LatestSave
+        |]
+        |> Array.iter (fun reference ->
+            Assert.That(reference.ReferenceId, Is.EqualTo(initialReference.ReferenceId))
+            Assert.That(reference.Sha256Hash, Is.EqualTo(sha256Hash))
+            Assert.That(reference.Blake3Hash, Is.EqualTo(blake3Hash)))
+
+    /// Verifies that initial-branch replay becomes publicly complete when its first promotion is applied.
+    [<Test>]
+    member _.InitialBranchPromotionReplayContainsNoDefaultReferences() =
+        let created =
+            BranchDto.UpdateDto
+                (branchEventWithBasedOn
+                    (BranchEventType.Created(
+                        branchId,
+                        BranchName Constants.InitialBranchName,
+                        BranchId.Empty,
+                        ReferenceId.Empty,
+                        OwnerId.NewGuid(),
+                        OrganizationId.NewGuid(),
+                        RepositoryId.NewGuid(),
+                        [| ReferenceType.Promotion |]
+                    ))
+                    ReferenceDto.Default)
+                BranchDto.Default
+
+        let initialReference = referenceDto ReferenceType.Promotion
+
+        let promoted =
+            BranchDto.UpdateDto (branchEvent (BranchEventType.Promoted(initialReference, directoryVersionId, sha256Hash, blake3Hash, referenceText))) created
+
+        [|
+            promoted.BasedOn
+            promoted.LatestReference
+            promoted.LatestPromotion
+            promoted.LatestCommit
+            promoted.LatestCheckpoint
+            promoted.LatestSave
+        |]
+        |> Array.iter (fun reference ->
+            Assert.That(reference.ReferenceId, Is.EqualTo(initialReference.ReferenceId))
+            Assert.That(reference.Sha256Hash, Is.EqualTo(sha256Hash))
+            Assert.That(reference.Blake3Hash, Is.EqualTo(blake3Hash)))
+
     /// Verifies that reference producing commands carry both root hashes.
     [<Test>]
     member _.ReferenceProducingCommandsCarryBothRootHashes() =

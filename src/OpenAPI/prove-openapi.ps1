@@ -1155,6 +1155,8 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         'RepositoryBooleanReturnValue must keep exists/isEmpty ReturnValue as boolean.'
 
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
     foreach ($requiredDirectoryContract in @(
             'DirectoryVersionId:',
             'DirectoryVersionApiDto:',
@@ -1212,7 +1214,7 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     Assert-OperationTextMatches `
         $getBySha256HashOperation `
         "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionSha256HashLookupResponse'" `
-        'GetDirectoryVersionBySha256Hash must use the SHA lookup envelope that narrowly models the no-match sentinel.'
+        'GetDirectoryVersionBySha256Hash must use the strict SHA lookup envelope; no-match is an error response.'
 
     $getByBlake3HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionByBlake3Hash'
     Assert-OperationTextMatches `
@@ -1280,13 +1282,28 @@ function Test-OpenApiSharedContractDetails {
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
-        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'" `
-        'Only the directory hash lookup response may model the DirectoryVersion.Default empty SHA-256 sentinel.'
+        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256Hash'" `
+        'Directory hash lookup success responses must carry a strict SHA-256 hash.'
 
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
         "(?s)DirectoryVersionSha256HashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/DirectoryVersionHashLookupResult'" `
-        'Only SHA directory hash lookup responses may use the sentinel-aware result schema rather than weakening persisted DirectoryVersion.'
+        'SHA directory hash lookup responses must use the complete current directory result schema.'
+
+    foreach ($requiredSchemaProof in @(
+            [pscustomobject]@{ Text = $sharedText; Schema = 'FileVersion'; Properties = @('RelativePath', 'Sha256Hash', 'Blake3Hash', 'ContentReference') },
+            [pscustomobject]@{ Text = $sharedText; Schema = 'DirectoryVersion'; Properties = @('DirectoryVersionId', 'Sha256Hash', 'Blake3Hash', 'HashesValidated') },
+            [pscustomobject]@{ Text = $directoryComponentsText; Schema = 'DirectoryVersionHashLookupResult'; Properties = @('DirectoryVersionId', 'Sha256Hash', 'Blake3Hash', 'HashesValidated') },
+            [pscustomobject]@{ Text = $branchComponentsText; Schema = 'ReferenceApiDto'; Properties = @('ReferenceId', 'DirectoryId', 'Sha256Hash', 'Blake3Hash') },
+            [pscustomobject]@{ Text = $dtoComponentsText; Schema = 'ReferenceDto'; Properties = @('ReferenceId', 'DirectoryId', 'Sha256Hash', 'Blake3Hash') }
+        )) {
+        foreach ($property in $requiredSchemaProof.Properties) {
+            Assert-OperationTextMatches `
+                ([pscustomobject]@{ OperationText = $requiredSchemaProof.Text }) `
+                "(?s)$($requiredSchemaProof.Schema):\s*.*?required:\s*(?:\[[^\]]*\b$property\b[^\]]*\]|(?:\s*-\s+\w+)*\s*-\s+$property\b)" `
+                "$($requiredSchemaProof.Schema).$property must be required in the public OpenAPI schema."
+        }
+    }
 
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `

@@ -92,10 +92,9 @@ module internal NormalFileMaterialization =
                     correlationId
                     $"Normal file download target '{fileVersion.RelativePath}' materialized {bytes.Length} bytes, but FileVersion.Size is {fileVersion.Size} bytes."
             )
-        elif
-            not (String.IsNullOrWhiteSpace fileVersion.Sha256Hash)
-            && not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase))
-        then
+        elif String.IsNullOrWhiteSpace fileVersion.Sha256Hash then
+            Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' must include FileVersion.Sha256Hash before materialization.")
+        elif not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase)) then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Sha256Hash.")
         elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' must include FileVersion.Blake3Hash before materialization.")

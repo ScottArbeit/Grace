@@ -32,49 +32,49 @@ export interface ReferenceDto {
      * @type {string}
      * @memberof ReferenceDto
      */
-    _class?: string;
+    _class: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceDto
      */
-    referenceId?: string;
+    referenceId: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceDto
      */
-    branchId?: string;
+    branchId: string;
     /**
      * 
      * @type {string}
      * @memberof ReferenceDto
      */
-    directoryId?: string;
+    directoryId: string;
     /**
-     * Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof ReferenceDto
      */
-    sha256Hash?: string;
+    sha256Hash: string;
     /**
      * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
      * @memberof ReferenceDto
      */
-    blake3Hash?: string;
+    blake3Hash: string;
     /**
      * 
      * @type {ReferenceType}
      * @memberof ReferenceDto
      */
-    referenceType?: ReferenceType;
+    referenceType: ReferenceType;
     /**
      * 
      * @type {string}
      * @memberof ReferenceDto
      */
-    referenceText?: string;
+    referenceText: string;
     /**
      * 
      * @type {string}
@@ -86,7 +86,7 @@ export interface ReferenceDto {
      * @type {Date}
      * @memberof ReferenceDto
      */
-    createdAt?: Date;
+    createdAt: Date;
 }
 
 
@@ -95,6 +95,15 @@ export interface ReferenceDto {
  * Check if a given object implements the ReferenceDto interface.
  */
 export function instanceOfReferenceDto(value: object): value is ReferenceDto {
+    if (!('_class' in value) || value['_class'] === undefined) return false;
+    if (!('referenceId' in value) || value['referenceId'] === undefined) return false;
+    if (!('branchId' in value) || value['branchId'] === undefined) return false;
+    if (!('directoryId' in value) || value['directoryId'] === undefined) return false;
+    if (!('sha256Hash' in value) || value['sha256Hash'] === undefined) return false;
+    if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
+    if (!('referenceType' in value) || value['referenceType'] === undefined) return false;
+    if (!('referenceText' in value) || value['referenceText'] === undefined) return false;
+    if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
     return true;
 }
 
@@ -108,16 +117,16 @@ export function ReferenceDtoFromJSONTyped(json: any, ignoreDiscriminator: boolea
     }
     return {
         
-        '_class': json['Class'] == null ? undefined : json['Class'],
-        'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
-        'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
-        'directoryId': json['DirectoryId'] == null ? undefined : json['DirectoryId'],
-        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
-        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
-        'referenceType': json['ReferenceType'] == null ? undefined : ReferenceTypeFromJSON(json['ReferenceType']),
-        'referenceText': json['ReferenceText'] == null ? undefined : json['ReferenceText'],
+        '_class': json['Class'],
+        'referenceId': json['ReferenceId'],
+        'branchId': json['BranchId'],
+        'directoryId': json['DirectoryId'],
+        'sha256Hash': json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'],
+        'referenceType': ReferenceTypeFromJSON(json['ReferenceType']),
+        'referenceText': json['ReferenceText'],
         'createdBy': json['CreatedBy'] == null ? undefined : json['CreatedBy'],
-        'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
+        'createdAt': (new Date(json['CreatedAt'])),
     };
 }
 
@@ -141,7 +150,7 @@ export function ReferenceDtoToJSONTyped(value?: ReferenceDto | null, ignoreDiscr
         'ReferenceType': ReferenceTypeToJSON(value['referenceType']),
         'ReferenceText': value['referenceText'],
         'CreatedBy': value['createdBy'],
-        'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
+        'CreatedAt': value['createdAt'].toISOString(),
     };
 }
 

@@ -234,6 +234,11 @@ module Branch =
                             BranchName = branchName
                             ParentBranchId = parentBranchId
                             BasedOn = basedOnReferenceDto
+                            LatestReference = basedOnReferenceDto
+                            LatestPromotion = basedOnReferenceDto
+                            LatestCommit = basedOnReferenceDto
+                            LatestCheckpoint = basedOnReferenceDto
+                            LatestSave = basedOnReferenceDto
                             OwnerId = ownerId
                             OrganizationId = organizationId
                             RepositoryId = repositoryId
@@ -300,4 +305,26 @@ module Branch =
                 | Undeleted -> { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
 
 
-            { newBranchDto with UpdatedAt = Some branchEvent.Metadata.Timestamp }
+            let initialReference =
+                if newBranchDto.BasedOn.ReferenceId
+                   <> ReferenceId.Empty then
+                    newBranchDto.BasedOn
+                else
+                    newBranchDto.LatestReference
+
+            /// Replaces an internal uninitialized slot with the branch's first valid Reference during replay projection.
+            let completeReference (referenceDto: ReferenceDto) =
+                if referenceDto.ReferenceId = ReferenceId.Empty then
+                    initialReference
+                else
+                    referenceDto
+
+            { newBranchDto with
+                BasedOn = completeReference newBranchDto.BasedOn
+                LatestReference = completeReference newBranchDto.LatestReference
+                LatestPromotion = completeReference newBranchDto.LatestPromotion
+                LatestCommit = completeReference newBranchDto.LatestCommit
+                LatestCheckpoint = completeReference newBranchDto.LatestCheckpoint
+                LatestSave = completeReference newBranchDto.LatestSave
+                UpdatedAt = Some branchEvent.Metadata.Timestamp
+            }

@@ -432,7 +432,8 @@ module Connect =
 
     /// Coordinates existing file matches remote version behavior for this CLI command path.
     let internal existingFileMatchesRemoteVersion localSha256Hash localBlake3Hash (fileVersion: FileVersion) =
-        localSha256Hash = fileVersion.Sha256Hash
+        not (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash))
+        && localSha256Hash = fileVersion.Sha256Hash
         && localBlake3Hash = fileVersion.Blake3Hash
 
     /// Coordinates collect file conflicts behavior for this CLI command path.

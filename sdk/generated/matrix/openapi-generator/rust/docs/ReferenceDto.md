@@ -4,16 +4,16 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**class** | Option<**String**> |  | [optional]
-**reference_id** | Option<**uuid::Uuid**> |  | [optional]
-**branch_id** | Option<**uuid::Uuid**> |  | [optional]
-**directory_id** | Option<**uuid::Uuid**> |  | [optional]
-**sha256_hash** | Option<**String**> | Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs. | [optional]
-**blake3_hash** | Option<**String**> | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional]
-**reference_type** | Option<[**models::ReferenceType**](ReferenceType.md)> |  | [optional]
-**reference_text** | Option<**String**> |  | [optional]
+**class** | **String** |  | 
+**reference_id** | **uuid::Uuid** |  | 
+**branch_id** | **uuid::Uuid** |  | 
+**directory_id** | **uuid::Uuid** |  | 
+**sha256_hash** | **String** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | 
+**blake3_hash** | **String** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | 
+**reference_type** | [**models::ReferenceType**](ReferenceType.md) |  | 
+**reference_text** | **String** |  | 
 **created_by** | Option<**String**> |  | [optional]
-**created_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
+**created_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

@@ -14,96 +14,96 @@ use serde::{Deserialize, Serialize};
 /// BranchApiDto : Public branch DTO returned through branch endpoints.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BranchApiDto {
-    #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
-    pub class: Option<String>,
-    #[serde(rename = "BranchId", skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<uuid::Uuid>,
-    #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
-    pub branch_name: Option<String>,
-    #[serde(rename = "ParentBranchId", skip_serializing_if = "Option::is_none")]
-    pub parent_branch_id: Option<uuid::Uuid>,
-    #[serde(rename = "OwnerId", skip_serializing_if = "Option::is_none")]
-    pub owner_id: Option<uuid::Uuid>,
-    #[serde(rename = "OrganizationId", skip_serializing_if = "Option::is_none")]
-    pub organization_id: Option<uuid::Uuid>,
-    #[serde(rename = "RepositoryId", skip_serializing_if = "Option::is_none")]
-    pub repository_id: Option<uuid::Uuid>,
-    #[serde(rename = "BasedOn", skip_serializing_if = "Option::is_none")]
-    pub based_on: Option<Box<models::ReferenceApiDto>>,
-    #[serde(rename = "UserId", skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
-    #[serde(rename = "AssignEnabled", skip_serializing_if = "Option::is_none")]
-    pub assign_enabled: Option<bool>,
-    #[serde(rename = "PromotionEnabled", skip_serializing_if = "Option::is_none")]
-    pub promotion_enabled: Option<bool>,
-    #[serde(rename = "CommitEnabled", skip_serializing_if = "Option::is_none")]
-    pub commit_enabled: Option<bool>,
-    #[serde(rename = "CheckpointEnabled", skip_serializing_if = "Option::is_none")]
-    pub checkpoint_enabled: Option<bool>,
-    #[serde(rename = "SaveEnabled", skip_serializing_if = "Option::is_none")]
-    pub save_enabled: Option<bool>,
-    #[serde(rename = "TagEnabled", skip_serializing_if = "Option::is_none")]
-    pub tag_enabled: Option<bool>,
-    #[serde(rename = "ExternalEnabled", skip_serializing_if = "Option::is_none")]
-    pub external_enabled: Option<bool>,
-    #[serde(rename = "AutoRebaseEnabled", skip_serializing_if = "Option::is_none")]
-    pub auto_rebase_enabled: Option<bool>,
-    #[serde(rename = "PromotionMode", skip_serializing_if = "Option::is_none")]
-    pub promotion_mode: Option<String>,
-    #[serde(rename = "LatestReference", skip_serializing_if = "Option::is_none")]
-    pub latest_reference: Option<Box<models::ReferenceApiDto>>,
-    #[serde(rename = "LatestPromotion", skip_serializing_if = "Option::is_none")]
-    pub latest_promotion: Option<Box<models::ReferenceApiDto>>,
-    #[serde(rename = "LatestCommit", skip_serializing_if = "Option::is_none")]
-    pub latest_commit: Option<Box<models::ReferenceApiDto>>,
-    #[serde(rename = "LatestCheckpoint", skip_serializing_if = "Option::is_none")]
-    pub latest_checkpoint: Option<Box<models::ReferenceApiDto>>,
-    #[serde(rename = "LatestSave", skip_serializing_if = "Option::is_none")]
-    pub latest_save: Option<Box<models::ReferenceApiDto>>,
-    #[serde(rename = "ShouldRecomputeLatestReferences", skip_serializing_if = "Option::is_none")]
-    pub should_recompute_latest_references: Option<bool>,
-    #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    #[serde(rename = "Class")]
+    pub class: String,
+    #[serde(rename = "BranchId")]
+    pub branch_id: uuid::Uuid,
+    #[serde(rename = "BranchName")]
+    pub branch_name: String,
+    #[serde(rename = "ParentBranchId")]
+    pub parent_branch_id: uuid::Uuid,
+    #[serde(rename = "OwnerId")]
+    pub owner_id: uuid::Uuid,
+    #[serde(rename = "OrganizationId")]
+    pub organization_id: uuid::Uuid,
+    #[serde(rename = "RepositoryId")]
+    pub repository_id: uuid::Uuid,
+    #[serde(rename = "BasedOn")]
+    pub based_on: Box<models::ReferenceApiDto>,
+    #[serde(rename = "UserId")]
+    pub user_id: String,
+    #[serde(rename = "AssignEnabled")]
+    pub assign_enabled: bool,
+    #[serde(rename = "PromotionEnabled")]
+    pub promotion_enabled: bool,
+    #[serde(rename = "CommitEnabled")]
+    pub commit_enabled: bool,
+    #[serde(rename = "CheckpointEnabled")]
+    pub checkpoint_enabled: bool,
+    #[serde(rename = "SaveEnabled")]
+    pub save_enabled: bool,
+    #[serde(rename = "TagEnabled")]
+    pub tag_enabled: bool,
+    #[serde(rename = "ExternalEnabled")]
+    pub external_enabled: bool,
+    #[serde(rename = "AutoRebaseEnabled")]
+    pub auto_rebase_enabled: bool,
+    #[serde(rename = "PromotionMode")]
+    pub promotion_mode: String,
+    #[serde(rename = "LatestReference")]
+    pub latest_reference: Box<models::ReferenceApiDto>,
+    #[serde(rename = "LatestPromotion")]
+    pub latest_promotion: Box<models::ReferenceApiDto>,
+    #[serde(rename = "LatestCommit")]
+    pub latest_commit: Box<models::ReferenceApiDto>,
+    #[serde(rename = "LatestCheckpoint")]
+    pub latest_checkpoint: Box<models::ReferenceApiDto>,
+    #[serde(rename = "LatestSave")]
+    pub latest_save: Box<models::ReferenceApiDto>,
+    #[serde(rename = "ShouldRecomputeLatestReferences")]
+    pub should_recompute_latest_references: bool,
+    #[serde(rename = "CreatedAt")]
+    pub created_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "UpdatedAt", skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     #[serde(rename = "DeletedAt", skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    #[serde(rename = "DeleteReason", skip_serializing_if = "Option::is_none")]
-    pub delete_reason: Option<String>,
+    #[serde(rename = "DeleteReason")]
+    pub delete_reason: String,
 }
 
 impl BranchApiDto {
     /// Public branch DTO returned through branch endpoints.
-    pub fn new() -> BranchApiDto {
+    pub fn new(class: String, branch_id: uuid::Uuid, branch_name: String, parent_branch_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, based_on: models::ReferenceApiDto, user_id: String, assign_enabled: bool, promotion_enabled: bool, commit_enabled: bool, checkpoint_enabled: bool, save_enabled: bool, tag_enabled: bool, external_enabled: bool, auto_rebase_enabled: bool, promotion_mode: String, latest_reference: models::ReferenceApiDto, latest_promotion: models::ReferenceApiDto, latest_commit: models::ReferenceApiDto, latest_checkpoint: models::ReferenceApiDto, latest_save: models::ReferenceApiDto, should_recompute_latest_references: bool, created_at: chrono::DateTime<chrono::FixedOffset>, delete_reason: String) -> BranchApiDto {
         BranchApiDto {
-            class: None,
-            branch_id: None,
-            branch_name: None,
-            parent_branch_id: None,
-            owner_id: None,
-            organization_id: None,
-            repository_id: None,
-            based_on: None,
-            user_id: None,
-            assign_enabled: None,
-            promotion_enabled: None,
-            commit_enabled: None,
-            checkpoint_enabled: None,
-            save_enabled: None,
-            tag_enabled: None,
-            external_enabled: None,
-            auto_rebase_enabled: None,
-            promotion_mode: None,
-            latest_reference: None,
-            latest_promotion: None,
-            latest_commit: None,
-            latest_checkpoint: None,
-            latest_save: None,
-            should_recompute_latest_references: None,
-            created_at: None,
+            class,
+            branch_id,
+            branch_name,
+            parent_branch_id,
+            owner_id,
+            organization_id,
+            repository_id,
+            based_on: Box::new(based_on),
+            user_id,
+            assign_enabled,
+            promotion_enabled,
+            commit_enabled,
+            checkpoint_enabled,
+            save_enabled,
+            tag_enabled,
+            external_enabled,
+            auto_rebase_enabled,
+            promotion_mode,
+            latest_reference: Box::new(latest_reference),
+            latest_promotion: Box::new(latest_promotion),
+            latest_commit: Box::new(latest_commit),
+            latest_checkpoint: Box::new(latest_checkpoint),
+            latest_save: Box::new(latest_save),
+            should_recompute_latest_references,
+            created_at,
             updated_at: None,
             deleted_at: None,
-            delete_reason: None,
+            delete_reason,
         }
     }
 }

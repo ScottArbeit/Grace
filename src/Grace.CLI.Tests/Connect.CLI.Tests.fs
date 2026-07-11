@@ -89,5 +89,5 @@ module ConnectTests =
         remoteFile.RelativePath <- RelativePath "missing-blake3.txt"
         remoteFile.Sha256Hash <- Sha256Hash "sha"
 
-        Connect.existingFileMatchesRemoteVersion (Sha256Hash "sha") (Blake3Hash "local-blake3") remoteFile
+        Connect.existingFileMatchesRemoteVersion (Sha256Hash "sha") (Blake3Hash String.Empty) remoteFile
         |> should equal false

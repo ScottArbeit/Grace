@@ -6,34 +6,34 @@ Public branch DTO returned through branch endpoints.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**var_class** | **str** |  | [optional] 
-**branch_id** | **UUID** |  | [optional] 
-**branch_name** | **str** |  | [optional] 
-**parent_branch_id** | **UUID** |  | [optional] 
-**owner_id** | **UUID** |  | [optional] 
-**organization_id** | **UUID** |  | [optional] 
-**repository_id** | **UUID** |  | [optional] 
-**based_on** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | [optional] 
-**user_id** | **str** |  | [optional] 
-**assign_enabled** | **bool** |  | [optional] 
-**promotion_enabled** | **bool** |  | [optional] 
-**commit_enabled** | **bool** |  | [optional] 
-**checkpoint_enabled** | **bool** |  | [optional] 
-**save_enabled** | **bool** |  | [optional] 
-**tag_enabled** | **bool** |  | [optional] 
-**external_enabled** | **bool** |  | [optional] 
-**auto_rebase_enabled** | **bool** |  | [optional] 
-**promotion_mode** | **str** |  | [optional] 
-**latest_reference** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | [optional] 
-**latest_promotion** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | [optional] 
-**latest_commit** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | [optional] 
-**latest_checkpoint** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | [optional] 
-**latest_save** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | [optional] 
-**should_recompute_latest_references** | **bool** |  | [optional] 
-**created_at** | **datetime** |  | [optional] 
+**var_class** | **str** |  | 
+**branch_id** | **UUID** |  | 
+**branch_name** | **str** |  | 
+**parent_branch_id** | **UUID** |  | 
+**owner_id** | **UUID** |  | 
+**organization_id** | **UUID** |  | 
+**repository_id** | **UUID** |  | 
+**based_on** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**user_id** | **str** |  | 
+**assign_enabled** | **bool** |  | 
+**promotion_enabled** | **bool** |  | 
+**commit_enabled** | **bool** |  | 
+**checkpoint_enabled** | **bool** |  | 
+**save_enabled** | **bool** |  | 
+**tag_enabled** | **bool** |  | 
+**external_enabled** | **bool** |  | 
+**auto_rebase_enabled** | **bool** |  | 
+**promotion_mode** | **str** |  | 
+**latest_reference** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**latest_promotion** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**latest_commit** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**latest_checkpoint** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**latest_save** | [**ReferenceApiDto**](ReferenceApiDto.md) |  | 
+**should_recompute_latest_references** | **bool** |  | 
+**created_at** | **datetime** |  | 
 **updated_at** | **datetime** |  | [optional] 
 **deleted_at** | **datetime** |  | [optional] 
-**delete_reason** | **str** |  | [optional] 
+**delete_reason** | **str** |  | 
 
 ## Example
 

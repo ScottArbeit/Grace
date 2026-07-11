@@ -20,7 +20,7 @@ import json
 
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.file_version import FileVersion
@@ -30,43 +30,37 @@ from pydantic_core import to_jsonable_python
 
 class DirectoryVersionHashLookupResult(BaseModel):
     """
-    Raw directory version returned by hash lookup endpoints. Sha256Hash may be empty only when /directory/getBySha256Hash deliberately returns DirectoryVersion.Default as its no-match sentinel.
+    Complete current directory version returned by hash lookup endpoints.
     """ # noqa: E501
-    var_class: Optional[StrictStr] = Field(default=None, alias="Class")
-    directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
-    owner_id: Optional[UUID] = Field(default=None, alias="OwnerId")
-    organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
-    repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
-    relative_path: Optional[StrictStr] = Field(default=None, alias="RelativePath")
-    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value only for the DirectoryVersion.Default no-match sentinel, or lowercase 64-character SHA-256 hash.", alias="Sha256Hash")
-    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
-    directories: Optional[List[UUID]] = Field(default=None, alias="Directories")
-    files: Optional[List[FileVersion]] = Field(default=None, alias="Files")
-    size: Optional[StrictInt] = Field(default=None, alias="Size")
-    recursive_size: Optional[StrictInt] = Field(default=None, alias="RecursiveSize")
-    created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
-    hashes_validated: Optional[StrictBool] = Field(default=None, alias="HashesValidated")
+    var_class: StrictStr = Field(alias="Class")
+    directory_version_id: UUID = Field(alias="DirectoryVersionId")
+    owner_id: UUID = Field(alias="OwnerId")
+    organization_id: UUID = Field(alias="OrganizationId")
+    repository_id: UUID = Field(alias="RepositoryId")
+    relative_path: StrictStr = Field(alias="RelativePath")
+    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
+    directories: List[UUID] = Field(alias="Directories")
+    files: List[FileVersion] = Field(alias="Files")
+    size: StrictInt = Field(alias="Size")
+    recursive_size: StrictInt = Field(alias="RecursiveSize")
+    created_at: datetime = Field(alias="CreatedAt")
+    hashes_validated: StrictBool = Field(alias="HashesValidated")
     __properties: ClassVar[List[str]] = ["Class", "DirectoryVersionId", "OwnerId", "OrganizationId", "RepositoryId", "RelativePath", "Sha256Hash", "Blake3Hash", "Directories", "Files", "Size", "RecursiveSize", "CreatedAt", "HashesValidated"]
 
     @field_validator('sha256_hash')
     def sha256_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
-        if value is None:
-            return value
-
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^$|^[a-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
     @field_validator('blake3_hash')
     def blake3_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
-        if value is None:
-            return value
-
         if not isinstance(value, str):
             value = str(value)
 

@@ -6,22 +6,22 @@ Public reference DTO returned through branch reference endpoints.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**var_class** | **str** |  | [optional] 
-**reference_id** | **UUID** |  | [optional] 
-**owner_id** | **UUID** |  | [optional] 
-**organization_id** | **UUID** |  | [optional] 
-**repository_id** | **UUID** |  | [optional] 
-**branch_id** | **UUID** |  | [optional] 
-**directory_id** | **UUID** | DirectoryVersionId represented by the current server DTO field name. | [optional] 
-**sha256_hash** | **str** | Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs. | [optional] 
-**blake3_hash** | **str** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional] 
-**reference_type** | [**ReferenceType**](ReferenceType.md) |  | [optional] 
-**reference_text** | **str** |  | [optional] 
-**links** | **List[str]** |  | [optional] 
-**created_at** | **datetime** |  | [optional] 
+**var_class** | **str** |  | 
+**reference_id** | **UUID** |  | 
+**owner_id** | **UUID** |  | 
+**organization_id** | **UUID** |  | 
+**repository_id** | **UUID** |  | 
+**branch_id** | **UUID** |  | 
+**directory_id** | **UUID** | DirectoryVersionId represented by the current server DTO field name. | 
+**sha256_hash** | **str** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | 
+**blake3_hash** | **str** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | 
+**reference_type** | [**ReferenceType**](ReferenceType.md) |  | 
+**reference_text** | **str** |  | 
+**links** | **List[str]** |  | 
+**created_at** | **datetime** |  | 
 **updated_at** | **datetime** |  | [optional] 
 **deleted_at** | **datetime** |  | [optional] 
-**delete_reason** | **str** |  | [optional] 
+**delete_reason** | **str** |  | 
 
 ## Example
 

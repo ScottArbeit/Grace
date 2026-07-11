@@ -132,7 +132,7 @@
       tags:
         - Directories
       summary: Get a directory version by SHA-256 hash.
-      description: Gets a directory version DTO by SHA-256 hash.
+      description: Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace's normal not-found error.
       operationId: GetDirectoryVersionBySha256Hash
       requestBody:
         required: true

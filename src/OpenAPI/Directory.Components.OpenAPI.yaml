@@ -97,9 +97,7 @@
           type: boolean
           example: true
     DirectoryVersionHashLookupResult:
-      description: >-
-        Raw directory version returned by hash lookup endpoints. Sha256Hash may be empty only when
-        /directory/getBySha256Hash deliberately returns DirectoryVersion.Default as its no-match sentinel.
+      description: Complete current directory version returned by hash lookup endpoints.
       type: object
       properties:
         Class:
@@ -115,7 +113,7 @@
         RelativePath:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
         Sha256Hash:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
         Blake3Hash:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
         Directories:
@@ -137,6 +135,21 @@
           format: date-time
         HashesValidated:
           type: boolean
+      required:
+        - Class
+        - DirectoryVersionId
+        - OwnerId
+        - OrganizationId
+        - RepositoryId
+        - RelativePath
+        - Sha256Hash
+        - Blake3Hash
+        - Directories
+        - Files
+        - Size
+        - RecursiveSize
+        - CreatedAt
+        - HashesValidated
     DirectoryCommandReturnValue:
       description: Grace response envelope returned by directory command endpoints.
       type: object
