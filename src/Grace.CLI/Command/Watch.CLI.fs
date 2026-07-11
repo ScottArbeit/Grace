@@ -3896,6 +3896,12 @@ module Watch =
                 let childIds = HashSet<DirectoryVersionId>()
                 let children = ResizeArray<DirectoryVersion>()
 
+                let expectedDirectorySize = getDirectorySize directoryVersion.Files
+
+                if directoryVersion.Size <> expectedDirectorySize then
+                    invalidOp
+                        $"Remote materialization DirectoryVersion {directoryId} has size {directoryVersion.Size}, but its direct files total {expectedDirectorySize}."
+
                 for childId in directoryVersion.Directories do
                     if not (childIds.Add(childId)) then
                         invalidOp $"Remote materialization metadata contains duplicate child DirectoryVersionId {childId} under {directoryId}."
@@ -4034,6 +4040,26 @@ module Watch =
                 invalidOp $"Remote materialization cannot start because object-cache content is missing or corrupt for: {invalidPaths}."
         }
 
+    /// Verifies remote binary flags against the accepted cache or retained working-tree bytes before clean status replacement.
+    let private verifyCurrentBranchMaterializationBinaryClassifications (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for fileVersion in plan.FileWrites do
+                let objectCachePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+                use stream = File.Open(objectCachePath, fileStreamOptionsRead)
+                let! actualIsBinary = isBinaryFile stream
+
+                if actualIsBinary <> fileVersion.IsBinary then
+                    invalidOp $"Remote materialization binary classification does not match object-cache bytes for {fileVersion.RelativePath}."
+
+            for fileVersion in plan.RetainedFiles do
+                let targetPath = materializationTargetFullPath fileVersion.RelativePath
+                use stream = File.Open(targetPath, fileStreamOptionsRead)
+                let! actualIsBinary = isBinaryFile stream
+
+                if actualIsBinary <> fileVersion.IsBinary then
+                    invalidOp $"Remote materialization binary classification does not match retained working-tree bytes for {fileVersion.RelativePath}."
+        }
+
     /// Applies exact target mutations from local object-cache files while the update marker is present.
     let private applyCurrentBranchMaterializationTargets (clients: CurrentBranchRemoteMaterializationApplyClients) currentStatus remoteStatus plan =
         task {
@@ -4066,6 +4092,7 @@ module Watch =
                     do! verifyCurrentBranchMaterializationObjectCache plan
                     do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
                     do! verifyCurrentBranchMaterializationRetainedFiles plan
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
                     let currentFiles = materializationFilesByPath currentStatus
 
                     for relativePath in plan.FileDeletes do
@@ -4152,6 +4179,7 @@ module Watch =
                             invalidOp $"Remote materialization copied target did not match declared identity: {fileVersion.RelativePath}."
 
                     do! clients.BeforeStatusReplacementVerification()
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
                     do! verifyCurrentBranchMaterializationRetainedFiles plan
 
                     for fileVersion in plan.FileWrites do
@@ -4263,6 +4291,13 @@ module Watch =
                 with
                 | ex ->
                     clients.RequestResync $"remote materialization object cache invalid before exact apply: {ex.Message}"
+                    raise ex
+
+                try
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization binary metadata invalid before exact apply: {ex.Message}"
                     raise ex
 
                 try
