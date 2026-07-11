@@ -55,6 +55,13 @@ type Repository() =
     static member public SetAllowsLargeFiles(parameters: SetAllowsLargeFilesParameters) =
         postServer<SetAllowsLargeFilesParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.SetAllowsLargeFiles)}")
 
+    /// Sets whether callers without repository write permission may contribute through private branches.
+    static member public SetAllowExternalContributions(parameters: SetAllowExternalContributionsParameters) =
+        postServer<SetAllowExternalContributionsParameters, String> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"repository/{nameof (Repository.SetAllowExternalContributions)}"
+        )
+
     /// <summary>
     /// Sets whether the repository is public or private.
     /// </summary>

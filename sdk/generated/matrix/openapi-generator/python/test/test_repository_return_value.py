@@ -48,6 +48,8 @@ class TestRepositoryReturnValue(unittest.TestCase):
                     storage_container_name = '', 
                     repository_visibility = 'Private', 
                     repository_status = 'Active', 
+                    allows_large_files = True, 
+                    allow_external_contributions = True, 
                     branches = [
                         'MyBranch'
                         ], 
@@ -75,6 +77,8 @@ class TestRepositoryReturnValue(unittest.TestCase):
                     storage_container_name = '', 
                     repository_visibility = 'Private', 
                     repository_status = 'Active', 
+                    allows_large_files = True, 
+                    allow_external_contributions = True, 
                     branches = [
                         'MyBranch'
                         ], 

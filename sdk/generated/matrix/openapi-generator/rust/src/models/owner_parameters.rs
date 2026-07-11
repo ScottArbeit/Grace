@@ -19,6 +19,9 @@ pub struct OwnerParameters {
     /// The entity on whose behalf the action is being performed.
     #[serde(rename = "Principal", skip_serializing_if = "Option::is_none")]
     pub principal: Option<String>,
+    /// Allow-listed event properties. UploadSessionIds is the only client-settable key.
+    #[serde(rename = "Properties", skip_serializing_if = "Option::is_none")]
+    pub properties: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "OwnerId", skip_serializing_if = "Option::is_none")]
     pub owner_id: Option<uuid::Uuid>,
     #[serde(rename = "OwnerName", skip_serializing_if = "Option::is_none")]
@@ -30,6 +33,7 @@ impl OwnerParameters {
         OwnerParameters {
             correlation_id: None,
             principal: None,
+            properties: None,
             owner_id: None,
             owner_name: None,
         }

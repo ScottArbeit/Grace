@@ -40,6 +40,12 @@ export interface ReferenceParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof ReferenceParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof ReferenceParameters
@@ -92,6 +98,7 @@ export function ReferenceParametersFromJSONTyped(json: any, ignoreDiscriminator:
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
         'referenceType': json['ReferenceType'] == null ? undefined : ReferenceTypeFromJSON(json['ReferenceType']),
         'referenceText': json['ReferenceText'] == null ? undefined : json['ReferenceText'],
@@ -113,6 +120,7 @@ export function ReferenceParametersToJSONTyped(value?: ReferenceParameters | nul
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'ReferenceId': value['referenceId'],
         'ReferenceType': ReferenceTypeToJSON(value['referenceType']),
         'ReferenceText': value['referenceText'],

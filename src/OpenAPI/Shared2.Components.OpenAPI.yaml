@@ -120,6 +120,11 @@
         Principal:
           type: string
           description: The entity on whose behalf the action is being performed.
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+          description: Allow-listed event properties. UploadSessionIds is the only client-settable key.
 
     FileVersion:
       type: object

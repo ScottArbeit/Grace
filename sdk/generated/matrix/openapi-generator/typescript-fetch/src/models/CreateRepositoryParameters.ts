@@ -40,6 +40,12 @@ export interface CreateRepositoryParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof CreateRepositoryParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof CreateRepositoryParameters
@@ -104,6 +110,7 @@ export function CreateRepositoryParametersFromJSONTyped(json: any, ignoreDiscrim
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
         'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
@@ -127,6 +134,7 @@ export function CreateRepositoryParametersToJSONTyped(value?: CreateRepositoryPa
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
         'OrganizationId': value['organizationId'],

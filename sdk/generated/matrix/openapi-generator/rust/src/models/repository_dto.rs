@@ -37,6 +37,10 @@ pub struct RepositoryDto {
     pub repository_visibility: Option<models::RepositoryVisibility>,
     #[serde(rename = "RepositoryStatus", skip_serializing_if = "Option::is_none")]
     pub repository_status: Option<models::RepositoryStatus>,
+    #[serde(rename = "AllowsLargeFiles", skip_serializing_if = "Option::is_none")]
+    pub allows_large_files: Option<bool>,
+    #[serde(rename = "AllowExternalContributions", skip_serializing_if = "Option::is_none")]
+    pub allow_external_contributions: Option<bool>,
     #[serde(rename = "Branches", skip_serializing_if = "Option::is_none")]
     pub branches: Option<Vec<String>>,
     #[serde(rename = "DefaultServerApiVersion", skip_serializing_if = "Option::is_none")]
@@ -64,6 +68,8 @@ impl RepositoryDto {
             storage_container_name: None,
             repository_visibility: None,
             repository_status: None,
+            allows_large_files: None,
+            allow_external_contributions: None,
             branches: None,
             default_server_api_version: None,
             default_branch_name: None,

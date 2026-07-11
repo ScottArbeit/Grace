@@ -8,6 +8,7 @@ Name | Type
 ------------ | -------------
 `correlationId` | string
 `principal` | string
+`properties` | { [key: string]: string; }
 `ownerId` | string
 `ownerName` | string
 
@@ -20,6 +21,7 @@ import type { OwnerParameters } from '@grace-vcs/generated-openapi-probe'
 const example = {
   "correlationId": null,
   "principal": null,
+  "properties": null,
   "ownerId": 9dd5f81f-dc43-4839-9173-85d09394f30f,
   "ownerName": null,
 } satisfies OwnerParameters

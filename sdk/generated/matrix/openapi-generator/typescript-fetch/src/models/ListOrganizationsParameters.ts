@@ -32,6 +32,12 @@ export interface ListOrganizationsParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof ListOrganizationsParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof ListOrganizationsParameters
@@ -64,6 +70,7 @@ export function ListOrganizationsParametersFromJSONTyped(json: any, ignoreDiscri
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
     };
@@ -82,6 +89,7 @@ export function ListOrganizationsParametersToJSONTyped(value?: ListOrganizations
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
     };

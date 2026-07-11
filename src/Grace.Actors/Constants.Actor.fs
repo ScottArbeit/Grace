@@ -99,6 +99,9 @@ module Constants =
         let UploadSession = "UploadSessionActor"
 
         [<Literal>]
+        let BillingAccount = "BillingAccountActor"
+
+        [<Literal>]
         let Reference = "ReferenceActor"
 
         [<Literal>]
@@ -115,9 +118,6 @@ module Constants =
 
         [<Literal>]
         let RepositoryContentCounter = "RepositoryContentCounterActor"
-
-        [<Literal>]
-        let ContentOwnershipLedger = "ContentOwnershipLedgerActor"
 
         [<Literal>]
         let ManifestContributionWorkflow = "ManifestContributionWorkflowActor"
@@ -203,6 +203,9 @@ module Constants =
         let UploadSession = "UploadSession"
 
         [<Literal>]
+        let BillingAccount = "BillingAccount"
+
+        [<Literal>]
         let Reference = "Ref"
 
         [<Literal>]
@@ -216,9 +219,6 @@ module Constants =
 
         [<Literal>]
         let RepositoryContentCounter = "RepoContentCounter"
-
-        [<Literal>]
-        let ContentOwnershipLedger = "ContentOwnershipLedger"
 
         [<Literal>]
         let ManifestContributionWorkflow = "ManifestContributionWorkflow"

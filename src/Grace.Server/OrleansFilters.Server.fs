@@ -74,7 +74,6 @@ module Orleans =
                             | StateName.ApprovalRequest -> repositoryId ()
                             | StateName.ApprovalRequestIndex -> repositoryId ()
                             | StateName.ContentBlockMetadata -> firstGrainKeySegment ()
-                            | StateName.ContentOwnershipLedger -> firstGrainKeySegment ()
                             | StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()
                             | StateName.Reference -> repositoryId ()
                             | StateName.Reminder -> StateName.Reminder
@@ -83,6 +82,7 @@ module Orleans =
                             | StateName.Review -> repositoryId ()
                             | StateName.User -> StateName.User
                             | StateName.UploadSession -> repositoryId ()
+                            | StateName.BillingAccount -> StateName.BillingAccount
                             | StateName.WorkItem -> repositoryId ()
                             | StateName.WorkItemNumberCounter -> repositoryId ()
                             | _ ->

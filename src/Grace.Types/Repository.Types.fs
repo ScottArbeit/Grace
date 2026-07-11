@@ -33,6 +33,7 @@ module Repository =
         | SetRepositoryStatus of repositoryStatus: RepositoryStatus
         | SetRecordSaves of recordSaves: bool
         | SetAllowsLargeFiles of allowsLargeFiles: bool
+        | SetAllowExternalContributions of allowExternalContributions: bool
         | SetAnonymousAccess of anonymousAccess: bool
         | SetDefaultServerApiVersion of defaultServerApiVersion: string
         | SetDefaultBranchName of defaultBranchName: BranchName
@@ -68,6 +69,7 @@ module Repository =
         | RepositoryTypeSet of repositoryVisibility: RepositoryType
         | RepositoryStatusSet of repositoryStatus: RepositoryStatus
         | AllowsLargeFilesSet of allowsLargeFiles: bool
+        | AllowExternalContributionsSet of allowExternalContributions: bool
         | AnonymousAccessSet of anonymousAccess: bool
         | RecordSavesSet of recordSaves: bool
         | DefaultServerApiVersionSet of defaultServerApiVersion: string
@@ -112,6 +114,7 @@ module Repository =
             RepositoryStatus: RepositoryStatus
             AnonymousAccess: bool
             AllowsLargeFiles: bool
+            AllowExternalContributions: bool
             DefaultServerApiVersion: string
             DefaultBranchName: BranchName
             LogicalDeleteDays: single
@@ -146,6 +149,7 @@ module Repository =
                 RepositoryStatus = RepositoryStatus.Active
                 AnonymousAccess = false
                 AllowsLargeFiles = false
+                AllowExternalContributions = false
                 DefaultServerApiVersion = "latest"
                 DefaultBranchName = BranchName Constants.InitialBranchName
                 LogicalDeleteDays = 30.0f
@@ -202,6 +206,8 @@ module Repository =
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }
                 | AllowsLargeFilesSet allowsLargeFiles -> { currentRepositoryDto with AllowsLargeFiles = allowsLargeFiles }
+                | AllowExternalContributionsSet allowExternalContributions ->
+                    { currentRepositoryDto with AllowExternalContributions = allowExternalContributions }
                 | AnonymousAccessSet anonymousAccess -> { currentRepositoryDto with AnonymousAccess = anonymousAccess }
 
             { newRepositoryDto with UpdatedAt = Some repositoryEvent.Metadata.Timestamp }

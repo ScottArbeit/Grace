@@ -32,6 +32,12 @@ export interface SetOwnerNameParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof SetOwnerNameParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof SetOwnerNameParameters
@@ -70,6 +76,7 @@ export function SetOwnerNameParametersFromJSONTyped(json: any, ignoreDiscriminat
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
         'newName': json['NewName'] == null ? undefined : json['NewName'],
@@ -89,6 +96,7 @@ export function SetOwnerNameParametersToJSONTyped(value?: SetOwnerNameParameters
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
         'NewName': value['newName'],

@@ -56,6 +56,11 @@ module Repository =
         inherit RepositoryParameters()
         member val public AllowsLargeFiles = false with get, set
 
+    /// Parameters for the /repository/setAllowExternalContributions endpoint.
+    type SetAllowExternalContributionsParameters() =
+        inherit RepositoryParameters()
+        member val public AllowExternalContributions = false with get, set
+
     /// Parameters for the /repository/recordSaves endpoint.
     type RecordSavesParameters() =
         inherit RepositoryParameters()

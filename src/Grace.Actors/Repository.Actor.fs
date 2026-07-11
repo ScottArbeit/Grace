@@ -155,11 +155,6 @@ module Repository =
 
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the empty directory version."
 
-                                    let initialPromotionMetadata =
-                                        { repositoryEvent.Metadata with Properties = Dictionary<string, string>(repositoryEvent.Metadata.Properties) }
-
-                                    initialPromotionMetadata.Properties[ "SkipContentOwnershipBoundary" ] <- "RepositoryBootstrap"
-
                                     let! promotionResult =
                                         branchActor.Handle
                                             (BranchCommand.Promote(
@@ -168,7 +163,7 @@ module Repository =
                                                 emptyBlake3Hash,
                                                 (getLocalizedString StringResourceName.InitialPromotionMessage)
                                             ))
-                                            initialPromotionMetadata
+                                            repositoryEvent.Metadata
 
                                     logToConsole $"In Repository.Actor.handleEvent: After trying to create the first promotion."
 
@@ -521,6 +516,8 @@ module Repository =
                                     | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
                                     | SetRepositoryType repositoryType -> return RepositoryTypeSet repositoryType
                                     | SetAllowsLargeFiles allowsLargeFiles -> return AllowsLargeFilesSet allowsLargeFiles
+                                    | SetAllowExternalContributions allowExternalContributions ->
+                                        return AllowExternalContributionsSet allowExternalContributions
                                     | SetAnonymousAccess anonymousAccess -> return AnonymousAccessSet anonymousAccess
                                     | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
                                     | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version

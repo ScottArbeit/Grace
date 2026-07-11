@@ -18,7 +18,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional, Union
 from uuid import UUID
 from grace_generated_openapi_probe.models.object_storage_provider import ObjectStorageProvider
@@ -43,12 +43,14 @@ class RepositoryDto(BaseModel):
     storage_container_name: Optional[StrictStr] = Field(default=None, alias="StorageContainerName")
     repository_visibility: Optional[RepositoryVisibility] = Field(default=None, alias="RepositoryVisibility")
     repository_status: Optional[RepositoryStatus] = Field(default=None, alias="RepositoryStatus")
+    allows_large_files: Optional[StrictBool] = Field(default=None, alias="AllowsLargeFiles")
+    allow_external_contributions: Optional[StrictBool] = Field(default=None, alias="AllowExternalContributions")
     branches: Optional[List[StrictStr]] = Field(default=None, alias="Branches")
     default_server_api_version: Optional[StrictStr] = Field(default=None, alias="DefaultServerApiVersion")
     default_branch_name: Optional[StrictStr] = Field(default=None, alias="DefaultBranchName")
     save_days: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, alias="SaveDays")
     checkpoint_days: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, alias="CheckpointDays")
-    __properties: ClassVar[List[str]] = ["Class", "RepositoryId", "OwnerId", "OrganizationId", "RepositoryName", "ObjectStorageProvider", "StoragePoolId", "StorageAccountName", "StorageContainerName", "RepositoryVisibility", "RepositoryStatus", "Branches", "DefaultServerApiVersion", "DefaultBranchName", "SaveDays", "CheckpointDays"]
+    __properties: ClassVar[List[str]] = ["Class", "RepositoryId", "OwnerId", "OrganizationId", "RepositoryName", "ObjectStorageProvider", "StoragePoolId", "StorageAccountName", "StorageContainerName", "RepositoryVisibility", "RepositoryStatus", "AllowsLargeFiles", "AllowExternalContributions", "Branches", "DefaultServerApiVersion", "DefaultBranchName", "SaveDays", "CheckpointDays"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -112,6 +114,8 @@ class RepositoryDto(BaseModel):
             "StorageContainerName": obj.get("StorageContainerName"),
             "RepositoryVisibility": obj.get("RepositoryVisibility"),
             "RepositoryStatus": obj.get("RepositoryStatus"),
+            "AllowsLargeFiles": obj.get("AllowsLargeFiles"),
+            "AllowExternalContributions": obj.get("AllowExternalContributions"),
             "Branches": obj.get("Branches"),
             "DefaultServerApiVersion": obj.get("DefaultServerApiVersion"),
             "DefaultBranchName": obj.get("DefaultBranchName"),

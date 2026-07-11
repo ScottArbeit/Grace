@@ -9,6 +9,7 @@ Name | Type
 ------------ | -------------
 `correlationId` | string
 `principal` | string
+`properties` | { [key: string]: string; }
 `ownerId` | string
 `ownerName` | string
 `searchVisibility` | [SearchVisibility](SearchVisibility.md)
@@ -22,6 +23,7 @@ import type { SetOwnerSearchVisibilityParameters } from '@grace-vcs/generated-op
 const example = {
   "correlationId": null,
   "principal": null,
+  "properties": null,
   "ownerId": 9dd5f81f-dc43-4839-9173-85d09394f30f,
   "ownerName": null,
   "searchVisibility": null,

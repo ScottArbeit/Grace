@@ -38,6 +38,9 @@ class TestListWebhookRulesParameters(unittest.TestCase):
             return ListWebhookRulesParameters(
                 correlation_id = '',
                 principal = '',
+                properties = {
+                    'key' : ''
+                    },
                 owner_id = '',
                 owner_name = '',
                 organization_id = '',

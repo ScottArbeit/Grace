@@ -32,6 +32,12 @@ export interface SetCheckpointDaysParameters {
      */
     principal?: string;
     /**
+     * Allow-listed event properties. UploadSessionIds is the only client-settable key.
+     * @type {{ [key: string]: string; }}
+     * @memberof SetCheckpointDaysParameters
+     */
+    properties?: { [key: string]: string; };
+    /**
      * 
      * @type {string}
      * @memberof SetCheckpointDaysParameters
@@ -94,6 +100,7 @@ export function SetCheckpointDaysParametersFromJSONTyped(json: any, ignoreDiscri
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
+        'properties': json['Properties'] == null ? undefined : json['Properties'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
         'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
@@ -117,6 +124,7 @@ export function SetCheckpointDaysParametersToJSONTyped(value?: SetCheckpointDays
         
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
+        'Properties': value['properties'],
         'OwnerId': value['ownerId'],
         'OwnerName': value['ownerName'],
         'OrganizationId': value['organizationId'],

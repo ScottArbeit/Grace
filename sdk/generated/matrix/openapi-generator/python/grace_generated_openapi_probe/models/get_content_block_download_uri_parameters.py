@@ -32,6 +32,7 @@ class GetContentBlockDownloadUriParameters(BaseModel):
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
+    properties: Optional[Dict[str, StrictStr]] = Field(default=None, description="Allow-listed event properties. UploadSessionIds is the only client-settable key.", alias="Properties")
     owner_id: Optional[StrictStr] = Field(default=None, alias="OwnerId")
     owner_name: Optional[StrictStr] = Field(default=None, alias="OwnerName")
     organization_id: Optional[StrictStr] = Field(default=None, alias="OrganizationId")
@@ -45,7 +46,7 @@ class GetContentBlockDownloadUriParameters(BaseModel):
     storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.", alias="StoragePoolId")
     content_block_address: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
     manifest_address: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3-derived FileManifest address.", alias="ManifestAddress")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ReferenceId", "AuthorizedScope", "Sha256Hash", "Blake3Hash", "StoragePoolId", "ContentBlockAddress", "ManifestAddress"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "Properties", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ReferenceId", "AuthorizedScope", "Sha256Hash", "Blake3Hash", "StoragePoolId", "ContentBlockAddress", "ManifestAddress"]
 
     @field_validator('sha256_hash')
     def sha256_hash_validate_regular_expression(cls, value):
@@ -146,6 +147,7 @@ class GetContentBlockDownloadUriParameters(BaseModel):
         _obj = cls.model_validate({
             "CorrelationId": obj.get("CorrelationId"),
             "Principal": obj.get("Principal"),
+            "Properties": obj.get("Properties"),
             "OwnerId": obj.get("OwnerId"),
             "OwnerName": obj.get("OwnerName"),
             "OrganizationId": obj.get("OrganizationId"),

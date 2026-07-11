@@ -19,6 +19,9 @@ pub struct ReferenceParameters {
     /// The entity on whose behalf the action is being performed.
     #[serde(rename = "Principal", skip_serializing_if = "Option::is_none")]
     pub principal: Option<String>,
+    /// Allow-listed event properties. UploadSessionIds is the only client-settable key.
+    #[serde(rename = "Properties", skip_serializing_if = "Option::is_none")]
+    pub properties: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
     pub reference_id: Option<uuid::Uuid>,
     #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]
@@ -36,6 +39,7 @@ impl ReferenceParameters {
         ReferenceParameters {
             correlation_id: None,
             principal: None,
+            properties: None,
             reference_id: None,
             reference_type: None,
             reference_text: None,

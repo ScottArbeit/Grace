@@ -1626,6 +1626,9 @@ module Application =
                                route "/setAllowsLargeFiles" Repository.SetAllowsLargeFiles
                                |> addMetadata typeof<Repository.SetAllowsLargeFilesParameters>
 
+                               route "/setAllowExternalContributions" Repository.SetAllowExternalContributions
+                               |> addMetadata typeof<Repository.SetAllowExternalContributionsParameters>
+
                                route "/setAnonymousAccess" Repository.SetAnonymousAccess
                                |> addMetadata typeof<Repository.SetAnonymousAccessParameters>
 

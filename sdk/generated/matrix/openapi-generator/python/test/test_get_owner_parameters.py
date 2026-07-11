@@ -38,6 +38,9 @@ class TestGetOwnerParameters(unittest.TestCase):
             return GetOwnerParameters(
                 correlation_id = '',
                 principal = '',
+                properties = {
+                    'key' : ''
+                    },
                 owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f',
                 owner_name = '',
                 include_deleted = False

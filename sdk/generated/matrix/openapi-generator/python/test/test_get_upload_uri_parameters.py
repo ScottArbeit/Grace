@@ -38,6 +38,9 @@ class TestGetUploadUriParameters(unittest.TestCase):
             return GetUploadUriParameters(
                 correlation_id = '',
                 principal = '',
+                properties = {
+                    'key' : ''
+                    },
                 owner_id = '',
                 owner_name = '',
                 organization_id = '',

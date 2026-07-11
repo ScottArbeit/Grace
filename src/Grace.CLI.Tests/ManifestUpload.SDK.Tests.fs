@@ -452,7 +452,11 @@ type ManifestUploadSdkTests() =
                         {
                             FileVersion = fileVersion
                             Manifest = None
-                            UploadSessionId = None
+                            UploadSessionId =
+                                if fileVersion.RelativePath = manifestFile.RelativePath then
+                                    Some(Guid.Parse "11111111-1111-1111-1111-111111111111")
+                                else
+                                    None
                             UploadedBlockCount = if fileVersion.RelativePath = manifestFile.RelativePath then 1 else 0
                             UsedManifestUpload = fileVersion.RelativePath = manifestFile.RelativePath
                         }
@@ -475,6 +479,7 @@ type ManifestUploadSdkTests() =
             | Error error -> Assert.Fail($"{error.Error}{Environment.NewLine}{serialize error.Properties}")
             | Ok returnValue ->
                 Assert.That(returnValue.ReturnValue, Is.EquivalentTo([| manifestFile; ineligibleFile |]))
+                Assert.That(returnValue.Properties["UploadSessionIds"], Is.EqualTo("11111111111111111111111111111111"))
 
                 Assert.That(
                     manifestAttempts,

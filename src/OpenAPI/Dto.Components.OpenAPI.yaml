@@ -188,6 +188,10 @@
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryVisibility
         RepositoryStatus:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryStatus
+        AllowsLargeFiles:
+          type: boolean
+        AllowExternalContributions:
+          type: boolean
         Branches:
           type: array
           items:

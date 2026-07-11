@@ -11,7 +11,6 @@ open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.RepositoryContentCounter
-open Grace.Types.ContentOwnershipLedger
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Organization
 open Grace.Types.Owner
@@ -24,6 +23,7 @@ open Grace.Types.Validation
 open Grace.Types.Visibility
 open Grace.Types.Artifact
 open Grace.Types.UploadSession
+open Grace.Types.BillingAccount
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
 open Grace.Types.Common
@@ -777,22 +777,19 @@ module Interfaces =
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
-    /// Defines the operations for the ContentOwnershipLedger actor.
+    /// Defines the persistent pooled-storage accounting aggregate for one repository owner.
     [<Interface>]
-    type IContentOwnershipLedgerActor =
-        inherit IGrainWithStringKey
+    type IBillingAccountActor =
+        inherit IGrainWithGuidKey
 
-        /// Returns true if this content ownership ledger has been initialized.
-        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+        /// Returns the current BillingAccount snapshot.
+        abstract member Get: correlationId: CorrelationId -> Task<BillingAccountDto>
 
-        /// Returns the current active ownership state for this manifest-backed content.
-        abstract member Get: correlationId: CorrelationId -> Task<ContentOwnershipLedgerDto>
+        /// Returns the persisted BillingAccount events used for retry and audit evidence.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<BillingAccountEvent>>
 
-        /// Returns the events handled by this content ownership ledger.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ContentOwnershipLedgerEvent>>
-
-        /// Validates incoming commands and converts them to persisted ownership events.
-        abstract member Handle: command: ContentOwnershipLedgerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ContentOwnershipLedgerDecision>>
+        /// Atomically validates and persists a storage reservation lifecycle command.
+        abstract member Handle: command: BillingAccountCommand -> eventMetadata: EventMetadata -> Task<GraceResult<BillingAccountDecision>>
 
     /// Defines the operations for the ManifestContributionWorkflow actor.
     [<Interface>]

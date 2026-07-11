@@ -18,6 +18,8 @@ Name | Type
 `storageContainerName` | string
 `repositoryVisibility` | [RepositoryVisibility](RepositoryVisibility.md)
 `repositoryStatus` | [RepositoryStatus](RepositoryStatus.md)
+`allowsLargeFiles` | boolean
+`allowExternalContributions` | boolean
 `branches` | Array&lt;string&gt;
 `defaultServerApiVersion` | string
 `defaultBranchName` | string
@@ -42,6 +44,8 @@ const example = {
   "storageContainerName": null,
   "repositoryVisibility": null,
   "repositoryStatus": null,
+  "allowsLargeFiles": null,
+  "allowExternalContributions": null,
   "branches": null,
   "defaultServerApiVersion": null,
   "defaultBranchName": MyBranch,

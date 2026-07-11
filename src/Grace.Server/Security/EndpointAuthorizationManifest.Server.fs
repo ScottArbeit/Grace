@@ -260,6 +260,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/repository/getReferencesByReferenceId" Authenticated
             endpoint "POST" "/repository/isEmpty" Authenticated
             endpoint "POST" "/repository/setAllowsLargeFiles" Authenticated
+            endpoint "POST" "/repository/setAllowExternalContributions" Authenticated
             endpoint "POST" "/repository/setAnonymousAccess" Authenticated
             endpoint "POST" "/repository/setCheckpointDays" Authenticated
             endpoint "POST" "/repository/setConflictResolutionPolicy" Authenticated

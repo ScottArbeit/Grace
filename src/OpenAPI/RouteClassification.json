@@ -108,6 +108,7 @@
         { "method": "POST", "path": "/branch/setPromotionMode" },
         { "method": "POST", "path": "/branch/updateParentBranch" },
         { "method": "POST", "path": "/repository/setAllowsLargeFiles" },
+        { "method": "POST", "path": "/repository/setAllowExternalContributions" },
         { "method": "POST", "path": "/repository/setAnonymousAccess" },
         { "method": "POST", "path": "/repository/setConflictResolutionPolicy" },
         { "method": "POST", "path": "/repository/setDiffCacheDays" },

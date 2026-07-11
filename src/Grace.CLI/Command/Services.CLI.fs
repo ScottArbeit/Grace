@@ -45,6 +45,7 @@ open System.Runtime.Intrinsics.Arm
 module Services =
 
     let mutable lockObject = new Lock()
+    let private pendingRetainingUploadSessionIds = ConcurrentDictionary<string, byte>(StringComparer.Ordinal)
 
     /// Utility method to write to the console using color.
     let logToAnsiConsole (color: string) message =
@@ -1278,6 +1279,7 @@ module Services =
             else
                 let fallbackFileVersions = ConcurrentQueue<FileVersion>()
                 let uploadedFileVersions = ConcurrentQueue<FileVersion>()
+                let uploadSessionIds = ConcurrentQueue<UploadSessionId>()
                 let errors = ConcurrentQueue<GraceError>()
                 let mutable fileVersionIndex = 0
 
@@ -1286,7 +1288,12 @@ module Services =
 
                     match! manifestUpload fileVersion with
                     | Ok result when not result.ReturnValue.UsedManifestUpload -> fallbackFileVersions.Enqueue(fileVersion)
-                    | Ok result -> uploadedFileVersions.Enqueue(result.ReturnValue.FileVersion)
+                    | Ok result ->
+                        uploadedFileVersions.Enqueue(result.ReturnValue.FileVersion)
+
+                        if result.ReturnValue.UploadedBlockCount > 0 then
+                            result.ReturnValue.UploadSessionId
+                            |> Option.iter uploadSessionIds.Enqueue
                     | Error error -> errors.Enqueue(error)
 
                     fileVersionIndex <- fileVersionIndex + 1
@@ -1301,8 +1308,23 @@ module Services =
                 else
                     let fallback = fallbackFileVersions.ToArray()
 
+                    let createResult () =
+                        let result = GraceReturnValue.Create (uploadedFileVersions.ToArray()) parameters.CorrelationId
+
+                        if not uploadSessionIds.IsEmpty then
+                            let canonicalIds =
+                                uploadSessionIds
+                                |> Seq.map (fun uploadSessionId -> uploadSessionId.ToString("N"))
+                                |> Seq.distinct
+                                |> Seq.sortWith (fun left right -> StringComparer.Ordinal.Compare(left, right))
+                                |> String.concat ","
+
+                            result.Properties.Add("UploadSessionIds", canonicalIds)
+
+                        result
+
                     if fallback.Length = 0 then
-                        return Ok(GraceReturnValue.Create (uploadedFileVersions.ToArray()) parameters.CorrelationId)
+                        return Ok(createResult ())
                     else
                         match! wholeFileUpload (copyStorageParameters parameters fallback) with
                         | Error error -> return Error error
@@ -1310,8 +1332,26 @@ module Services =
                             for fileVersion in fallbackResult.ReturnValue do
                                 uploadedFileVersions.Enqueue(fileVersion)
 
-                            return Ok(GraceReturnValue.Create (uploadedFileVersions.ToArray()) parameters.CorrelationId)
+                            return Ok(createResult ())
         }
+
+    /// Copies canonical upload-session evidence onto the next retaining command only when new blocks were uploaded.
+    let copyUploadSessionIdsToParameters (uploadResult: GraceReturnValue<'T>) (parameters: Grace.Shared.Parameters.Common.CommonParameters) =
+        let mutable value = Unchecked.defaultof<obj>
+
+        if uploadResult.Properties.TryGetValue("UploadSessionIds", &value) then
+            parameters.Properties[ "UploadSessionIds" ] <- string value
+
+    /// Remembers upload sessions produced by incremental Watch uploads until the next durable save.
+    let rememberUploadSessionIds (uploadResult: GraceReturnValue<'T>) =
+        let mutable value = Unchecked.defaultof<obj>
+
+        if uploadResult.Properties.TryGetValue("UploadSessionIds", &value) then
+            string value
+            |> fun canonical -> canonical.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.iter (fun uploadSessionId ->
+                pendingRetainingUploadSessionIds.TryAdd(uploadSessionId, 0uy)
+                |> ignore)
 
     /// Uploads all new or changed files from a directory to object storage.
     let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
@@ -2383,10 +2423,17 @@ module Services =
                     Message = message
                 )
 
+            if not pendingRetainingUploadSessionIds.IsEmpty then
+                createReferenceParameters.Properties[ "UploadSessionIds" ] <-
+                    pendingRetainingUploadSessionIds.Keys
+                    |> Seq.sortWith (fun left right -> StringComparer.Ordinal.Compare(left, right))
+                    |> String.concat ","
+
             let! result = Branch.Save createReferenceParameters
             //Activity.Current.SetTag("CorrelationId", correlationId) |> ignore
             match result with
             | Ok returnValue ->
+                pendingRetainingUploadSessionIds.Clear()
                 //logToAnsiConsole Colors.Verbose $"Created a save in branch {Current().BranchName}. Sha256Hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}. CorrelationId: {returnValue.CorrelationId}."
                 //Activity.Current.AddTag("Created Save reference", "true")
                 //                .SetStatus(ActivityStatusCode.Ok, returnValue.ReturnValue) |> ignore
@@ -2894,7 +2941,9 @@ module Services =
                     )
 
                 match! uploadFilesToObjectStorage parameters with
-                | Ok returnValue -> return Ok returnValue.ReturnValue
+                | Ok returnValue ->
+                    rememberUploadSessionIds returnValue
+                    return Ok returnValue.ReturnValue
                 | Error error -> return Error error
             }
 

@@ -44,7 +44,7 @@
     <Compile Include="UploadSession.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />
-    <Compile Include="ContentOwnershipLedger.Actor.Tests.fs" />
+    <Compile Include="BillingAccount.Actor.Tests.fs" />
     <Compile Include="ManifestContributionWorkflow.Actor.Tests.fs" />
     <Compile Include="ContentOwnershipAccounting.Proof.Tests.fs" />
     <Compile Include="Reference.Actor.Tests.fs" />

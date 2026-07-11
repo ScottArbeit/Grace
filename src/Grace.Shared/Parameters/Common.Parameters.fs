@@ -2,6 +2,7 @@ namespace Grace.Shared.Parameters
 
 open Orleans
 open System
+open System.Collections.Generic
 
 /// Contains common helpers.
 module Common =
@@ -11,6 +12,7 @@ module Common =
     type CommonParameters() =
         member val public CorrelationId: string = String.Empty with get, set
         member val public Principal: string = String.Empty with get, set
+        member val public Properties: Dictionary<string, string> = Dictionary<string, string>(StringComparer.Ordinal) with get, set
 
     /// Base parameters for /agent/session endpoints.
     type AgentSessionParameters() =

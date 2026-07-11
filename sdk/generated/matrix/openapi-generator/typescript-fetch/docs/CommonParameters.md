@@ -9,6 +9,7 @@ Name | Type
 ------------ | -------------
 `correlationId` | string
 `principal` | string
+`properties` | { [key: string]: string; }
 
 ## Example
 
@@ -19,6 +20,7 @@ import type { CommonParameters } from '@grace-vcs/generated-openapi-probe'
 const example = {
   "correlationId": null,
   "principal": null,
+  "properties": null,
 } satisfies CommonParameters
 
 console.log(example)
