@@ -254,6 +254,24 @@ type OperationsChargePreviewTests() =
         Assert.That(targetModelStart, Is.GreaterThanOrEqualTo(0))
         let targetModelSource = migrationSource.Substring(targetModelStart)
 
+        let snapshotPath =
+            Path.Combine(
+                TestContext.CurrentContext.TestDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "Grace.Operations.Data",
+                "Migrations",
+                "OperationsDbContextModelSnapshot.fs"
+            )
+            |> Path.GetFullPath
+
+        let snapshotSource = File.ReadAllText snapshotPath
+        let snapshotModelStart = snapshotSource.IndexOf("override _.BuildModel(modelBuilder: ModelBuilder) =", StringComparison.Ordinal)
+        Assert.That(snapshotModelStart, Is.GreaterThanOrEqualTo(0))
+        let snapshotModelSource = snapshotSource.Substring(snapshotModelStart)
+
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
         let runtime = context.GetService<IDesignTimeModel>().Model
         let snapshot = OperationsDbContextModelSnapshot().Model
@@ -262,6 +280,15 @@ type OperationsChargePreviewTests() =
         let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
             model.GetEntityTypes()
             |> Seq.map (fun entity ->
+                let keys =
+                    entity.GetKeys()
+                    |> Seq.map (fun key ->
+                        key.GetName(),
+                        key.Properties
+                        |> Seq.map (fun property -> property.Name)
+                        |> Seq.toList)
+                    |> Set.ofSeq
+
                 let properties =
                     entity.GetProperties()
                     |> Seq.map (fun property -> property.Name, property.ClrType.FullName, property.IsNullable)
@@ -281,6 +308,8 @@ type OperationsChargePreviewTests() =
                     entity.GetForeignKeys()
                     |> Seq.map (fun foreignKey ->
                         foreignKey.GetConstraintName(),
+                        foreignKey.PrincipalEntityType.Name,
+                        foreignKey.DeleteBehavior,
                         foreignKey.Properties
                         |> Seq.map (fun property -> property.Name)
                         |> Seq.toList)
@@ -291,7 +320,7 @@ type OperationsChargePreviewTests() =
                     |> Seq.map (fun constraint' -> constraint'.Name, constraint'.Sql)
                     |> Set.ofSeq
 
-                entity.Name, entity.GetSchema(), entity.GetTableName(), properties, indexes, foreignKeys, checkConstraints)
+                entity.Name, entity.GetSchema(), entity.GetTableName(), keys, properties, indexes, foreignKeys, checkConstraints)
             |> Set.ofSeq
 
         let runtimeShape = modelShape runtime
@@ -301,9 +330,15 @@ type OperationsChargePreviewTests() =
 
         ChargePreviewTestData.multiple (fun () ->
             Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
+            Assert.That(snapshotModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
+            Assert.That(targetModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
+            Assert.That(snapshotModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
             Assert.That(targetModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
+            Assert.That(snapshotModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
             Assert.That(targetModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
+            Assert.That(snapshotModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
             Assert.That(targetModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
+            Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That((migrationShape = snapshotShape), Is.True)
 
             Assert.That(

@@ -3,6 +3,8 @@ namespace Grace.Operations.Data.Migrations
 open Grace.Operations.Data
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
+open Microsoft.EntityFrameworkCore.Metadata.Builders
+open System
 
 /// Captures the current Operations EF model so future migrations can detect reviewed schema drift.
 [<DbContextAttribute(typeof<OperationsDbContext>)>]
@@ -169,7 +171,7 @@ type OperationsDbContextModelSnapshot() =
 
         rawFact
             .HasIndex([| "RehydrationExpiresAtUtc" |])
-            .HasDatabaseName(OperationsUsageSql.TemporaryHotCleanupExpiryIndexName)
+            .HasDatabaseName("IX_ops_RawUsageFact_RehydrationExpiresAtUtc")
             .HasFilter("[RehydrationExpiresAtUtc] IS NOT NULL")
         |> ignore
 
@@ -573,4 +575,145 @@ type OperationsDbContextModelSnapshot() =
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
-        OperationsChargePreviewModel.configure modelBuilder
+        let line = modelBuilder.Entity<ChargePreviewLineEntity>()
+
+        line.ToTable(
+            "ChargePreviewLine",
+            "ops",
+            fun (table: TableBuilder<ChargePreviewLineEntity>) ->
+                table.HasCheckConstraint("CK_ops_ChargePreviewLine_PeriodRange", "[PeriodFromUtc] < [PeriodToUtc]")
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_ChargePreviewLine_EffectiveRange",
+                    "[PeriodFromUtc] <= [EffectiveFromUtc] AND [EffectiveFromUtc] < [EffectiveToUtc] AND [EffectiveToUtc] <= [PeriodToUtc]"
+                )
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargePreviewLine_UnitQuantity", "[UnitQuantity] > 0")
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargePreviewLine_Amounts", "[UnitPriceMicros] >= 0 AND [TotalQuantity] >= 0 AND [ChargeMicros] >= 0")
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_ChargePreviewLine_Currency",
+                    "LEN([CurrencyCode]) = 3 AND [CurrencyCode] = UPPER([CurrencyCode]) AND [CurrencyCode] NOT LIKE '%[^A-Z]%'"
+                )
+                |> ignore
+        )
+        |> ignore
+
+        line
+            .HasKey([| "ChargePreviewLineId" |])
+            .HasName("PK_ops_ChargePreviewLine")
+        |> ignore
+
+        line
+            .Property<Guid>("ChargePreviewLineId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        for name in
+            [
+                "CustomerId"
+                "OwnerId"
+                "OrganizationId"
+                "RepositoryId"
+                "BillableUsageKindMappingId"
+                "CustomerPricingAssignmentId"
+                "PricingPlanId"
+                "PricingRateId"
+            ] do
+            line
+                .Property<Guid>(name)
+                .HasColumnType("uniqueidentifier")
+                .IsRequired()
+            |> ignore
+
+        for name in
+            [
+                "PeriodFromUtc"
+                "PeriodToUtc"
+                "EffectiveFromUtc"
+                "EffectiveToUtc"
+            ] do
+            line
+                .Property<DateTime>(name)
+                .HasColumnType("datetime2(7)")
+                .IsRequired()
+            |> ignore
+
+        line.Property<int>("FactKind").IsRequired()
+        |> ignore
+
+        line
+            .Property<int>("BillableUsageKind")
+            .IsRequired()
+        |> ignore
+
+        line
+            .Property<string>("CurrencyCode")
+            .HasColumnType("varchar(3)")
+            .HasMaxLength(3)
+            .IsUnicode(false)
+            .UseCollation("Latin1_General_100_BIN2")
+            .IsRequired()
+        |> ignore
+
+        line
+            .Property<string>("UnitName")
+            .HasMaxLength(64)
+            .IsRequired()
+        |> ignore
+
+        for name in
+            [
+                "UnitQuantity"
+                "UnitPriceMicros"
+                "TotalQuantity"
+                "ChargeMicros"
+            ] do
+            line.Property<int64>(name).IsRequired() |> ignore
+
+        line
+            .HasIndex(
+                [|
+                    "CustomerId"
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "PeriodFromUtc"
+                    "PeriodToUtc"
+                |]
+            )
+            .HasDatabaseName("IX_ops_ChargePreviewLine_Scope")
+        |> ignore
+
+        line
+            .HasIndex(
+                [|
+                    "CustomerId"
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "PeriodFromUtc"
+                    "PeriodToUtc"
+                    "FactKind"
+                    "BillableUsageKindMappingId"
+                    "BillableUsageKind"
+                    "CustomerPricingAssignmentId"
+                    "PricingPlanId"
+                    "PricingRateId"
+                    "CurrencyCode"
+                    "UnitName"
+                    "UnitQuantity"
+                    "UnitPriceMicros"
+                    "EffectiveFromUtc"
+                    "EffectiveToUtc"
+                |]
+            )
+            .HasDatabaseName("UX_ops_ChargePreviewLine_CompleteGrain")
+            .IsUnique()
+        |> ignore
