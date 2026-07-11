@@ -2260,7 +2260,14 @@ type StorageManifestUploadSessionRoutes() =
             let! racingResponse = racingConfirmTask
             let! racingBody = racingResponse.Content.ReadAsStringAsync()
             Assert.That(racingResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), racingBody)
-            Assert.That(racingBody, Does.Contain("RetentionPending"))
+
+            Assert.That(
+                (deserialize<GraceError> racingBody).Error,
+                Is.AnyOf(
+                    "UploadSession must be active before confirming a ContentBlock upload; current state is RetentionPending.",
+                    "UploadSession is waiting for cleanup and cannot be changed by ConfirmBlockUploaded."
+                )
+            )
 
             let! finalBlockExists = finalContentBlockExistsByAddress racingUploadUri racingBlock.Address
             Assert.That(finalBlockExists, Is.False)
