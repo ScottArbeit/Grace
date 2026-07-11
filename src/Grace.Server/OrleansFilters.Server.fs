@@ -168,6 +168,8 @@ module Orleans =
                             grainId
                         )
 
+                        return raise ex
+
                     let command = getCurrentCommand ()
 
                     let duration_ms = getDurationRightAligned_ms actorStartTime

@@ -14,10 +14,18 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Provides controllable actor persistence for key lifecycle and failure-boundary tests.
-type private FakePersistentState(initialState: ArtifactGrantSigningKeyRingState, recordExists: bool, ?failWrites: bool, ?initiallyLoaded: bool) =
+type private FakePersistentState
+    (
+        initialState: ArtifactGrantSigningKeyRingState,
+        recordExists: bool,
+        ?failWrites: bool,
+        ?failReads: bool,
+        ?initiallyLoaded: bool
+    ) =
     let mutable value = initialState
     let mutable exists = recordExists
     let mutable fail = defaultArg failWrites false
+    let failRead = defaultArg failReads false
     let mutable loaded = defaultArg initiallyLoaded true
     let mutable writes = 0
 
@@ -44,6 +52,7 @@ type private FakePersistentState(initialState: ArtifactGrantSigningKeyRingState,
 
         member _.RecordExists =
             if not loaded then invalidOp "State has not yet been loaded"
+            if failRead then invalidOp "actor storage read failed"
 
             exists
 
@@ -180,6 +189,24 @@ type ArtifactGrantSigningKeyActorTests() =
         }
 
     [<Test>]
+    member _.``storage read and malformed persisted state failures escape without a default key set``() =
+        task {
+            let readFailure = FakePersistentState(ArtifactGrantSigningKeyRingState.Empty, false, failReads = true)
+            let readStore = store readFailure
+
+            let readException = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> readStore.PublishValidationKeys(now) :> Task))
+
+            Assert.That(readException.Message, Is.EqualTo "actor storage read failed")
+
+            let malformedState = { ArtifactGrantSigningKeyRingState.Empty with Class = "malformed" }
+            let malformedStore = store (FakePersistentState(malformedState, true))
+
+            let malformedException = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> malformedStore.PublishValidationKeys(now) :> Task))
+
+            Assert.That(malformedException.Message, Is.EqualTo "Artifact grant signing-key actor state is malformed.")
+        }
+
+    [<Test>]
     member _.``rotation preserves overlap keys until the final accepted grant window ends``() =
         task {
             let state = FakePersistentState(ArtifactGrantSigningKeyRingState.Empty, false)
@@ -204,10 +231,40 @@ type ArtifactGrantSigningKeyActorTests() =
                 now
                     .Plus(ArtifactGrantContract.SigningKeyActiveLifetime)
                     .Plus(ArtifactGrantContract.MaximumAcceptedGrantTtl)
-                    .Plus(Duration.FromTicks 1L)
+                    .Plus(ArtifactGrantContract.MaximumProofClockSkew)
+                    .Plus(Duration.FromMilliseconds 1L)
 
             let! retired = keyStore.PublishValidationKeys afterOverlap
             Assert.That(retired.Keys |> Seq.map (fun key -> key.KeyId), Does.Not.Contain firstGrant.Header.KeyId)
+        }
+
+    [<Test>]
+    member _.``validation key remains published through final proof skew boundary but cannot sign after expiry``() =
+        task {
+            let state = FakePersistentState(ArtifactGrantSigningKeyRingState.Empty, false)
+            let keyStore = store state
+            let! firstGrantResult = keyStore.IssueGrant(issueRequest (), now)
+            let firstGrant = issuedGrant firstGrantResult
+
+            let firstKey =
+                state.State.Keys
+                |> Array.find (fun key -> key.KeyId = firstGrant.Header.KeyId)
+
+            let finalAcceptedInstant = firstKey.ExpiresAt.Plus ArtifactGrantContract.MaximumProofClockSkew
+
+            let! atBoundary = keyStore.PublishValidationKeys finalAcceptedInstant
+            Assert.That(atBoundary.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain firstKey.KeyId)
+
+            let! afterBoundary = keyStore.PublishValidationKeys(finalAcceptedInstant.Plus(Duration.FromMilliseconds 1L))
+
+            Assert.That(
+                afterBoundary.Keys
+                |> Seq.map (fun key -> key.KeyId),
+                Does.Not.Contain firstKey.KeyId
+            )
+
+            let! issuedAfterExpiry = keyStore.IssueGrant(issueRequest (), firstKey.ExpiresAt)
+            Assert.That((issuedGrant issuedAfterExpiry).Header.KeyId, Is.Not.EqualTo firstKey.KeyId)
         }
 
     [<Test>]

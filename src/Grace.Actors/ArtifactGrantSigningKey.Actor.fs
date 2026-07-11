@@ -57,6 +57,7 @@ module ArtifactGrantSigningKeyActor =
 
         /// Creates persisted P-256 private material with the approved active and overlap lifetimes.
         let createSigningKey (now: Instant) =
+            let now = Instant.FromUnixTimeMilliseconds(now.ToUnixTimeMilliseconds())
             use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
             let keyId = $"agk-{ArtifactGrant.Base64Url.encode (RandomNumberGenerator.GetBytes 16)}"
             let activeUntil = now.Plus ArtifactGrantContract.SigningKeyActiveLifetime
@@ -109,7 +110,9 @@ module ArtifactGrantSigningKeyActor =
 
                 let liveKeys =
                     currentState.Keys
-                    |> Array.filter (fun key -> now < key.ExpiresAt)
+                    |> Array.filter (fun key ->
+                        now
+                        <= key.ExpiresAt.Plus ArtifactGrantContract.MaximumProofClockSkew)
 
                 let activeKey =
                     liveKeys
@@ -208,7 +211,9 @@ module ArtifactGrantSigningKeyActor =
 
                 let keys =
                     currentState.Keys
-                    |> Array.filter (fun key -> now < key.ExpiresAt)
+                    |> Array.filter (fun key ->
+                        now
+                        <= key.ExpiresAt.Plus ArtifactGrantContract.MaximumProofClockSkew)
                     |> Array.map (fun keyState ->
                         use key = importPrivateKey keyState
                         ArtifactGrant.exportValidationKey keyState.KeyId keyState.CreatedAt keyState.ExpiresAt key)

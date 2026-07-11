@@ -60,3 +60,11 @@ type OrleansPartitionKeyProviderTests() =
         let sourceText = File.ReadAllText(filePath)
 
         Assert.That(sourceText, Does.Contain("| StateName.ArtifactGrantSigningKey -> StateName.ArtifactGrantSigningKey"))
+
+    /// Verifies that shared Orleans invocation failures are never converted into default successful results.
+    [<Test>]
+    member _.CorrelationLoggingFilterRethrowsInvocationFailures() =
+        let filePath = tryResolveSourcePath ()
+        let sourceText = File.ReadAllText(filePath)
+
+        Assert.That(sourceText, Does.Contain("return raise ex"))

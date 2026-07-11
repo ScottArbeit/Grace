@@ -137,8 +137,8 @@ module ArtifactGrant =
     [<RequireQualifiedAccess>]
     module Canonical =
 
-        /// Converts an Instant to the numeric canonical representation used for signatures.
-        let instantTicks (instant: Instant) = instant.ToUnixTimeTicks()
+        /// Converts an Instant to the Unix-millisecond representation preserved by every generated client.
+        let instantMilliseconds (instant: Instant) = instant.ToUnixTimeMilliseconds()
 
         /// Converts a Duration to the numeric canonical representation used for signatures.
         let durationTicks (duration: Duration) = duration.ToTimeSpan().Ticks
@@ -196,12 +196,12 @@ module ArtifactGrant =
             writeStringArray writer "artifacts" payload.ArtifactIdentities
             writer.WriteString("cache", payload.CacheServicePrincipalId)
             writer.WriteString("class", payload.Class)
-            writer.WriteNumber("exp", instantTicks payload.ExpiresAt)
+            writer.WriteNumber("exp", instantMilliseconds payload.ExpiresAt)
             writer.WriteString("holder", payload.HolderKeyThumbprint)
             writer.WriteString("issuer", payload.Issuer)
-            writer.WriteNumber("iat", instantTicks payload.IssuedAt)
+            writer.WriteNumber("iat", instantMilliseconds payload.IssuedAt)
             writer.WriteNumber("mode", int payload.ExecutionMode)
-            writer.WriteNumber("nbf", instantTicks payload.NotBefore)
+            writer.WriteNumber("nbf", instantMilliseconds payload.NotBefore)
             writer.WriteString("requesterId", payload.RequesterPrincipalId)
             writer.WriteNumber("requesterType", int payload.RequesterPrincipalType)
             writer.WriteString("root", payload.TargetRootDirectoryVersionId.ToString("D"))
@@ -236,9 +236,9 @@ module ArtifactGrant =
             writer.WriteStartObject()
             writer.WriteString("artifact", payload.ArtifactIdentity)
             writer.WriteString("class", payload.Class)
-            writer.WriteNumber("exp", instantTicks payload.ExpiresAt)
+            writer.WriteNumber("exp", instantMilliseconds payload.ExpiresAt)
             writer.WriteString("grant", payload.GrantDigest)
-            writer.WriteNumber("iat", instantTicks payload.IssuedAt)
+            writer.WriteNumber("iat", instantMilliseconds payload.IssuedAt)
             writer.WriteString("method", payload.HttpMethod)
             writer.WriteString("route", payload.NormalizedRoute)
             writer.WriteEndObject()
@@ -492,16 +492,22 @@ module ArtifactGrant =
         (grant: SignedArtifactGrant option)
         (proof: SignedArtifactRequestProof option)
         =
-        if not (isValidValidationKeySet keySet) then
-            Error InvalidValidationKeySet
-        elif
+        if
             isNull (box request)
             || request.Class
                <> nameof ArtifactRequestValidationRequest
+            || String.IsNullOrWhiteSpace request.CacheServicePrincipalId
+            || request.TargetRootDirectoryVersionId = Guid.Empty
+            || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
+            || String.IsNullOrWhiteSpace request.ArtifactIdentity
+            || String.IsNullOrWhiteSpace request.HttpMethod
+            || String.IsNullOrWhiteSpace(Canonical.route request.Route)
         then
             Error InvalidClass
         elif request.ExecutionMode = MaterializationExecutionMode.Direct then
             Ok()
+        elif not (isValidValidationKeySet keySet) then
+            Error InvalidValidationKeySet
         else
             match grant, proof with
             | None, _ -> Error MissingGrant
@@ -597,16 +603,18 @@ module ArtifactGrant =
         (request: ArtifactGrantValidationRequest)
         (grant: SignedArtifactGrant option)
         =
-        if not (isValidValidationKeySet keySet) then
-            Error InvalidValidationKeySet
-        elif
-            isNull (box request)
-            || request.Class
-               <> nameof ArtifactGrantValidationRequest
-        then
+        if isNull (box request)
+           || request.Class
+              <> nameof ArtifactGrantValidationRequest
+           || String.IsNullOrWhiteSpace request.CacheServicePrincipalId
+           || request.TargetRootDirectoryVersionId = Guid.Empty
+           || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
+           || String.IsNullOrWhiteSpace request.ArtifactIdentity then
             Error InvalidClass
         elif request.ExecutionMode = MaterializationExecutionMode.Direct then
             Ok()
+        elif not (isValidValidationKeySet keySet) then
+            Error InvalidValidationKeySet
         else
             match grant with
             | None -> Error MissingGrant

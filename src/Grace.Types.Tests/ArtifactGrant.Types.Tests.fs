@@ -200,15 +200,18 @@ type ArtifactGrantValidationTests() =
     [<Test>]
     member _.``grant and validation key clock tolerance is symmetric without extending declared grant ttl``() =
         let tolerance = ArtifactGrantContract.MaximumProofClockSkew
-        let tick = Duration.FromTicks 1L
+        let precisionStep = Duration.FromMilliseconds 1L
         let key, validationKey = signingKey "key-1" (now.Plus tolerance) (now.Plus(Duration.FromHours 1))
         use key = key
-        let insideFutureGrant = signedGrant "key-1" key (now.Plus(tolerance.Minus tick)) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+
+        let insideFutureGrant =
+            signedGrant "key-1" key (now.Plus(tolerance.Minus precisionStep)) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+
         let futureGrant = signedGrant "key-1" key (now.Plus tolerance) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
 
         validateWithKeySet
             now
-            (keySet [ { validationKey with CreatedAt = validationKey.CreatedAt.Minus tick; NotBefore = validationKey.NotBefore.Minus tick } ])
+            (keySet [ { validationKey with CreatedAt = validationKey.CreatedAt.Minus precisionStep; NotBefore = validationKey.NotBefore.Minus precisionStep } ])
             (validationRequest ())
             insideFutureGrant
         |> assertOk
@@ -216,12 +219,12 @@ type ArtifactGrantValidationTests() =
         validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) futureGrant
         |> assertOk
 
-        let tooFutureKey = { validationKey with CreatedAt = validationKey.CreatedAt.Plus tick; NotBefore = validationKey.NotBefore.Plus tick }
+        let tooFutureKey = { validationKey with CreatedAt = validationKey.CreatedAt.Plus precisionStep; NotBefore = validationKey.NotBefore.Plus precisionStep }
 
         validateWithKeySet now (keySet [ tooFutureKey ]) (validationRequest ()) futureGrant
         |> assertError ValidationKeyNotYetValid
 
-        let tooFutureGrant = signedGrant "key-1" key (now.Plus(tolerance.Plus tick)) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+        let tooFutureGrant = signedGrant "key-1" key (now.Plus(tolerance.Plus precisionStep)) ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
 
         validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) tooFutureGrant
         |> assertError GrantNotYetValid
@@ -238,7 +241,7 @@ type ArtifactGrantValidationTests() =
             signedGrant
                 "key-1"
                 key
-                (now.Minus(ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus(tolerance.Minus tick)))
+                (now.Minus(ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus(tolerance.Minus precisionStep)))
                 ArtifactGrantContract.MaximumAcceptedGrantTtl
                 [ artifactIdentity ]
 
@@ -256,7 +259,7 @@ type ArtifactGrantValidationTests() =
             expiredAtBoundary
         |> assertOk
 
-        let overlong = signedGrant "key-1" key now (ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus tick) [ artifactIdentity ]
+        let overlong = signedGrant "key-1" key now (ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus precisionStep) [ artifactIdentity ]
 
         validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) overlong
         |> assertError GrantTtlTooLong
@@ -565,7 +568,7 @@ type ArtifactRequestProofValidationTests() =
         let exactAdmissionBoundary = proof.Payload.ExpiresAt.Plus ArtifactGrantContract.MaximumProofClockSkew
 
         GrantCrypto.validateArtifactRequestWithKeySet
-            (exactAdmissionBoundary.Minus(Duration.FromTicks 1L))
+            (exactAdmissionBoundary.Minus(Duration.FromMilliseconds 1L))
             keySet
             (request "GET" route)
             (Some grant)
@@ -576,7 +579,7 @@ type ArtifactRequestProofValidationTests() =
         |> assertProofOk
 
         GrantCrypto.validateArtifactRequestWithKeySet
-            (exactAdmissionBoundary.Plus(Duration.FromTicks 1L))
+            (exactAdmissionBoundary.Plus(Duration.FromMilliseconds 1L))
             keySet
             (request "GET" route)
             (Some grant)
@@ -588,7 +591,7 @@ type ArtifactRequestProofValidationTests() =
         GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some overlongProof)
         |> assertProofError ProofLifetimeTooLong
 
-        let inside = ArtifactGrantContract.MaximumProofClockSkew.Minus(Duration.FromTicks 1L)
+        let inside = ArtifactGrantContract.MaximumProofClockSkew.Minus(Duration.FromMilliseconds 1L)
 
         for offset in
             [
@@ -619,7 +622,7 @@ type ArtifactRequestProofValidationTests() =
                 artifactIdentity
                 (now
                     .Plus(ArtifactGrantContract.MaximumProofClockSkew)
-                    .Plus(Duration.FromTicks 1L))
+                    .Plus(Duration.FromMilliseconds 1L))
                 ArtifactGrantContract.MaximumProofPresentationLifetime
 
         GrantCrypto.validateArtifactRequestWithKeySet now keySet (request "GET" route) (Some grant) (Some outsideProof)
@@ -689,6 +692,56 @@ type ArtifactRequestProofValidationTests() =
 
         GrantCrypto.validateArtifactRequestWithKeySet now (ArtifactGrantValidationKeySet.Create(now, [])) directRequest None None
         |> assertProofOk
+
+        let malformedKeySet = Unchecked.defaultof<ArtifactGrantValidationKeySet>
+
+        GrantCrypto.validateArtifactRequestWithKeySet now malformedKeySet directRequest None None
+        |> assertProofOk
+
+        GrantCrypto.validateRequiredForCacheMode
+            now
+            (fun _ -> RefreshSkipped)
+            malformedKeySet
+            (ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity))
+            None
+        |> assertProofOk
+
+        let malformedDirectRequest = { directRequest with HttpMethod = String.Empty }
+
+        GrantCrypto.validateArtifactRequestWithKeySet now malformedKeySet malformedDirectRequest None None
+        |> assertProofError InvalidClass
+
+        let malformedGrantRequest = ArtifactGrantValidationRequest.Create(String.Empty, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity)
+
+        GrantCrypto.validateRequiredForCacheMode now (fun _ -> RefreshSkipped) malformedKeySet malformedGrantRequest None
+        |> assertProofError InvalidClass
+
+    [<Test>]
+    member _.``signed protocol timestamps normalize to Unix milliseconds``() =
+        let subMillisecond = now.Plus(Duration.FromTicks 9876L)
+        let holderPrivateKey, holderPublicKey = holderKey ()
+        use holderPrivateKey = holderPrivateKey
+
+        let payload =
+            ArtifactGrantPayload.Create(
+                requesterPrincipalId,
+                GrantCrypto.holderKeyThumbprint holderPublicKey,
+                cacheServicePrincipalId,
+                targetRoot,
+                MaterializationExecutionMode.CacheRequired,
+                [ artifactIdentity ],
+                subMillisecond,
+                ArtifactGrantContract.DefaultGrantTtl
+            )
+
+        let proof =
+            ArtifactRequestProofPayload.Create("digest", "GET", route, artifactIdentity, subMillisecond, ArtifactGrantContract.MaximumProofPresentationLifetime)
+
+        Assert.That(payload.IssuedAt.ToUnixTimeTicks() % TimeSpan.TicksPerMillisecond, Is.EqualTo 0L)
+        Assert.That(payload.NotBefore, Is.EqualTo payload.IssuedAt)
+        Assert.That(payload.ExpiresAt.ToUnixTimeTicks() % TimeSpan.TicksPerMillisecond, Is.EqualTo 0L)
+        Assert.That(proof.IssuedAt.ToUnixTimeTicks() % TimeSpan.TicksPerMillisecond, Is.EqualTo 0L)
+        Assert.That(proof.ExpiresAt.ToUnixTimeTicks() % TimeSpan.TicksPerMillisecond, Is.EqualTo 0L)
 
     [<Test>]
     member _.``public JSON preserves user and holder proof contracts without private key material``() =

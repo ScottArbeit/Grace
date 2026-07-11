@@ -9,6 +9,9 @@ open System.Collections.Generic
 /// Contains signed artifact grant contracts shared by Grace Server and Grace Cache validators.
 module ArtifactGrant =
 
+    /// Normalizes signed protocol timestamps to the Unix-millisecond precision preserved by every generated client.
+    let private toProtocolInstant (instant: Instant) = Instant.FromUnixTimeMilliseconds(instant.ToUnixTimeMilliseconds())
+
     /// Provides the signed artifact grant TTL, key lifetime, and algorithm constants.
     [<RequireQualifiedAccess>]
     module ArtifactGrantContract =
@@ -131,6 +134,8 @@ module ArtifactGrant =
                 issuedAt: Instant,
                 ttl: Duration
             ) =
+            let issuedAt = toProtocolInstant issuedAt
+
             {
                 Class = nameof ArtifactGrantPayload
                 Issuer = ArtifactGrantContract.Issuer
@@ -265,6 +270,9 @@ module ArtifactGrant =
 
         /// Builds one validation key using base64url-encoded P-256 public coordinates.
         static member Create(keyId: string, createdAt: Instant, expiresAt: Instant, publicKeyX: string, publicKeyY: string) =
+            let createdAt = toProtocolInstant createdAt
+            let expiresAt = toProtocolInstant expiresAt
+
             {
                 Class = nameof ArtifactGrantValidationKey
                 KeyId = keyId
@@ -297,7 +305,7 @@ module ArtifactGrant =
             {
                 Class = nameof ArtifactGrantValidationKeySet
                 Issuer = ArtifactGrantContract.Issuer
-                PublishedAt = publishedAt
+                PublishedAt = toProtocolInstant publishedAt
                 CacheTtl = ArtifactGrantContract.ValidationKeyCacheTtl
                 Keys = List<ArtifactGrantValidationKey>(keys)
             }
@@ -396,6 +404,8 @@ module ArtifactGrant =
 
         /// Builds one already-normalized holder proof statement.
         static member Create(grantDigest, httpMethod, normalizedRoute, artifactIdentity, issuedAt, ttl) =
+            let issuedAt = toProtocolInstant issuedAt
+
             {
                 Class = nameof ArtifactRequestProofPayload
                 GrantDigest = grantDigest
