@@ -525,7 +525,10 @@ type SqlChargePreviewRebuilder(connectionString: string) =
                     addScopeParameters deleteCommand scope
                     let! _ = deleteCommand.ExecuteNonQueryAsync cancellationToken
 
-                    for line in lines do
+                    let mutable lineIndex = 0
+
+                    while lineIndex < lines.Length do
+                        let line = lines[lineIndex]
                         use insert = connection.CreateCommand()
                         insert.Transaction <- transaction
 
@@ -550,7 +553,7 @@ type SqlChargePreviewRebuilder(connectionString: string) =
                         add "@TotalQuantity" SqlDbType.BigInt line.TotalQuantity
                         add "@Charge" SqlDbType.BigInt line.ChargeMicros
                         let! _ = insert.ExecuteNonQueryAsync cancellationToken
-                        ()
+                        lineIndex <- lineIndex + 1
 
                     do! transaction.CommitAsync cancellationToken
                     return lines

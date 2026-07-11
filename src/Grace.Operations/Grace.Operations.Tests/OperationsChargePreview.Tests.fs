@@ -5,9 +5,11 @@ open Grace.Operations.Data.Migrations
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
+open Microsoft.EntityFrameworkCore.Metadata
 open Microsoft.Extensions.DependencyInjection
 open NUnit.Framework
 open System
+open System.IO
 open System.Threading
 
 /// Supplies independent fixtures for deterministic charge-preview proofs.
@@ -231,33 +233,114 @@ type OperationsChargePreviewTests() =
             Assert.That(sql, Does.Contain("MAX(boundary.EffectiveFromUtc)"))
             Assert.That(sql, Does.Contain("MIN(boundary.EffectiveToUtc)")))
 
-    /// Verifies the EF runtime model, snapshot, and migration target expose the same preview identity indexes.
+    /// Verifies the migration target is literal and the complete EF model agrees across all reviewed representations.
     [<Test>]
     member _.PreviewMigrationAndModelsAgreeOnPersistedIdentity() =
+        let migrationPath =
+            Path.Combine(
+                TestContext.CurrentContext.TestDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "Grace.Operations.Data",
+                "Migrations",
+                "20260711090000_AddChargePreviewLines.fs"
+            )
+            |> Path.GetFullPath
+
+        let migrationSource = File.ReadAllText migrationPath
+        let targetModelStart = migrationSource.IndexOf("override _.BuildTargetModel(modelBuilder: ModelBuilder) =", StringComparison.Ordinal)
+        Assert.That(targetModelStart, Is.GreaterThanOrEqualTo(0))
+        let targetModelSource = migrationSource.Substring(targetModelStart)
+
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsChargePreviewModel;Integrated Security=true;"
-        let runtime = context.Model.FindEntityType(typeof<ChargePreviewLineEntity>)
+        let runtime = context.GetService<IDesignTimeModel>().Model
+        let snapshot = OperationsDbContextModelSnapshot().Model
+        let migration = AddChargePreviewLines().TargetModel
 
-        let snapshot =
-            OperationsDbContextModelSnapshot()
-                .Model.FindEntityType(typeof<ChargePreviewLineEntity>)
+        let modelShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) =
+            model.GetEntityTypes()
+            |> Seq.map (fun entity ->
+                let properties =
+                    entity.GetProperties()
+                    |> Seq.map (fun property -> property.Name, property.ClrType.FullName, property.IsNullable)
+                    |> Set.ofSeq
 
-        let migration =
-            AddChargePreviewLines()
-                .TargetModel.FindEntityType(typeof<ChargePreviewLineEntity>)
+                let indexes =
+                    entity.GetIndexes()
+                    |> Seq.map (fun index ->
+                        index.GetDatabaseName(),
+                        index.IsUnique,
+                        index.Properties
+                        |> Seq.map (fun property -> property.Name)
+                        |> Seq.toList)
+                    |> Set.ofSeq
 
-        let indexes (entity: Microsoft.EntityFrameworkCore.Metadata.IEntityType) =
-            entity.GetIndexes()
-            |> Seq.map (fun index -> index.GetDatabaseName())
+                let foreignKeys =
+                    entity.GetForeignKeys()
+                    |> Seq.map (fun foreignKey ->
+                        foreignKey.GetConstraintName(),
+                        foreignKey.Properties
+                        |> Seq.map (fun property -> property.Name)
+                        |> Seq.toList)
+                    |> Set.ofSeq
+
+                let checkConstraints =
+                    entity.GetCheckConstraints()
+                    |> Seq.map (fun constraint' -> constraint'.Name, constraint'.Sql)
+                    |> Set.ofSeq
+
+                entity.Name, entity.GetSchema(), entity.GetTableName(), properties, indexes, foreignKeys, checkConstraints)
             |> Set.ofSeq
 
+        let runtimeShape = modelShape runtime
+        let snapshotShape = modelShape snapshot
+        let migrationShape = modelShape migration
+        let preview = runtime.FindEntityType(typeof<ChargePreviewLineEntity>)
+
         ChargePreviewTestData.multiple (fun () ->
-            Assert.That(runtime, Is.Not.Null)
-            Assert.That(snapshot, Is.Not.Null)
-            Assert.That(migration, Is.Not.Null)
-            Assert.That(indexes runtime :> obj, Is.EqualTo(indexes snapshot :> obj))
-            Assert.That(indexes runtime :> obj, Is.EqualTo(indexes migration :> obj))
-            Assert.That(indexes runtime, Does.Contain(OperationsChargePreviewSql.GrainIndexName))
-            Assert.That(indexes runtime, Does.Contain(OperationsChargePreviewSql.ScopeIndexName)))
+            Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
+            Assert.That(targetModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
+            Assert.That(targetModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
+            Assert.That(targetModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
+            Assert.That((migrationShape = snapshotShape), Is.True)
+
+            Assert.That(
+                (migrationShape = runtimeShape),
+                Is.True,
+                $"Migration-only: {Set.difference migrationShape runtimeShape}; runtime-only: {Set.difference runtimeShape migrationShape}"
+            )
+
+            Assert.That(
+                preview.GetIndexes()
+                |> Seq.map (fun index -> index.GetDatabaseName()),
+                Does.Contain(OperationsChargePreviewSql.GrainIndexName)
+            )
+
+            Assert.That(
+                preview.GetIndexes()
+                |> Seq.map (fun index -> index.GetDatabaseName()),
+                Does.Contain(OperationsChargePreviewSql.ScopeIndexName)
+            ))
+
+    /// Verifies the transactional insertion path avoids resumable-CE enumeration while preserving ordered indexing.
+    [<Test>]
+    member _.RebuildInsertionUsesFs3511SafeIndexedLoop() =
+        let sourcePath =
+            Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", "Grace.Operations.Data", "OperationsChargePreview.fs")
+            |> Path.GetFullPath
+
+        let source = File.ReadAllText sourcePath
+        let rebuildStart = source.IndexOf("member _.RebuildAsync(scope, cancellationToken) =", StringComparison.Ordinal)
+        Assert.That(rebuildStart, Is.GreaterThanOrEqualTo(0))
+        let rebuildSource = source.Substring(rebuildStart)
+
+        ChargePreviewTestData.multiple (fun () ->
+            Assert.That(rebuildSource, Does.Not.Match(@"\bfor\s+line\s+in\s+lines\s+do\b"))
+            Assert.That(rebuildSource, Does.Contain("while lineIndex < lines.Length do"))
+            Assert.That(rebuildSource, Does.Contain("let line = lines[lineIndex]"))
+            Assert.That(rebuildSource, Does.Contain("lineIndex <- lineIndex + 1")))
 
     /// Verifies generated migration SQL contains the atomic identity constraints expected by SQL Server.
     [<Test>]
