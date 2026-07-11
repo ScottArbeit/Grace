@@ -2,11 +2,14 @@ namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
 open Grace.Operations.Data.Migrations
+open Grace.Types.Common
+open Grace.Types.Usage
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Metadata
 open Microsoft.EntityFrameworkCore.Migrations
 open NUnit.Framework
+open NodaTime
 open System
 open System.IO
 
@@ -15,6 +18,27 @@ open System.IO
 type OperationsBillingTests() =
     let utc year month day hour = DateTime(year, month, day, hour, 0, 0, DateTimeKind.Utc)
     let multiple action = Assert.Multiple(Action action)
+
+    let correction () =
+        {
+            BillingPeriodId = Guid.NewGuid()
+            EntryKind = ChargeLedgerEntryKind.Adjustment
+            PriorChargeLedgerEntryId = Some(Guid.NewGuid())
+            FactKind = 1
+            BillableUsageKindMappingId = Guid.NewGuid()
+            BillableUsageKind = 2
+            CustomerPricingAssignmentId = Guid.NewGuid()
+            PricingPlanId = Guid.NewGuid()
+            PricingRateId = Guid.NewGuid()
+            CurrencyCode = "USD"
+            UnitName = "byte-minute"
+            UnitQuantity = 1024L
+            UnitPriceMicros = 7L
+            EffectiveFromUtc = utc 2028 1 1 0
+            EffectiveToUtc = utc 2028 2 1 0
+            QuantityDelta = -4L
+            ChargeMicrosDelta = -28L
+        }
 
     /// Verifies UTC month boundaries include leap February and remain half-open.
     [<Test>]
@@ -74,6 +98,66 @@ type OperationsBillingTests() =
         )
         |> ignore
 
+    /// Verifies every immutable correction dimension and signed delta participates in deterministic identity.
+    [<Test>]
+    member _.ManualCorrectionIdentityUsesCompleteGrainAndExactRetriesDeduplicate() =
+        let value = correction ()
+        let identity candidate = ManualBillingCorrectionIdentity.entryId candidate "manual-correlation"
+        let original = identity value
+
+        let distinct =
+            [
+                { value with BillingPeriodId = Guid.NewGuid() }
+                { value with EntryKind = ChargeLedgerEntryKind.Reversal }
+                { value with PriorChargeLedgerEntryId = Some(Guid.NewGuid()) }
+                { value with FactKind = value.FactKind + 1 }
+                { value with BillableUsageKindMappingId = Guid.NewGuid() }
+                { value with BillableUsageKind = value.BillableUsageKind + 1 }
+                { value with CustomerPricingAssignmentId = Guid.NewGuid() }
+                { value with PricingPlanId = Guid.NewGuid() }
+                { value with PricingRateId = Guid.NewGuid() }
+                { value with CurrencyCode = "EUR" }
+                { value with UnitName = "operation" }
+                { value with UnitQuantity = value.UnitQuantity + 1L }
+                { value with UnitPriceMicros = value.UnitPriceMicros + 1L }
+                { value with EffectiveFromUtc = value.EffectiveFromUtc.AddTicks(1L) }
+                { value with EffectiveToUtc = value.EffectiveToUtc.AddTicks(1L) }
+                { value with QuantityDelta = value.QuantityDelta - 1L }
+                { value with ChargeMicrosDelta = value.ChargeMicrosDelta - 1L }
+            ]
+
+        multiple (fun () ->
+            Assert.That(identity value, Is.EqualTo(original), "Exact retry must retain its deterministic identity.")
+            Assert.That(distinct |> List.map identity, Has.None.EqualTo(original)))
+
+    /// Verifies empty fact identifiers use stable broker evidence without collapsing scopes or messages.
+    [<Test>]
+    member _.EmptyFactFailureIdentityUsesMessageAndScopeEvidence() =
+        let ownerId = OwnerId.Parse("11111111-1111-1111-1111-111111111111")
+        let organizationId = OrganizationId.Parse("22222222-2222-2222-2222-222222222222")
+        let repositoryId = RepositoryId.Parse("33333333-3333-3333-3333-333333333333")
+
+        let fact =
+            UsageFact.RepositoryStorageBytesMinute(
+                Guid.Empty,
+                CorrelationId "invalid-fact-correlation",
+                ownerId,
+                organizationId,
+                repositoryId,
+                StoragePoolId "pool",
+                1L,
+                Instant.FromUtc(2028, 1, 15, 0, 0)
+            )
+
+        let identity message candidate = BillingIngestionFailureIdentity.failureId candidate "InvalidUsageFact" message
+        let original = identity "message-1" fact
+        let otherScope = { fact with Scope = { fact.Scope with RepositoryId = RepositoryId.Parse("44444444-4444-4444-8444-444444444444") } }
+
+        multiple (fun () ->
+            Assert.That(identity "message-1" fact, Is.EqualTo(original))
+            Assert.That(identity "message-2" fact, Is.Not.EqualTo(original))
+            Assert.That(identity "message-1" otherScope, Is.Not.EqualTo(original)))
+
     /// Verifies worker cadence, shared lock, freshness, one transaction, and atomic late-fact delivery remain explicit.
     [<Test>]
     member _.RuntimeSourceCarriesHighRiskProof() =
@@ -89,9 +173,14 @@ type OperationsBillingTests() =
             Assert.That(closeSource, Does.Contain("OperationsBillingSql.AcquireScopeLock"))
             Assert.That(closeSource, Does.Contain("AcceptedFactsDigest=@Facts AND PricingDigest=@Pricing"))
             Assert.That(closeSource, Does.Contain("BeginTransactionAsync(IsolationLevel.Serializable"))
+            Assert.That(closeSource, Does.Contain("CREATE TABLE #CorrectionExpected"))
+            Assert.That(closeSource, Does.Not.Contain("replacePreview connection transaction periodId scope facts"))
+            Assert.That(closeSource, Does.Contain("SELECT BillingCorrectionWorkId FROM ops.BillingCorrectionWork"))
+            Assert.That(closeSource, Does.Contain("A failed work item remains pending"))
             Assert.That(closeSource, Does.Not.Contain("force"))
             Assert.That(dataSource, Does.Contain("RecordAcceptedFactBillingEffectsAsync"))
             Assert.That(dataSource, Does.Contain("period.State IN (2,3)"))
+            Assert.That(workerSource, Does.Contain("schema.EnsureCreatedAsync stoppingToken"))
             Assert.That(workerSource, Does.Contain("TimeSpan.FromMinutes 30.0")))
 
     /// Verifies runtime, newest migration target, and latest snapshot have identical complete structural models.
@@ -193,5 +282,9 @@ type OperationsBillingTests() =
         multiple (fun () ->
             Assert.That(script, Does.Contain("TR_ops_ChargeLedgerEntry_Immutable"))
             Assert.That(script, Does.Contain("TR_ops_PricingRate_HistoricalProtection"))
+            Assert.That(script, Does.Contain("JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId"))
+            Assert.That(script, Does.Contain("p.CustomerId=d.CustomerId AND p.OwnerId=d.OwnerId"))
+            Assert.That(script, Does.Contain("d.EffectiveFromUtc<p.PeriodToUtc"))
+            Assert.That(script, Does.Contain("EffectiveToUtc,Quantity,ChargeMicros,PriorChargeLedgerEntryId"))
             Assert.That(script, Does.Contain("UX_ops_BillingCorrectionWork_PeriodFact"))
             Assert.That(script, Does.Not.Contain("CloseAttemptHistory")))

@@ -8,12 +8,13 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Runs durable billing lifecycle and correction work on the approved 30-minute cadence.
-type OperationsBillingWorkerService(service: IBillingPeriodService, logger: ILogger<OperationsBillingWorkerService>) =
+type OperationsBillingWorkerService(schema: IOperationsUsageSchemaInitializer, service: IBillingPeriodService, logger: ILogger<OperationsBillingWorkerService>) =
     inherit BackgroundService()
 
     /// Executes immediately after startup and then every 30 minutes without process-local lifecycle truth.
     override _.ExecuteAsync(stoppingToken: CancellationToken) =
         task {
+            do! schema.EnsureCreatedAsync stoppingToken
             use timer = new PeriodicTimer(TimeSpan.FromMinutes 30.0)
             let mutable continueRunning = true
 

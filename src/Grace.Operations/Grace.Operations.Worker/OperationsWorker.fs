@@ -1646,7 +1646,7 @@ module OperationsWorkerSettings =
 
 type private NoOpBillingIngestionFailureRecorder() =
     interface IBillingIngestionFailureRecorder with
-        member _.RecordFailureAsync(_fact, _failureCode, _redactedDetail, _cancellationToken) = Task.CompletedTask
+        member _.RecordFailureAsync(_fact, _failureCode, _redactedDetail, _messageIdentity, _cancellationToken) = Task.CompletedTask
 
 /// Handles one usage fact message through validation, SQL persistence, and explicit Service Bus settlement.
 type OperationsUsageIngestionProcessor
@@ -1847,6 +1847,10 @@ type OperationsUsageIngestionProcessor
                                         usageFact,
                                         "InvalidUsageFact",
                                         "Usage fact failed contract validation.",
+                                        (if String.IsNullOrWhiteSpace message.MessageId then
+                                             message.CorrelationId
+                                         else
+                                             message.MessageId),
                                         cancellationToken
                                     )
 
@@ -1870,6 +1874,10 @@ type OperationsUsageIngestionProcessor
                                             usageFact,
                                             "StorageValidation",
                                             "Usage fact failed durable storage validation.",
+                                            (if String.IsNullOrWhiteSpace message.MessageId then
+                                                 message.CorrelationId
+                                             else
+                                                 message.MessageId),
                                             cancellationToken
                                         )
 

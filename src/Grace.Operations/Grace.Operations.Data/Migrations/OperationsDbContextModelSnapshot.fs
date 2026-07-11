@@ -1036,6 +1036,8 @@ type OperationsDbContextModelSnapshot() =
                     "UnitPriceMicros"
                     "EffectiveFromUtc"
                     "EffectiveToUtc"
+                    "Quantity"
+                    "ChargeMicros"
                     "PriorChargeLedgerEntryId"
                 |]
             )

@@ -40,16 +40,65 @@ type ManualBillingCorrection =
         ChargeMicrosDelta: int64
     }
 
+/// Builds retry-stable identities for complete manual correction commands.
+[<RequireQualifiedAccess>]
+module ManualBillingCorrectionIdentity =
+    /// Includes every immutable ledger dimension so only an exact command retry deduplicates.
+    let entryId (correction: ManualBillingCorrection) (correlationId: string) =
+        BillingPeriodRules.deterministicId [ correction.BillingPeriodId.ToString("D")
+                                             correlationId
+                                             string (int correction.EntryKind)
+                                             correction.PriorChargeLedgerEntryId
+                                             |> Option.map (fun value -> value.ToString("D"))
+                                             |> Option.defaultValue "none"
+                                             string correction.FactKind
+                                             correction.BillableUsageKindMappingId.ToString("D")
+                                             string correction.BillableUsageKind
+                                             correction.CustomerPricingAssignmentId.ToString("D")
+                                             correction.PricingPlanId.ToString("D")
+                                             correction.PricingRateId.ToString("D")
+                                             correction.CurrencyCode
+                                             correction.UnitName
+                                             string correction.UnitQuantity
+                                             string correction.UnitPriceMicros
+                                             string correction.EffectiveFromUtc.Ticks
+                                             string correction.EffectiveToUtc.Ticks
+                                             string correction.QuantityDelta
+                                             string correction.ChargeMicrosDelta ]
+
+/// Builds stable active-failure identities without conflating malformed empty fact identifiers.
+[<RequireQualifiedAccess>]
+module BillingIngestionFailureIdentity =
+    /// Uses the fact id when valid and otherwise the broker identity plus complete period scope.
+    let failureId (fact: UsageFact) failureCode messageIdentity =
+        let factIdentity =
+            if fact.UsageFactId = Guid.Empty then
+                $"message:{messageIdentity}"
+            else
+                $"fact:{fact.UsageFactId:D}"
+
+        BillingPeriodRules.deterministicId [ "ingestion-failure"
+                                             factIdentity
+                                             failureCode
+                                             fact.Scope.OwnerId.ToString("D")
+                                             fact.Scope.OrganizationId.ToString("D")
+                                             fact.Scope.RepositoryId.ToString("D")
+                                             string (fact.ObservedAt.ToDateTimeUtc().Ticks) ]
+
 /// Records durable scoped billing-relevant ingestion failure evidence before message settlement.
 type IBillingIngestionFailureRecorder =
     /// Upserts one bounded active failure for a rejected fact identity.
-    abstract RecordFailureAsync: fact: UsageFact * failureCode: string * redactedDetail: string * cancellationToken: CancellationToken -> Task
+    abstract RecordFailureAsync:
+        fact: UsageFact * failureCode: string * redactedDetail: string * messageIdentity: string * cancellationToken: CancellationToken -> Task
 
 /// Persists idempotent scoped failure evidence used by close completeness checks.
 type SqlBillingIngestionFailureRecorder(connectionString: string) =
     interface IBillingIngestionFailureRecorder with
-        member _.RecordFailureAsync(fact, failureCode, redactedDetail, cancellationToken) =
+        member _.RecordFailureAsync(fact, failureCode, redactedDetail, messageIdentity, cancellationToken) =
             task {
+                if String.IsNullOrWhiteSpace messageIdentity then
+                    invalidArg "messageIdentity" "Billing failure evidence requires a stable broker message or correlation identity."
+
                 let detail =
                     if String.IsNullOrWhiteSpace redactedDetail then
                         "Rejected billing-relevant usage fact."
@@ -63,19 +112,15 @@ type SqlBillingIngestionFailureRecorder(connectionString: string) =
                 command.CommandText <-
                     """
 DECLARE @CustomerId uniqueidentifier=(SELECT TOP(1) CustomerId FROM ops.CustomerPricingAssignment WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND @ObservedAtUtc>=EffectiveFromUtc AND (EffectiveToUtc IS NULL OR @ObservedAtUtc<EffectiveToUtc) ORDER BY EffectiveFromUtc DESC,CustomerPricingAssignmentId);
-IF NOT EXISTS(SELECT 1 FROM ops.BillingIngestionFailure WHERE UsageFactId=@UsageFactId AND ResolvedAtUtc IS NULL)
+IF NOT EXISTS(SELECT 1 FROM ops.BillingIngestionFailure WHERE BillingIngestionFailureId=@FailureId AND ResolvedAtUtc IS NULL)
 INSERT INTO ops.BillingIngestionFailure(BillingIngestionFailureId,UsageFactId,CustomerId,OwnerId,OrganizationId,RepositoryId,ObservedAtUtc,FailureCode,FailureDetail,CreatedAtUtc)
 VALUES(@FailureId,@UsageFactId,@CustomerId,@OwnerId,@OrganizationId,@RepositoryId,@ObservedAtUtc,@FailureCode,@FailureDetail,SYSUTCDATETIME());"""
 
                 let add name dbType value = command.Parameters.Add(name, dbType).Value <- value
 
-                add
-                    "@FailureId"
-                    SqlDbType.UniqueIdentifier
-                    (BillingPeriodRules.deterministicId [ "ingestion-failure"
-                                                          fact.UsageFactId.ToString("D") ])
+                add "@FailureId" SqlDbType.UniqueIdentifier (BillingIngestionFailureIdentity.failureId fact failureCode messageIdentity)
 
-                add "@UsageFactId" SqlDbType.UniqueIdentifier fact.UsageFactId
+                add "@UsageFactId" SqlDbType.UniqueIdentifier (if fact.UsageFactId = Guid.Empty then box DBNull.Value else box fact.UsageFactId)
                 add "@OwnerId" SqlDbType.UniqueIdentifier fact.Scope.OwnerId
                 add "@OrganizationId" SqlDbType.UniqueIdentifier fact.Scope.OrganizationId
                 add "@RepositoryId" SqlDbType.UniqueIdentifier fact.Scope.RepositoryId
@@ -364,6 +409,49 @@ SELECT Value FROM (
             return lines
         }
 
+    /// Materializes recalculated correction candidates without mutating posted preview history.
+    let materializeCorrectionCandidates
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (scope: ChargePreviewScope)
+        (facts: ChargePreviewPricedFact array)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            use create =
+                command
+                    connection
+                    transaction
+                    "CREATE TABLE #CorrectionExpected(FactKind int NOT NULL,BillableUsageKindMappingId uniqueidentifier NOT NULL,BillableUsageKind int NOT NULL,CustomerPricingAssignmentId uniqueidentifier NOT NULL,PricingPlanId uniqueidentifier NOT NULL,PricingRateId uniqueidentifier NOT NULL,CurrencyCode varchar(3) NOT NULL,UnitName nvarchar(64) NOT NULL,UnitQuantity bigint NOT NULL,UnitPriceMicros bigint NOT NULL,EffectiveFromUtc datetime2(7) NOT NULL,EffectiveToUtc datetime2(7) NOT NULL,Quantity bigint NOT NULL,ChargeMicros bigint NOT NULL);"
+
+            let! _ = create.ExecuteNonQueryAsync cancellationToken
+            let lines = ChargePreviewCalculation.buildLines scope facts
+
+            for line in lines do
+                use insert =
+                    command
+                        connection
+                        transaction
+                        "INSERT INTO #CorrectionExpected(FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros) VALUES(@FactKind,@Mapping,@BillableKind,@Assignment,@Plan,@Rate,@Currency,@Unit,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge);"
+
+                add insert "@FactKind" SqlDbType.Int line.FactKind
+                add insert "@Mapping" SqlDbType.UniqueIdentifier line.BillableUsageKindMappingId
+                add insert "@BillableKind" SqlDbType.Int line.BillableUsageKind
+                add insert "@Assignment" SqlDbType.UniqueIdentifier line.CustomerPricingAssignmentId
+                add insert "@Plan" SqlDbType.UniqueIdentifier line.PricingPlanId
+                add insert "@Rate" SqlDbType.UniqueIdentifier line.PricingRateId
+                insert.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- line.CurrencyCode
+                insert.Parameters.Add("@Unit", SqlDbType.NVarChar, 64).Value <- line.UnitName
+                add insert "@UnitQuantity" SqlDbType.BigInt line.UnitQuantity
+                add insert "@UnitPrice" SqlDbType.BigInt line.UnitPriceMicros
+                add insert "@EffectiveFrom" SqlDbType.DateTime2 line.EffectiveFromUtc
+                add insert "@EffectiveTo" SqlDbType.DateTime2 line.EffectiveToUtc
+                add insert "@Quantity" SqlDbType.BigInt line.TotalQuantity
+                add insert "@Charge" SqlDbType.BigInt line.ChargeMicros
+                let! _ = insert.ExecuteNonQueryAsync cancellationToken
+                ()
+        }
+
     interface IBillingPeriodService with
         member _.RunAutomaticPassAsync(nowUtc, cancellationToken) =
             task {
@@ -609,9 +697,8 @@ SELECT @Inserted+@@ROWCOUNT;"""
                 use pending = discovery.CreateCommand()
 
                 pending.CommandText <-
-                    "SELECT TOP(@BatchSize) BillingCorrectionWorkId FROM ops.BillingCorrectionWork WHERE CompletedAtUtc IS NULL ORDER BY CreatedAtUtc,BillingCorrectionWorkId;"
+                    "SELECT BillingCorrectionWorkId FROM ops.BillingCorrectionWork WHERE CompletedAtUtc IS NULL ORDER BY CreatedAtUtc,BillingCorrectionWorkId;"
 
-                add pending "@BatchSize" SqlDbType.Int batchSize
                 use! pendingReader = pending.ExecuteReaderAsync cancellationToken
                 let workIds = ResizeArray<Guid>()
                 let mutable reading = true
@@ -625,7 +712,7 @@ SELECT @Inserted+@@ROWCOUNT;"""
                 let mutable completed = 0
                 let mutable workIndex = 0
 
-                while workIndex < workIds.Count do
+                while workIndex < workIds.Count && completed < batchSize do
                     use connection = new SqlConnection(connectionString)
                     do! connection.OpenAsync cancellationToken
                     use! raw = connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
@@ -665,8 +752,7 @@ SELECT @Inserted+@@ROWCOUNT;"""
 
                             do! lockScope connection transaction scope cancellationToken
                             let! facts = readPricedFacts connection transaction scope cancellationToken
-                            let! pricingHash = readPricingDigest connection transaction scope cancellationToken
-                            let! _ = replacePreview connection transaction periodId scope facts pricingHash cancellationToken
+                            do! materializeCorrectionCandidates connection transaction scope facts cancellationToken
 
                             use delta =
                                 command
@@ -675,8 +761,8 @@ SELECT @Inserted+@@ROWCOUNT;"""
                                     """
 ;WITH Expected AS (
  SELECT FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,
-        SUM(TotalQuantity) Quantity,SUM(ChargeMicros) ChargeMicros
- FROM ops.ChargePreviewLine WHERE CustomerId=@CustomerId AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND PeriodFromUtc=@PeriodFromUtc AND PeriodToUtc=@PeriodToUtc
+        SUM(Quantity) Quantity,SUM(ChargeMicros) ChargeMicros
+ FROM #CorrectionExpected
  GROUP BY FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc),
 Posted AS (
  SELECT FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,
@@ -688,7 +774,6 @@ SELECT NEWID(),@PeriodId,1,NULL,p.PriorId,COALESCE(e.FactKind,p.FactKind),COALES
 FROM Expected e FULL OUTER JOIN Posted p ON e.FactKind=p.FactKind AND e.BillableUsageKindMappingId=p.BillableUsageKindMappingId AND e.BillableUsageKind=p.BillableUsageKind AND e.CustomerPricingAssignmentId=p.CustomerPricingAssignmentId AND e.PricingPlanId=p.PricingPlanId AND e.PricingRateId=p.PricingRateId AND e.CurrencyCode=p.CurrencyCode AND e.UnitName=p.UnitName AND e.UnitQuantity=p.UnitQuantity AND e.UnitPriceMicros=p.UnitPriceMicros AND e.EffectiveFromUtc=p.EffectiveFromUtc AND e.EffectiveToUtc=p.EffectiveToUtc
 WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,0)<>COALESCE(p.ChargeMicros,0);"""
 
-                            addScope delta scope
                             add delta "@PeriodId" SqlDbType.UniqueIdentifier periodId
                             delta.Parameters.Add("@Correlation", SqlDbType.NVarChar, 128).Value <- correlationId
                             let! inserted = delta.ExecuteNonQueryAsync cancellationToken
@@ -717,9 +802,13 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
 
                         do! transaction.CommitAsync cancellationToken
                     with
-                    | ex ->
+                    | :? OperationCanceledException as ex ->
                         do! rollback transaction
                         ExceptionDispatchInfo.Capture(ex).Throw()
+                    | ex ->
+                        do! rollback transaction
+                        // A failed work item remains pending; later independent rows still receive a fair attempt.
+                        ()
 
                     workIndex <- workIndex + 1
 
@@ -763,17 +852,7 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
                       >= correction.EffectiveToUtc then
                     invalidArg "correction" "Correction applicability must be a non-empty UTC interval."
 
-                let prior =
-                    correction.PriorChargeLedgerEntryId
-                    |> Option.map (fun value -> value.ToString("D"))
-                    |> Option.defaultValue "none"
-
-                let entryId =
-                    BillingPeriodRules.deterministicId [ correction.BillingPeriodId.ToString("D")
-                                                         provenance.CorrelationId
-                                                         string (int correction.EntryKind)
-                                                         correction.PricingRateId.ToString("D")
-                                                         prior ]
+                let entryId = ManualBillingCorrectionIdentity.entryId correction provenance.CorrelationId
 
                 use connection = new SqlConnection(connectionString)
                 do! connection.OpenAsync cancellationToken
