@@ -217,3 +217,70 @@ type CustomerPricingAssignmentEntity() =
 
     /// References the pricing plan for EF schema relationship generation.
     member val PricingPlan: PricingPlanEntity = null with get, set
+
+/// Represents one rebuildable provisional charge-preview line for a complete pricing applicability segment.
+[<AllowNullLiteral>]
+type ChargePreviewLineEntity() =
+
+    /// Stores the deterministic identity derived from the complete preview-line grain.
+    member val ChargePreviewLineId = Guid.Empty with get, set
+
+    /// Stores the customer whose provisional charge is represented.
+    member val CustomerId = Guid.Empty with get, set
+
+    /// Stores the Grace owner scope for the charged repository.
+    member val OwnerId = Guid.Empty with get, set
+
+    /// Stores the Grace organization scope for the charged repository.
+    member val OrganizationId = Guid.Empty with get, set
+
+    /// Stores the Grace repository scope for the charged usage.
+    member val RepositoryId = Guid.Empty with get, set
+
+    /// Stores the inclusive UTC start of the explicitly rebuilt preview period.
+    member val PeriodFromUtc = DateTime.MinValue with get, set
+
+    /// Stores the exclusive UTC end of the explicitly rebuilt preview period.
+    member val PeriodToUtc = DateTime.MinValue with get, set
+
+    /// Stores the tracked usage-fact kind contributing to this line.
+    member val FactKind = 0 with get, set
+
+    /// Stores the complete billable usage-kind mapping identity selected for the source facts.
+    member val BillableUsageKindMappingId = Guid.Empty with get, set
+
+    /// Stores the billable usage kind selected by the mapping.
+    member val BillableUsageKind = 0 with get, set
+
+    /// Stores the complete customer pricing assignment identity selected for the source facts.
+    member val CustomerPricingAssignmentId = Guid.Empty with get, set
+
+    /// Stores the complete pricing plan identity selected for the source facts.
+    member val PricingPlanId = Guid.Empty with get, set
+
+    /// Stores the complete pricing rate identity selected for the source facts.
+    member val PricingRateId = Guid.Empty with get, set
+
+    /// Stores the line currency without permitting cross-currency aggregation.
+    member val CurrencyCode = String.Empty with get, set
+
+    /// Stores the measured unit label carried by the selected rate.
+    member val UnitName = String.Empty with get, set
+
+    /// Stores the measured quantity represented by one priced unit.
+    member val UnitQuantity = 0L with get, set
+
+    /// Stores the selected customer price in whole currency micros per unit quantity.
+    member val UnitPriceMicros = 0L with get, set
+
+    /// Stores the inclusive start of the complete pricing applicability segment intersected with the preview period.
+    member val EffectiveFromUtc = DateTime.MinValue with get, set
+
+    /// Stores the exclusive end of the complete pricing applicability segment intersected with the preview period.
+    member val EffectiveToUtc = DateTime.MinValue with get, set
+
+    /// Stores source quantity summed before line-charge calculation.
+    member val TotalQuantity = 0L with get, set
+
+    /// Stores the once-rounded provisional charge in whole currency micros.
+    member val ChargeMicros = 0L with get, set

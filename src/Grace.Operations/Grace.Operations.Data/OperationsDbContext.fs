@@ -572,6 +572,8 @@ module OperationsModel =
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
+        OperationsChargePreviewModel.configure modelBuilder
+
 /// Owns the EF Core model for Grace Operations SQL Server schema evolution.
 type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     inherit DbContext(options)
@@ -599,6 +601,10 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     /// Exposes customer pricing assignments for EF migrations and schema inspection.
     [<DefaultValue>]
     val mutable private customerPricingAssignments: DbSet<CustomerPricingAssignmentEntity>
+
+    /// Provides EF access to provisional charge-preview lines.
+    [<DefaultValue>]
+    val mutable private chargePreviewLines: DbSet<ChargePreviewLineEntity>
 
     /// Provides the EF set for immutable usage fact rows.
     member this.RawUsageFacts
@@ -629,6 +635,11 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     member this.CustomerPricingAssignments
         with get () = this.customerPricingAssignments
         and set value = this.customerPricingAssignments <- value
+
+    /// Provides the EF set for provisional charge-preview lines.
+    member this.ChargePreviewLines
+        with get () = this.chargePreviewLines
+        and set value = this.chargePreviewLines <- value
 
     /// Configures the Operations SQL Server schema shape that migrations must preserve.
     override _.OnModelCreating(modelBuilder: ModelBuilder) = OperationsModel.configure modelBuilder
