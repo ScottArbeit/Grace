@@ -9,7 +9,7 @@ Name | Type | Description | Notes
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **directory_id** | Option<**uuid::Uuid**> |  | [optional]
 **sha256_hash** | Option<**String**> | Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs. | [optional]
-**blake3_hash** | Option<**String**> | Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs. | [optional]
+**blake3_hash** | Option<**String**> | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional]
 **reference_type** | Option<[**models::ReferenceType**](ReferenceType.md)> |  | [optional]
 **reference_text** | Option<**String**> |  | [optional]
 **created_by** | Option<**String**> |  | [optional]

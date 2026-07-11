@@ -113,17 +113,6 @@ components:
       description: Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
       pattern: '^[a-f0-9]{64}$'
       example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
-    Blake3HashCompatibility:
-      type: string
-      nullable: true
-      description: Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
-      pattern: '^$|^[a-f0-9]{64}$'
-      example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
-    Blake3HashReferenceCompatibility:
-      type: string
-      description: Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
-      pattern: '^$|^[a-f0-9]{64}$'
-      example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
     Blake3HashPrefix:
       type: string
       description: Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups.
@@ -190,7 +179,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         IsBinary:
           type: boolean
         Size:
@@ -235,7 +224,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         Directories:
           type: array
           items:

@@ -1745,7 +1745,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/bad-parameters.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/bad-parameters.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
             parameters.MaxReferences <- MaximumMaxReferences + 1
 
@@ -1765,7 +1765,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/null-path.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/null-path.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
             parameters.Path <- null
 
@@ -1800,7 +1800,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/null-reference-types.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/null-reference-types.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
 
             let json =

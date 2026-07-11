@@ -12,7 +12,7 @@ Name | Type | Description | Notes
 **repository_id** | **UUID** |  | [optional] 
 **relative_path** | **str** |  | [optional] 
 **sha256_hash** | **str** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | [optional] 
-**blake3_hash** | **str** | Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs. | [optional] 
+**blake3_hash** | **str** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional] 
 **directories** | **List[UUID]** |  | [optional] 
 **files** | [**List[FileVersion]**](FileVersion.md) |  | [optional] 
 **size** | **int** |  | [optional] 

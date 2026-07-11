@@ -32,7 +32,7 @@ pub struct ReferenceApiDto {
     /// Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
-    /// Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
     #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
     #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]

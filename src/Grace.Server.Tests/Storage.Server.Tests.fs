@@ -164,7 +164,7 @@ type StorageWholeFileCompatibility() =
             let relativePath = $"{relativeDirectory}/small.bin"
             let payload = Encoding.UTF8.GetBytes($"Grace whole-file missing BLAKE3 {Guid.NewGuid():N}")
             let sha256Hash = computeSha256Hash payload
-            let fileVersion = FileVersion.Create relativePath sha256Hash String.Empty true (int64 payload.Length)
+            let fileVersion = FileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) String.Empty true (int64 payload.Length)
 
             let! uploadResponse = Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId fileVersion))
             let! uploadContent = uploadResponse.Content.ReadAsStringAsync()

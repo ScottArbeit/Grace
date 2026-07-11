@@ -46,7 +46,7 @@ export interface FileVersion {
      */
     sha256Hash?: string;
     /**
-     * Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
      * @memberof FileVersion
      */

@@ -11,7 +11,7 @@ Name | Type | Description | Notes
 **repository_id** | Option<**uuid::Uuid**> |  | [optional]
 **relative_path** | Option<**String**> |  | [optional]
 **sha256_hash** | Option<**String**> | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | [optional]
-**blake3_hash** | Option<**String**> | Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs. | [optional]
+**blake3_hash** | Option<**String**> | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional]
 **directories** | Option<**Vec<uuid::Uuid>**> |  | [optional]
 **files** | Option<[**Vec<models::FileVersion>**](FileVersion.md)> |  | [optional]
 **size** | Option<**i64**> |  | [optional]

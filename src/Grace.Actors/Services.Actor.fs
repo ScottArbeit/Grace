@@ -1777,33 +1777,12 @@ module Services =
                 return None
         }
 
-    let internal hydrateLegacyReferenceProjectionBlake3
-        (getDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersion option>)
-        correlationId
-        (referenceDto: ReferenceDto)
-        =
+    /// Projects persisted reference events without modifying their hash contract.
+    let internal projectReferenceEvents referenceEvents =
         task {
-            if String.IsNullOrWhiteSpace(string referenceDto.Blake3Hash) then
-                let! directoryVersion = getDirectoryVersion referenceDto.RepositoryId referenceDto.DirectoryId correlationId
-
-                match directoryVersion with
-                | Some rootDirectoryVersion ->
-                    /// Holds a reference DTO after legacy root-directory hash hydration.
-                    let hydratedReferenceDto, _ = ReferenceDto.HydrateLegacyRootDirectoryHash rootDirectoryVersion referenceDto
-                    return hydratedReferenceDto
-                | None -> return referenceDto
-            else
-                return referenceDto
-        }
-
-    /// Projects reference events while hydrating missing legacy Blake3 root hashes.
-    let internal projectReferenceEventsWithLegacyBlake3Hydration getDirectoryVersion correlationId referenceEvents =
-        task {
-            let referenceDto =
+            return
                 referenceEvents
                 |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
-
-            return! hydrateLegacyReferenceProjectionBlake3 getDirectoryVersion correlationId referenceDto
         }
 
     /// Gets a list of references that match a provided SHA-256 hash.
@@ -1851,11 +1830,7 @@ module Services =
                         let mutable index = 0
 
                         while index < eventsForAllReferences.Length do
-                            let! referenceDto =
-                                projectReferenceEventsWithLegacyBlake3Hydration
-                                    getRootDirectoryVersionByDirectoryVersionId
-                                    "getReferencesBySha256Hash"
-                                    eventsForAllReferences[index].State
+                            let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto then references.Add(referenceDto)
 
@@ -1938,11 +1913,7 @@ module Services =
                         let mutable index = 0
 
                         while index < eventsForAllReferences.Length do
-                            let! referenceDto =
-                                projectReferenceEventsWithLegacyBlake3Hydration
-                                    getRootDirectoryVersionByDirectoryVersionId
-                                    correlationId
-                                    eventsForAllReferences[index].State
+                            let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                             references.Add(referenceDto)
 
@@ -2132,11 +2103,7 @@ module Services =
                         let mutable index = 0
 
                         while index < eventsForAllReferences.Length do
-                            let! referenceDto =
-                                projectReferenceEventsWithLegacyBlake3Hydration
-                                    getRootDirectoryVersionByDirectoryVersionId
-                                    correlationId
-                                    eventsForAllReferences[index].State
+                            let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                             references.Add(referenceDto)
 
@@ -2213,11 +2180,7 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestReference.IsNone do
-                            let! referenceDto =
-                                projectReferenceEventsWithLegacyBlake3Hydration
-                                    getRootDirectoryVersionByDirectoryVersionId
-                                    "getLatestReference"
-                                    eventsForAllReferences[index].State
+                            let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
 
@@ -2294,11 +2257,7 @@ module Services =
 
                                             while index < eventsForAllReferences.Length
                                                   && not foundForType do
-                                                let! referenceDto =
-                                                    projectReferenceEventsWithLegacyBlake3Hydration
-                                                        getRootDirectoryVersionByDirectoryVersionId
-                                                        "getLatestReferenceByReferenceTypes"
-                                                        eventsForAllReferences[index].State
+                                                let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                                                 if isNotDeletedReference referenceDto then
                                                     referenceDtos.TryAdd(referenceType, referenceDto)
@@ -2386,11 +2345,7 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestReference.IsNone do
-                            let! referenceDto =
-                                projectReferenceEventsWithLegacyBlake3Hydration
-                                    getRootDirectoryVersionByDirectoryVersionId
-                                    "getLatestReferenceByType"
-                                    eventsForAllReferences[index].State
+                            let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
 
@@ -2458,11 +2413,7 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestPromotion.IsNone do
-                            let! referenceDto =
-                                projectReferenceEventsWithLegacyBlake3Hydration
-                                    getRootDirectoryVersionByDirectoryVersionId
-                                    "getLatestPromotion"
-                                    eventsForAllReferences[index].State
+                            let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto
                                && hasPromotionSetTerminalLink referenceDto then
@@ -3262,11 +3213,7 @@ module Services =
                             let mutable index = 0
 
                             while index < eventsForAllReferences.Length do
-                                let! referenceDto =
-                                    projectReferenceEventsWithLegacyBlake3Hydration
-                                        getRootDirectoryVersionByDirectoryVersionId
-                                        correlationId
-                                        eventsForAllReferences[index].State
+                                let! referenceDto = projectReferenceEvents eventsForAllReferences[index].State
 
                                 queryResults.Add(referenceDto.ReferenceId, referenceDto)
                                 index <- index + 1

@@ -39,7 +39,7 @@ class DirectoryVersion(BaseModel):
     repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
     relative_path: Optional[StrictStr] = Field(default=None, alias="RelativePath")
     sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
-    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.", alias="Blake3Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
     directories: Optional[List[UUID]] = Field(default=None, alias="Directories")
     files: Optional[List[FileVersion]] = Field(default=None, alias="Files")
     size: Optional[StrictInt] = Field(default=None, alias="Size")
@@ -70,8 +70,8 @@ class DirectoryVersion(BaseModel):
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^$|^[a-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
     model_config = ConfigDict(

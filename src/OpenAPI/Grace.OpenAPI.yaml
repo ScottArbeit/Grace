@@ -3905,7 +3905,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256HashReferenceCompatibility'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashReferenceCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         ReferenceType:
           $ref: '#/components/schemas/ReferenceType'
         ReferenceText:
@@ -4789,7 +4789,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         IsBinary:
           type: boolean
         Size:
@@ -4833,7 +4833,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         Directories:
           type: array
           items:
@@ -5450,11 +5450,6 @@ components:
       description: Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
       pattern: ^$|^[a-f0-9]{64}$
       example: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
-    Blake3HashReferenceCompatibility:
-      type: string
-      description: Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
-      pattern: ^$|^[a-f0-9]{64}$
-      example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
     ReferenceApiDto:
       description: Public reference DTO returned through branch reference endpoints.
       type: object
@@ -5480,7 +5475,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256HashReferenceCompatibility'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashReferenceCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         ReferenceType:
           $ref: '#/components/schemas/ReferenceType'
         ReferenceText:
@@ -5817,12 +5812,6 @@ components:
       type: string
       format: uuid
       example: 33a4e36b-828f-4fae-9343-50b6560dc842
-    Blake3HashCompatibility:
-      type: string
-      nullable: true
-      description: Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
-      pattern: ^$|^[a-f0-9]{64}$
-      example: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
     FileContentReference:
       description: Identifies whether a FileVersion refers to whole-file bytes or a FileManifest.
       type: object
@@ -5954,7 +5943,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256HashLookupSentinelCompatibility'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3HashCompatibility'
+          $ref: '#/components/schemas/Blake3Hash'
         Directories:
           type: array
           items:

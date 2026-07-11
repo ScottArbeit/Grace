@@ -58,7 +58,15 @@ type ManifestDownloadSdkTests() =
         blocks
 
     static member private CreateManifestFileVersion relativePath payload manifest =
-        let fileVersion = FileVersion.Create relativePath (ManifestDownloadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+        let fileVersion =
+            FileVersion.CreateWithHashes
+                relativePath
+                (ManifestDownloadSdkTests.ComputeSha256Hash payload)
+                (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                String.Empty
+                true
+                (int64 payload.Length)
+
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
 
@@ -239,7 +247,16 @@ type ManifestDownloadSdkTests() =
     member _.WholeFileContentDownloadUsesCompatibilityFallbackWithoutResolvingBlocks() =
         task {
             let payload = ManifestDownloadSdkTests.PseudoRandomBytes 128
-            let fileVersion = FileVersion.Create "small.txt" (ManifestDownloadSdkTests.ComputeSha256Hash payload) String.Empty false (int64 payload.Length)
+
+            let fileVersion =
+                FileVersion.CreateWithHashes
+                    "small.txt"
+                    (ManifestDownloadSdkTests.ComputeSha256Hash payload)
+                    (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                    String.Empty
+                    false
+                    (int64 payload.Length)
+
             let correlationId = "corr-sdk-manifest-download-whole-file"
 
             let client: ManifestDownload.ManifestDownloadClient =

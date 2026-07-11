@@ -14,7 +14,7 @@ Name | Type | Description | Notes
 **branch_id** | **UUID** |  | [optional] 
 **directory_id** | **UUID** | DirectoryVersionId represented by the current server DTO field name. | [optional] 
 **sha256_hash** | **str** | Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs. | [optional] 
-**blake3_hash** | **str** | Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs. | [optional] 
+**blake3_hash** | **str** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional] 
 **reference_type** | [**ReferenceType**](ReferenceType.md) |  | [optional] 
 **reference_text** | **str** |  | [optional] 
 **links** | **List[str]** |  | [optional] 

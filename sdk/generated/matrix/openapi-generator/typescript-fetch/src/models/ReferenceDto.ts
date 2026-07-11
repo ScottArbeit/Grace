@@ -58,7 +58,7 @@ export interface ReferenceDto {
      */
     sha256Hash?: string;
     /**
-     * Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
      * @memberof ReferenceDto
      */

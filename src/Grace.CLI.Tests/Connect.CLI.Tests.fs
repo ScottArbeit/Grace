@@ -82,10 +82,12 @@ module ConnectTests =
         Connect.existingFileMatchesRemoteVersion (Sha256Hash "shared-sha") (Blake3Hash "remote-blake3") remoteFile
         |> should equal true
 
-    /// Verifies that connect skip decision keeps legacy empty blake3 remote compatible.
+    /// Verifies that connect does not accept a remote file without BLAKE3 as a match.
     [<Test>]
-    let ``connect skip decision keeps legacy empty blake3 remote compatible`` () =
-        let remoteFile = FileVersion.Create (RelativePath "legacy-sha-only.txt") (Sha256Hash "legacy-sha") String.Empty false 10L
+    let ``connect skip decision rejects empty remote blake3`` () =
+        let remoteFile = FileVersion.Default
+        remoteFile.RelativePath <- RelativePath "missing-blake3.txt"
+        remoteFile.Sha256Hash <- Sha256Hash "sha"
 
-        Connect.existingFileMatchesRemoteVersion (Sha256Hash "legacy-sha") (Blake3Hash "different-local-blake3") remoteFile
-        |> should equal true
+        Connect.existingFileMatchesRemoteVersion (Sha256Hash "sha") (Blake3Hash "local-blake3") remoteFile
+        |> should equal false

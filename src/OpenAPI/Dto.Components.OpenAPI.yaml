@@ -151,7 +151,7 @@
         Sha256Hash:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashReferenceCompatibility
         Blake3Hash:
-          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashReferenceCompatibility
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash
         ReferenceType:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType
         ReferenceText:

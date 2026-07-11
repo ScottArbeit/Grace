@@ -117,7 +117,7 @@
         Sha256Hash:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'
         Blake3Hash:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashCompatibility'
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
         Directories:
           type: array
           items:
