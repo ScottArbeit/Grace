@@ -58,6 +58,9 @@ module Program =
             SqlOperationsUsageArchiveStore(settings.SqlConnectionString) :> IOperationsUsageArchiveStore)
         |> ignore
 
+        services.AddSingleton<IChargePreviewRebuilder>(fun _ -> SqlChargePreviewRebuilder(settings.SqlConnectionString) :> IChargePreviewRebuilder)
+        |> ignore
+
         services.AddSingleton<OperationsUsageIngestionProcessor>()
         |> ignore
 

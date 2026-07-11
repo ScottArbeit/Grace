@@ -572,3 +572,5 @@ type OperationsDbContextModelSnapshot() =
             .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
+
+        OperationsChargePreviewModel.configure modelBuilder

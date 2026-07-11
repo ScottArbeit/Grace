@@ -6,6 +6,9 @@ schema is intentionally narrow:
 - `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary and keeps
   the exact accepted broker payload in `RawPayload` for replay and audit.
 - `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
+- `ops.ChargePreviewLine` stores deterministic provisional customer charge lines rebuilt from compact immutable usage
+  facts and complete effective pricing. A rebuild atomically replaces one customer/repository/half-open-period scope;
+  these rows are neither invoices nor immutable ledger entries.
 - The EF migrations history table lives in `ops.__EFMigrationsHistory` so operations schema state stays with the
   operations schema.
 
@@ -75,3 +78,13 @@ online rebuild options, lock hints for data backfills, and guarded data movement
 Do not put SQL Server physical-design choices in worker startup, request handlers, or ad hoc runtime bootstrap code.
 When raw SQL is used in a migration, keep it deterministic, name the Grace invariant it protects, and cover the emitted
 schema or behavior with Operations migration tests.
+
+## Callable Charge Previews
+
+The worker registers an internal `IChargePreviewRebuilder` that callers can invoke with an explicit UTC half-open
+period. The rebuild reads compact `RawUsageFact` index columns, so archived facts remain eligible when `RawPayload` is
+empty and Blob rehydration is neither performed nor required. Complete pricing is selected at each fact's observed
+timestamp, quantities are summed per applicability segment, and each line is rounded once to whole currency micros.
+
+This leaf intentionally adds no timer, schedule, billing-period state, close operation, HTTP route, or ledger posting.
+Missing pricing fails the rebuild and leaves the previously committed complete preview unchanged.
