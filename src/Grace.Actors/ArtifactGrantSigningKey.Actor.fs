@@ -37,24 +37,6 @@ module ArtifactGrantSigningKeyActor =
 
                 initialized <- true
 
-        /// Rejects malformed persisted state instead of creating a process-local replacement key.
-        let requireValidState () =
-            ensureInitialized ()
-
-            if isNull (box currentState)
-               || currentState.Class
-                  <> nameof ArtifactGrantSigningKeyRingState
-               || isNull currentState.Keys
-               || currentState.Keys
-                  |> Array.exists (fun key ->
-                      isNull (box key)
-                      || String.IsNullOrWhiteSpace key.KeyId
-                      || isNull key.PrivateKeyPkcs8
-                      || key.PrivateKeyPkcs8.Length = 0
-                      || key.ActiveUntil <= key.CreatedAt
-                      || key.ExpiresAt <= key.ActiveUntil) then
-                invalidOp "Artifact grant signing-key actor state is malformed."
-
         /// Creates persisted P-256 private material with the approved active and overlap lifetimes.
         let createSigningKey (now: Instant) =
             let now = Instant.FromUnixTimeMilliseconds(now.ToUnixTimeMilliseconds())
@@ -70,7 +52,7 @@ module ArtifactGrantSigningKeyActor =
                 PrivateKeyPkcs8 = key.ExportPkcs8PrivateKey()
             }
 
-        /// Imports one persisted private key into an operation-local cryptographic object.
+        /// Imports one persisted private key only when it is exactly compatible with the ES256/P-256 contract.
         let importPrivateKey (keyState: ArtifactGrantSigningKeyState) =
             let key = ECDsa.Create()
             let mutable bytesRead = 0
@@ -82,11 +64,48 @@ module ArtifactGrantSigningKeyActor =
                     key.Dispose()
                     invalidOp "Artifact grant signing-key state contains trailing private-key bytes."
 
+                let parameters = key.ExportParameters(true)
+                let p256Oid = ECCurve.NamedCurves.nistP256.Oid.Value
+
+                if parameters.Curve.Oid.Value <> p256Oid
+                   || isNull parameters.Q.X
+                   || parameters.Q.X.Length <> 32
+                   || isNull parameters.Q.Y
+                   || parameters.Q.Y.Length <> 32 then
+                    key.Dispose()
+                    invalidOp "Artifact grant signing-key state is not an ES256 P-256 private key."
+
                 key
             with
             | ex ->
                 key.Dispose()
                 raise ex
+
+        /// Rejects the complete durable ring when any retained entry cannot safely sign and publish as ES256/P-256.
+        let requireValidState () =
+            ensureInitialized ()
+
+            let malformedEntry (keyState: ArtifactGrantSigningKeyState) =
+                if isNull (box keyState)
+                   || String.IsNullOrWhiteSpace keyState.KeyId
+                   || isNull keyState.PrivateKeyPkcs8
+                   || keyState.PrivateKeyPkcs8.Length = 0
+                   || keyState.ActiveUntil <= keyState.CreatedAt
+                   || keyState.ExpiresAt <= keyState.ActiveUntil then
+                    true
+                else
+                    try
+                        use _ = importPrivateKey keyState
+                        false
+                    with
+                    | _ -> true
+
+            if isNull (box currentState)
+               || currentState.Class
+                  <> nameof ArtifactGrantSigningKeyRingState
+               || isNull currentState.Keys
+               || currentState.Keys |> Array.exists malformedEntry then
+                invalidOp "Artifact grant signing-key actor state is malformed."
 
         /// Writes a complete next state before exposing any key derived from it.
         let persist (nextState: ArtifactGrantSigningKeyRingState) =
@@ -103,8 +122,8 @@ module ArtifactGrantSigningKeyActor =
                     return raise ex
             }
 
-        /// Purges expired keys and rotates when no active key remains, persisting before return.
-        let ensureActiveKey (now: Instant) =
+        /// Purges expired keys and durably rotates unless one strict signer covers the required active horizon.
+        let ensureActiveKey (now: Instant) (requiredActiveThrough: Instant) =
             task {
                 requireValidState ()
 
@@ -116,7 +135,10 @@ module ArtifactGrantSigningKeyActor =
 
                 let activeKey =
                     liveKeys
-                    |> Array.filter (fun key -> key.CreatedAt <= now && now < key.ActiveUntil)
+                    |> Array.filter (fun key ->
+                        key.CreatedAt <= now
+                        && now < key.ActiveUntil
+                        && requiredActiveThrough <= key.ActiveUntil)
                     |> Array.sortByDescending (fun key -> key.CreatedAt)
                     |> Array.tryHead
 
@@ -185,7 +207,7 @@ module ArtifactGrantSigningKeyActor =
                 match validateRequest request with
                 | Error error -> return Error error
                 | Ok (artifactIdentities, ttl) ->
-                    let! keyState = ensureActiveKey now
+                    let! keyState = ensureActiveKey now now
                     use key = importPrivateKey keyState
                     let header = ArtifactGrantHeader.Create keyState.KeyId
 
@@ -207,7 +229,7 @@ module ArtifactGrantSigningKeyActor =
         /// Publishes only durably stored current and overlap keys using isolated crypto objects.
         member _.PublishValidationKeys(now: Instant) =
             task {
-                let! _ = ensureActiveKey now
+                let! _ = ensureActiveKey now (now.Plus ArtifactGrantContract.ValidationKeyCacheTtl)
 
                 let keys =
                     currentState.Keys

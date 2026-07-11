@@ -10,6 +10,7 @@ open NodaTime
 open NUnit.Framework
 open Orleans.Runtime
 open System
+open System.Security.Cryptography
 open System.Threading
 open System.Threading.Tasks
 
@@ -106,6 +107,21 @@ type ArtifactGrantSigningKeyActorTests() =
     /// Creates a store over controllable persisted actor state.
     let store (state: FakePersistentState) = ArtifactGrantSigningKeyStore(state, NullLogger.Instance)
 
+    /// Creates one persisted signing-key entry for durable-state validation tests.
+    let persistedKey (curve: ECCurve) createdAt activeUntil =
+        use key = ECDsa.Create(curve)
+
+        {
+            KeyId = $"persisted-{Guid.NewGuid():N}"
+            CreatedAt = createdAt
+            ActiveUntil = activeUntil
+            ExpiresAt = activeUntil.Plus ArtifactGrantContract.MaximumAcceptedGrantTtl
+            PrivateKeyPkcs8 = key.ExportPkcs8PrivateKey()
+        }
+
+    /// Wraps retained key entries in the unchanged durable ring shape.
+    let persistedRing keys = { Class = nameof ArtifactGrantSigningKeyRingState; Keys = keys }
+
     /// Unwraps successful issuance while preserving a useful test failure.
     let issuedGrant result =
         match result with
@@ -143,6 +159,119 @@ type ArtifactGrantSigningKeyActorTests() =
             Assert.That(keys.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain grant.Header.KeyId)
             Assert.That(grant.Payload.RequesterPrincipalId, Is.EqualTo request.RequesterPrincipalId)
             Assert.That(grant.Payload.HolderKeyThumbprint, Is.EqualTo(holderKeyThumbprint request.HolderPublicKey))
+        }
+
+    [<Test>]
+    member _.``publication rotates only after the signer cache horizon boundary and persists before return``() =
+        task {
+            let activeUntil = now.Plus ArtifactGrantContract.SigningKeyActiveLifetime
+            let original = persistedKey ECCurve.NamedCurves.nistP256 now activeUntil
+            let state = FakePersistentState(persistedRing [| original |], true)
+            let keyStore = store state
+            let boundary = activeUntil.Minus ArtifactGrantContract.ValidationKeyCacheTtl
+
+            let! immediatelyBefore = keyStore.PublishValidationKeys(boundary.Minus(Duration.FromMilliseconds 1L))
+            let! exactlyAt = keyStore.PublishValidationKeys boundary
+
+            Assert.That(state.WriteCount, Is.EqualTo 0)
+
+            Assert.That(
+                immediatelyBefore.Keys
+                |> Seq.map (fun key -> key.KeyId),
+                Is.EquivalentTo [| original.KeyId |]
+            )
+
+            Assert.That(exactlyAt.Keys |> Seq.map (fun key -> key.KeyId), Is.EquivalentTo [| original.KeyId |])
+
+            let! immediatelyAfter = keyStore.PublishValidationKeys(boundary.Plus(Duration.FromMilliseconds 1L))
+
+            let persistedIds =
+                state.State.Keys
+                |> Seq.map (fun key -> key.KeyId)
+                |> Set.ofSeq
+
+            let publishedIds =
+                immediatelyAfter.Keys
+                |> Seq.map (fun key -> key.KeyId)
+                |> Set.ofSeq
+
+            Assert.That(state.WriteCount, Is.EqualTo 1)
+            Assert.That(state.State.Keys, Has.Length.EqualTo 2)
+            Assert.That((publishedIds = persistedIds), Is.True)
+            Assert.That(publishedIds, Does.Contain original.KeyId)
+        }
+
+    [<Test>]
+    member _.``failed horizon persistence exposes neither a publication nor a usable replacement signer``() =
+        task {
+            let activeUntil = now.Plus ArtifactGrantContract.SigningKeyActiveLifetime
+            let original = persistedKey ECCurve.NamedCurves.nistP256 now activeUntil
+            let durable = persistedRing [| original |]
+            let state = FakePersistentState(durable, true, failWrites = true)
+            let keyStore = store state
+
+            let publicationTime =
+                activeUntil
+                    .Minus(ArtifactGrantContract.ValidationKeyCacheTtl)
+                    .Plus(Duration.FromMilliseconds 1L)
+
+            let failure = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> keyStore.PublishValidationKeys(publicationTime) :> Task))
+
+            Assert.That(failure.Message, Is.EqualTo "actor storage write failed")
+            Assert.That(state.State, Is.SameAs durable)
+            Assert.That(state.WriteCount, Is.EqualTo 1)
+
+            state.FailWrites <- false
+            let! issuedAfterExpiry = keyStore.IssueGrant(issueRequest (), activeUntil)
+            let replacementGrant = issuedGrant issuedAfterExpiry
+
+            Assert.That(state.WriteCount, Is.EqualTo 2)
+            Assert.That(replacementGrant.Header.KeyId, Is.EqualTo state.State.Keys[0].KeyId)
+            Assert.That(replacementGrant.Header.KeyId, Is.Not.EqualTo original.KeyId)
+        }
+
+    [<Test>]
+    member _.``cache publication spanning rotation contains the later strict signer``() =
+        task {
+            let activeUntil = now.Plus ArtifactGrantContract.SigningKeyActiveLifetime
+            let original = persistedKey ECCurve.NamedCurves.nistP256 now activeUntil
+            let state = FakePersistentState(persistedRing [| original |], true)
+            let keyStore = store state
+
+            let publishedAt =
+                activeUntil
+                    .Minus(ArtifactGrantContract.ValidationKeyCacheTtl)
+                    .Plus(Duration.FromMilliseconds 1L)
+
+            let! cachedPublication = keyStore.PublishValidationKeys publishedAt
+            let! beforeExpiryResult = keyStore.IssueGrant(issueRequest (), activeUntil.Minus(Duration.FromMilliseconds 1L))
+            let! atExpiryResult = keyStore.IssueGrant(issueRequest (), activeUntil)
+            let beforeExpiry = issuedGrant beforeExpiryResult
+            let atExpiry = issuedGrant atExpiryResult
+
+            Assert.That(atExpiry.Header.KeyId, Is.Not.EqualTo original.KeyId)
+
+            Assert.That(
+                cachedPublication.Keys
+                |> Seq.map (fun key -> key.KeyId),
+                Does.Contain original.KeyId
+            )
+
+            Assert.That(
+                cachedPublication.Keys
+                |> Seq.map (fun key -> key.KeyId),
+                Does.Contain beforeExpiry.Header.KeyId
+            )
+
+            Assert.That(
+                cachedPublication.Keys
+                |> Seq.map (fun key -> key.KeyId),
+                Does.Contain atExpiry.Header.KeyId
+            )
+
+            match validateWithKeySet activeUntil cachedPublication (validationRequest ()) atExpiry with
+            | Ok () -> ()
+            | Error error -> Assert.Fail(ArtifactGrantValidationError.toMessage error)
         }
 
     [<Test>]
@@ -204,6 +333,50 @@ type ArtifactGrantSigningKeyActorTests() =
             let malformedException = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> malformedStore.PublishValidationKeys(now) :> Task))
 
             Assert.That(malformedException.Message, Is.EqualTo "Artifact grant signing-key actor state is malformed.")
+        }
+
+    [<Test>]
+    member _.``valid persisted P-256 private material survives activation and remains usable``() =
+        task {
+            let retained = persistedKey ECCurve.NamedCurves.nistP256 now (now.Plus ArtifactGrantContract.SigningKeyActiveLifetime)
+            let state = FakePersistentState(persistedRing [| retained |], true)
+            let keyStore = store state
+
+            let! grantResult = keyStore.IssueGrant(issueRequest (), now)
+            let grant = issuedGrant grantResult
+            let! publication = keyStore.PublishValidationKeys now
+
+            Assert.That(grant.Header.KeyId, Is.EqualTo retained.KeyId)
+            Assert.That(publication.Keys |> Seq.map (fun key -> key.KeyId), Does.Contain retained.KeyId)
+            Assert.That(state.WriteCount, Is.EqualTo 0)
+        }
+
+    [<Test>]
+    member _.``wrong curve malformed PKCS8 and non-32-byte coordinates fail the whole durable state without repair``() =
+        task {
+            let activeUntil = now.Plus ArtifactGrantContract.SigningKeyActiveLifetime
+            let valid = persistedKey ECCurve.NamedCurves.nistP256 now activeUntil
+            let p384 = persistedKey ECCurve.NamedCurves.nistP384 now activeUntil
+            let p521 = persistedKey ECCurve.NamedCurves.nistP521 now activeUntil
+            let malformed = { valid with KeyId = "malformed-pkcs8"; PrivateKeyPkcs8 = [| 1uy; 2uy; 3uy |] }
+
+            for invalid in [| p384; p521; malformed |] do
+                let durable = persistedRing [| valid; invalid |]
+                let publicationState = FakePersistentState(durable, true)
+                let issuanceState = FakePersistentState(durable, true)
+                let publicationStore = store publicationState
+                let issuanceStore = store issuanceState
+
+                Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> publicationStore.PublishValidationKeys(now) :> Task))
+                |> ignore
+
+                Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> issuanceStore.IssueGrant(issueRequest (), now) :> Task))
+                |> ignore
+
+                Assert.That(publicationState.WriteCount, Is.EqualTo 0)
+                Assert.That(issuanceState.WriteCount, Is.EqualTo 0)
+                Assert.That(publicationState.State, Is.SameAs durable)
+                Assert.That(issuanceState.State, Is.SameAs durable)
         }
 
     [<Test>]
