@@ -329,6 +329,7 @@ module ArtifactGrant =
             false
         else
             let keys = keySet.Keys |> Seq.toArray
+            let canonicalLifetime = ArtifactGrantContract.SigningKeyActiveLifetime.Plus ArtifactGrantContract.MaximumAcceptedGrantTtl
 
             let structurallyValid =
                 keys
@@ -338,7 +339,7 @@ module ArtifactGrant =
                     && not (String.IsNullOrWhiteSpace key.KeyId)
                     && key.Algorithm = ArtifactGrantContract.Algorithm
                     && key.CreatedAt = key.NotBefore
-                    && key.ExpiresAt > key.NotBefore
+                    && key.ExpiresAt - key.NotBefore = canonicalLifetime
                     && not (String.IsNullOrWhiteSpace key.PublicKeyX)
                     && not (String.IsNullOrWhiteSpace key.PublicKeyY)
                     && match tryCreateVerifier key with
@@ -442,6 +443,8 @@ module ArtifactGrant =
         elif String.IsNullOrWhiteSpace grant.Payload.HolderKeyThumbprint then
             Error MissingHolderKeyBinding
         elif grant.Payload.NotBefore <> grant.Payload.IssuedAt then
+            Error GrantTtlTooLong
+        elif grant.Payload.ExpiresAt <= grant.Payload.IssuedAt then
             Error GrantTtlTooLong
         elif isBeyondFutureTolerance now grant.Payload.NotBefore clockTolerance then
             Error GrantNotYetValid

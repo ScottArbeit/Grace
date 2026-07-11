@@ -24,6 +24,9 @@ type ArtifactGrantValidationTests() =
     let artifactIdentity = "GraceZipFiles/11111111-1111-1111-1111-111111111111.zip"
     let otherArtifactIdentity = "11111111-1111-1111-1111-111111111111.msgpack"
 
+    /// Matches the complete actor-published public validation-key window.
+    let canonicalValidationKeyLifetime = ArtifactGrantContract.SigningKeyActiveLifetime.Plus ArtifactGrantContract.MaximumAcceptedGrantTtl
+
     /// Creates a deterministic validation request for the cache-mode artifact test surface.
     let validationRequest () =
         ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
@@ -71,7 +74,8 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``valid grant is accepted for intended cache target root execution mode and artifact``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
 
@@ -100,7 +104,8 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``low-level signed grant validator rejects direct mode payloads``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrantForMode "key-1" key MaterializationExecutionMode.Direct now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
         let request = ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity)
@@ -110,7 +115,8 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``unsigned and malformed grants fail closed``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
 
@@ -129,8 +135,9 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``wrong cache root execution mode artifact and signature are rejected``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
-        let wrongKey, _ = signingKey "wrong" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
+        let wrongKey, _ = signingKey "wrong" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         use wrongKey = wrongKey
         let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
@@ -164,18 +171,36 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``expired grant excessive ttl and expired key are rejected``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
 
         let expiredGrant = signedGrant "key-1" key (now.Minus(Duration.FromMinutes 10L)) ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
 
         let longTtlGrant = signedGrant "key-1" key now (ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus(Duration.FromTicks 1L)) [ artifactIdentity ]
 
-        let boundaryKey: ArtifactGrantValidationKey = { validationKey with ExpiresAt = now.Minus ArtifactGrantContract.MaximumProofClockSkew }
+        let boundaryExpiresAt = now.Minus ArtifactGrantContract.MaximumProofClockSkew
 
-        let insideBoundaryKey: ArtifactGrantValidationKey = { boundaryKey with ExpiresAt = boundaryKey.ExpiresAt.Plus(Duration.FromTicks 1L) }
+        let boundaryKey: ArtifactGrantValidationKey =
+            { validationKey with
+                CreatedAt = boundaryExpiresAt.Minus canonicalValidationKeyLifetime
+                NotBefore = boundaryExpiresAt.Minus canonicalValidationKeyLifetime
+                ExpiresAt = boundaryExpiresAt
+            }
 
-        let expiredKey: ArtifactGrantValidationKey = { boundaryKey with ExpiresAt = boundaryKey.ExpiresAt.Minus(Duration.FromTicks 1L) }
+        let insideBoundaryKey: ArtifactGrantValidationKey =
+            { boundaryKey with
+                CreatedAt = boundaryKey.CreatedAt.Plus(Duration.FromTicks 1L)
+                NotBefore = boundaryKey.NotBefore.Plus(Duration.FromTicks 1L)
+                ExpiresAt = boundaryKey.ExpiresAt.Plus(Duration.FromTicks 1L)
+            }
+
+        let expiredKey: ArtifactGrantValidationKey =
+            { boundaryKey with
+                CreatedAt = boundaryKey.CreatedAt.Minus(Duration.FromTicks 1L)
+                NotBefore = boundaryKey.NotBefore.Minus(Duration.FromTicks 1L)
+                ExpiresAt = boundaryKey.ExpiresAt.Minus(Duration.FromTicks 1L)
+            }
 
         validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) expiredGrant
         |> assertError ExpiredGrant
@@ -201,7 +226,8 @@ type ArtifactGrantValidationTests() =
     member _.``grant and validation key clock tolerance is symmetric without extending declared grant ttl``() =
         let tolerance = ArtifactGrantContract.MaximumProofClockSkew
         let precisionStep = Duration.FromMilliseconds 1L
-        let key, validationKey = signingKey "key-1" (now.Plus tolerance) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Plus tolerance
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
 
         let insideFutureGrant =
@@ -211,7 +237,11 @@ type ArtifactGrantValidationTests() =
 
         validateWithKeySet
             now
-            (keySet [ { validationKey with CreatedAt = validationKey.CreatedAt.Minus precisionStep; NotBefore = validationKey.NotBefore.Minus precisionStep } ])
+            (keySet [ { validationKey with
+                          CreatedAt = validationKey.CreatedAt.Minus precisionStep
+                          NotBefore = validationKey.NotBefore.Minus precisionStep
+                          ExpiresAt = validationKey.ExpiresAt.Minus precisionStep
+                      } ])
             (validationRequest ())
             insideFutureGrant
         |> assertOk
@@ -219,7 +249,12 @@ type ArtifactGrantValidationTests() =
         validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) futureGrant
         |> assertOk
 
-        let tooFutureKey = { validationKey with CreatedAt = validationKey.CreatedAt.Plus precisionStep; NotBefore = validationKey.NotBefore.Plus precisionStep }
+        let tooFutureKey =
+            { validationKey with
+                CreatedAt = validationKey.CreatedAt.Plus precisionStep
+                NotBefore = validationKey.NotBefore.Plus precisionStep
+                ExpiresAt = validationKey.ExpiresAt.Plus precisionStep
+            }
 
         validateWithKeySet now (keySet [ tooFutureKey ]) (validationRequest ()) futureGrant
         |> assertError ValidationKeyNotYetValid
@@ -247,14 +282,28 @@ type ArtifactGrantValidationTests() =
 
         validateWithKeySet
             now
-            (keySet [ { validationKey with CreatedAt = now.Minus(Duration.FromHours 1); NotBefore = now.Minus(Duration.FromHours 1) } ])
+            (keySet [ { validationKey with
+                          CreatedAt = now.Minus(Duration.FromHours 1)
+                          NotBefore = now.Minus(Duration.FromHours 1)
+                          ExpiresAt =
+                              now
+                                  .Minus(Duration.FromHours 1)
+                                  .Plus canonicalValidationKeyLifetime
+                      } ])
             (validationRequest ())
             expiredJustInside
         |> assertOk
 
         validateWithKeySet
             now
-            (keySet [ { validationKey with CreatedAt = now.Minus(Duration.FromHours 1); NotBefore = now.Minus(Duration.FromHours 1) } ])
+            (keySet [ { validationKey with
+                          CreatedAt = now.Minus(Duration.FromHours 1)
+                          NotBefore = now.Minus(Duration.FromHours 1)
+                          ExpiresAt =
+                              now
+                                  .Minus(Duration.FromHours 1)
+                                  .Plus canonicalValidationKeyLifetime
+                      } ])
             (validationRequest ())
             expiredAtBoundary
         |> assertOk
@@ -267,7 +316,8 @@ type ArtifactGrantValidationTests() =
     [<Test>]
     member _.``signed grant start must equal issuance while ttl boundaries remain independent of clock tolerance``() =
         let precisionStep = Duration.FromMilliseconds 1L
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let valid = signedGrant "key-1" key now ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
 
@@ -290,8 +340,84 @@ type ArtifactGrantValidationTests() =
         |> assertError GrantTtlTooLong
 
     [<Test>]
+    member _.``signed grant lifetime must be positive before clock tolerance admission``() =
+        let precisionStep = Duration.FromMilliseconds 1L
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
+        use key = key
+
+        let maximum = signedGrant "key-1" key now ArtifactGrantContract.MaximumAcceptedGrantTtl [ artifactIdentity ]
+
+        /// Re-signs the canonical grant with one adversarial declared expiry.
+        let resign expiresAt = GrantCrypto.sign key maximum.Header { maximum.Payload with ExpiresAt = expiresAt }
+
+        let positive = resign (maximum.Payload.IssuedAt.Plus precisionStep)
+        let zero = resign maximum.Payload.IssuedAt
+        let negative = resign (maximum.Payload.IssuedAt.Minus precisionStep)
+        let overMaximum = resign (maximum.Payload.IssuedAt.Plus(ArtifactGrantContract.MaximumAcceptedGrantTtl.Plus precisionStep))
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) positive
+        |> assertOk
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) maximum
+        |> assertOk
+
+        for invalid in [ zero; negative; overMaximum ] do
+            validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) invalid
+            |> assertError GrantTtlTooLong
+
+    [<Test>]
+    member _.``validation key publications require the exact canonical public lifetime``() =
+        let precisionStep = Duration.FromMilliseconds 1L
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
+        use key = key
+        let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
+
+        validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) grant
+        |> assertOk
+
+        let malformedKeys =
+            [
+                { validationKey with ExpiresAt = validationKey.ExpiresAt.Minus precisionStep }
+                { validationKey with ExpiresAt = validationKey.ExpiresAt.Plus precisionStep }
+                { validationKey with ExpiresAt = validationKey.NotBefore }
+                { validationKey with ExpiresAt = validationKey.NotBefore.Minus precisionStep }
+                { validationKey with NotBefore = Instant.MinValue; CreatedAt = Instant.MinValue; ExpiresAt = Instant.MaxValue }
+            ]
+
+        malformedKeys
+        |> List.iter (fun malformed ->
+            validateWithKeySet now (keySet [ malformed ]) (validationRequest ()) grant
+            |> assertError InvalidValidationKeySet)
+
+    [<Test>]
+    member _.``mixed malformed validation key publication fails before lookup and refresh``() =
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "published-key" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
+        use key = key
+        let unknownGrant = signedGrant "unknown-key" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
+
+        let malformedKey = { validationKey with KeyId = "malformed-key"; ExpiresAt = validationKey.ExpiresAt.Plus(Duration.FromMilliseconds 1L) }
+
+        let mutable refreshCount = 0
+
+        validateWithRefresh
+            now
+            (fun _ ->
+                refreshCount <- refreshCount + 1
+                RefreshSkipped)
+            (keySet [ validationKey; malformedKey ])
+            (validationRequest ())
+            unknownGrant
+        |> assertError InvalidValidationKeySet
+
+        Assert.That(refreshCount, Is.Zero)
+
+    [<Test>]
     member _.``malformed validation key sets fail closed with their typed contract``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
         let nullKey = Unchecked.defaultof<ArtifactGrantValidationKey>
@@ -326,7 +452,8 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``grant validation entry points are total over null and malformed runtime shapes``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
         let keys = keySet [ validationKey ]
@@ -372,8 +499,10 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``current and overlap keys validate until old validation key expiry``() =
-        let oldKey, oldValidationKey = signingKey "old-key" (now.Minus(Duration.FromHours 2)) (now.Plus(Duration.FromMinutes 1L))
-        let newKey, newValidationKey = signingKey "new-key" now (now.Plus(Duration.FromHours 2))
+        let oldExpiresAt = now.Plus(Duration.FromMinutes 1L)
+        let oldNotBefore = oldExpiresAt.Minus canonicalValidationKeyLifetime
+        let oldKey, oldValidationKey = signingKey "old-key" oldNotBefore oldExpiresAt
+        let newKey, newValidationKey = signingKey "new-key" now (now.Plus canonicalValidationKeyLifetime)
         use oldKey = oldKey
         use newKey = newKey
 
@@ -397,7 +526,8 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``unknown key refresh is attempted once and then fails closed when still unknown``() =
-        let key, _ = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, _ = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
         let mutable refreshCount = 0
@@ -417,7 +547,8 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``unknown key refresh can validate when refreshed publication contains the key``() =
-        let key, validationKey = signingKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1))
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
         let mutable refreshCount = 0
@@ -454,7 +585,16 @@ type ArtifactRequestProofValidationTests() =
     /// Creates a requester- and holder-bound grant plus its validation publication.
     let grantForHolder (holderPublicKey: ArtifactGrantHolderPublicKey) =
         let signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
-        let validationKey = GrantCrypto.exportValidationKey "key-1" (now.Minus(Duration.FromHours 1)) (now.Plus(Duration.FromHours 1)) signingKey
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+
+        let validationKey =
+            GrantCrypto.exportValidationKey
+                "key-1"
+                keyNotBefore
+                (keyNotBefore
+                    .Plus(ArtifactGrantContract.SigningKeyActiveLifetime)
+                    .Plus ArtifactGrantContract.MaximumAcceptedGrantTtl)
+                signingKey
 
         let payload =
             ArtifactGrantPayload.Create(
