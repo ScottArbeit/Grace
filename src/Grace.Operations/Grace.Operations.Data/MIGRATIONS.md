@@ -86,5 +86,33 @@ period. The rebuild reads compact `RawUsageFact` index columns, so archived fact
 empty and Blob rehydration is neither performed nor required. Complete pricing is selected at each fact's observed
 timestamp, quantities are summed per applicability segment, and each line is rounded once to whole currency micros.
 
-This leaf intentionally adds no timer, schedule, billing-period state, close operation, HTTP route, or ledger posting.
-Missing pricing fails the rebuild and leaves the previously committed complete preview unchanged.
+Missing pricing fails a standalone rebuild and leaves the previously committed complete preview unchanged.
+
+## Billing Period Close And Immutable Ledger
+
+The Operations worker materializes one UTC calendar-month billing period for each overlapping customer pricing
+assignment, including assignments with zero accepted usage. Periods remain Open through the 24-hour lateness window,
+become Provisional at exactly `PeriodToUtc + 24 hours`, and become eligible for close at exactly
+`PeriodToUtc + 72 hours`. One hosted worker runs immediately after startup and every 30 minutes; SQL period state and
+transaction-owned application locks, rather than the process timer, remain authoritative across restarts and
+concurrent worker instances.
+
+Close uses the same complete customer, owner, organization, repository, and period lock identity as preview rebuild.
+Inside one serializable transaction it re-reads lifecycle and scoped unresolved ingestion evidence, computes durable
+SHA-256 digests over accepted facts and every selected assignment, plan, mapping, and rate field, and reuses a saved
+preview only when both persisted digests match. Missing or mismatched evidence rebuilds the preview before immutable
+ledger entries and Closed state commit together. Zero-usage periods close with zero ledger rows.
+
+`ops.ChargeLedgerEntry` is append-only. SQL rejects every update or delete, initial charge identity is unique per
+period and preview line, and correction identity is unique per period, correlation, kind, pricing grain, and prior
+entry. Ledger rows retain complete historical pricing identity, applicability, signed quantity, signed whole-micro
+charge, currency, unit, and provenance. Currencies are never combined into a period-wide total.
+
+Late accepted facts resolve matching active ingestion evidence and insert idempotent `ops.BillingCorrectionWork` in
+the same usage transaction. Correction processing takes the period lock, rebuilds expected charges using historical
+effective pricing, appends only signed deltas, marks the first changed period Corrected, and completes the work item in
+one transaction. Corrected is terminal and accepts further append-only corrections.
+
+The billing domain stores only bounded current close diagnostics on `ops.BillingPeriod`. Attempt history remains in
+operational logs. There is no close-attempt history table, no force-close bypass, and no dependency on raw archive,
+provider-cost reconciliation, external invoicing, HTTP routes, CLI, SDK, or the general Operations audit subsystem.

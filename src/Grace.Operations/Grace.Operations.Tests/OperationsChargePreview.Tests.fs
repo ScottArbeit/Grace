@@ -339,12 +339,12 @@ type OperationsChargePreviewTests() =
             Assert.That(snapshotModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
             Assert.That(targetModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
-            Assert.That((migrationShape = snapshotShape), Is.True)
+            Assert.That(Set.isSubset migrationShape snapshotShape, Is.True)
 
             Assert.That(
-                (migrationShape = runtimeShape),
+                (snapshotShape = runtimeShape),
                 Is.True,
-                $"Migration-only: {Set.difference migrationShape runtimeShape}; runtime-only: {Set.difference runtimeShape migrationShape}"
+                $"Snapshot-only: {Set.difference snapshotShape runtimeShape}; runtime-only: {Set.difference runtimeShape snapshotShape}"
             )
 
             Assert.That(

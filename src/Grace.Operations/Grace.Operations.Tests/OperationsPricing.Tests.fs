@@ -436,7 +436,17 @@ type OperationsPricingTests() =
     /// Verifies the migration script creates pricing tables and overlap rejection instead of relying on query tie-breaks.
     [<Test>]
     member _.PricingMigrationScriptContainsEffectiveDatingTablesAndOverlapRejection() =
-        let script = migrationScript ()
+        use context =
+            OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsPricingMigrationScript;Integrated Security=true;"
+
+        let script =
+            context
+                .GetService<IMigrator>()
+                .GenerateScript(
+                    "20260709090000_AddRawUsageFactRehydrationExpiryIndex",
+                    "20260709110000_AddPricingPlanRateAssignment",
+                    MigrationsSqlGenerationOptions.Idempotent
+                )
 
         let lockHintCount =
             script

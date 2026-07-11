@@ -140,6 +140,10 @@ type private InMemoryOperationsUsageTransactionScope() =
 
                                 aggregates[aggregate.Key] <- current + aggregate.Quantity
                                 Task.CompletedTask
+
+                        member _.RecordAcceptedFactBillingEffectsAsync(_rawFact, billingCancellationToken) =
+                            billingCancellationToken.ThrowIfCancellationRequested()
+                            Task.CompletedTask
                     }
 
                 let! result = operation transaction cancellationToken
@@ -457,7 +461,7 @@ type OperationsUsageStorageTests() =
     /// Verifies partitioning is limited to current Operations tables and keeps local SQL Server testability.
     [<Test>]
     member _.MonthlyPartitioningMigrationStaysInsideCurrentUsageTables() =
-        let script = migrationScript ()
+        let script = migrationScriptFromTo "20260707000000_AddRawUsageFactPayload" "20260707120000_AddOperationsMonthlyPartitioning"
 
         Assert.Multiple(
             Action (fun () ->

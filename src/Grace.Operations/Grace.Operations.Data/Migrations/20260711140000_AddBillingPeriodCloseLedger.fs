@@ -2,17 +2,101 @@ namespace Grace.Operations.Data.Migrations
 
 open Grace.Operations.Data
 open Microsoft.EntityFrameworkCore
-open Microsoft.EntityFrameworkCore.Infrastructure
+open Microsoft.EntityFrameworkCore.Migrations
 open Microsoft.EntityFrameworkCore.Metadata.Builders
 open System
 
-/// Captures the current Operations EF model so future migrations can detect reviewed schema drift.
-[<DbContextAttribute(typeof<OperationsDbContext>)>]
-type OperationsDbContextModelSnapshot() =
-    inherit ModelSnapshot()
+/// Adds UTC billing lifecycle, durable preview freshness, immutable ledger, scoped failures, and correction delivery.
+[<Microsoft.EntityFrameworkCore.Infrastructure.DbContextAttribute(typeof<OperationsDbContext>)>]
+[<Migration("20260711140000_AddBillingPeriodCloseLedger")>]
+type AddBillingPeriodCloseLedger() =
+    inherit Migration()
 
-    /// Rebuilds the Operations model represented by the latest migration.
-    override _.BuildModel(modelBuilder: ModelBuilder) =
+    /// Applies billing close persistence and SQL-enforced historical immutability.
+    override _.Up(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.Sql(
+            """
+
+CREATE TABLE ops.BillingPeriod (
+ BillingPeriodId uniqueidentifier NOT NULL, CustomerId uniqueidentifier NOT NULL, OwnerId uniqueidentifier NOT NULL,
+ OrganizationId uniqueidentifier NOT NULL, RepositoryId uniqueidentifier NOT NULL, PeriodFromUtc datetime2(7) NOT NULL,
+ PeriodToUtc datetime2(7) NOT NULL, State int NOT NULL, CloseBlockedCode nvarchar(64) NULL,
+ CloseBlockedDetail nvarchar(1024) NULL, LastCloseAttemptAtUtc datetime2(7) NULL,
+ ConsecutiveCloseFailureCount int NOT NULL CONSTRAINT DF_ops_BillingPeriod_FailureCount DEFAULT 0,
+ ClosedAtUtc datetime2(7) NULL, CloseInitiatedByPrincipalId nvarchar(256) NULL, CloseReasonCode nvarchar(64) NULL,
+ CloseReasonText nvarchar(1024) NULL, CloseCorrelationId nvarchar(128) NULL,
+ CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingPeriod_Created DEFAULT SYSUTCDATETIME(),
+ CONSTRAINT PK_ops_BillingPeriod PRIMARY KEY (BillingPeriodId),
+ CONSTRAINT CK_ops_BillingPeriod_Range CHECK (PeriodFromUtc < PeriodToUtc),
+ CONSTRAINT CK_ops_BillingPeriod_State CHECK (State BETWEEN 0 AND 3),
+ CONSTRAINT CK_ops_BillingPeriod_FailureCount CHECK (ConsecutiveCloseFailureCount >= 0));
+CREATE UNIQUE INDEX UX_ops_BillingPeriod_ScopeMonth ON ops.BillingPeriod(CustomerId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc);
+CREATE INDEX IX_ops_BillingPeriod_StatePeriodTo ON ops.BillingPeriod(State,PeriodToUtc);
+
+CREATE TABLE ops.ChargePreviewFreshness (
+ BillingPeriodId uniqueidentifier NOT NULL, AcceptedFactsDigest char(64) NOT NULL, PricingDigest char(64) NOT NULL,
+ PreviewCommittedAtUtc datetime2(7) NOT NULL, CONSTRAINT PK_ops_ChargePreviewFreshness PRIMARY KEY (BillingPeriodId),
+ CONSTRAINT FK_ops_ChargePreviewFreshness_BillingPeriod FOREIGN KEY(BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId) ON DELETE CASCADE);
+
+CREATE TABLE ops.ChargeLedgerEntry (
+ ChargeLedgerEntryId uniqueidentifier NOT NULL, BillingPeriodId uniqueidentifier NOT NULL, EntryKind int NOT NULL,
+ SourceChargePreviewLineId uniqueidentifier NULL, PriorChargeLedgerEntryId uniqueidentifier NULL, FactKind int NOT NULL,
+ BillableUsageKindMappingId uniqueidentifier NOT NULL, BillableUsageKind int NOT NULL,
+ CustomerPricingAssignmentId uniqueidentifier NOT NULL, PricingPlanId uniqueidentifier NOT NULL, PricingRateId uniqueidentifier NOT NULL,
+ CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL, UnitName nvarchar(64) NOT NULL,
+ UnitQuantity bigint NOT NULL, UnitPriceMicros bigint NOT NULL, EffectiveFromUtc datetime2(7) NOT NULL,
+ EffectiveToUtc datetime2(7) NOT NULL, Quantity bigint NOT NULL, ChargeMicros bigint NOT NULL,
+ InitiatedByPrincipalId nvarchar(256) NOT NULL, ReasonCode nvarchar(64) NOT NULL, ReasonText nvarchar(1024) NOT NULL,
+ CorrelationId nvarchar(128) NOT NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_ChargeLedgerEntry_Created DEFAULT SYSUTCDATETIME(),
+ CONSTRAINT PK_ops_ChargeLedgerEntry PRIMARY KEY(ChargeLedgerEntryId),
+ CONSTRAINT FK_ops_ChargeLedgerEntry_BillingPeriod FOREIGN KEY(BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId),
+ CONSTRAINT FK_ops_ChargeLedgerEntry_ChargePreviewLine FOREIGN KEY(SourceChargePreviewLineId) REFERENCES ops.ChargePreviewLine(ChargePreviewLineId),
+ CONSTRAINT FK_ops_ChargeLedgerEntry_Prior FOREIGN KEY(PriorChargeLedgerEntryId) REFERENCES ops.ChargeLedgerEntry(ChargeLedgerEntryId),
+ CONSTRAINT CK_ops_ChargeLedgerEntry_Kind CHECK (EntryKind BETWEEN 0 AND 2),
+ CONSTRAINT CK_ops_ChargeLedgerEntry_Currency CHECK (LEN(CurrencyCode)=3 AND CurrencyCode=UPPER(CurrencyCode) AND CurrencyCode NOT LIKE '%[^A-Z]%'),
+ CONSTRAINT CK_ops_ChargeLedgerEntry_ChargeSource CHECK ((EntryKind=0 AND SourceChargePreviewLineId IS NOT NULL AND PriorChargeLedgerEntryId IS NULL) OR (EntryKind IN (1,2) AND SourceChargePreviewLineId IS NULL)));
+CREATE UNIQUE INDEX UX_ops_ChargeLedgerEntry_Initial ON ops.ChargeLedgerEntry(BillingPeriodId,EntryKind,SourceChargePreviewLineId) WHERE SourceChargePreviewLineId IS NOT NULL;
+CREATE UNIQUE INDEX UX_ops_ChargeLedgerEntry_Correction ON ops.ChargeLedgerEntry(BillingPeriodId,CorrelationId,EntryKind,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,PriorChargeLedgerEntryId) WHERE SourceChargePreviewLineId IS NULL;
+CREATE INDEX IX_ChargeLedgerEntry_SourceChargePreviewLineId ON ops.ChargeLedgerEntry(SourceChargePreviewLineId);
+CREATE INDEX IX_ChargeLedgerEntry_PriorChargeLedgerEntryId ON ops.ChargeLedgerEntry(PriorChargeLedgerEntryId);
+
+CREATE TABLE ops.BillingIngestionFailure (
+ BillingIngestionFailureId uniqueidentifier NOT NULL, UsageFactId uniqueidentifier NULL, CustomerId uniqueidentifier NULL,
+ OwnerId uniqueidentifier NULL, OrganizationId uniqueidentifier NULL, RepositoryId uniqueidentifier NULL, ObservedAtUtc datetime2(7) NULL,
+ FailureCode nvarchar(64) NOT NULL, FailureDetail nvarchar(1024) NOT NULL,
+ CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingIngestionFailure_Created DEFAULT SYSUTCDATETIME(),
+ ResolvedAtUtc datetime2(7) NULL, ResolvedByPrincipalId nvarchar(256) NULL, ResolutionReasonCode nvarchar(64) NULL,
+ ResolutionReasonText nvarchar(1024) NULL, ResolutionCorrelationId nvarchar(128) NULL,
+ CONSTRAINT PK_ops_BillingIngestionFailure PRIMARY KEY(BillingIngestionFailureId));
+CREATE UNIQUE INDEX UX_ops_BillingIngestionFailure_ActiveFact ON ops.BillingIngestionFailure(UsageFactId) WHERE UsageFactId IS NOT NULL AND ResolvedAtUtc IS NULL;
+CREATE INDEX IX_ops_BillingIngestionFailure_ActiveScope ON ops.BillingIngestionFailure(CustomerId,OwnerId,OrganizationId,RepositoryId,ObservedAtUtc) WHERE ResolvedAtUtc IS NULL;
+
+CREATE TABLE ops.BillingCorrectionWork (
+ BillingCorrectionWorkId uniqueidentifier NOT NULL, BillingPeriodId uniqueidentifier NOT NULL, UsageFactId uniqueidentifier NOT NULL,
+ CorrelationId nvarchar(128) NOT NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingCorrectionWork_Created DEFAULT SYSUTCDATETIME(),
+ CompletedAtUtc datetime2(7) NULL, CONSTRAINT PK_ops_BillingCorrectionWork PRIMARY KEY(BillingCorrectionWorkId),
+ CONSTRAINT FK_ops_BillingCorrectionWork_BillingPeriod FOREIGN KEY(BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId));
+CREATE UNIQUE INDEX UX_ops_BillingCorrectionWork_PeriodFact ON ops.BillingCorrectionWork(BillingPeriodId,UsageFactId);
+CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(CompletedAtUtc,CreatedAtUtc);
+
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_ChargeLedgerEntry_Immutable ON ops.ChargeLedgerEntry INSTEAD OF UPDATE, DELETE AS BEGIN SET NOCOUNT ON; THROW 51020, ''Posted charge ledger entries are immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_PricingRate_HistoricalProtection ON ops.PricingRate AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.ChargeLedgerEntry l ON l.PricingRateId=d.PricingRateId JOIN ops.BillingPeriod p ON p.BillingPeriodId=l.BillingPeriodId WHERE p.State IN(2,3)) THROW 51021, ''Historical pricing referenced by a closed billing period is immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_PricingPlan_HistoricalProtection ON ops.PricingPlan AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.ChargeLedgerEntry l ON l.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.BillingPeriodId=l.BillingPeriodId WHERE p.State IN(2,3)) THROW 51022, ''Historical pricing plan is immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_BillableUsageKindMapping_HistoricalProtection ON ops.BillableUsageKindMapping AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.ChargeLedgerEntry l ON l.BillableUsageKindMappingId=d.BillableUsageKindMappingId JOIN ops.BillingPeriod p ON p.BillingPeriodId=l.BillingPeriodId WHERE p.State IN(2,3)) THROW 51023, ''Historical billable mapping is immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalProtection ON ops.CustomerPricingAssignment AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.ChargeLedgerEntry l ON l.CustomerPricingAssignmentId=d.CustomerPricingAssignmentId JOIN ops.BillingPeriod p ON p.BillingPeriodId=l.BillingPeriodId WHERE p.State IN(2,3)) THROW 51024, ''Historical customer pricing assignment is immutable.'', 1; END;');
+"""
+        )
+        |> ignore
+
+    /// Removes billing close persistence in reverse dependency order.
+    override _.Down(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.Sql(
+            "DROP TRIGGER IF EXISTS ops.TR_ops_CustomerPricingAssignment_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable; DROP TABLE ops.BillingCorrectionWork; DROP TABLE ops.BillingIngestionFailure; DROP TABLE ops.ChargeLedgerEntry; DROP TABLE ops.ChargePreviewFreshness; DROP TABLE ops.BillingPeriod;"
+        )
+        |> ignore
+
+    /// Captures the complete independently literal Operations model represented by this migration.
+    override _.BuildTargetModel(modelBuilder: ModelBuilder) =
         modelBuilder.HasAnnotation("ProductVersion", "10.0.9")
         |> ignore
 

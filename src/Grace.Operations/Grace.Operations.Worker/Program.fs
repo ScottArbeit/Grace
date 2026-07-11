@@ -61,6 +61,13 @@ module Program =
         services.AddSingleton<IChargePreviewRebuilder>(fun _ -> SqlChargePreviewRebuilder(settings.SqlConnectionString) :> IChargePreviewRebuilder)
         |> ignore
 
+        services.AddSingleton<IBillingPeriodService>(fun _ -> SqlBillingPeriodService(settings.SqlConnectionString) :> IBillingPeriodService)
+        |> ignore
+
+        services.AddSingleton<IBillingIngestionFailureRecorder> (fun _ ->
+            SqlBillingIngestionFailureRecorder(settings.SqlConnectionString) :> IBillingIngestionFailureRecorder)
+        |> ignore
+
         services.AddSingleton<OperationsUsageIngestionProcessor>()
         |> ignore
 
@@ -76,6 +83,9 @@ module Program =
         |> ignore
 
         services.AddHostedService<OperationsUsageTemporaryHotCleanupWorkerService>()
+        |> ignore
+
+        services.AddHostedService<OperationsBillingWorkerService>()
         |> ignore
 
         match archiveSettings with

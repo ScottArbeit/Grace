@@ -554,6 +554,9 @@ type IOperationsUsageTransaction =
     /// Adds the accepted raw fact quantity to the derived minute aggregate.
     abstract AddToUsageAggregateMinuteAsync: aggregate: UsageAggregateMinute * cancellationToken: CancellationToken -> Task
 
+    /// Resolves exact active failure evidence and creates idempotent correction work for affected closed periods.
+    abstract RecordAcceptedFactBillingEffectsAsync: rawFact: RawUsageFact * cancellationToken: CancellationToken -> Task
+
 /// Runs operations usage mutations inside one storage transaction boundary.
 type IOperationsUsageTransactionScope =
 
@@ -657,6 +660,43 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
             task {
                 use command = createCommand OperationsUsageSql.AddToUsageAggregateMinute
                 addUsageAggregateMinuteParameters command aggregate
+                let! _ = command.ExecuteNonQueryAsync cancellationToken
+                return ()
+            }
+
+        member _.RecordAcceptedFactBillingEffectsAsync(rawFact, cancellationToken) =
+            task {
+                use command =
+                    createCommand
+                        """
+UPDATE ops.BillingIngestionFailure
+SET ResolvedAtUtc=SYSUTCDATETIME(), ResolvedByPrincipalId=N'Grace.Operations',
+    ResolutionReasonCode=N'AcceptedUsageFact', ResolutionReasonText=N'Exact usage fact accepted.',
+    ResolutionCorrelationId=@CorrelationId
+WHERE UsageFactId=@UsageFactId AND ResolvedAtUtc IS NULL;
+
+INSERT INTO ops.BillingCorrectionWork
+    (BillingCorrectionWorkId,BillingPeriodId,UsageFactId,CorrelationId,CreatedAtUtc)
+SELECT NEWID(), period.BillingPeriodId, @UsageFactId, @CorrelationId, SYSUTCDATETIME()
+FROM ops.CustomerPricingAssignment assignment
+JOIN ops.BillingPeriod period
+  ON period.CustomerId=assignment.CustomerId
+ AND period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId
+ AND @ObservedAtUtc >= period.PeriodFromUtc AND @ObservedAtUtc < period.PeriodToUtc
+WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
+  AND @ObservedAtUtc >= assignment.EffectiveFromUtc
+  AND (assignment.EffectiveToUtc IS NULL OR @ObservedAtUtc < assignment.EffectiveToUtc)
+  AND period.State IN (2,3)
+  AND NOT EXISTS (SELECT 1 FROM ops.BillingCorrectionWork existing
+                  WHERE existing.BillingPeriodId=period.BillingPeriodId AND existing.UsageFactId=@UsageFactId);
+"""
+
+                addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+                addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
+                addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
+                addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
+                addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
+                addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
                 let! _ = command.ExecuteNonQueryAsync cancellationToken
                 return ()
             }
@@ -1475,6 +1515,7 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
                         if accepted then
                             do! transaction.AddToUsageAggregateMinuteAsync(plan.Aggregate, operationCancellationToken)
+                            do! transaction.RecordAcceptedFactBillingEffectsAsync(plan.RawFact, operationCancellationToken)
 
                             return { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = plan.RawFact.UsageFactId; Aggregate = Some plan.Aggregate }
                         else
@@ -1500,6 +1541,7 @@ type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
                             if accepted then
                                 do! transaction.AddToUsageAggregateMinuteAsync(plan.Aggregate, operationCancellationToken)
+                                do! transaction.RecordAcceptedFactBillingEffectsAsync(plan.RawFact, operationCancellationToken)
 
                                 return { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = plan.RawFact.UsageFactId; Aggregate = Some plan.Aggregate }
                             else
