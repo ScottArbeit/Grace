@@ -1644,12 +1644,28 @@ module OperationsWorkerSettings =
                     PrefetchCount = prefetchCount
                 }
 
-/// Handles one usage fact message through validation, SQL persistence, and explicit Service Bus settlement.
+/// Provides no-op billing dependencies for focused ingestion tests that do not configure the Operations billing store.
+type private NoOpBillingIngestionFailureRecorder() =
+    interface IBillingIngestionFailureRecorder with
+        member _.RecordFailureAsync(_usageFactId, _ownerId, _organizationId, _repositoryId, _observedAtUtc, _correlationId, _failureCode, _detail, _cancellationToken) = Task.CompletedTask
+        member _.ResolveFailureAsync(_usageFactId, _resolutionDetail, _cancellationToken) = Task.CompletedTask
+
+/// Provides no-op late-fact handling for focused ingestion tests.
+type private NoOpBillingPeriodService() =
+    interface IBillingPeriodService with
+        member _.RunAsync(_nowUtc, _cancellationToken) = Task.CompletedTask
+        member _.RetryCloseAsync(_scope, _nowUtc, _provenance, _cancellationToken) = Task.FromResult(BillingCloseOutcome.NotEligible)
+        member _.ApplyManualCorrectionAsync(_correction, _provenance, _cancellationToken) = Task.CompletedTask
+        member _.RecordAcceptedLateFactAsync(_ownerId, _organizationId, _repositoryId, _observedAtUtc, _usageFactId, _cancellationToken) = Task.CompletedTask
+
+/// Handles one usage fact message through validation, SQL persistence, billing evidence, and explicit Service Bus settlement.
 type OperationsUsageIngestionProcessor
     (
         store: IOperationsUsageFactStore,
         logger: ILogger<OperationsUsageIngestionProcessor>,
-        readiness: IOperationsUsageReadinessRecorder
+        readiness: IOperationsUsageReadinessRecorder,
+        billingFailures: IBillingIngestionFailureRecorder,
+        billingPeriods: IBillingPeriodService
     ) =
 
     /// Reads a string application property without exposing untrusted payload values in logs.
@@ -1766,7 +1782,17 @@ type OperationsUsageIngestionProcessor
         deadLetterAsync readinessAttempt "UnsupportedUsageFactSchema" description actions cancellationToken
 
     /// Builds a processor with an isolated readiness state for tests that only inspect settlement behavior.
-    new(store, logger) = OperationsUsageIngestionProcessor(store, logger, OperationsUsageReadinessState() :> IOperationsUsageReadinessRecorder)
+    new(store, logger, readiness) =
+        OperationsUsageIngestionProcessor(store, logger, readiness, NoOpBillingIngestionFailureRecorder(), NoOpBillingPeriodService())
+
+    new(store, logger) =
+        OperationsUsageIngestionProcessor(
+            store,
+            logger,
+            OperationsUsageReadinessState() :> IOperationsUsageReadinessRecorder,
+            NoOpBillingIngestionFailureRecorder(),
+            NoOpBillingPeriodService()
+        )
 
     /// Processes a usage fact message and settles it only after the durable outcome is known.
     member _.ProcessMessageAsync(message: OperationsUsageMessage, actions: IOperationsUsageMessageActions, cancellationToken: CancellationToken) =
@@ -1829,6 +1855,8 @@ type OperationsUsageIngestionProcessor
                         else
                             match UsageFact.Validate usageFact with
                             | Error errors ->
+                                do! billingFailures.RecordFailureAsync(Some usageFact.UsageFactId, Some usageFact.Scope.OwnerId, Some usageFact.Scope.OrganizationId, Some usageFact.Scope.RepositoryId, Some(usageFact.ObservedAt.ToDateTimeUtc()), string usageFact.CorrelationId, "InvalidUsageFact", "Usage fact failed contract validation.", cancellationToken)
+
                                 logger.LogWarning(
                                     "Dead-lettering invalid UsageFact. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
                                     message.MessageId,
@@ -1844,6 +1872,8 @@ type OperationsUsageIngestionProcessor
 
                                 match stored with
                                 | Error errors ->
+                                    do! billingFailures.RecordFailureAsync(Some usageFact.UsageFactId, Some usageFact.Scope.OwnerId, Some usageFact.Scope.OrganizationId, Some usageFact.Scope.RepositoryId, Some(usageFact.ObservedAt.ToDateTimeUtc()), string usageFact.CorrelationId, "StorageValidation", "Usage fact failed durable storage validation.", cancellationToken)
+
                                     logger.LogWarning(
                                         "Dead-lettering UsageFact rejected by operations storage validation. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
                                         usageFact.UsageFactId,
@@ -1855,6 +1885,9 @@ type OperationsUsageIngestionProcessor
                                     let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
                                     ()
                                 | Ok result ->
+                                    // Existing Closed/Corrected owner-month periods win over current assignment state.
+                                    do! billingPeriods.RecordAcceptedLateFactAsync(usageFact.Scope.OwnerId, usageFact.Scope.OrganizationId, usageFact.Scope.RepositoryId, usageFact.ObservedAt.ToDateTimeUtc(), usageFact.UsageFactId, cancellationToken)
+
                                     logger.LogInformation(
                                         "Processed operational UsageFact. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Status: {Status}; BucketStart: {BucketStart}.",
                                         result.UsageFactId,

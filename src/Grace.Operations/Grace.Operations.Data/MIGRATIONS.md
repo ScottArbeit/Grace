@@ -15,6 +15,34 @@ schema is intentionally narrow:
 The ingestion hot path still uses reviewed raw SQL for the durable insert and aggregate update. That path preserves the
 `UsageFactId` idempotency lock and the aggregate `MERGE ... WITH (HOLDLOCK)` behavior that the worker depends on.
 
+## Owner-Scoped Billing Periods And Immutable Ledger
+
+`20260711140000_AddBillingPeriodCloseLedger` adds the current non-production billing model. A billing period is exactly
+`OwnerId`, `OrganizationId`, `RepositoryId`, and a half-open UTC calendar month. There is no secondary billing identity.
+
+- Periods remain `Open` until 24 hours after the month end, become `Provisional` through the close window, and are eligible
+  for close at 72 hours. The hosted pass runs once at startup and every 30 minutes.
+- Closing uses the exact owner/org/repository/month SQL lock and application-lock resource used by preview replacement.
+  It re-reads state and completeness evidence in a serializable transaction, rebuilds the final preview, writes its fact
+  and pricing digests, posts immutable ledger entries, and commits `Closed` as one transaction. Empty previews may close
+  with explicit zero totals and zero ledger entries.
+- `ChargeLedgerEntry` is append-only. Corrections append signed adjustments or reversals with complete assignment, plan,
+  mapping, rate, unit, effective-window, correlation, and prior-entry provenance. Automatic late-fact work is uniquely
+  identified by period and `UsageFactId`, so repeated delivery is isolated and idempotent.
+- The schema blocks direct `UPDATE` or `DELETE` of ledger entries. Historical pricing plan, usage-kind mapping,
+  assignment, and rate inserts, updates, and deletes are blocked when their half-open effective windows intersect a
+  `Closed` or `Corrected` owner-scoped period, including a zero-usage period. Future-effective pricing remains allowed.
+- Active rejected usage evidence is bounded and scoped by owner/org/repository/month when available. The first active
+  non-empty `UsageFactId` failure is canonical; later conflicting rejects settle without replacing its scope. Acceptance
+  or explicit repair resolves that bounded conflict evidence.
+- Automatic late usage is routed from the existing terminal owner period, not a current assignment. Its durable work is
+  unique by period and `UsageFactId`, posts one isolated adjustment linked to its work and immediately preceding automatic
+  pricing-grain entry, and remains visibly pending when pricing is missing. Manual adjustments and reversals validate
+  their complete owner-scoped pricing grain and any requested predecessor before appending immutable history.
+
+Grace has no production billing data. These migrations describe the current schema only: no compatibility columns,
+views, aliases, backfill, or legacy objects are retained.
+
 ## Hot/Cold Raw Payload Archive
 
 Raw payloads stay hot in SQL only for the configured Operations archive retention window. When archive Blob settings

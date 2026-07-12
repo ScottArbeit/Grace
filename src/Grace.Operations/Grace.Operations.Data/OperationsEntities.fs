@@ -280,3 +280,153 @@ type ChargePreviewLineEntity() =
 
     /// Stores the once-rounded provisional charge in whole currency micros.
     member val ChargeMicros = 0L with get, set
+
+/// Represents one owner-scoped UTC billing month and its bounded close state.
+[<AllowNullLiteral>]
+type BillingPeriodEntity() =
+    /// Stores the deterministic owner scope and month identity.
+    member val BillingPeriodId = Guid.Empty with get, set
+    /// Stores the billed Grace owner.
+    member val OwnerId = Guid.Empty with get, set
+    /// Stores the billed Grace organization.
+    member val OrganizationId = Guid.Empty with get, set
+    /// Stores the billed Grace repository.
+    member val RepositoryId = Guid.Empty with get, set
+    /// Stores the inclusive UTC calendar-month boundary.
+    member val PeriodFromUtc = DateTime.MinValue with get, set
+    /// Stores the exclusive UTC calendar-month boundary.
+    member val PeriodToUtc = DateTime.MinValue with get, set
+    /// Stores the durable lifecycle state.
+    member val State = 0 with get, set
+    /// Stores the current bounded repair blocker code.
+    member val CloseBlockedCode: string = null with get, set
+    /// Stores bounded redacted operator diagnostics for the current blocker.
+    member val CloseBlockedDetail: string = null with get, set
+    /// Stores the most recent close attempt without retaining a close-attempt history.
+    member val LastCloseAttemptAtUtc = Nullable<DateTime>() with get, set
+    /// Stores consecutive failures for current diagnostics only.
+    member val ConsecutiveCloseFailureCount = 0 with get, set
+    /// Stores when immutable initial charges committed.
+    member val ClosedAtUtc = Nullable<DateTime>() with get, set
+    /// Stores close provenance for an operator retry.
+    member val CloseInitiatedByPrincipalId: string = null with get, set
+    /// Stores close reason classification.
+    member val CloseReasonCode: string = null with get, set
+    /// Stores bounded close reason detail.
+    member val CloseReasonText: string = null with get, set
+    /// Stores the accepted correlation identity for the close.
+    member val CloseCorrelationId: string = null with get, set
+    /// Stores the SQL creation time.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+/// Stores source and pricing digests for the preview committed with a billing period.
+[<AllowNullLiteral>]
+type ChargePreviewFreshnessEntity() =
+    /// Stores the related billing period identity.
+    member val BillingPeriodId = Guid.Empty with get, set
+    /// Stores a deterministic accepted-fact digest.
+    member val AcceptedFactsDigest = String.Empty with get, set
+    /// Stores a deterministic applicable-pricing digest.
+    member val PricingDigest = String.Empty with get, set
+    /// Stores when the preview and digests committed together.
+    member val PreviewCommittedAtUtc = DateTime.MinValue with get, set
+
+/// Represents one immutable initial charge, automatic correction, or manual adjustment.
+[<AllowNullLiteral>]
+type ChargeLedgerEntryEntity() =
+    /// Stores the immutable entry identity.
+    member val ChargeLedgerEntryId = Guid.Empty with get, set
+    /// Stores the owning billing period.
+    member val BillingPeriodId = Guid.Empty with get, set
+    /// Stores charge, adjustment, or reversal kind.
+    member val EntryKind = 0 with get, set
+    /// Links initial charges to a final preview line.
+    member val SourceChargePreviewLineId = Nullable<Guid>() with get, set
+    /// Links a correction to its immediately preceding compatible entry when applicable.
+    member val PriorChargeLedgerEntryId = Nullable<Guid>() with get, set
+    /// Stores automatic correction work identity for exact retry isolation.
+    member val BillingCorrectionWorkId = Nullable<Guid>() with get, set
+    /// Stores the tracked usage kind.
+    member val FactKind = 0 with get, set
+    /// Stores the immutable mapping identity.
+    member val BillableUsageKindMappingId = Guid.Empty with get, set
+    /// Stores the selected billable usage kind.
+    member val BillableUsageKind = 0 with get, set
+    /// Stores the immutable owner-scoped pricing assignment identity.
+    member val PricingAssignmentId = Guid.Empty with get, set
+    /// Stores the plan selected for the immutable amount.
+    member val PricingPlanId = Guid.Empty with get, set
+    /// Stores the rate selected for the immutable amount.
+    member val PricingRateId = Guid.Empty with get, set
+    /// Stores the three-letter currency.
+    member val CurrencyCode = String.Empty with get, set
+    /// Stores the unit label.
+    member val UnitName = String.Empty with get, set
+    /// Stores quantity per rate unit.
+    member val UnitQuantity = 0L with get, set
+    /// Stores price per unit in whole micros.
+    member val UnitPriceMicros = 0L with get, set
+    /// Stores inclusive pricing applicability start.
+    member val EffectiveFromUtc = DateTime.MinValue with get, set
+    /// Stores exclusive pricing applicability end.
+    member val EffectiveToUtc = DateTime.MinValue with get, set
+    /// Stores signed posted source quantity.
+    member val Quantity = 0L with get, set
+    /// Stores signed posted amount in whole micros.
+    member val ChargeMicros = 0L with get, set
+    /// Stores complete mutation provenance.
+    member val InitiatedByPrincipalId = String.Empty with get, set
+    /// Stores the stable mutation reason code.
+    member val ReasonCode = String.Empty with get, set
+    /// Stores human-readable mutation reason.
+    member val ReasonText = String.Empty with get, set
+    /// Stores correlation propagated under the accepted 200-character contract.
+    member val CorrelationId = String.Empty with get, set
+    /// Stores SQL commit time.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+/// Represents unresolved billing-relevant ingestion evidence scoped when the malformed fact supplied scope.
+[<AllowNullLiteral>]
+type BillingIngestionFailureEntity() =
+    /// Stores deterministic evidence identity.
+    member val BillingIngestionFailureId = Guid.Empty with get, set
+    /// Stores the fact identity when present.
+    member val UsageFactId = Nullable<Guid>() with get, set
+    /// Stores nullable owner scope.
+    member val OwnerId = Nullable<Guid>() with get, set
+    /// Stores nullable organization scope.
+    member val OrganizationId = Nullable<Guid>() with get, set
+    /// Stores nullable repository scope.
+    member val RepositoryId = Nullable<Guid>() with get, set
+    /// Stores nullable observed time.
+    member val ObservedAtUtc = Nullable<DateTime>() with get, set
+    /// Stores the redacted failure code.
+    member val FailureCode = String.Empty with get, set
+    /// Stores bounded redacted failure detail.
+    member val FailureDetail = String.Empty with get, set
+    /// Stores correlation evidence.
+    member val CorrelationId = String.Empty with get, set
+    /// Stores failure creation time.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+    /// Stores repair resolution time.
+    member val ResolvedAtUtc = Nullable<DateTime>() with get, set
+    /// Stores repair provenance.
+    member val ResolutionDetail: string = null with get, set
+
+/// Represents durable, retry-isolated automatic work for one accepted late UsageFact.
+[<AllowNullLiteral>]
+type BillingCorrectionWorkEntity() =
+    /// Stores deterministic period/fact work identity.
+    member val BillingCorrectionWorkId = Guid.Empty with get, set
+    /// Stores the closed or corrected period to repair.
+    member val BillingPeriodId = Guid.Empty with get, set
+    /// Stores the accepted late fact identity.
+    member val UsageFactId = Guid.Empty with get, set
+    /// Stores current bounded pending reason when pricing is unavailable.
+    member val BlockedCode: string = null with get, set
+    /// Stores current bounded pending detail.
+    member val BlockedDetail: string = null with get, set
+    /// Stores when processing committed successfully.
+    member val CompletedAtUtc = Nullable<DateTime>() with get, set
+    /// Stores SQL creation time.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
