@@ -50,10 +50,10 @@ class TestReferenceDefaultSentinel(unittest.TestCase):
                 links = [
                     ''
                     ],
-                created_by = '',
+                created_by = '0',
                 created_at = '2000-01-01T00:00:00Z',
-                updated_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
-                deleted_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
+                updated_at = '0',
+                deleted_at = '0',
                 delete_reason = ''
             )
         else:

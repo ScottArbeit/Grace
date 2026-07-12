@@ -230,7 +230,10 @@ export function TypedReferenceApiDtoToJSON
 
         raw_value = json.loads(json_str)
         if raw_value.get("ReferenceId") == "00000000-0000-0000-0000-000000000000":
-            instance.actual_instance = ReferenceDefaultSentinel.from_json(json_str)
+            sentinel = ReferenceDefaultSentinel.from_json(json_str)
+            if sentinel.created_by is not None or sentinel.updated_at is not None or sentinel.deleted_at is not None:
+                raise ValueError("Typed Reference absence must be the canonical ReferenceDto.Default sentinel.")
+            instance.actual_instance = sentinel
             return instance
 
         # deserialize data into ReferenceApiDto
@@ -258,9 +261,12 @@ impl<'de> Deserialize<'de> for TypedReferenceApiDto {
         let is_sentinel = value.get("ReferenceId").and_then(serde_json::Value::as_str)
             == Some("00000000-0000-0000-0000-000000000000");
         if is_sentinel {
-            serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
-                .map(|reference| Self::ReferenceDefaultSentinel(Box::new(reference)))
-                .map_err(serde::de::Error::custom)
+            let reference = serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
+                .map_err(serde::de::Error::custom)?;
+            if reference.created_by.is_some() || reference.updated_at.is_some() || reference.deleted_at.is_some() {
+                return Err(serde::de::Error::custom("Typed Reference absence must be the canonical ReferenceDto.Default sentinel."));
+            }
+            Ok(Self::ReferenceDefaultSentinel(Box::new(reference)))
         } else {
             serde_json::from_value::<models::ReferenceApiDto>(value)
                 .map(|reference| Self::ReferenceApiDto(Box::new(reference)))
@@ -289,7 +295,7 @@ function Get-DirectoryManifestHash {
     }
 
     $lines = Get-ChildItem -Path $Path -Recurse -File |
-        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache)\\' } |
+        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache|[^\\]+\.egg-info)\\' } |
         Where-Object { $_.Name -notin @('package-lock.json', 'Cargo.lock') } |
         Sort-Object FullName |
         ForEach-Object {

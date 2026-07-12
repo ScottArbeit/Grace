@@ -18,7 +18,6 @@ import pprint
 import re  # noqa: F401
 import json
 
-from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
@@ -43,10 +42,10 @@ class ReferenceDefaultSentinel(BaseModel):
     reference_type: StrictStr = Field(alias="ReferenceType")
     reference_text: StrictStr = Field(alias="ReferenceText")
     links: Annotated[List[StrictStr], Field(max_length=0)] = Field(alias="Links")
-    created_by: Optional[StrictStr] = Field(default=None, alias="CreatedBy")
+    created_by: Optional[Annotated[str, Field(min_length=1, strict=True)]] = Field(default=None, description="Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.", alias="CreatedBy")
     created_at: StrictStr = Field(alias="CreatedAt")
-    updated_at: Optional[datetime] = Field(default=None, alias="UpdatedAt")
-    deleted_at: Optional[datetime] = Field(default=None, alias="DeletedAt")
+    updated_at: Optional[Annotated[str, Field(min_length=1, strict=True)]] = Field(default=None, description="Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.", alias="UpdatedAt")
+    deleted_at: Optional[Annotated[str, Field(min_length=1, strict=True)]] = Field(default=None, description="Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.", alias="DeletedAt")
     delete_reason: StrictStr = Field(alias="DeleteReason")
     __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "OwnerId", "OrganizationId", "RepositoryId", "BranchId", "DirectoryId", "Sha256Hash", "Blake3Hash", "ReferenceType", "ReferenceText", "Links", "CreatedBy", "CreatedAt", "UpdatedAt", "DeletedAt", "DeleteReason"]
 
@@ -127,11 +126,50 @@ class ReferenceDefaultSentinel(BaseModel):
             raise ValueError("must be one of enum values ('')")
         return value
 
+    @field_validator('created_by')
+    def created_by_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$", value):
+            raise ValueError(r"must validate the regular expression /^$/")
+        return value
+
     @field_validator('created_at')
     def created_at_validate_enum(cls, value):
         """Validates the enum"""
         if value not in set(['2000-01-01T00:00:00Z']):
             raise ValueError("must be one of enum values ('2000-01-01T00:00:00Z')")
+        return value
+
+    @field_validator('updated_at')
+    def updated_at_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$", value):
+            raise ValueError(r"must validate the regular expression /^$/")
+        return value
+
+    @field_validator('deleted_at')
+    def deleted_at_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$", value):
+            raise ValueError(r"must validate the regular expression /^$/")
         return value
 
     @field_validator('delete_reason')

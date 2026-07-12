@@ -90,7 +90,10 @@ class TypedReferenceApiDto(BaseModel):
 
         raw_value = json.loads(json_str)
         if raw_value.get("ReferenceId") == "00000000-0000-0000-0000-000000000000":
-            instance.actual_instance = ReferenceDefaultSentinel.from_json(json_str)
+            sentinel = ReferenceDefaultSentinel.from_json(json_str)
+            if sentinel.created_by is not None or sentinel.updated_at is not None or sentinel.deleted_at is not None:
+                raise ValueError("Typed Reference absence must be the canonical ReferenceDto.Default sentinel.")
+            instance.actual_instance = sentinel
             return instance
 
         # deserialize data into ReferenceApiDto

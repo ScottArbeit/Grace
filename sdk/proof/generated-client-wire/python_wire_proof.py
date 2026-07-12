@@ -39,4 +39,16 @@ except ValueError:
 else:
     raise AssertionError("partial sentinel was accepted")
 
+for field, value in {
+    "CreatedBy": "unexpected-principal",
+    "UpdatedAt": "2026-07-11T20:00:00Z",
+    "DeletedAt": "2026-07-11T20:00:00Z",
+}.items():
+    try:
+        TypedReferenceApiDto.from_dict({**SENTINEL, field: value})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"sentinel with non-canonical {field} was accepted")
+
 print("Python UUID-coerced typed Reference wire round trip passed")

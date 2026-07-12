@@ -16,10 +16,10 @@ Name | Type | Description | Notes
 **reference_type** | **ReferenceType** |  (enum: Save) | 
 **reference_text** | **ReferenceText** |  (enum: ) | 
 **links** | **Vec<String>** |  | 
-**created_by** | Option<**String**> |  | [optional]
+**created_by** | Option<**String**> | Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together. | [optional]
 **created_at** | **CreatedAt** |  (enum: 2000-01-01T00:00:00Z) | 
-**updated_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
-**deleted_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
+**updated_at** | Option<**String**> | Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together. | [optional]
+**deleted_at** | Option<**String**> | Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together. | [optional]
 **delete_reason** | **DeleteReason** |  (enum: ) | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

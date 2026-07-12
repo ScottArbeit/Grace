@@ -38,14 +38,17 @@ pub struct ReferenceDefaultSentinel {
     pub reference_text: ReferenceText,
     #[serde(rename = "Links")]
     pub links: Vec<String>,
+    /// Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
     #[serde(rename = "CreatedBy", skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     #[serde(rename = "CreatedAt")]
     pub created_at: CreatedAt,
+    /// Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
     #[serde(rename = "UpdatedAt", skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    pub updated_at: Option<String>,
+    /// Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
     #[serde(rename = "DeletedAt", skip_serializing_if = "Option::is_none")]
-    pub deleted_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    pub deleted_at: Option<String>,
     #[serde(rename = "DeleteReason")]
     pub delete_reason: DeleteReason,
 }

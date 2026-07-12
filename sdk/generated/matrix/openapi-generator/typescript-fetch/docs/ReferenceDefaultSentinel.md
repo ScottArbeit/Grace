@@ -21,8 +21,8 @@ Name | Type
 `links` | Array&lt;string&gt;
 `createdBy` | string
 `createdAt` | string
-`updatedAt` | Date
-`deletedAt` | Date
+`updatedAt` | string
+`deletedAt` | string
 `deleteReason` | string
 
 ## Example

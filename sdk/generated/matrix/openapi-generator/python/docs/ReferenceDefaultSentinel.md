@@ -18,10 +18,10 @@ Name | Type | Description | Notes
 **reference_type** | **str** |  | 
 **reference_text** | **str** |  | 
 **links** | **List[str]** |  | 
-**created_by** | **str** |  | [optional] 
+**created_by** | **str** | Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together. | [optional] 
 **created_at** | **str** |  | 
-**updated_at** | **datetime** |  | [optional] 
-**deleted_at** | **datetime** |  | [optional] 
+**updated_at** | **str** | Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together. | [optional] 
+**deleted_at** | **str** | Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together. | [optional] 
 **delete_reason** | **str** |  | 
 
 ## Example

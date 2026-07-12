@@ -290,25 +290,72 @@ type NormalFileMaterializationServerTests() =
         Assert.That(metadataRequests, Has.Count.EqualTo(1))
         Assert.That((metadataRequests[0] = [| blocks[0].Address |]), Is.True)
 
-    /// Verifies that manifest-backed materialization rejects a missing SHA-256 before accepting reconstructed bytes.
+    /// Verifies that whole-file materialization rejects missing mandatory hashes before selecting a storage reader.
     [<Test>]
-    member _.ManifestBackedNormalDownloadRejectsMissingSha256() =
+    member _.WholeFileNormalDownloadRejectsMissingHashesBeforeStorageAccess() =
+        let payload = bytes "whole file missing hashes"
+        let target = fileVersion "/missing-hashes.bin" payload
+        let objectKey = StorageKeys.wholeFileContentObjectKey target
+        let wholeFileReads = ResizeArray<string>()
+        let metadataRequests = ResizeArray<ContentBlockAddress array>()
+        let blockReads = ResizeArray<ContentBlockAddress * ContentBlockStoragePlacement>()
+
+        let wholeFileReader: NormalFileMaterialization.ObjectPayloadReader =
+            fun key correlationId _ ->
+                task {
+                    wholeFileReads.Add key
+                    return Error(GraceError.Create $"whole-file reader should not be called for {key}" correlationId)
+                }
+
+        let materializeWithMissingHash expectedError setMissingHash =
+            setMissingHash ()
+
+            materializeBytes
+                wholeFileReader
+                (metadataResolverFrom (Dictionary<StoragePoolId * ManifestAddress * ContentBlockAddress, ContentBlockMetadata>()) metadataRequests)
+                (contentBlockReaderFrom (Dictionary<string, byte array>()) blockReads)
+                target
+                objectKey
+            |> expectErrorContains expectedError
+
+            Assert.That(wholeFileReads, Is.Empty)
+            Assert.That(metadataRequests, Is.Empty)
+            Assert.That(blockReads, Is.Empty)
+
+        materializeWithMissingHash "FileVersion.Sha256Hash" (fun () -> target.Sha256Hash <- Sha256Hash String.Empty)
+        target.Sha256Hash <- Sha256Hash(sha256Hex payload)
+        materializeWithMissingHash "FileVersion.Blake3Hash" (fun () -> target.Blake3Hash <- Blake3Hash String.Empty)
+
+    /// Verifies that manifest-backed materialization rejects missing mandatory hashes before any storage access.
+    [<Test>]
+    member _.ManifestBackedNormalDownloadRejectsMissingHashesBeforeStorageAccess() =
         let payload = bytes "manifest missing sha256"
         let target, manifest, blocks = manifestFile "/missing-sha256.bin" (StoragePoolId "pool-missing-sha256") payload
-        target.Sha256Hash <- Sha256Hash String.Empty
         let placement = placementFor manifest.StoragePoolId blocks[0].Address "stored/missing-sha256"
         let objects = Dictionary<string, byte array>()
         objects[placement.ObjectKey] <- blocks[0].Payload
         let metadata = Dictionary<StoragePoolId * ManifestAddress * ContentBlockAddress, ContentBlockMetadata>()
         addMetadata metadata manifest manifest.StoragePoolId manifest.Blocks[0] placement
+        let metadataRequests = ResizeArray<ContentBlockAddress array>()
+        let blockReads = ResizeArray<ContentBlockAddress * ContentBlockStoragePlacement>()
 
-        materializeBytes
-            failingWholeFileReader
-            (metadataResolverFrom metadata (ResizeArray()))
-            (contentBlockReaderFrom objects (ResizeArray()))
-            target
-            "normal/missing-sha256.bin"
-        |> expectErrorContains "FileVersion.Sha256Hash"
+        let materializeWithMissingHash expectedError setMissingHash =
+            setMissingHash ()
+
+            materializeBytes
+                failingWholeFileReader
+                (metadataResolverFrom metadata metadataRequests)
+                (contentBlockReaderFrom objects blockReads)
+                target
+                "normal/missing-hashes.bin"
+            |> expectErrorContains expectedError
+
+            Assert.That(metadataRequests, Is.Empty)
+            Assert.That(blockReads, Is.Empty)
+
+        materializeWithMissingHash "FileVersion.Sha256Hash" (fun () -> target.Sha256Hash <- Sha256Hash String.Empty)
+        target.Sha256Hash <- Sha256Hash(sha256Hex payload)
+        materializeWithMissingHash "FileVersion.Blake3Hash" (fun () -> target.Blake3Hash <- Blake3Hash String.Empty)
 
     /// Verifies that manifest Backed Non Binary Normal Download Publishes Gzip Payload For Whole File Compatibility.
     [<Test>]

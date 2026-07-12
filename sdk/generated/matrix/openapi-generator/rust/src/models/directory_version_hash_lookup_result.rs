@@ -38,8 +38,8 @@ pub struct DirectoryVersionHashLookupResult {
     pub files: Vec<models::FileVersion>,
     #[serde(rename = "Size")]
     pub size: i64,
-    #[serde(rename = "RecursiveSize")]
-    pub recursive_size: i64,
+    #[serde(rename = "RecursiveSize", skip_serializing_if = "Option::is_none")]
+    pub recursive_size: Option<i64>,
     #[serde(rename = "CreatedAt")]
     pub created_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "HashesValidated")]
@@ -48,7 +48,7 @@ pub struct DirectoryVersionHashLookupResult {
 
 impl DirectoryVersionHashLookupResult {
     /// Complete current directory version returned by hash lookup endpoints.
-    pub fn new(class: String, directory_version_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, relative_path: String, sha256_hash: String, blake3_hash: String, directories: Vec<uuid::Uuid>, files: Vec<models::FileVersion>, size: i64, recursive_size: i64, created_at: chrono::DateTime<chrono::FixedOffset>, hashes_validated: bool) -> DirectoryVersionHashLookupResult {
+    pub fn new(class: String, directory_version_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, relative_path: String, sha256_hash: String, blake3_hash: String, directories: Vec<uuid::Uuid>, files: Vec<models::FileVersion>, size: i64, created_at: chrono::DateTime<chrono::FixedOffset>, hashes_validated: bool) -> DirectoryVersionHashLookupResult {
         DirectoryVersionHashLookupResult {
             class,
             directory_version_id,
@@ -61,7 +61,7 @@ impl DirectoryVersionHashLookupResult {
             directories,
             files,
             size,
-            recursive_size,
+            recursive_size: None,
             created_at,
             hashes_validated,
         }

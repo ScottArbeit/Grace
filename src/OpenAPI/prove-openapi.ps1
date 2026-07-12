@@ -1164,6 +1164,13 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     Assert-TextContains $branchComponentsText "enum: ['']" 'The canonical sentinel must use empty hashes and text.'
     Assert-TextContains $branchComponentsText 'additionalProperties: false' 'The canonical sentinel must reject arbitrary partial Reference properties.'
 
+    foreach ($auditField in @('CreatedBy', 'UpdatedAt', 'DeletedAt')) {
+        Assert-OperationTextMatches `
+            ([pscustomobject]@{ OperationText = $branchComponentsText }) `
+            "(?s)ReferenceDefaultSentinel:\s*.*?${auditField}:\s*.*?nullable:\s*true\s*.*?minLength:\s*1\s*.*?pattern:\s*'\^\$'" `
+            "ReferenceDefaultSentinel.${auditField} must admit only the null audit value from ReferenceDto.Default."
+    }
+
     $typedReferenceCount = ([regex]::Matches($branchComponentsText, [regex]::Escape("`$ref: '#/TypedReferenceApiDto'"))).Count
     if ($typedReferenceCount -ne 4) {
         Add-Failure "BranchApiDto must use TypedReferenceApiDto for exactly four type-specific latest slots; found $typedReferenceCount."
@@ -1314,6 +1321,18 @@ function Test-OpenApiSharedContractDetails {
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
         "(?s)DirectoryVersionSha256HashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/DirectoryVersionHashLookupResult'" `
         'SHA directory hash lookup responses must use the complete current directory result schema.'
+
+    $shaLookupRequired = [regex]::Match(
+        $directoryComponentsText,
+        '(?s)DirectoryVersionHashLookupResult:\s*.*?required:\s*(?<required>.*?)\s*DirectoryCommandReturnValue:'
+    ).Groups['required'].Value
+
+    if ($shaLookupRequired -match '(?m)^\s*-\s+RecursiveSize\s*$') {
+        Add-Failure 'SHA-256 directory lookup results must not require the DTO-only RecursiveSize field.'
+    }
+    else {
+        Add-Pass 'SHA-256 directory lookup results leave the raw DirectoryVersion RecursiveSize field optional.'
+    }
 
     foreach ($requiredSchemaProof in @(
             [pscustomobject]@{ Text = $sharedText; Schema = 'FileVersion'; Properties = @('RelativePath', 'Sha256Hash', 'Blake3Hash', 'ContentReference') },

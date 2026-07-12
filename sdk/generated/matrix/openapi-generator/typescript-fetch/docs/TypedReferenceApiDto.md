@@ -20,8 +20,8 @@ Name | Type
 `referenceText` | string
 `links` | Array&lt;string&gt;
 `createdAt` | string
-`updatedAt` | Date
-`deletedAt` | Date
+`updatedAt` | string
+`deletedAt` | string
 `deleteReason` | string
 `createdBy` | string
 

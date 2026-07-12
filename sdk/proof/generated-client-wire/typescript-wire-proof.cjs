@@ -36,4 +36,11 @@ assert.equal(branch.latestCommit.sha256Hash, '');
 assert.throws(() => TypedReferenceApiDtoFromJSON({
   ...sentinel, OwnerId: real.OwnerId, Sha256Hash: real.Sha256Hash, Blake3Hash: real.Blake3Hash
 }), /canonical/);
+for (const [field, value] of Object.entries({
+  CreatedBy: 'unexpected-principal',
+  UpdatedAt: '2026-07-11T20:00:00Z',
+  DeletedAt: '2026-07-11T20:00:00Z'
+})) {
+  assert.throws(() => TypedReferenceApiDtoFromJSON({ ...sentinel, [field]: value }), /canonical/);
+}
 console.log('TypeScript PascalCase BranchApiDto wire round trip passed');

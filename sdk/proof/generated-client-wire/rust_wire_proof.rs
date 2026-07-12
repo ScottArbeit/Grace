@@ -30,4 +30,14 @@ fn typed_reference_wire_variants_are_semantic() {
     partial["Sha256Hash"] = json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     partial["Blake3Hash"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     assert!(serde_json::from_value::<TypedReferenceApiDto>(partial).is_err());
+
+    for (field, value) in [
+        ("CreatedBy", json!("unexpected-principal")),
+        ("UpdatedAt", json!("2026-07-11T20:00:00Z")),
+        ("DeletedAt", json!("2026-07-11T20:00:00Z")),
+    ] {
+        let mut non_canonical = sentinel();
+        non_canonical[field] = value;
+        assert!(serde_json::from_value::<TypedReferenceApiDto>(non_canonical).is_err());
+    }
 }

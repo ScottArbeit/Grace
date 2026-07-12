@@ -77,6 +77,10 @@ module internal NormalFileMaterialization =
             Error(error correlationId "Normal file download FileVersion is required.")
         elif fileVersion.Size < 0L then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' has an invalid negative size.")
+        elif String.IsNullOrWhiteSpace fileVersion.Sha256Hash then
+            Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' must include FileVersion.Sha256Hash before materialization.")
+        elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
+            Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' must include FileVersion.Blake3Hash before materialization.")
         elif isNull (box fileVersion.ContentReference) then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' has no ContentReference.")
         else
@@ -92,12 +96,8 @@ module internal NormalFileMaterialization =
                     correlationId
                     $"Normal file download target '{fileVersion.RelativePath}' materialized {bytes.Length} bytes, but FileVersion.Size is {fileVersion.Size} bytes."
             )
-        elif String.IsNullOrWhiteSpace fileVersion.Sha256Hash then
-            Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' must include FileVersion.Sha256Hash before materialization.")
         elif not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase)) then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Sha256Hash.")
-        elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
-            Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' must include FileVersion.Blake3Hash before materialization.")
         elif not (String.Equals(blake3Hex bytes, fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase)) then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Blake3Hash.")
         else

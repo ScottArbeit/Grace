@@ -147,7 +147,6 @@
         - Directories
         - Files
         - Size
-        - RecursiveSize
         - CreatedAt
         - HashesValidated
     DirectoryCommandReturnValue:

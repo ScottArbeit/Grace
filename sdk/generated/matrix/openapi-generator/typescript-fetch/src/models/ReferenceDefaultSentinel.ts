@@ -92,7 +92,7 @@ export interface ReferenceDefaultSentinel {
      */
     links: Array<string>;
     /**
-     * 
+     * Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
      * @type {string}
      * @memberof ReferenceDefaultSentinel
      */
@@ -104,17 +104,17 @@ export interface ReferenceDefaultSentinel {
      */
     createdAt: ReferenceDefaultSentinelCreatedAtEnum;
     /**
-     * 
-     * @type {Date}
+     * Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
+     * @type {string}
      * @memberof ReferenceDefaultSentinel
      */
-    updatedAt?: Date;
+    updatedAt?: string;
     /**
-     * 
-     * @type {Date}
+     * Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
+     * @type {string}
      * @memberof ReferenceDefaultSentinel
      */
-    deletedAt?: Date;
+    deletedAt?: string;
     /**
      * 
      * @type {ReferenceDefaultSentinelDeleteReasonEnum}
@@ -274,8 +274,8 @@ export function ReferenceDefaultSentinelFromJSONTyped(json: any, ignoreDiscrimin
         'links': json['Links'],
         'createdBy': json['CreatedBy'] == null ? undefined : json['CreatedBy'],
         'createdAt': json['CreatedAt'],
-        'updatedAt': json['UpdatedAt'] == null ? undefined : (new Date(json['UpdatedAt'])),
-        'deletedAt': json['DeletedAt'] == null ? undefined : (new Date(json['DeletedAt'])),
+        'updatedAt': json['UpdatedAt'] == null ? undefined : json['UpdatedAt'],
+        'deletedAt': json['DeletedAt'] == null ? undefined : json['DeletedAt'],
         'deleteReason': json['DeleteReason'],
     };
 }
@@ -305,8 +305,8 @@ export function ReferenceDefaultSentinelToJSONTyped(value?: ReferenceDefaultSent
         'Links': value['links'],
         'CreatedBy': value['createdBy'],
         'CreatedAt': value['createdAt'],
-        'UpdatedAt': value['updatedAt'] == null ? value['updatedAt'] : value['updatedAt'].toISOString(),
-        'DeletedAt': value['deletedAt'] == null ? value['deletedAt'] : value['deletedAt'].toISOString(),
+        'UpdatedAt': value['updatedAt'],
+        'DeletedAt': value['deletedAt'],
         'DeleteReason': value['deleteReason'],
     };
 }

@@ -367,19 +367,26 @@
           items:
             type: string
         CreatedBy:
+          description: Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
           type: string
           nullable: true
+          minLength: 1
+          pattern: '^$'
         CreatedAt:
           type: string
           enum: ['2000-01-01T00:00:00Z']
         UpdatedAt:
+          description: Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
           type: string
-          format: date-time
           nullable: true
+          minLength: 1
+          pattern: '^$'
         DeletedAt:
+          description: Null-only audit value from ReferenceDto.Default; non-null strings cannot match the empty-string pattern and minimum length together.
           type: string
-          format: date-time
           nullable: true
+          minLength: 1
+          pattern: '^$'
         DeleteReason:
           type: string
           enum: ['']

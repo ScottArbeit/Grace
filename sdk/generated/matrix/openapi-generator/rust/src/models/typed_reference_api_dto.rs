@@ -190,9 +190,12 @@ impl<'de> Deserialize<'de> for TypedReferenceApiDto {
         let is_sentinel = value.get("ReferenceId").and_then(serde_json::Value::as_str)
             == Some("00000000-0000-0000-0000-000000000000");
         if is_sentinel {
-            serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
-                .map(|reference| Self::ReferenceDefaultSentinel(Box::new(reference)))
-                .map_err(serde::de::Error::custom)
+            let reference = serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
+                .map_err(serde::de::Error::custom)?;
+            if reference.created_by.is_some() || reference.updated_at.is_some() || reference.deleted_at.is_some() {
+                return Err(serde::de::Error::custom("Typed Reference absence must be the canonical ReferenceDto.Default sentinel."));
+            }
+            Ok(Self::ReferenceDefaultSentinel(Box::new(reference)))
         } else {
             serde_json::from_value::<models::ReferenceApiDto>(value)
                 .map(|reference| Self::ReferenceApiDto(Box::new(reference)))
