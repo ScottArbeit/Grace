@@ -817,7 +817,7 @@ type OperationsDbContextModelSnapshot() =
 
         period
             .Property<string>("CloseCorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
         |> ignore
 
         period
@@ -904,6 +904,12 @@ type OperationsDbContextModelSnapshot() =
                     "CK_ops_ChargeLedgerEntry_ChargeSource",
                     "([EntryKind] = 0 AND [SourceChargePreviewLineId] IS NOT NULL AND [PriorChargeLedgerEntryId] IS NULL) OR ([EntryKind] IN (1,2) AND [SourceChargePreviewLineId] IS NULL)"
                 )
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargeLedgerEntry_UnitQuantity", "[UnitQuantity] > 0")
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargeLedgerEntry_UnitPriceMicros", "[UnitPriceMicros] >= 0")
                 |> ignore
         )
         |> ignore
@@ -996,7 +1002,7 @@ type OperationsDbContextModelSnapshot() =
 
         ledger
             .Property<string>("CorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 
@@ -1151,7 +1157,7 @@ type OperationsDbContextModelSnapshot() =
 
         failure
             .Property<string>("ResolutionCorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
         |> ignore
 
         failure
@@ -1194,7 +1200,7 @@ type OperationsDbContextModelSnapshot() =
 
         work
             .Property<string>("CorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 

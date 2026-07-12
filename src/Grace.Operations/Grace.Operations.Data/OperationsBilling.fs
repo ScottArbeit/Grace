@@ -108,7 +108,7 @@ module BillingProvenance =
         required "InitiatedByPrincipalId" 256 provenance.InitiatedByPrincipalId
         required "ReasonCode" 64 provenance.ReasonCode
         required "ReasonText" 1024 provenance.ReasonText
-        required "CorrelationId" 128 provenance.CorrelationId
+        required "CorrelationId" OperationsUsageSql.CorrelationIdMaxLength provenance.CorrelationId
 
 /// Owns literal runtime EF configuration for billing close persistence.
 [<RequireQualifiedAccess>]
@@ -212,7 +212,7 @@ module OperationsBillingModel =
 
         period
             .Property<string>("CloseCorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
         |> ignore
 
         period
@@ -299,6 +299,12 @@ module OperationsBillingModel =
                     "CK_ops_ChargeLedgerEntry_ChargeSource",
                     "([EntryKind] = 0 AND [SourceChargePreviewLineId] IS NOT NULL AND [PriorChargeLedgerEntryId] IS NULL) OR ([EntryKind] IN (1,2) AND [SourceChargePreviewLineId] IS NULL)"
                 )
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargeLedgerEntry_UnitQuantity", "[UnitQuantity] > 0")
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargeLedgerEntry_UnitPriceMicros", "[UnitPriceMicros] >= 0")
                 |> ignore
         )
         |> ignore
@@ -391,7 +397,7 @@ module OperationsBillingModel =
 
         ledger
             .Property<string>("CorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
             .IsRequired()
         |> ignore
 
@@ -546,7 +552,7 @@ module OperationsBillingModel =
 
         failure
             .Property<string>("ResolutionCorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
         |> ignore
 
         failure
@@ -589,7 +595,7 @@ module OperationsBillingModel =
 
         work
             .Property<string>("CorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
             .IsRequired()
         |> ignore
 
@@ -636,4 +642,7 @@ module OperationsBillingSql =
 
     /// Rejects mutation of pricing rows already referenced by a Closed or Corrected period while allowing future rows.
     let CreateHistoricalPricingProtectionTriggers =
-        "CREATE OR ALTER TRIGGER [ops].[TR_ops_PricingRate_HistoricalProtection] ON [ops].[PricingRate] AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM deleted d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN (2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51021, 'Historical pricing applicable to a closed billing period is immutable.', 1; END; CREATE OR ALTER TRIGGER [ops].[TR_ops_PricingPlan_HistoricalProtection] ON [ops].[PricingPlan] AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM deleted d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN (2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51022, 'Historical pricing plan applicable to a closed billing period is immutable.', 1; END; CREATE OR ALTER TRIGGER [ops].[TR_ops_BillableUsageKindMapping_HistoricalProtection] ON [ops].[BillableUsageKindMapping] AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM deleted d JOIN ops.BillingPeriod p ON d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc) JOIN ops.CustomerPricingAssignment a ON a.CustomerId=p.CustomerId AND a.OwnerId=p.OwnerId AND a.OrganizationId=p.OrganizationId AND a.RepositoryId=p.RepositoryId AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) WHERE p.State IN (2,3)) THROW 51023, 'Historical billable mapping applicable to a closed billing period is immutable.', 1; END; CREATE OR ALTER TRIGGER [ops].[TR_ops_CustomerPricingAssignment_HistoricalProtection] ON [ops].[CustomerPricingAssignment] AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM deleted d JOIN ops.BillingPeriod p ON p.CustomerId=d.CustomerId AND p.OwnerId=d.OwnerId AND p.OrganizationId=d.OrganizationId AND p.RepositoryId=d.RepositoryId WHERE p.State IN (2,3) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51024, 'Historical customer pricing assignment applicable to a closed billing period is immutable.', 1; END;"
+        """CREATE OR ALTER TRIGGER [ops].[TR_ops_PricingRate_HistoricalProtection] ON [ops].[PricingRate] AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM (SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN (2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51021, 'Historical pricing applicable to a closed billing period is immutable.', 1; END;
+CREATE OR ALTER TRIGGER [ops].[TR_ops_PricingPlan_HistoricalProtection] ON [ops].[PricingPlan] AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM (SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN (2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51022, 'Historical pricing plan applicable to a closed billing period is immutable.', 1; END;
+CREATE OR ALTER TRIGGER [ops].[TR_ops_BillableUsageKindMapping_HistoricalProtection] ON [ops].[BillableUsageKindMapping] AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM (SELECT EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.BillingPeriod p ON d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc) JOIN ops.CustomerPricingAssignment a ON a.CustomerId=p.CustomerId AND a.OwnerId=p.OwnerId AND a.OrganizationId=p.OrganizationId AND a.RepositoryId=p.RepositoryId AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) WHERE p.State IN (2,3)) THROW 51023, 'Historical billable mapping applicable to a closed billing period is immutable.', 1; END;
+CREATE OR ALTER TRIGGER [ops].[TR_ops_CustomerPricingAssignment_HistoricalProtection] ON [ops].[CustomerPricingAssignment] AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS (SELECT 1 FROM (SELECT CustomerId,OwnerId,OrganizationId,RepositoryId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT CustomerId,OwnerId,OrganizationId,RepositoryId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.BillingPeriod p ON p.CustomerId=d.CustomerId AND p.OwnerId=d.OwnerId AND p.OrganizationId=d.OrganizationId AND p.RepositoryId=d.RepositoryId WHERE p.State IN (2,3) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51024, 'Historical customer pricing assignment applicable to a closed billing period is immutable.', 1; END;"""

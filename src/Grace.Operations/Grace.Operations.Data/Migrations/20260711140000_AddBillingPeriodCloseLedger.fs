@@ -24,7 +24,7 @@ CREATE TABLE ops.BillingPeriod (
  CloseBlockedDetail nvarchar(1024) NULL, LastCloseAttemptAtUtc datetime2(7) NULL,
  ConsecutiveCloseFailureCount int NOT NULL CONSTRAINT DF_ops_BillingPeriod_FailureCount DEFAULT 0,
  ClosedAtUtc datetime2(7) NULL, CloseInitiatedByPrincipalId nvarchar(256) NULL, CloseReasonCode nvarchar(64) NULL,
- CloseReasonText nvarchar(1024) NULL, CloseCorrelationId nvarchar(128) NULL,
+ CloseReasonText nvarchar(1024) NULL, CloseCorrelationId nvarchar(200) NULL,
  CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingPeriod_Created DEFAULT SYSUTCDATETIME(),
  CONSTRAINT PK_ops_BillingPeriod PRIMARY KEY (BillingPeriodId),
  CONSTRAINT CK_ops_BillingPeriod_Range CHECK (PeriodFromUtc < PeriodToUtc),
@@ -47,14 +47,16 @@ CREATE TABLE ops.ChargeLedgerEntry (
  UnitQuantity bigint NOT NULL, UnitPriceMicros bigint NOT NULL, EffectiveFromUtc datetime2(7) NOT NULL,
  EffectiveToUtc datetime2(7) NOT NULL, Quantity bigint NOT NULL, ChargeMicros bigint NOT NULL,
  InitiatedByPrincipalId nvarchar(256) NOT NULL, ReasonCode nvarchar(64) NOT NULL, ReasonText nvarchar(1024) NOT NULL,
- CorrelationId nvarchar(128) NOT NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_ChargeLedgerEntry_Created DEFAULT SYSUTCDATETIME(),
+ CorrelationId nvarchar(200) NOT NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_ChargeLedgerEntry_Created DEFAULT SYSUTCDATETIME(),
  CONSTRAINT PK_ops_ChargeLedgerEntry PRIMARY KEY(ChargeLedgerEntryId),
  CONSTRAINT FK_ops_ChargeLedgerEntry_BillingPeriod FOREIGN KEY(BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId),
  CONSTRAINT FK_ops_ChargeLedgerEntry_ChargePreviewLine FOREIGN KEY(SourceChargePreviewLineId) REFERENCES ops.ChargePreviewLine(ChargePreviewLineId),
  CONSTRAINT FK_ops_ChargeLedgerEntry_Prior FOREIGN KEY(PriorChargeLedgerEntryId) REFERENCES ops.ChargeLedgerEntry(ChargeLedgerEntryId),
  CONSTRAINT CK_ops_ChargeLedgerEntry_Kind CHECK (EntryKind BETWEEN 0 AND 2),
  CONSTRAINT CK_ops_ChargeLedgerEntry_Currency CHECK (LEN(CurrencyCode)=3 AND CurrencyCode=UPPER(CurrencyCode) AND CurrencyCode NOT LIKE '%[^A-Z]%'),
- CONSTRAINT CK_ops_ChargeLedgerEntry_ChargeSource CHECK ((EntryKind=0 AND SourceChargePreviewLineId IS NOT NULL AND PriorChargeLedgerEntryId IS NULL) OR (EntryKind IN (1,2) AND SourceChargePreviewLineId IS NULL)));
+ CONSTRAINT CK_ops_ChargeLedgerEntry_ChargeSource CHECK ((EntryKind=0 AND SourceChargePreviewLineId IS NOT NULL AND PriorChargeLedgerEntryId IS NULL) OR (EntryKind IN (1,2) AND SourceChargePreviewLineId IS NULL)),
+ CONSTRAINT CK_ops_ChargeLedgerEntry_UnitQuantity CHECK (UnitQuantity > 0),
+ CONSTRAINT CK_ops_ChargeLedgerEntry_UnitPriceMicros CHECK (UnitPriceMicros >= 0));
 CREATE UNIQUE INDEX UX_ops_ChargeLedgerEntry_Initial ON ops.ChargeLedgerEntry(BillingPeriodId,EntryKind,SourceChargePreviewLineId) WHERE SourceChargePreviewLineId IS NOT NULL;
 CREATE UNIQUE INDEX UX_ops_ChargeLedgerEntry_Correction ON ops.ChargeLedgerEntry(BillingPeriodId,CorrelationId,EntryKind,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,PriorChargeLedgerEntryId) WHERE SourceChargePreviewLineId IS NULL;
 CREATE INDEX IX_ChargeLedgerEntry_SourceChargePreviewLineId ON ops.ChargeLedgerEntry(SourceChargePreviewLineId);
@@ -66,24 +68,24 @@ CREATE TABLE ops.BillingIngestionFailure (
  FailureCode nvarchar(64) NOT NULL, FailureDetail nvarchar(1024) NOT NULL,
  CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingIngestionFailure_Created DEFAULT SYSUTCDATETIME(),
  ResolvedAtUtc datetime2(7) NULL, ResolvedByPrincipalId nvarchar(256) NULL, ResolutionReasonCode nvarchar(64) NULL,
- ResolutionReasonText nvarchar(1024) NULL, ResolutionCorrelationId nvarchar(128) NULL,
+ ResolutionReasonText nvarchar(1024) NULL, ResolutionCorrelationId nvarchar(200) NULL,
  CONSTRAINT PK_ops_BillingIngestionFailure PRIMARY KEY(BillingIngestionFailureId));
 CREATE UNIQUE INDEX UX_ops_BillingIngestionFailure_ActiveFact ON ops.BillingIngestionFailure(UsageFactId) WHERE UsageFactId IS NOT NULL AND ResolvedAtUtc IS NULL;
 CREATE INDEX IX_ops_BillingIngestionFailure_ActiveScope ON ops.BillingIngestionFailure(CustomerId,OwnerId,OrganizationId,RepositoryId,ObservedAtUtc) WHERE ResolvedAtUtc IS NULL;
 
 CREATE TABLE ops.BillingCorrectionWork (
  BillingCorrectionWorkId uniqueidentifier NOT NULL, BillingPeriodId uniqueidentifier NOT NULL, UsageFactId uniqueidentifier NOT NULL,
- CorrelationId nvarchar(128) NOT NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingCorrectionWork_Created DEFAULT SYSUTCDATETIME(),
+ CorrelationId nvarchar(200) NOT NULL, CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingCorrectionWork_Created DEFAULT SYSUTCDATETIME(),
  CompletedAtUtc datetime2(7) NULL, CONSTRAINT PK_ops_BillingCorrectionWork PRIMARY KEY(BillingCorrectionWorkId),
  CONSTRAINT FK_ops_BillingCorrectionWork_BillingPeriod FOREIGN KEY(BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId));
 CREATE UNIQUE INDEX UX_ops_BillingCorrectionWork_PeriodFact ON ops.BillingCorrectionWork(BillingPeriodId,UsageFactId);
 CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(CompletedAtUtc,CreatedAtUtc);
 
 EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_ChargeLedgerEntry_Immutable ON ops.ChargeLedgerEntry INSTEAD OF UPDATE, DELETE AS BEGIN SET NOCOUNT ON; THROW 51020, ''Posted charge ledger entries are immutable.'', 1; END;');
-EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_PricingRate_HistoricalProtection ON ops.PricingRate AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN(2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51021, ''Historical pricing applicable to a closed billing period is immutable.'', 1; END;');
-EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_PricingPlan_HistoricalProtection ON ops.PricingPlan AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN(2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51022, ''Historical pricing plan applicable to a closed billing period is immutable.'', 1; END;');
-EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_BillableUsageKindMapping_HistoricalProtection ON ops.BillableUsageKindMapping AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.BillingPeriod p ON d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc) JOIN ops.CustomerPricingAssignment a ON a.CustomerId=p.CustomerId AND a.OwnerId=p.OwnerId AND a.OrganizationId=p.OrganizationId AND a.RepositoryId=p.RepositoryId AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) WHERE p.State IN(2,3)) THROW 51023, ''Historical billable mapping applicable to a closed billing period is immutable.'', 1; END;');
-EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalProtection ON ops.CustomerPricingAssignment AFTER UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM deleted d JOIN ops.BillingPeriod p ON p.CustomerId=d.CustomerId AND p.OwnerId=d.OwnerId AND p.OrganizationId=d.OrganizationId AND p.RepositoryId=d.RepositoryId WHERE p.State IN(2,3) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51024, ''Historical customer pricing assignment applicable to a closed billing period is immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_PricingRate_HistoricalProtection ON ops.PricingRate AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM (SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN(2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51021, ''Historical pricing applicable to a closed billing period is immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_PricingPlan_HistoricalProtection ON ops.PricingPlan AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM (SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId JOIN ops.BillingPeriod p ON p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId WHERE p.State IN(2,3) AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51022, ''Historical pricing plan applicable to a closed billing period is immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_BillableUsageKindMapping_HistoricalProtection ON ops.BillableUsageKindMapping AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM (SELECT EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.BillingPeriod p ON d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc) JOIN ops.CustomerPricingAssignment a ON a.CustomerId=p.CustomerId AND a.OwnerId=p.OwnerId AND a.OrganizationId=p.OrganizationId AND a.RepositoryId=p.RepositoryId AND a.EffectiveFromUtc<p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc>p.PeriodFromUtc) WHERE p.State IN(2,3)) THROW 51023, ''Historical billable mapping applicable to a closed billing period is immutable.'', 1; END;');
+EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalProtection ON ops.CustomerPricingAssignment AFTER INSERT, UPDATE, DELETE AS BEGIN SET NOCOUNT ON; IF EXISTS(SELECT 1 FROM (SELECT CustomerId,OwnerId,OrganizationId,RepositoryId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT CustomerId,OwnerId,OrganizationId,RepositoryId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d JOIN ops.BillingPeriod p ON p.CustomerId=d.CustomerId AND p.OwnerId=d.OwnerId AND p.OrganizationId=d.OrganizationId AND p.RepositoryId=d.RepositoryId WHERE p.State IN(2,3) AND d.EffectiveFromUtc<p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc>p.PeriodFromUtc)) THROW 51024, ''Historical customer pricing assignment applicable to a closed billing period is immutable.'', 1; END;');
 """
         )
         |> ignore
@@ -901,7 +903,7 @@ EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalPr
 
         period
             .Property<string>("CloseCorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
         |> ignore
 
         period
@@ -988,6 +990,12 @@ EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalPr
                     "CK_ops_ChargeLedgerEntry_ChargeSource",
                     "([EntryKind] = 0 AND [SourceChargePreviewLineId] IS NOT NULL AND [PriorChargeLedgerEntryId] IS NULL) OR ([EntryKind] IN (1,2) AND [SourceChargePreviewLineId] IS NULL)"
                 )
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargeLedgerEntry_UnitQuantity", "[UnitQuantity] > 0")
+                |> ignore
+
+                table.HasCheckConstraint("CK_ops_ChargeLedgerEntry_UnitPriceMicros", "[UnitPriceMicros] >= 0")
                 |> ignore
         )
         |> ignore
@@ -1080,7 +1088,7 @@ EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalPr
 
         ledger
             .Property<string>("CorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 
@@ -1235,7 +1243,7 @@ EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalPr
 
         failure
             .Property<string>("ResolutionCorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
         |> ignore
 
         failure
@@ -1278,7 +1286,7 @@ EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalPr
 
         work
             .Property<string>("CorrelationId")
-            .HasMaxLength(128)
+            .HasMaxLength(200)
             .IsRequired()
         |> ignore
 

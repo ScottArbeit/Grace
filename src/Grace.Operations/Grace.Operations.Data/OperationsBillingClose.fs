@@ -66,6 +66,23 @@ module ManualBillingCorrectionIdentity =
                                              string correction.QuantityDelta
                                              string correction.ChargeMicrosDelta ]
 
+/// Validates immutable manual correction grain and period containment before SQL mutation.
+[<RequireQualifiedAccess>]
+module ManualBillingCorrectionValidation =
+    /// Rejects impossible unit quantity or price values at the application boundary.
+    let validatePricingGrain correction =
+        if correction.UnitQuantity <= 0L then
+            invalidArg "correction" "Correction unit quantity must be positive."
+
+        if correction.UnitPriceMicros < 0L then
+            invalidArg "correction" "Correction unit price must be nonnegative."
+
+    /// Requires the non-empty correction interval to stay within the period's half-open bounds.
+    let validateApplicability periodFromUtc periodToUtc correction =
+        if correction.EffectiveFromUtc < periodFromUtc
+           || correction.EffectiveToUtc > periodToUtc then
+            invalidArg "correction" "Correction applicability must be wholly contained in the billing period."
+
 /// Builds stable active-failure identities without conflating malformed empty fact identifiers.
 [<RequireQualifiedAccess>]
 module BillingIngestionFailureIdentity =
@@ -77,13 +94,27 @@ module BillingIngestionFailureIdentity =
             else
                 $"fact:{fact.UsageFactId:D}"
 
-        BillingPeriodRules.deterministicId [ "ingestion-failure"
-                                             factIdentity
-                                             failureCode
-                                             fact.Scope.OwnerId.ToString("D")
-                                             fact.Scope.OrganizationId.ToString("D")
-                                             fact.Scope.RepositoryId.ToString("D")
-                                             string (fact.ObservedAt.ToDateTimeUtc().Ticks) ]
+        let scopeIdentity =
+            if isNull (box fact.Scope) then
+                [ "scope:missing" ]
+            else
+                [
+                    fact.Scope.OwnerId.ToString("D")
+                    fact.Scope.OrganizationId.ToString("D")
+                    fact.Scope.RepositoryId.ToString("D")
+                ]
+
+        BillingPeriodRules.deterministicId (
+            [
+                "ingestion-failure"
+                factIdentity
+                failureCode
+            ]
+            @ scopeIdentity
+              @ [
+                  string (fact.ObservedAt.ToDateTimeUtc().Ticks)
+              ]
+        )
 
 /// Records durable scoped billing-relevant ingestion failure evidence before message settlement.
 type IBillingIngestionFailureRecorder =
@@ -121,9 +152,12 @@ VALUES(@FailureId,@UsageFactId,@CustomerId,@OwnerId,@OrganizationId,@RepositoryI
                 add "@FailureId" SqlDbType.UniqueIdentifier (BillingIngestionFailureIdentity.failureId fact failureCode messageIdentity)
 
                 add "@UsageFactId" SqlDbType.UniqueIdentifier (if fact.UsageFactId = Guid.Empty then box DBNull.Value else box fact.UsageFactId)
-                add "@OwnerId" SqlDbType.UniqueIdentifier fact.Scope.OwnerId
-                add "@OrganizationId" SqlDbType.UniqueIdentifier fact.Scope.OrganizationId
-                add "@RepositoryId" SqlDbType.UniqueIdentifier fact.Scope.RepositoryId
+                let scope = fact.Scope
+                let scopeValue projection = if isNull (box scope) then box DBNull.Value else box (projection scope)
+
+                add "@OwnerId" SqlDbType.UniqueIdentifier (scopeValue (fun value -> value.OwnerId))
+                add "@OrganizationId" SqlDbType.UniqueIdentifier (scopeValue (fun value -> value.OrganizationId))
+                add "@RepositoryId" SqlDbType.UniqueIdentifier (scopeValue (fun value -> value.RepositoryId))
                 add "@ObservedAtUtc" SqlDbType.DateTime2 (fact.ObservedAt.ToDateTimeUtc())
                 command.Parameters.Add("@FailureCode", SqlDbType.NVarChar, 64).Value <- failureCode
                 command.Parameters.Add("@FailureDetail", SqlDbType.NVarChar, 1024).Value <- detail
@@ -578,7 +612,7 @@ SELECT @Inserted+@@ROWCOUNT;"""
                             command
                                 connection
                                 transaction
-                                "SELECT TOP(1) FailureCode FROM ops.BillingIngestionFailure WHERE ResolvedAtUtc IS NULL AND CustomerId=@CustomerId AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc;"
+                                "SELECT TOP(1) FailureCode FROM ops.BillingIngestionFailure WHERE ResolvedAtUtc IS NULL AND (CustomerId=@CustomerId OR CustomerId IS NULL) AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc;"
 
                         addScope blocker scope
                         let! blockerCode = blocker.ExecuteScalarAsync cancellationToken
@@ -643,7 +677,7 @@ SELECT @Inserted+@@ROWCOUNT;"""
                             post.Parameters.Add("@Principal", SqlDbType.NVarChar, 256).Value <- p.InitiatedByPrincipalId
                             post.Parameters.Add("@ReasonCode", SqlDbType.NVarChar, 64).Value <- p.ReasonCode
                             post.Parameters.Add("@ReasonText", SqlDbType.NVarChar, 1024).Value <- p.ReasonText
-                            post.Parameters.Add("@Correlation", SqlDbType.NVarChar, 128).Value <- p.CorrelationId
+                            post.Parameters.Add("@Correlation", SqlDbType.NVarChar, OperationsUsageSql.CorrelationIdMaxLength).Value <- p.CorrelationId
                             let! posted = post.ExecuteNonQueryAsync cancellationToken
 
                             use close =
@@ -767,7 +801,7 @@ SELECT @Inserted+@@ROWCOUNT;"""
 Posted AS (
  SELECT FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,
         SUM(Quantity) Quantity,SUM(ChargeMicros) ChargeMicros,MIN(ChargeLedgerEntryId) PriorId
- FROM ops.ChargeLedgerEntry WHERE BillingPeriodId=@PeriodId
+ FROM ops.ChargeLedgerEntry WHERE BillingPeriodId=@PeriodId AND (EntryKind=0 OR (InitiatedByPrincipalId=N'Grace.Operations' AND ReasonCode=N'LateUsageFact'))
  GROUP BY FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc)
 INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,SourceChargePreviewLineId,PriorChargeLedgerEntryId,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId,CreatedAtUtc)
 SELECT NEWID(),@PeriodId,1,NULL,p.PriorId,COALESCE(e.FactKind,p.FactKind),COALESCE(e.BillableUsageKindMappingId,p.BillableUsageKindMappingId),COALESCE(e.BillableUsageKind,p.BillableUsageKind),COALESCE(e.CustomerPricingAssignmentId,p.CustomerPricingAssignmentId),COALESCE(e.PricingPlanId,p.PricingPlanId),COALESCE(e.PricingRateId,p.PricingRateId),COALESCE(e.CurrencyCode,p.CurrencyCode),COALESCE(e.UnitName,p.UnitName),COALESCE(e.UnitQuantity,p.UnitQuantity),COALESCE(e.UnitPriceMicros,p.UnitPriceMicros),COALESCE(e.EffectiveFromUtc,p.EffectiveFromUtc),COALESCE(e.EffectiveToUtc,p.EffectiveToUtc),COALESCE(e.Quantity,0)-COALESCE(p.Quantity,0),COALESCE(e.ChargeMicros,0)-COALESCE(p.ChargeMicros,0),N'Grace.Operations',N'LateUsageFact',N'Automatic correction for an accepted late usage fact.',@Correlation,SYSUTCDATETIME()
@@ -775,7 +809,7 @@ FROM Expected e FULL OUTER JOIN Posted p ON e.FactKind=p.FactKind AND e.Billable
 WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,0)<>COALESCE(p.ChargeMicros,0);"""
 
                             add delta "@PeriodId" SqlDbType.UniqueIdentifier periodId
-                            delta.Parameters.Add("@Correlation", SqlDbType.NVarChar, 128).Value <- correlationId
+                            delta.Parameters.Add("@Correlation", SqlDbType.NVarChar, OperationsUsageSql.CorrelationIdMaxLength).Value <- correlationId
                             let! inserted = delta.ExecuteNonQueryAsync cancellationToken
 
                             if inserted > 0 then
@@ -818,6 +852,7 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
         member _.RepairFailureAsync(failureId, provenance, cancellationToken) =
             task {
                 BillingProvenance.validate provenance
+
                 use connection = new SqlConnection(connectionString)
                 do! connection.OpenAsync cancellationToken
                 use command = connection.CreateCommand()
@@ -838,6 +873,9 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
             task {
                 BillingProvenance.validate provenance
 
+                if String.Equals(provenance.ReasonCode, "LateUsageFact", StringComparison.Ordinal) then
+                    invalidArg "provenance" "LateUsageFact provenance is reserved for automatic correction work."
+
                 if correction.EntryKind = ChargeLedgerEntryKind.Charge then
                     invalidArg "correction" "Manual corrections must be Adjustment or Reversal entries."
 
@@ -851,6 +889,8 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
                    || correction.EffectiveFromUtc
                       >= correction.EffectiveToUtc then
                     invalidArg "correction" "Correction applicability must be a non-empty UTC interval."
+
+                ManualBillingCorrectionValidation.validatePricingGrain correction
 
                 let entryId = ManualBillingCorrectionIdentity.entryId correction provenance.CorrelationId
 
@@ -889,7 +929,37 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
                        && state <> BillingPeriodState.Corrected then
                         invalidOp "Only Closed or Corrected periods accept manual corrections."
 
+                    ManualBillingCorrectionValidation.validateApplicability scope.PeriodFromUtc scope.PeriodToUtc correction
+
                     do! lockScope connection transaction scope cancellationToken
+
+                    match correction.PriorChargeLedgerEntryId with
+                    | Some priorId ->
+                        use prior =
+                            command
+                                connection
+                                transaction
+                                "SELECT COUNT(1) FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE ChargeLedgerEntryId=@PriorId AND BillingPeriodId=@PeriodId AND FactKind=@FactKind AND BillableUsageKindMappingId=@Mapping AND BillableUsageKind=@BillableKind AND CustomerPricingAssignmentId=@Assignment AND PricingPlanId=@Plan AND PricingRateId=@Rate AND CurrencyCode=@Currency AND UnitName=@Unit AND UnitQuantity=@UnitQuantity AND UnitPriceMicros=@UnitPrice AND EffectiveFromUtc=@EffectiveFrom AND EffectiveToUtc=@EffectiveTo;"
+
+                        add prior "@PriorId" SqlDbType.UniqueIdentifier priorId
+                        add prior "@PeriodId" SqlDbType.UniqueIdentifier correction.BillingPeriodId
+                        add prior "@FactKind" SqlDbType.Int correction.FactKind
+                        add prior "@Mapping" SqlDbType.UniqueIdentifier correction.BillableUsageKindMappingId
+                        add prior "@BillableKind" SqlDbType.Int correction.BillableUsageKind
+                        add prior "@Assignment" SqlDbType.UniqueIdentifier correction.CustomerPricingAssignmentId
+                        add prior "@Plan" SqlDbType.UniqueIdentifier correction.PricingPlanId
+                        add prior "@Rate" SqlDbType.UniqueIdentifier correction.PricingRateId
+                        prior.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- correction.CurrencyCode
+                        prior.Parameters.Add("@Unit", SqlDbType.NVarChar, 64).Value <- correction.UnitName
+                        add prior "@UnitQuantity" SqlDbType.BigInt correction.UnitQuantity
+                        add prior "@UnitPrice" SqlDbType.BigInt correction.UnitPriceMicros
+                        add prior "@EffectiveFrom" SqlDbType.DateTime2 correction.EffectiveFromUtc
+                        add prior "@EffectiveTo" SqlDbType.DateTime2 correction.EffectiveToUtc
+                        let! matches = prior.ExecuteScalarAsync cancellationToken
+
+                        if Convert.ToInt32(matches) <> 1 then
+                            invalidArg "correction" "Prior ledger entry must belong to the same period and immutable pricing grain."
+                    | None -> ()
 
                     use insert =
                         command
@@ -926,7 +996,7 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
                     insert.Parameters.Add("@Principal", SqlDbType.NVarChar, 256).Value <- provenance.InitiatedByPrincipalId
                     insert.Parameters.Add("@ReasonCode", SqlDbType.NVarChar, 64).Value <- provenance.ReasonCode
                     insert.Parameters.Add("@ReasonText", SqlDbType.NVarChar, 1024).Value <- provenance.ReasonText
-                    insert.Parameters.Add("@Correlation", SqlDbType.NVarChar, 128).Value <- provenance.CorrelationId
+                    insert.Parameters.Add("@Correlation", SqlDbType.NVarChar, OperationsUsageSql.CorrelationIdMaxLength).Value <- provenance.CorrelationId
                     let! _ = insert.ExecuteNonQueryAsync cancellationToken
                     do! transaction.CommitAsync cancellationToken
                     return entryId

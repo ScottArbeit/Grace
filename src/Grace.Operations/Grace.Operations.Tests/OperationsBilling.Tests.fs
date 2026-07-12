@@ -98,6 +98,57 @@ type OperationsBillingTests() =
         )
         |> ignore
 
+    /// Verifies the accepted usage correlation boundary survives every billing provenance hop.
+    [<Test>]
+    member _.BillingProvenanceUsesTheAcceptedTwoHundredCharacterCorrelationContract() =
+        let provenance correlationId =
+            {
+                InitiatedByPrincipalId = "Grace.Operations"
+                ReasonCode = "LateUsageFact"
+                ReasonText = "Automatic late usage correction."
+                CorrelationId = correlationId
+            }
+
+        Assert.DoesNotThrow(Action(fun () -> BillingProvenance.validate (provenance (String('c', 200)))))
+
+        Assert.Throws<ArgumentException>(Action(fun () -> BillingProvenance.validate (provenance (String('c', 201)))))
+        |> ignore
+
+    /// Verifies correction containment accepts exact half-open period bounds and rejects every crossing interval.
+    [<Test>]
+    member _.ManualCorrectionApplicabilityIsWhollyPeriodBounded() =
+        let fromUtc = utc 2028 1 1 0
+        let toUtc = utc 2028 2 1 0
+        let value = correction ()
+        let validate candidate = ManualBillingCorrectionValidation.validateApplicability fromUtc toUtc candidate
+
+        Assert.DoesNotThrow(Action(fun () -> validate value))
+        Assert.DoesNotThrow(Action(fun () -> validate { value with EffectiveToUtc = toUtc.AddTicks(-1L) }))
+        Assert.DoesNotThrow(Action(fun () -> validate { value with EffectiveFromUtc = fromUtc.AddTicks(1L) }))
+
+        Assert.Throws<ArgumentException>(Action(fun () -> validate { value with EffectiveFromUtc = fromUtc.AddTicks(-1L) }))
+        |> ignore
+
+        Assert.Throws<ArgumentException>(Action(fun () -> validate { value with EffectiveToUtc = toUtc.AddTicks(1L) }))
+        |> ignore
+
+    /// Verifies immutable correction pricing permits zero price but rejects nonpositive units and negative prices.
+    [<Test>]
+    member _.ManualCorrectionPricingGrainRejectsImpossibleValues() =
+        let value = correction ()
+        let validate candidate = ManualBillingCorrectionValidation.validatePricingGrain candidate
+
+        Assert.DoesNotThrow(Action(fun () -> validate { value with UnitPriceMicros = 0L }))
+
+        Assert.Throws<ArgumentException>(Action(fun () -> validate { value with UnitQuantity = 0L }))
+        |> ignore
+
+        Assert.Throws<ArgumentException>(Action(fun () -> validate { value with UnitQuantity = -1L }))
+        |> ignore
+
+        Assert.Throws<ArgumentException>(Action(fun () -> validate { value with UnitPriceMicros = -1L }))
+        |> ignore
+
     /// Verifies every immutable correction dimension and signed delta participates in deterministic identity.
     [<Test>]
     member _.ManualCorrectionIdentityUsesCompleteGrainAndExactRetriesDeduplicate() =
@@ -158,6 +209,27 @@ type OperationsBillingTests() =
             Assert.That(identity "message-2" fact, Is.Not.EqualTo(original))
             Assert.That(identity "message-1" otherScope, Is.Not.EqualTo(original)))
 
+    /// Verifies missing scope evidence remains stable and non-global instead of poisoning message settlement.
+    [<Test>]
+    member _.MissingScopeFailureIdentitySettlesDeterministically() =
+        let fact =
+            UsageFact.RepositoryStorageBytesMinute(
+                Guid.Empty,
+                CorrelationId "missing-scope",
+                OwnerId.Parse("11111111-1111-1111-1111-111111111111"),
+                OrganizationId.Parse("22222222-2222-2222-2222-222222222222"),
+                RepositoryId.Parse("33333333-3333-3333-3333-333333333333"),
+                StoragePoolId "pool",
+                1L,
+                Instant.FromUtc(2028, 1, 15, 0, 0)
+            )
+
+        let missingScope = { fact with Scope = Unchecked.defaultof<_> }
+        let identity () = BillingIngestionFailureIdentity.failureId missingScope "InvalidUsageFact" "message-1"
+
+        Assert.DoesNotThrow(Action(fun () -> identity () |> ignore))
+        Assert.That(identity (), Is.EqualTo(identity ()))
+
     /// Verifies worker cadence, shared lock, freshness, one transaction, and atomic late-fact delivery remain explicit.
     [<Test>]
     member _.RuntimeSourceCarriesHighRiskProof() =
@@ -177,6 +249,11 @@ type OperationsBillingTests() =
             Assert.That(closeSource, Does.Not.Contain("replacePreview connection transaction periodId scope facts"))
             Assert.That(closeSource, Does.Contain("SELECT BillingCorrectionWorkId FROM ops.BillingCorrectionWork"))
             Assert.That(closeSource, Does.Contain("A failed work item remains pending"))
+            Assert.That(closeSource, Does.Contain("CustomerId=@CustomerId OR CustomerId IS NULL"))
+            Assert.That(closeSource, Does.Contain("EntryKind=0 OR (InitiatedByPrincipalId=N'Grace.Operations' AND ReasonCode=N'LateUsageFact')"))
+            Assert.That(closeSource, Does.Contain("LateUsageFact provenance is reserved for automatic correction work."))
+            Assert.That(closeSource, Does.Contain("Prior ledger entry must belong to the same period and immutable pricing grain."))
+            Assert.That(closeSource, Does.Contain("OperationsUsageSql.CorrelationIdMaxLength"))
             Assert.That(closeSource, Does.Not.Contain("force"))
             Assert.That(dataSource, Does.Contain("RecordAcceptedFactBillingEffectsAsync"))
             Assert.That(dataSource, Does.Contain("period.State IN (2,3)"))
@@ -282,9 +359,14 @@ type OperationsBillingTests() =
         multiple (fun () ->
             Assert.That(script, Does.Contain("TR_ops_ChargeLedgerEntry_Immutable"))
             Assert.That(script, Does.Contain("TR_ops_PricingRate_HistoricalProtection"))
+            Assert.That(script, Does.Contain("AFTER INSERT, UPDATE, DELETE"))
+            Assert.That(script, Does.Contain("FROM inserted UNION ALL"))
             Assert.That(script, Does.Contain("JOIN ops.CustomerPricingAssignment a ON a.PricingPlanId=d.PricingPlanId"))
             Assert.That(script, Does.Contain("p.CustomerId=d.CustomerId AND p.OwnerId=d.OwnerId"))
             Assert.That(script, Does.Contain("d.EffectiveFromUtc<p.PeriodToUtc"))
+            Assert.That(script, Does.Contain("CK_ops_ChargeLedgerEntry_UnitQuantity"))
+            Assert.That(script, Does.Contain("CK_ops_ChargeLedgerEntry_UnitPriceMicros"))
+            Assert.That(script, Does.Contain("CorrelationId nvarchar(200) NOT NULL"))
             Assert.That(script, Does.Contain("EffectiveToUtc,Quantity,ChargeMicros,PriorChargeLedgerEntryId"))
             Assert.That(script, Does.Contain("UX_ops_BillingCorrectionWork_PeriodFact"))
             Assert.That(script, Does.Not.Contain("CloseAttemptHistory")))
