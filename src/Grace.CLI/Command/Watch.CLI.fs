@@ -595,6 +595,189 @@ module Watch =
 
                 watchPathComparisonConfiguredRoot <- Some normalizedRoot
 
+    /// Identifies the origin allowed to create a local Watch scheduling candidate.
+    type internal WatchObservationOrigin =
+        | LocalFileSystem
+        | RemoteReference
+
+    /// Describes the final local observation that should be interpreted after its quiet window elapses.
+    type internal WatchObservationKind =
+        | CreatedOrChanged
+        | Deleted
+        | GraceStatusArtifact
+
+    /// Captures one coalesced local filesystem observation and the generation that owns its due work.
+    type internal WatchObservationCandidate = { FullPath: string; Kind: WatchObservationKind; Generation: int64; LastSeenAt: DateTime; DueAt: DateTime }
+
+    /// Coalesces local filesystem observations until their deterministic quiet window has elapsed.
+    type internal WatchObservationCandidateScheduler(quietWindow: TimeSpan, pathComparison: StringComparison) =
+        let gate = obj ()
+
+        let pathComparer =
+            match pathComparison with
+            | StringComparison.Ordinal -> StringComparer.Ordinal
+            | StringComparison.OrdinalIgnoreCase -> StringComparer.OrdinalIgnoreCase
+            | StringComparison.InvariantCulture -> StringComparer.InvariantCulture
+            | StringComparison.InvariantCultureIgnoreCase -> StringComparer.InvariantCultureIgnoreCase
+            | StringComparison.CurrentCulture -> StringComparer.CurrentCulture
+            | StringComparison.CurrentCultureIgnoreCase -> StringComparer.CurrentCultureIgnoreCase
+            | _ -> StringComparer.Ordinal
+
+        let candidates = Dictionary<string, WatchObservationCandidate>(pathComparer)
+        let mutable nextGeneration = 0L
+        let mutable disposed = false
+
+        /// Normalizes a callback path without touching the filesystem so equivalent spellings share one candidate key.
+        let tryNormalizeCandidatePath (fullPath: string) =
+            try
+                if String.IsNullOrWhiteSpace(fullPath) then
+                    None
+                else
+                    Some(Path.GetFullPath(fullPath))
+            with
+            | :? ArgumentException
+            | :? NotSupportedException
+            | :? PathTooLongException -> None
+
+        /// Orders due candidates independently of callback arrival order when their due instants match.
+        let compareDueCandidates (left: WatchObservationCandidate) (right: WatchObservationCandidate) =
+            let dueComparison = left.DueAt.CompareTo(right.DueAt)
+
+            if dueComparison <> 0 then
+                dueComparison
+            else
+                let generationComparison = left.Generation.CompareTo(right.Generation)
+
+                if generationComparison <> 0 then
+                    generationComparison
+                else
+                    pathComparer.Compare(left.FullPath, right.FullPath)
+
+        /// Records one local observation, replacing any older generation for the same normalized path.
+        member _.Observe(origin: WatchObservationOrigin, kind: WatchObservationKind, fullPath: string, seenAt: DateTime) =
+            lock gate (fun () ->
+                match origin, disposed, tryNormalizeCandidatePath fullPath with
+                | LocalFileSystem, false, Some normalizedPath ->
+                    let generation = Interlocked.Increment(&nextGeneration)
+
+                    let candidate = { FullPath = normalizedPath; Kind = kind; Generation = generation; LastSeenAt = seenAt; DueAt = seenAt + quietWindow }
+
+                    candidates[normalizedPath] <- candidate
+                    Some candidate
+                | _ -> None)
+
+        /// Returns the current due snapshot without consuming it so a newer generation can still supersede it before dispatch.
+        member _.SnapshotDue(now: DateTime) =
+            lock gate (fun () ->
+                candidates.Values
+                |> Seq.filter (fun candidate -> candidate.DueAt <= now)
+                |> Seq.sortWith compareDueCandidates
+                |> Seq.toArray)
+
+        /// Claims a due candidate only when the snapshot generation remains current at the dispatch boundary.
+        member _.TryClaim(candidate: WatchObservationCandidate, now: DateTime) =
+            lock gate (fun () ->
+                match candidates.TryGetValue(candidate.FullPath) with
+                | true, current when
+                    current.Generation = candidate.Generation
+                    && current.DueAt <= now
+                    ->
+                    candidates.Remove(candidate.FullPath) |> ignore
+
+                    Some current
+                | _ -> None)
+
+        /// Lists pending candidates for deterministic tests without exposing the scheduler's mutable dictionary.
+        member _.Snapshot() =
+            lock gate (fun () ->
+                candidates.Values
+                |> Seq.sortWith compareDueCandidates
+                |> Seq.toArray)
+
+        /// Reports whether local observations still await a due claim.
+        member _.HasPending = lock gate (fun () -> candidates.Count > 0)
+
+        /// Clears process-local candidates during Watch reset or shutdown.
+        member _.Clear() = lock gate (fun () -> candidates.Clear())
+
+        /// Retires all candidates and rejects later callbacks after the owning Watch lifetime ends.
+        member _.Dispose() =
+            lock gate (fun () ->
+                disposed <- true
+                candidates.Clear())
+
+        interface IDisposable with
+            member this.Dispose() = this.Dispose()
+
+    let private localObservationCandidateSchedulerLock = obj ()
+    let private liveLocalObservationQuietWindow = TimeSpan.FromSeconds(1.0)
+    let mutable private localObservationCandidateScheduler = new WatchObservationCandidateScheduler(TimeSpan.Zero, watchPathComparison)
+    let mutable private localObservationCandidateSchedulingActive = 0
+    let mutable private immediateLocalObservationProcessingForWatchTests = 0
+
+    /// Reports whether a live Watch lifetime has activated quiet-window candidate scheduling for raw callbacks.
+    let private isLocalObservationCandidateSchedulingActive () =
+        Volatile.Read(&localObservationCandidateSchedulingActive)
+        <> 0
+
+    /// Activates or clears candidate scheduling for the live Watch lifetime.
+    let private setLocalObservationCandidateSchedulingActive active = Volatile.Write(&localObservationCandidateSchedulingActive, (if active then 1 else 0))
+
+    /// Reports whether a direct callback test intentionally preserves its immediate legacy harness behavior.
+    let private useImmediateLocalObservationProcessingForWatchTests () =
+        Volatile.Read(&immediateLocalObservationProcessingForWatchTests)
+        <> 0
+
+    /// Selects candidate scheduling or the explicit direct-callback compatibility seam for focused Watch tests.
+    let internal setLocalObservationCandidateSchedulingForWatchTests active =
+        Volatile.Write(&immediateLocalObservationProcessingForWatchTests, (if active then 0 else 1))
+        setLocalObservationCandidateSchedulingActive active
+
+    /// Aligns candidate coalescing with the active repository path comparison before Watch starts accepting callbacks.
+    let private configureLocalObservationCandidateScheduler quietWindow =
+        lock localObservationCandidateSchedulerLock (fun () ->
+            if localObservationCandidateScheduler.HasPending then
+                ()
+            else
+                localObservationCandidateScheduler.Dispose()
+                localObservationCandidateScheduler <- new WatchObservationCandidateScheduler(quietWindow, watchPathComparison))
+
+    /// Records a raw local event without reading content, enumerating paths, or scheduling remote Reference work.
+    let private recordLocalObservationCandidate kind fullPath seenAt =
+        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Observe(LocalFileSystem, kind, fullPath, seenAt))
+
+    /// Reads the active scheduler snapshot after a test has installed a deterministic clock or direct candidate sequence.
+    let internal localObservationCandidateSnapshotForWatchTests () =
+        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Snapshot())
+
+    /// Clears local candidate state without affecting the independent current-branch Reference catch-up scheduler.
+    let private clearLocalObservationCandidateScheduler () = lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Clear())
+
+    /// Retires candidate state when a Watch lifetime ends so later lifetimes cannot observe stale paths.
+    let private retireLocalObservationCandidateScheduler () =
+        setLocalObservationCandidateSchedulingActive false
+
+        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Dispose())
+
+    /// Reports whether candidate metadata alone keeps the Watch process locally dirty.
+    let private hasPendingLocalObservationCandidates () = lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.HasPending)
+
+    /// Captures due candidates while retaining generation checks for the subsequent claim boundary.
+    let private dueLocalObservationCandidates now =
+        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler, localObservationCandidateScheduler.SnapshotDue(now))
+
+    /// Claims a due candidate only if no newer same-path raw event has superseded it.
+    let private tryClaimLocalObservationCandidate (scheduler: WatchObservationCandidateScheduler) candidate now = scheduler.TryClaim(candidate, now)
+
+    /// Evaluates is grace status artifact against parsed options and command state.
+    let private isGraceStatusArtifact (fullPath: string) =
+        let statusFile = Current().GraceStatusFile
+
+        fullPath.Equals(statusFile, StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(statusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(statusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(statusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+
     /// Compares delete-trigger paths against GraceStatus with the legacy status delete semantics.
     let private deletedPathComparison = StringComparison.OrdinalIgnoreCase
 
@@ -1089,8 +1272,6 @@ module Watch =
     let internal graceStatusForWatchTests () = graceStatus
     /// Reads the in-memory Grace Status directory identities so transition-publication tests can prove state isolation.
     let internal graceStatusDirectoryIdsForWatchTests () = graceStatusDirectoryIds
-    /// Reports whether the Watch timer still owes a Grace Status refresh pass.
-    let internal graceStatusHasChangedForWatchTests () = graceStatusHasChanged
 
     /// Checks whether set grace status has changed for watch tests is true for the parsed command input.
     let internal setGraceStatusHasChangedForWatchTests hasChanged =
@@ -1121,6 +1302,7 @@ module Watch =
     let internal setWatchPathComparisonForWatchTests comparison =
         watchPathComparison <- comparison
         watchPathComparisonOverride <- Some comparison
+        configureLocalObservationCandidateScheduler TimeSpan.Zero
 
     /// Installs the repository case-sensitivity detector used by watch tests.
     let internal setRepositoryPathCaseInsensitiveLookupForWatchTests detector =
@@ -2208,6 +2390,7 @@ module Watch =
     let private hasProcessablePendingWatchWorkExceptManual () =
         isGraceWatchResyncPending ()
         || graceStatusHasChanged
+        || hasPendingLocalObservationCandidates ()
         || not (
             filesToProcess.IsEmpty
             && directoriesToProcess.IsEmpty
@@ -2753,6 +2936,123 @@ module Watch =
 
         publishPendingWatchWorkTransitionIfNeeded ()
 
+    /// Applies a due create or change candidate after its quiet window has separated raw callbacks from filesystem work.
+    let private applyCreatedOrChangedLocalObservationCandidate fullPath =
+        if updateNotInProgress ()
+           && isGraceStatusArtifact fullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+            false
+        elif not (updateNotInProgress ()) then
+            logObservationSuppressed fullPath
+            false
+        elif isDelayedGraceOwnedFileObservation fullPath then
+            logObservationSuppressed fullPath
+            false
+        elif Directory.Exists(fullPath) then
+            let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds fullPath
+
+            if directoryStatusAddQueued then
+                logToAnsiConsole Colors.Added $"I saw that directory {fullPath} was created."
+
+            if not directoryStatusEnumerationComplete then
+                enqueueDirectoryUploadRetry fullPath
+
+            directoryStatusAddQueued
+            || not directoryStatusEnumerationComplete
+        elif isNotDirectory fullPath then
+            if enqueueFileUpload fullPath then
+                logToAnsiConsole Colors.Changed $"I saw that {fullPath} changed."
+                true
+            else
+                false
+        else
+            false
+
+    /// Applies a due delete candidate after the current marker and final filesystem state can be examined safely.
+    let private applyDeletedLocalObservationCandidate fullPath =
+        if updateNotInProgress ()
+           && isGraceStatusArtifact fullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+            false
+        elif not (updateNotInProgress ()) then
+            logObservationSuppressed fullPath
+            false
+        else
+            let canceledFileUpload = cancelPendingUploadsForDeletedPath fullPath
+
+            if isDelayedGraceOwnedFileObservation fullPath
+               && not canceledFileUpload then
+                logObservationSuppressed fullPath
+                false
+            elif enqueueStatusUpdateTrigger fullPath then
+                match repositoryRelativePath fullPath with
+                | Some relativePath ->
+                    let invalidatedRelativePath = RelativePath relativePath
+
+                    if
+                        canceledFileUpload
+                        || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
+                    then
+                        clearProcessedFileRelativePathsPendingStatus [ invalidatedRelativePath ]
+                        removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+                | None -> ()
+
+                if canceledFileUpload then
+                    match repositoryRelativePath fullPath with
+                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
+                    | None -> ()
+
+                logToAnsiConsole Colors.Deleted $"I saw that {fullPath} was deleted."
+                true
+            else
+                false
+
+    /// Claims every candidate due at the supplied instant and performs the existing expensive Watch work after the claim boundary.
+    let private processDueLocalObservationCandidates now =
+        let scheduler, dueCandidates = dueLocalObservationCandidates now
+        let mutable queuedPendingWork = false
+
+        for dueCandidate in dueCandidates do
+            match tryClaimLocalObservationCandidate scheduler dueCandidate now with
+            | Some candidate ->
+                let candidateQueuedWork =
+                    match candidate.Kind with
+                    | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate candidate.FullPath
+                    | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath
+                    | GraceStatusArtifact ->
+                        if updateNotInProgress () then
+                            markGraceStatusChangedAndPublishPendingWorkTransition ()
+                        else
+                            logObservationSuppressed candidate.FullPath
+
+                        false
+
+                queuedPendingWork <- queuedPendingWork || candidateQueuedWork
+            | None -> ()
+
+        if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Applies an observation immediately only for direct callback harnesses that did not start the Watch lifetime.
+    let private processLocalObservationImmediately kind fullPath =
+        let queuedPendingWork =
+            match kind with
+            | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath
+            | Deleted -> applyDeletedLocalObservationCandidate fullPath
+            | GraceStatusArtifact ->
+                if updateNotInProgress () then
+                    markGraceStatusChangedAndPublishPendingWorkTransition ()
+                else
+                    logObservationSuppressed fullPath
+
+                false
+
+        if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Drains zero-window test candidates before reporting whether Watch still owes a Grace Status refresh pass.
+    let internal graceStatusHasChangedForWatchTests () =
+        processDueLocalObservationCandidates DateTime.UtcNow
+        graceStatusHasChanged
+
     /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
     let private promoteStartupModeIfRecoverySucceeded () =
         if
@@ -3104,6 +3404,8 @@ module Watch =
 
     /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
+        clearLocalObservationCandidateScheduler ()
+        setLocalObservationCandidateSchedulingActive false
         filesToProcess.Clear()
         directoriesToProcess.Clear()
         statusUpdateTriggers.Clear()
@@ -3150,6 +3452,7 @@ module Watch =
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None
+        configureLocalObservationCandidateScheduler TimeSpan.Zero
         repositoryPathCaseInsensitiveLookupForWatch <- detectRepositoryPathCaseInsensitiveLookup
         fileExistsForWatchFinalPath <- File.Exists
         directoryExistsForWatchFinalPath <- Directory.Exists
@@ -3159,6 +3462,16 @@ module Watch =
 
     /// Coordinates pending watch work snapshot for tests behavior for this CLI command path.
     let internal pendingWatchWorkSnapshotForTests () =
+        processDueLocalObservationCandidates DateTime.UtcNow
+
+        {
+            FilesToProcess = filesToProcess.Keys.OrderBy(id).ToArray()
+            DirectoriesToProcess = directoriesToProcess.Keys.OrderBy(id).ToArray()
+            StatusUpdateTriggers = statusUpdateTriggers.Keys.OrderBy(id).ToArray()
+        }
+
+    /// Reads queued Watch work without draining a due local observation candidate for raw-callback boundary tests.
+    let internal pendingWatchWorkSnapshotWithoutCandidateDrainForTests () =
         {
             FilesToProcess = filesToProcess.Keys.OrderBy(id).ToArray()
             DirectoriesToProcess = directoriesToProcess.Keys.OrderBy(id).ToArray()
@@ -5835,67 +6148,59 @@ module Watch =
                 signalRConnection.InvokeAsync("RegisterParentBranch", branchId, parentBranchId, cancellationToken))
             cancellationToken
 
-    /// Evaluates is grace status artifact against parsed options and command state.
-    let private isGraceStatusArtifact (fullPath: string) =
-        let statusFile = Current().GraceStatusFile
-
-        fullPath.Equals(statusFile, StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
-
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
-        elif updateNotInProgress ()
-             && isGraceStatusArtifact args.FullPath then
-            markGraceStatusChangedAndPublishPendingWorkTransition ()
-        elif isDelayedGraceOwnedFileObservation args.FullPath then
+        elif updateNotInProgress () then
+            let kind =
+                if isGraceStatusArtifact args.FullPath then
+                    GraceStatusArtifact
+                else
+                    CreatedOrChanged
+
+            if isLocalObservationCandidateSchedulingActive () then
+                recordLocalObservationCandidate kind args.FullPath DateTime.UtcNow
+                |> ignore
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                processLocalObservationImmediately kind args.FullPath
+            else
+                logObservationSuppressed args.FullPath
+        else
             logObservationSuppressed args.FullPath
-        elif
-            updateNotInProgress ()
-            && Directory.Exists(args.FullPath)
-        then
-            let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds args.FullPath
-
-            if directoryStatusAddQueued then
-                logToAnsiConsole Colors.Added $"I saw that directory {args.FullPath} was created."
-
-            if not directoryStatusEnumerationComplete then
-                enqueueDirectoryUploadRetry args.FullPath
-
-            if directoryStatusAddQueued
-               || not directoryStatusEnumerationComplete then
-                publishPendingWatchWorkTransitionIfNeeded ()
-        elif updateNotInProgress ()
-             && isNotDirectory args.FullPath then
-            if enqueueFileUpload args.FullPath then
-                logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
-                publishPendingWatchWorkTransitionIfNeeded ()
-
-            if isGraceStatusArtifact args.FullPath then
-                markGraceStatusChangedAndPublishPendingWorkTransition ()
 
     /// Coordinates on changed behavior for this CLI command path.
     let OnChanged (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
-        elif updateNotInProgress ()
-             && isGraceStatusArtifact args.FullPath then
-            markGraceStatusChangedAndPublishPendingWorkTransition ()
-            logToAnsiConsole Colors.Important $"Grace Status file has been updated."
-        elif isDelayedGraceOwnedFileObservation args.FullPath then
-            logObservationSuppressed args.FullPath
-        elif updateNotInProgress ()
-             && isNotDirectory args.FullPath then
-            let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
+        elif updateNotInProgress () then
+            let kind =
+                if isGraceStatusArtifact args.FullPath then
+                    GraceStatusArtifact
+                else
+                    CreatedOrChanged
 
-            if not <| shouldIgnore then
+            if isLocalObservationCandidateSchedulingActive () then
+                recordLocalObservationCandidate kind args.FullPath DateTime.UtcNow
+                |> ignore
+            elif useImmediateLocalObservationProcessingForWatchTests ()
+                 && kind = GraceStatusArtifact then
+                processLocalObservationImmediately kind args.FullPath
+            elif useImmediateLocalObservationProcessingForWatchTests ()
+                 && isDelayedGraceOwnedFileObservation args.FullPath then
+                logObservationSuppressed args.FullPath
+            elif
+                useImmediateLocalObservationProcessingForWatchTests ()
+                && isNotDirectory args.FullPath
+                && not (shouldIgnoreFile args.FullPath)
+            then
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
                 enqueueFileUpload args.FullPath |> ignore
                 publishPendingWatchWorkTransitionIfNeeded ()
+            elif not (useImmediateLocalObservationProcessingForWatchTests ()) then
+                logObservationSuppressed args.FullPath
+        else
+            logObservationSuppressed args.FullPath
 
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
     let private enqueueDirectoryContentsForUpload directoryPath = tryEnqueueDirectoryContentsForUpload directoryPath
@@ -5917,85 +6222,82 @@ module Watch =
     let OnDeleted (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
-        elif updateNotInProgress ()
-             && isGraceStatusArtifact args.FullPath then
-            markGraceStatusChangedAndPublishPendingWorkTransition ()
         elif updateNotInProgress () then
-            let canceledFileUpload = cancelPendingUploadsForDeletedPath args.FullPath
+            let kind = if isGraceStatusArtifact args.FullPath then GraceStatusArtifact else Deleted
 
-            if isDelayedGraceOwnedFileObservation args.FullPath
-               && not canceledFileUpload then
+            if isLocalObservationCandidateSchedulingActive () then
+                recordLocalObservationCandidate kind args.FullPath DateTime.UtcNow
+                |> ignore
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                processLocalObservationImmediately kind args.FullPath
+            else
                 logObservationSuppressed args.FullPath
-            elif enqueueStatusUpdateTrigger args.FullPath then
-                match repositoryRelativePath args.FullPath with
-                | Some relativePath ->
-                    let invalidatedRelativePath = RelativePath relativePath
-
-                    if
-                        canceledFileUpload
-                        || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
-                    then
-                        clearProcessedFileRelativePathsPendingStatus [ invalidatedRelativePath ]
-                        removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
-                | None -> ()
-
-                if canceledFileUpload then
-                    match repositoryRelativePath args.FullPath with
-                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
-                    | None -> ()
-
-                logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
-                publishPendingWatchWorkTransitionIfNeeded ()
-
-            if isGraceStatusArtifact args.FullPath then
-                markGraceStatusChangedAndPublishPendingWorkTransition ()
+        else
+            logObservationSuppressed args.FullPath
 
     /// Coordinates on renamed behavior for this CLI command path.
     let OnRenamed (args: RenamedEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
-            let mutable queuedPendingWork = false
-            let newPathIsDirectory = Directory.Exists(args.FullPath)
+            let seenAt = DateTime.UtcNow
 
-            let canceledFileUpload = cancelPendingUploadsForDeletedPath args.OldFullPath
+            let kind =
+                if isGraceStatusArtifact args.FullPath then
+                    GraceStatusArtifact
+                else
+                    CreatedOrChanged
 
-            let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
-            queuedPendingWork <- queuedPendingWork || oldPathStatusQueued
+            if isLocalObservationCandidateSchedulingActive () then
+                recordLocalObservationCandidate Deleted args.OldFullPath seenAt
+                |> ignore
 
-            if oldPathStatusQueued then
-                if canceledFileUpload then
-                    match repositoryRelativePath args.OldFullPath with
-                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
-                    | None -> ()
+                recordLocalObservationCandidate kind args.FullPath seenAt
+                |> ignore
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                let mutable queuedPendingWork = false
+                let newPathIsDirectory = Directory.Exists(args.FullPath)
+                let canceledFileUpload = cancelPendingUploadsForDeletedPath args.OldFullPath
+                let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
+                queuedPendingWork <- queuedPendingWork || oldPathStatusQueued
 
-                logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
+                if oldPathStatusQueued then
+                    if canceledFileUpload then
+                        match repositoryRelativePath args.OldFullPath with
+                        | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
+                        | None -> ()
 
-            if newPathIsDirectory then
-                let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds args.FullPath
-                queuedPendingWork <- queuedPendingWork || directoryStatusAddQueued
-
-                if directoryStatusAddQueued
-                   && not oldPathStatusQueued then
                     logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
-                let fileUploadWorkCountBefore = filesToProcess.Count
-                let fileUploadEnumerationComplete = enqueueDirectoryContentsForUpload args.FullPath
+                if newPathIsDirectory then
+                    let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds args.FullPath
+                    queuedPendingWork <- queuedPendingWork || directoryStatusAddQueued
 
-                if not fileUploadEnumerationComplete then
-                    enqueueDirectoryUploadRetry args.FullPath
-                    queuedPendingWork <- true
-                elif filesToProcess.Count > fileUploadWorkCountBefore then
+                    if directoryStatusAddQueued
+                       && not oldPathStatusQueued then
+                        logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
+
+                    let fileUploadWorkCountBefore = filesToProcess.Count
+                    let fileUploadEnumerationComplete = enqueueDirectoryContentsForUpload args.FullPath
+
+                    if not fileUploadEnumerationComplete then
+                        enqueueDirectoryUploadRetry args.FullPath
+                        queuedPendingWork <- true
+                    elif filesToProcess.Count > fileUploadWorkCountBefore then
+                        queuedPendingWork <- true
+
+                    if not directoryStatusEnumerationComplete then
+                        enqueueDirectoryUploadRetry args.FullPath
+                        queuedPendingWork <- true
+                elif enqueueFileUpload args.FullPath then
+                    logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
                     queuedPendingWork <- true
 
-                if not directoryStatusEnumerationComplete then
-                    enqueueDirectoryUploadRetry args.FullPath
-                    queuedPendingWork <- true
-            elif enqueueFileUpload args.FullPath then
-                logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                queuedPendingWork <- true
-
-            if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
+                if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
+            else
+                logObservationSuppressed args.FullPath
+        else
+            logObservationSuppressed args.FullPath
 
     /// Coordinates on error behavior for this CLI command path.
     let OnError (args: ErrorEventArgs) =
@@ -6666,6 +6968,7 @@ module Watch =
         =
         task {
             configureWatchPathComparisonForCurrentRepository ()
+            processDueLocalObservationCandidates DateTime.UtcNow
 
             // First, check if there's anything to process.
             if isGraceWatchResyncPending () then
@@ -7516,6 +7819,11 @@ module Watch =
         /// Runs the asynchronous watch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
+                use localObservationCandidateLifetime =
+                    { new IDisposable with
+                        member _.Dispose() = retireLocalObservationCandidateScheduler ()
+                    }
+
                 try
                     if isCheckRequested parseResult then
                         let! watchStatusInspection = inspectGraceWatchStatus ()
@@ -7531,6 +7839,10 @@ module Watch =
 
                     setGraceWatchRuntimeMode GraceWatchRuntimeMode.StartingUp
                     configureWatchPathComparisonForCurrentRepository ()
+
+                    // A live watcher waits one timer interval after the most recent raw callback before it reads filesystem state.
+                    configureLocalObservationCandidateScheduler liveLocalObservationQuietWindow
+                    setLocalObservationCandidateSchedulingActive true
 
                     // Create the FileSystemWatcher, but don't enable it yet.
                     use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)

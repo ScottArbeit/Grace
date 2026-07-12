@@ -410,6 +410,7 @@ module WatchTests =
             Services.clearShouldIgnoreCache ()
             deleteWatchStatusFileIfExists ()
             Watch.clearPendingWatchWorkForTests ()
+            Watch.setLocalObservationCandidateSchedulingForWatchTests false
             action tempDir
         finally
             Watch.clearPendingWatchWorkForTests ()
@@ -783,6 +784,194 @@ module WatchTests =
     /// Builds renamed event test data used to exercise CLI watch behavior.
     let private renamedEvent (oldFullPath: string) (fullPath: string) =
         RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
+
+    /// Verifies that same-path local callbacks retain only the latest due generation and extend its quiet window.
+    [<Test>]
+    let ``local observation candidates collapse duplicate paths and extend due time`` () =
+        let quietWindow = TimeSpan.FromSeconds(1.0)
+        let scheduler = new Watch.WatchObservationCandidateScheduler(quietWindow, StringComparison.Ordinal)
+        let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "duplicate.txt")
+        let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+
+        let firstCandidate =
+            scheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, firstSeenAt)
+            |> Option.get
+
+        let latestSeenAt = firstSeenAt.AddMilliseconds(250.0)
+
+        let latestCandidate =
+            scheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, latestSeenAt)
+            |> Option.get
+
+        scheduler.Snapshot().Length |> should equal 1
+
+        latestCandidate.Generation
+        |> should be (greaterThan firstCandidate.Generation)
+
+        let pendingCandidate = scheduler.Snapshot()[0]
+
+        pendingCandidate.LastSeenAt
+        |> should equal latestSeenAt
+
+        pendingCandidate.DueAt
+        |> should equal (latestSeenAt.Add(quietWindow))
+
+    /// Verifies that a candidate becomes eligible exactly at its quiet-window boundary and never before it.
+    [<Test>]
+    let ``local observation candidate is eligible exactly at quiet boundary`` () =
+        let quietWindow = TimeSpan.FromSeconds(1.0)
+        let scheduler = new Watch.WatchObservationCandidateScheduler(quietWindow, StringComparison.Ordinal)
+        let seenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+
+        let candidate =
+            scheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "boundary.txt"), seenAt)
+            |> Option.get
+
+        scheduler.SnapshotDue(seenAt.AddMilliseconds(999.0))
+        |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+        scheduler.SnapshotDue(candidate.DueAt)
+        |> should equal [| candidate |]
+
+        scheduler.TryClaim(candidate, candidate.DueAt)
+        |> should equal (Some candidate)
+
+        scheduler.Snapshot()
+        |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+    /// Verifies that a captured due snapshot cannot claim a same-path generation superseded before dispatch.
+    [<Test>]
+    let ``local observation candidate stale scheduled generation cannot emit`` () =
+        let scheduler = new Watch.WatchObservationCandidateScheduler(TimeSpan.Zero, StringComparison.Ordinal)
+        let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "stale.txt")
+        let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+
+        let olderCandidate =
+            scheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, firstSeenAt)
+            |> Option.get
+
+        scheduler.SnapshotDue(firstSeenAt)
+        |> should equal [| olderCandidate |]
+
+        let newerCandidate =
+            scheduler.Observe(Watch.LocalFileSystem, Watch.Deleted, fullPath, firstSeenAt.AddMilliseconds(1.0))
+            |> Option.get
+
+        scheduler.TryClaim(olderCandidate, newerCandidate.DueAt)
+        |> should equal None
+
+        scheduler.SnapshotDue(newerCandidate.DueAt)
+        |> should equal [| newerCandidate |]
+
+    /// Verifies that independent paths retain separate candidates and configured path case semantics choose their identity.
+    [<Test>]
+    let ``local observation candidates retain independent paths with configured case semantics`` () =
+        let seenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+        let root = Path.Combine(Path.GetTempPath(), "grace-watch-candidate")
+        let firstPath = Path.Combine(root, "first.txt")
+        let secondPath = Path.Combine(root, "second.txt")
+        let differentlyCasedPath = Path.Combine(root, "FIRST.txt")
+        let caseSensitiveScheduler = new Watch.WatchObservationCandidateScheduler(TimeSpan.Zero, StringComparison.Ordinal)
+        let caseInsensitiveScheduler = new Watch.WatchObservationCandidateScheduler(TimeSpan.Zero, StringComparison.OrdinalIgnoreCase)
+
+        caseSensitiveScheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, firstPath, seenAt)
+        |> Option.isSome
+        |> should equal true
+
+        caseSensitiveScheduler.Observe(Watch.LocalFileSystem, Watch.Deleted, secondPath, seenAt)
+        |> Option.isSome
+        |> should equal true
+
+        caseSensitiveScheduler.Observe(Watch.LocalFileSystem, Watch.Deleted, differentlyCasedPath, seenAt)
+        |> Option.isSome
+        |> should equal true
+
+        caseSensitiveScheduler.Snapshot().Length
+        |> should equal 3
+
+        caseSensitiveScheduler.SnapshotDue(seenAt)
+        |> Array.map (fun candidate -> candidate.FullPath)
+        |> should
+            equal
+            [|
+                firstPath
+                secondPath
+                differentlyCasedPath
+            |]
+
+        caseInsensitiveScheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, firstPath, seenAt)
+        |> Option.isSome
+        |> should equal true
+
+        caseInsensitiveScheduler.Observe(Watch.LocalFileSystem, Watch.Deleted, differentlyCasedPath, seenAt)
+        |> Option.isSome
+        |> should equal true
+
+        caseInsensitiveScheduler.Snapshot().Length
+        |> should equal 1
+
+    /// Verifies that remote Reference paths and disposed schedulers cannot create local observation candidates.
+    [<Test>]
+    let ``local observation scheduler rejects remote reference and disposal callbacks`` () =
+        let scheduler = new Watch.WatchObservationCandidateScheduler(TimeSpan.Zero, StringComparison.Ordinal)
+        let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "remote.txt")
+        let seenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+
+        scheduler.Observe(Watch.RemoteReference, Watch.CreatedOrChanged, fullPath, seenAt)
+        |> should equal None
+
+        scheduler.Snapshot()
+        |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+        (scheduler :> IDisposable).Dispose()
+
+        scheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, seenAt)
+        |> should equal None
+
+        scheduler.Snapshot()
+        |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+    /// Verifies that raw callbacks record candidate metadata without content work and suppress Grace-owned marker effects.
+    [<Test>]
+    let ``raw Watch callbacks queue only local candidates and suppress marker effects`` () =
+        withTempRepo (fun root ->
+            let changedPath = Path.Combine(root, "candidate.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            File.WriteAllText(changedPath, "candidate payload")
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent changedPath)
+
+            Watch
+                .localObservationCandidateSnapshotForWatchTests()
+                .Length
+            |> should equal 1
+
+            let rawCallbackWork = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            rawCallbackWork.FilesToProcess
+            |> should equal Array.empty<string>
+
+            rawCallbackWork.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            rawCallbackWork.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            let queuesAfterEligibility = Watch.pendingWatchWorkSnapshotForTests ()
+
+            queuesAfterEligibility.FilesToProcess
+            |> should equal [| changedPath |]
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+            File.WriteAllText(changedPath, "Grace-owned payload")
+            Watch.OnChanged(changedEvent changedPath)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>)
 
     /// Verifies that Grace-owned writes under the update marker do not enqueue Save-producing Watch work.
     [<Test>]
