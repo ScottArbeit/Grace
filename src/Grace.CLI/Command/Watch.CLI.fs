@@ -2329,11 +2329,12 @@ module Watch =
         tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot
         |> ignore
 
-    /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
-    let private publishPendingWatchWorkTransitionIfNeeded () =
+    /// Publishes a clean or dirty Watch IPC transition and reports whether the exact snapshot was verified on disk.
+    let private tryPublishPendingWatchWorkTransitionIfNeeded () =
         lock watchStatusPublishLock (fun () ->
             let pendingEvidence = readPendingWatchWorkEvidence ()
             let hasPendingWork = pendingEvidence.HasPendingWork
+            let mutable transitionWasPublished = false
 
             if
                 File.Exists(IpcFileName())
@@ -2394,7 +2395,7 @@ module Watch =
                         lastPublishedHasPendingWatchWork <- None
                         logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
-                    let transitionWasPublished =
+                    transitionWasPublished <-
                         try
                             let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
 
@@ -2411,7 +2412,14 @@ module Watch =
                         lastPublishedHasPendingWatchWork <- Some hasPendingWork
                     else
                         lastPublishedHasPendingWatchWork <- None
-                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check.")
+                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
+
+            transitionWasPublished)
+
+    /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
+    let private publishPendingWatchWorkTransitionIfNeeded () =
+        tryPublishPendingWatchWorkTransitionIfNeeded ()
+        |> ignore
 
     /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
     let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
@@ -4444,6 +4452,8 @@ module Watch =
             WaitForSafePoint: CurrentBranchReferenceNotification -> CurrentBranchMaterializationStatusGate -> Task<unit>
             ReestablishIpc: CurrentBranchReferenceNotification -> string -> Task<unit>
             ApplyReference: CurrentBranchReferenceNotification -> GraceWatchStatus -> Task<unit>
+            PublishCleanIpcAfterApply: unit -> bool
+            ReassertDirtyIpcAfterFailedCleanPublication: unit -> unit
             MaxAttempts: int option
         }
 
@@ -4658,14 +4668,26 @@ module Watch =
                                                             do! clients.ApplyReference payload leaseStatus
 
                                                             setGraceWatchPendingWorkStatusFlag false
-                                                            publishPendingWatchWorkTransitionIfNeeded ()
 
-                                                            return
-                                                                {
-                                                                    ReferenceId = payload.ReferenceId
-                                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-                                                                    Decision = Some acceptedDecision
-                                                                }
+                                                            if clients.PublishCleanIpcAfterApply() then
+                                                                return
+                                                                    {
+                                                                        ReferenceId = payload.ReferenceId
+                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                                        Decision = Some acceptedDecision
+                                                                    }
+                                                            else
+                                                                setGraceWatchPendingWorkStatusFlag true
+                                                                clients.ReassertDirtyIpcAfterFailedCleanPublication()
+
+                                                                clients.RequestDegradedResync "materialization final clean Watch IPC/status publication failed"
+
+                                                                return
+                                                                    {
+                                                                        ReferenceId = payload.ReferenceId
+                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                        Decision = Some acceptedDecision
+                                                                    }
                                                         with
                                                         | ex ->
                                                             setGraceWatchPendingWorkStatusFlag true
@@ -5007,6 +5029,8 @@ module Watch =
                 WaitForSafePoint = fun _ _ -> Task.FromResult(())
                 ReestablishIpc = fun _ _ -> Task.FromResult(())
                 ApplyReference = fun _ _ -> Task.FromResult(())
+                PublishCleanIpcAfterApply = fun () -> true
+                ReassertDirtyIpcAfterFailedCleanPublication = ignore
                 MaxAttempts = Some 3
             }
             payload
@@ -5023,6 +5047,11 @@ module Watch =
                         WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ApplyReference = applyCurrentBranchReferenceMaterialization
+                        PublishCleanIpcAfterApply = tryPublishPendingWatchWorkTransitionIfNeeded
+                        ReassertDirtyIpcAfterFailedCleanPublication =
+                            fun () ->
+                                publishPendingWatchWorkTransitionIfNeeded ()
+                                |> ignore
                         MaxAttempts = None
                     }
                     payload
@@ -5058,6 +5087,42 @@ module Watch =
                             WaitForSafePoint = waitForSafePoint
                             ReestablishIpc = reestablishIpc
                             ApplyReference = applyReference
+                            PublishCleanIpcAfterApply = fun () -> true
+                            ReassertDirtyIpcAfterFailedCleanPublication = ignore
+                            MaxAttempts = Some 3
+                        }
+                        payload
+
+                return Some outcome
+            else
+                return None
+        }
+
+    /// Exposes final clean-publication success and failure ordering to focused coordinator tests.
+    let internal handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
+        getCurrentBranch
+        inspectLocalStatus
+        requestDegradedResync
+        waitForSafePoint
+        reestablishIpc
+        applyReference
+        publishCleanIpcAfterApply
+        reassertDirtyIpcAfterFailedCleanPublication
+        payload
+        =
+        task {
+            if currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                let! outcome =
+                    runCurrentBranchMaterializationCoordinator
+                        {
+                            GetCurrentBranch = getCurrentBranch
+                            InspectLocalStatus = inspectLocalStatus
+                            RequestDegradedResync = requestDegradedResync
+                            WaitForSafePoint = waitForSafePoint
+                            ReestablishIpc = reestablishIpc
+                            ApplyReference = applyReference
+                            PublishCleanIpcAfterApply = publishCleanIpcAfterApply
+                            ReassertDirtyIpcAfterFailedCleanPublication = reassertDirtyIpcAfterFailedCleanPublication
                             MaxAttempts = Some 3
                         }
                         payload

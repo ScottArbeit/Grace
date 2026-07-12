@@ -17448,6 +17448,154 @@ module WatchTests =
                 |> should equal true
             | None -> Assert.Fail("Expected stale materialization cleanup to publish clean Watch IPC."))
 
+    /// Verifies final clean IPC publication occurs only after apply reports durable state and marker-boundary completion.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
+    let ``current branch materialization coordinator publishes clean only after successful apply completion`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let events = ResizeArray<string>()
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "final-publication-order-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync _ = Assert.Fail("A verified final clean publication must not request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+
+            let applyReference _ _ =
+                task {
+                    events.Add("apply-targets")
+                    events.Add("durable-status-updated")
+                    events.Add("update-marker-closed")
+                }
+
+            let publishCleanIpcAfterApply () =
+                events.ToArray()
+                |> should
+                    equal
+                    [|
+                        "apply-targets"
+                        "durable-status-updated"
+                        "update-marker-closed"
+                    |]
+
+                events.Add("clean-ipc-verified")
+                true
+
+            let reassertDirtyIpcAfterFailedCleanPublication () = Assert.Fail("Verified clean publication must not reassert dirty IPC.")
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    publishCleanIpcAfterApply
+                    reassertDirtyIpcAfterFailedCleanPublication
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            events.ToArray()
+            |> should
+                equal
+                [|
+                    "apply-targets"
+                    "durable-status-updated"
+                    "update-marker-closed"
+                    "clean-ipc-verified"
+                |])
+
+    /// Verifies unproven final clean IPC publication remains dirty, degraded, and non-applied after a successful apply.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
+    let ``current branch materialization coordinator reasserts dirty ipc when final clean publication is unproven`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let events = ResizeArray<string>()
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "final-publication-failure-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync reason = events.Add($"degraded:{reason}")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+
+            let applyReference _ _ =
+                task {
+                    events.Add("apply-targets")
+                    events.Add("durable-status-updated")
+                    events.Add("update-marker-closed")
+                }
+
+            let publishCleanIpcAfterApply () =
+                events.Add("clean-ipc-unproven")
+                false
+
+            let reassertDirtyIpcAfterFailedCleanPublication () =
+                Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+                |> should equal true
+
+                events.Add("dirty-ipc-reasserted")
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    publishCleanIpcAfterApply
+                    reassertDirtyIpcAfterFailedCleanPublication
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+
+            events.ToArray()
+            |> should
+                equal
+                [|
+                    "apply-targets"
+                    "durable-status-updated"
+                    "update-marker-closed"
+                    "clean-ipc-unproven"
+                    "dirty-ipc-reasserted"
+                    "degraded:materialization final clean Watch IPC/status publication failed"
+                |]
+
+            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+            |> should equal true)
+
     /// Verifies that a failed apply cannot republish clean IPC from pre-apply status evidence.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator keeps ipc dirty when apply fails`` () =
