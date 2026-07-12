@@ -2162,6 +2162,24 @@ module Watch =
             && not this.HasProcessablePendingWork
             && not this.HasManualPendingStatusEvidence
 
+    /// Distinguishes exact IPC verification from the pending-work state that snapshot advertises.
+    type private PendingWatchWorkPublicationVerification =
+        /// A verified IPC snapshot advertises no pending Watch work.
+        | VerifiedCleanPendingWorkPublication
+        /// A verified IPC snapshot advertises pending Watch work.
+        | VerifiedDirtyPendingWorkPublication
+        /// No stable IPC snapshot was verified for the attempted publication.
+        | UnverifiedPendingWorkPublication
+
+    /// Distinguishes a verified clean recovery from a verified dirty recovery publication that must retain retry state.
+    type private ResyncRecoveryPublicationResult =
+        /// The recovered status is clean, inspected as usable and healthy, and has no fresh pending-work evidence.
+        | VerifiedCleanRecoveryPublication
+        /// Recovery wrote and verified a dirty IPC snapshot, so latch and resync retirement remain forbidden.
+        | VerifiedDirtyRecoveryPublication
+        /// Recovery could not prove a clean result and must retain fail-closed pending state.
+        | UnverifiedRecoveryPublication
+
     /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
     let private hasProcessablePendingWatchWorkExceptManual () =
         isGraceWatchResyncPending ()
@@ -2292,7 +2310,7 @@ module Watch =
         transitionWasPublished
 
     /// Publishes Watch IPC after reading pending-work evidence inside the serialized status boundary.
-    let private tryPublishWatchIpcWithPendingWorkEvidenceProbe
+    let private tryPublishWatchIpcWithPendingWorkEvidenceProbeResult
         (readPendingWorkEvidence: unit -> PendingWatchWorkEvidence)
         expectedStatus
         expectedDirectoryIds
@@ -2302,6 +2320,7 @@ module Watch =
             let mutable attempts = 0
             let mutable transitionWasPublished = false
             let mutable pendingWorkChangedDuringWrite = true
+            let mutable publishedHasPendingWork = None
 
             while pendingWorkChangedDuringWrite && attempts < 2 do
                 attempts <- attempts + 1
@@ -2329,9 +2348,12 @@ module Watch =
 
                     transitionWasPublished <-
                         cachePendingWatchWorkPublicationIfVerified statusForVerification directoryIdsForVerification hasPendingWork publicationStartedAt
+
+                    publishedHasPendingWork <- if transitionWasPublished then Some hasPendingWork else None
                 with
                 | ex ->
                     transitionWasPublished <- false
+                    publishedHasPendingWork <- None
                     lastPublishedHasPendingWatchWork <- None
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
@@ -2339,8 +2361,37 @@ module Watch =
                     (readPendingWorkEvidence ()).HasPendingWork
                     <> hasPendingWork
 
-            transitionWasPublished
-            && not pendingWorkChangedDuringWrite)
+            match transitionWasPublished, pendingWorkChangedDuringWrite, publishedHasPendingWork with
+            | true, false, Some false -> VerifiedCleanPendingWorkPublication
+            | true, false, Some true -> VerifiedDirtyPendingWorkPublication
+            | _ -> UnverifiedPendingWorkPublication)
+
+    /// Reports whether a pending-work publication result proved that any exact IPC snapshot reached disk.
+    let private isPendingWatchWorkPublicationVerified publicationResult =
+        match publicationResult with
+        | VerifiedCleanPendingWorkPublication
+        | VerifiedDirtyPendingWorkPublication -> true
+        | UnverifiedPendingWorkPublication -> false
+
+    /// Publishes Watch IPC after reading pending-work evidence inside the serialized status boundary.
+    let private tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot =
+        tryPublishWatchIpcWithPendingWorkEvidenceProbeResult readPendingWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+        |> isPendingWatchWorkPublicationVerified
+
+    /// Verifies that the inspected Watch IPC snapshot is a usable healthy clean publication of the expected status.
+    let private isUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds (inspection: GraceWatchStatusInspection) =
+        inspection.IsUsable
+        && inspection.EffectiveMode = Some GraceWatchRuntimeMode.HealthyIncremental
+        && (inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds false))
+
+    /// Reads the inspected Watch IPC snapshot and proves it is usable, healthy, clean, and matches the expected status.
+    let private tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds =
+        try
+            inspectGraceWatchStatus().GetAwaiter().GetResult()
+            |> isUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds
+        with
+        | _ -> false
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
@@ -2368,13 +2419,37 @@ module Watch =
 
     /// Publishes clean IPC for one recovered resync attempt while retaining its own fail-closed pending anchors.
     let private tryPublishWatchIpcForResyncRecovery attempt expectedStatus expectedDirectoryIds writeSnapshot =
-        tryPublishWatchIpcWithPendingWorkEvidenceProbe
-            (fun () -> readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt)
-            expectedStatus
-            expectedDirectoryIds
-            writeSnapshot
-        && isGraceWatchResyncAttemptCurrent attempt
-        && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+        let publicationResult =
+            tryPublishWatchIpcWithPendingWorkEvidenceProbeResult
+                (fun () -> readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt)
+                expectedStatus
+                expectedDirectoryIds
+                writeSnapshot
+
+        if
+            not (isGraceWatchResyncAttemptCurrent attempt)
+            || currentGraceWatchRuntimeMode ()
+               <> GraceWatchRuntimeMode.HealthyIncremental
+        then
+            UnverifiedRecoveryPublication
+        else
+            match publicationResult with
+            | VerifiedDirtyPendingWorkPublication -> VerifiedDirtyRecoveryPublication
+            | VerifiedCleanPendingWorkPublication ->
+                let postPublicationEvidence = readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt
+
+                if postPublicationEvidence.HasPendingWork then
+                    UnverifiedRecoveryPublication
+                elif tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds then
+                    let finalPendingEvidence = readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt
+
+                    if finalPendingEvidence.HasPendingWork then
+                        UnverifiedRecoveryPublication
+                    else
+                        VerifiedCleanRecoveryPublication
+                else
+                    UnverifiedRecoveryPublication
+            | UnverifiedPendingWorkPublication -> UnverifiedRecoveryPublication
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot =
@@ -2495,14 +2570,7 @@ module Watch =
 
     /// Verifies an already-published clean snapshot through the inspected IPC trust boundary before final materialization success.
     let private tryVerifyCurrentBranchMaterializationCleanPublication expectedStatus expectedDirectoryIds =
-        try
-            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
-
-            inspection.IsUsable
-            && (inspection.Status
-                |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds false))
-        with
-        | _ -> false
+        tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds
 
     /// Publishes a final clean materialization snapshot only while both pre- and post-publication pending-work probes are empty.
     let private tryPublishCurrentBranchMaterializationCleanStatus () =
@@ -6301,11 +6369,12 @@ module Watch =
                             setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
 
                             if materializationPendingLatchOwned then
-                                let cleanPublicationVerified =
+                                let recoveryPublication =
                                     tryPublishWatchIpcForResyncRecovery resyncAttempt graceStatus graceStatusDirectoryIds (fun () ->
                                         updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
-                                if cleanPublicationVerified then
+                                match recoveryPublication with
+                                | VerifiedCleanRecoveryPublication ->
                                     beforeGraceWatchResyncAttemptRetirementProbe ()
 
                                     if tryClearGraceWatchResyncAttempt resyncAttempt then
@@ -6347,7 +6416,7 @@ module Watch =
                                         logToAnsiConsole
                                             (if dirtyPublicationVerified then Colors.Important else Colors.Error)
                                             $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
-                                else
+                                | recoveryPublication ->
                                     setGraceWatchPendingWorkStatusFlag true
 
                                     if isGraceWatchResyncAttemptCurrent resyncAttempt then
@@ -6361,13 +6430,19 @@ module Watch =
 
                                         if not dirtyPublicationVerified then lastPublishedHasPendingWatchWork <- None
 
+                                        let recoveryPublicationOutcome =
+                                            match recoveryPublication with
+                                            | VerifiedDirtyRecoveryPublication -> "verified dirty"
+                                            | UnverifiedRecoveryPublication -> "unproven"
+                                            | VerifiedCleanRecoveryPublication -> "unexpected verified clean"
+
                                         logToAnsiConsole
                                             Colors.Error
-                                            $"Grace Watch retained resync attempt {resyncAttempt} because clean recovery IPC publication was unproven."
+                                            $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery."
                                     else
                                         logToAnsiConsole
                                             Colors.Important
-                                            $"Grace Watch retained materialization pending status because recovery publication for stale resync attempt {resyncAttempt} was unproven."
+                                            $"Grace Watch retained materialization pending status because recovery publication for stale resync attempt {resyncAttempt} was not a verified clean recovery."
                             else
                                 let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
 
