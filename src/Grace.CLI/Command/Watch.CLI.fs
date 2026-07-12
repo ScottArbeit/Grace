@@ -2436,6 +2436,17 @@ module Watch =
         with
         | _ -> false
 
+    /// Verifies an already-published clean snapshot through the inspected IPC trust boundary before final materialization success.
+    let private tryVerifyCurrentBranchMaterializationCleanPublication expectedStatus expectedDirectoryIds =
+        try
+            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+            inspection.IsUsable
+            && (inspection.Status
+                |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds false))
+        with
+        | _ -> false
+
     /// Publishes a final clean materialization snapshot only while both pre- and post-publication pending-work probes are empty.
     let private tryPublishCurrentBranchMaterializationCleanStatus () =
         lock watchStatusPublishLock (fun () ->
@@ -2455,12 +2466,21 @@ module Watch =
                     let directoryIds = status.Index.Keys.ToHashSet()
 
                     let cleanPublicationVerified =
-                        if tryVerifyCurrentPendingWorkPublication status directoryIds false then
+                        if tryVerifyCurrentBranchMaterializationCleanPublication status directoryIds then
                             lastPublishedHasPendingWatchWork <- Some false
                             true
                         else
-                            tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
-                                updateGraceWatchInterprocessFile status (Some directoryIds))
+                            let published =
+                                tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
+                                    updateGraceWatchInterprocessFile status (Some directoryIds))
+
+                            let usableCleanPublication =
+                                published
+                                && tryVerifyCurrentBranchMaterializationCleanPublication status directoryIds
+
+                            if not usableCleanPublication then lastPublishedHasPendingWatchWork <- None
+
+                            usableCleanPublication
 
                     cleanPublicationVerified
                     && not (readPendingWatchWorkEvidence ()).HasPendingWork
@@ -2510,6 +2530,9 @@ module Watch =
                     lastPublishedHasPendingWatchWork <- None
                     logToAnsiConsole Colors.Error $"Grace Watch could not verify dirty materialization IPC/status publication: {ex.Message}"
                     false)
+
+    /// Publishes final clean materialization IPC through the production verification path for focused Watch tests.
+    let internal tryPublishCurrentBranchMaterializationCleanStatusForWatchTests () = tryPublishCurrentBranchMaterializationCleanStatus ()
 
     /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
     let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
@@ -6230,6 +6253,8 @@ module Watch =
                             let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
 
                             if clearedResyncAttempt then
+                                setGraceWatchPendingWorkStatusFlag false
+
                                 publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
                                     updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
