@@ -15335,6 +15335,99 @@ module WatchTests =
 
             scheduler.PendingGeneration |> should equal None)
 
+    /// Verifies that a GraceStatus refresh samples pending work before clearing it and schedules one non-phantom recovery generation.
+    [<Test; Category("CurrentBranchCatchUp")>]
+    let ``GraceStatus refresh preserves blocked-to-safe catch-up generation without phantom rerun`` () =
+        let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+        let events = ResizeArray<string>()
+        let mutable pendingWork = true
+        let mutable requestedGenerations = 0
+
+        let refreshGraceStatusIfChanged () =
+            task {
+                events.Add("refresh")
+                pendingWork <- false
+            }
+
+        let hasPendingWork () =
+            events.Add("sample-pending")
+            pendingWork
+
+        let requestCatchUp _ =
+            requestedGenerations <- requestedGenerations + 1
+            scheduler.Request() |> ignore
+
+        (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+            refreshGraceStatusIfChanged
+            (fun () -> Task.FromResult(()))
+            (fun () -> Task.FromResult(()))
+            hasPendingWork
+            (fun () -> false)
+            requestCatchUp)
+            .GetAwaiter()
+            .GetResult()
+
+        events.IndexOf("sample-pending")
+        |> should be (lessThan (events.IndexOf("refresh")))
+
+        requestedGenerations |> should equal 1
+
+        scheduler.PendingGeneration
+        |> should equal (Some 1L)
+
+        (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+            scheduler
+            (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "refresh-recovery")))
+            (fun _ ->
+                Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
+                    InvalidOperationException("A missing latest Reference must not enter the coordinator.")
+                )))
+            .GetAwaiter()
+            .GetResult()
+
+        scheduler.PendingGeneration |> should equal None
+
+        (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+            (fun () -> Task.FromResult(()))
+            (fun () -> Task.FromResult(()))
+            (fun () -> Task.FromResult(()))
+            hasPendingWork
+            (fun () -> false)
+            requestCatchUp)
+            .GetAwaiter()
+            .GetResult()
+
+        requestedGenerations |> should equal 1
+        scheduler.PendingGeneration |> should equal None
+
+    /// Verifies that failed or still-dirty GraceStatus refresh processing cannot request a premature recovery generation.
+    [<Test; Category("CurrentBranchCatchUp")>]
+    let ``GraceStatus refresh that remains dirty does not request premature catch-up`` () =
+        let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+        let mutable pendingWork = true
+        let mutable requestedGenerations = 0
+
+        let requestCatchUp _ =
+            requestedGenerations <- requestedGenerations + 1
+            scheduler.Request() |> ignore
+
+        (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+            (fun () ->
+                task {
+                    // Failed publication and a still-dirty refresh both retain pending-work evidence.
+                    pendingWork <- true
+                })
+            (fun () -> Task.FromResult(()))
+            (fun () -> Task.FromResult(()))
+            (fun () -> pendingWork)
+            (fun () -> false)
+            requestCatchUp)
+            .GetAwaiter()
+            .GetResult()
+
+        requestedGenerations |> should equal 0
+        scheduler.PendingGeneration |> should equal None
+
     /// Verifies that protocol-invalid current-branch notifications are rejected before BranchDto latest authority.
     [<Test>]
     let ``current branch reference decision rejects missing root identity and empty reference id`` () =

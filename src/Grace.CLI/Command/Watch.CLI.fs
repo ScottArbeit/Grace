@@ -7470,6 +7470,45 @@ module Watch =
             processChangedFilesClient
             catchUpCurrentBranchReference
 
+    /// Preserves pending-work recovery evidence across GraceStatus refresh processing before queuing a lifecycle catch-up generation.
+    let private processWatchTimerLocalRecoveryWithCatchUp
+        refreshGraceStatusIfChanged
+        processChangedFilesClient
+        completeStartupRecovery
+        hasPendingWork
+        isResyncPending
+        requestCatchUp
+        =
+        task {
+            let localWorkWasPending = hasPendingWork ()
+            let resyncWasPending = isResyncPending ()
+
+            do! refreshGraceStatusIfChanged ()
+            do! processChangedFilesClient ()
+            do! completeStartupRecovery ()
+
+            if (localWorkWasPending && not (hasPendingWork ()))
+               || (resyncWasPending && not (isResyncPending ())) then
+                requestCatchUp "local Watch recovery"
+        }
+
+    /// Exposes timer recovery sequencing so Watch tests can prove a refresh cannot erase its blocked-to-safe wake-up.
+    let internal processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+        refreshGraceStatusIfChanged
+        processChangedFilesClient
+        completeStartupRecovery
+        hasPendingWork
+        isResyncPending
+        requestCatchUp
+        =
+        processWatchTimerLocalRecoveryWithCatchUp
+            refreshGraceStatusIfChanged
+            processChangedFilesClient
+            completeStartupRecovery
+            hasPendingWork
+            isResyncPending
+            requestCatchUp
+
     /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
         inherit AsynchronousCommandLineAction()
@@ -7759,33 +7798,31 @@ module Watch =
 
                     while ticked
                           && not (cancellationToken.IsCancellationRequested) do
-                        // Grace Status may have changed from branch switch, or other commands.
-                        if graceStatusHasChanged then
-                            let refreshGeneration = currentGraceStatusRefreshGeneration ()
-                            let! updatedGraceStatus = readGraceStatusFile ()
-                            do! publishGraceStatusRefreshSnapshot refreshGeneration updatedGraceStatus updateGraceWatchInterprocessFile
-
-                        let localWorkWasPending = hasPendingWatchWork ()
-                        let resyncWasPending = isGraceWatchResyncPending ()
-
-                        do! processChangedFiles ()
-
                         do!
-                            completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
-                                readGraceStatusFile
-                                updateGraceWatchInterprocessFile
-                                processChangedFiles
+                            processWatchTimerLocalRecoveryWithCatchUp
                                 (fun () ->
                                     task {
-                                        requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
-                                        do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
-                                    })
+                                        // Grace Status may have changed from branch switch, or other commands.
+                                        if graceStatusHasChanged then
+                                            let refreshGeneration = currentGraceStatusRefreshGeneration ()
+                                            let! updatedGraceStatus = readGraceStatusFile ()
 
-                        if (localWorkWasPending
-                            && not (hasPendingWatchWork ()))
-                           || (resyncWasPending
-                               && not (isGraceWatchResyncPending ())) then
-                            requestCurrentBranchReferenceCatchUp "local Watch recovery"
+                                            do! publishGraceStatusRefreshSnapshot refreshGeneration updatedGraceStatus updateGraceWatchInterprocessFile
+                                    })
+                                processChangedFiles
+                                (fun () ->
+                                    completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+                                        readGraceStatusFile
+                                        updateGraceWatchInterprocessFile
+                                        processChangedFiles
+                                        (fun () ->
+                                            task {
+                                                requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
+                                                do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
+                                            }))
+                                hasPendingWatchWork
+                                isGraceWatchResyncPending
+                                requestCurrentBranchReferenceCatchUp
 
                         do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
                         let! tick = periodicTimer.WaitForNextTickAsync()
