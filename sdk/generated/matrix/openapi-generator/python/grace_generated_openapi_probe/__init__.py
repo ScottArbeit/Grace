@@ -186,6 +186,7 @@ __all__ = [
     "RebaseParameters",
     "RecordSavesParameters",
     "ReferenceApiDto",
+    "ReferenceDefaultSentinel",
     "ReferenceDto",
     "ReferenceListReturnValue",
     "ReferenceParameters",
@@ -225,6 +226,7 @@ __all__ = [
     "StorageParameters",
     "SwitchParameters",
     "TestWebhookRuleParameters",
+    "TypedReferenceApiDto",
     "UndeleteOrganizationParameters",
     "UndeleteOwnerParameters",
     "UndeleteRepositoryParameters",
@@ -433,6 +435,7 @@ from grace_generated_openapi_probe.models.promotion_set_approval_summary import 
 from grace_generated_openapi_probe.models.rebase_parameters import RebaseParameters as RebaseParameters
 from grace_generated_openapi_probe.models.record_saves_parameters import RecordSavesParameters as RecordSavesParameters
 from grace_generated_openapi_probe.models.reference_api_dto import ReferenceApiDto as ReferenceApiDto
+from grace_generated_openapi_probe.models.reference_default_sentinel import ReferenceDefaultSentinel as ReferenceDefaultSentinel
 from grace_generated_openapi_probe.models.reference_dto import ReferenceDto as ReferenceDto
 from grace_generated_openapi_probe.models.reference_list_return_value import ReferenceListReturnValue as ReferenceListReturnValue
 from grace_generated_openapi_probe.models.reference_parameters import ReferenceParameters as ReferenceParameters
@@ -472,6 +475,7 @@ from grace_generated_openapi_probe.models.start_upload_session import StartUploa
 from grace_generated_openapi_probe.models.storage_parameters import StorageParameters as StorageParameters
 from grace_generated_openapi_probe.models.switch_parameters import SwitchParameters as SwitchParameters
 from grace_generated_openapi_probe.models.test_webhook_rule_parameters import TestWebhookRuleParameters as TestWebhookRuleParameters
+from grace_generated_openapi_probe.models.typed_reference_api_dto import TypedReferenceApiDto as TypedReferenceApiDto
 from grace_generated_openapi_probe.models.undelete_organization_parameters import UndeleteOrganizationParameters as UndeleteOrganizationParameters
 from grace_generated_openapi_probe.models.undelete_owner_parameters import UndeleteOwnerParameters as UndeleteOwnerParameters
 from grace_generated_openapi_probe.models.undelete_repository_parameters import UndeleteRepositoryParameters as UndeleteRepositoryParameters

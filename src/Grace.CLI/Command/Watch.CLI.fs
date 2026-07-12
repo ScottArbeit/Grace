@@ -7,6 +7,7 @@ open Grace.SDK.Common
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Types.Common
 open Grace.Types.Reference
@@ -380,12 +381,11 @@ module Watch =
         recordGraceUpdateMarkerCompletedUtc deletedUtc
 
     /// Reads a marker completion sidecar for the specific marker path that produced the callback.
-    let private tryReadGraceUpdateMarkerCompletedUtcFrom completedFileName =
+    let private tryReadGraceUpdateMarkerCompletionFrom completedFileName =
         try
             if File.Exists(completedFileName) then
-                match DateTime.TryParse(File.ReadAllText(completedFileName), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
-                | true, completedUtc -> Some completedUtc
-                | false, _ -> None
+                File.ReadAllText(completedFileName)
+                |> tryDeserializeGraceUpdateMarkerCompletion
             else
                 None
         with
@@ -393,15 +393,15 @@ module Watch =
         | :? UnauthorizedAccessException -> None
 
     /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
-    let private tryReadGraceUpdateMarkerCompletedUtc () =
+    let private tryReadGraceUpdateMarkerCompletion () =
         updateMarkerCompletedFileName ()
-        |> tryReadGraceUpdateMarkerCompletedUtcFrom
+        |> tryReadGraceUpdateMarkerCompletionFrom
 
     /// Reads the completion instant for the marker whose deletion callback is being processed.
-    let private tryReadGraceUpdateMarkerCompletedUtcForMarker markerFileName =
+    let private tryReadGraceUpdateMarkerCompletionForMarker markerFileName =
         markerFileName
         |> updateMarkerCompletedFileNameForMarker
-        |> tryReadGraceUpdateMarkerCompletedUtcFrom
+        |> tryReadGraceUpdateMarkerCompletionFrom
 
     /// Records marker file freshness while the marker still exists so deletion cannot trust stale sidecars.
     let private observeGraceUpdateMarkerInstance markerFileName =
@@ -991,8 +991,8 @@ module Watch =
                 |> Seq.tryHead)
 
         let currentSidecarUtc =
-            match tryReadGraceUpdateMarkerCompletedUtc () with
-            | Some completedUtc when
+            match tryReadGraceUpdateMarkerCompletion () with
+            | Some (_, completedUtc) when
                 isRecentGraceUpdateMarkerCompletion completedUtc
                 && currentUpdateMarkerMatchesCompletedSidecar completedUtc
                 ->
@@ -2104,40 +2104,94 @@ module Watch =
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
-    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
-    let private hasPendingDurableWatchJournalEvidence () =
+    let mutable private beforeGraceWatchResyncAttemptRetirementProbe = fun () -> ()
+
+    /// Overrides the exact resync-attempt retirement probe for deterministic Watch recovery race tests.
+    let internal setBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests probe = beforeGraceWatchResyncAttemptRetirementProbe <- probe
+
+    /// Restores the exact resync-attempt retirement probe after deterministic Watch recovery race tests.
+    let internal resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests () = beforeGraceWatchResyncAttemptRetirementProbe <- fun () -> ()
+
+    let mutable private afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe = fun () -> ()
+
+    /// Overrides the post-clean recovery probe for deterministic stale-attempt publication tests.
+    let internal setAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests probe =
+        afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe <- probe
+
+    /// Restores the post-clean recovery probe after deterministic stale-attempt publication tests.
+    let internal resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests () =
+        afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe <- fun () -> ()
+
+    let mutable private manualPendingWatchWorkStatusFlag = 0
+
+    /// Reports whether a coordinator-owned side effect must keep Watch IPC dirty before normal queues can observe it.
+    let private hasManualPendingWatchWorkStatusFlag () =
+        Volatile.Read(&manualPendingWatchWorkStatusFlag)
+        <> 0
+
+    /// Reads whether unresolved durable journal rows still need local Watch processing.
+    let private inspectDurableWatchJournalPendingEvidence () =
         try
-            readWatchJournalPendingWorkSummaryForWatch()
-                .GetAwaiter()
-                .GetResult()
-                .HasPendingRows
+            let summary =
+                readWatchJournalPendingWorkSummaryForWatch()
+                    .GetAwaiter()
+                    .GetResult()
+
+            Ok summary.HasPendingRows
         with
         | ex ->
             logToAnsiConsole
                 Colors.Error
                 $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
 
-            true
+            Error ex.Message
+
+    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
+    let private hasPendingDurableWatchJournalEvidence () =
+        match inspectDurableWatchJournalPendingEvidence () with
+        | Ok hasPendingRows -> hasPendingRows
+        | Error _ -> true
 
     /// Describes pending Watch work without merging process-local queues and durable journal evidence.
     type private PendingWatchWorkEvidence =
         {
             HasProcessablePendingWork: bool
+            HasManualPendingStatusEvidence: bool
             HasDurableWatchJournalEvidence: bool
         }
 
         /// Reports whether any Watch work or durable journal evidence must keep IPC dirty.
         member this.HasPendingWork =
             this.HasProcessablePendingWork
+            || this.HasManualPendingStatusEvidence
             || this.HasDurableWatchJournalEvidence
 
         /// Reports whether durable journal evidence is the only reason IPC must be dirty.
         member this.HasDurableOnlyPendingWork =
             this.HasDurableWatchJournalEvidence
             && not this.HasProcessablePendingWork
+            && not this.HasManualPendingStatusEvidence
 
-    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
-    let private hasProcessablePendingWatchWork () =
+    /// Distinguishes exact IPC verification from the pending-work state that snapshot advertises.
+    type private PendingWatchWorkPublicationVerification =
+        /// A verified IPC snapshot advertises no pending Watch work.
+        | VerifiedCleanPendingWorkPublication
+        /// A verified IPC snapshot advertises pending Watch work.
+        | VerifiedDirtyPendingWorkPublication
+        /// No stable IPC snapshot was verified for the attempted publication.
+        | UnverifiedPendingWorkPublication
+
+    /// Distinguishes a verified clean recovery from a verified dirty recovery publication that must retain retry state.
+    type private ResyncRecoveryPublicationResult =
+        /// The recovered status is clean, inspected as usable and healthy, and has no fresh pending-work evidence.
+        | VerifiedCleanRecoveryPublication
+        /// Recovery wrote and verified a dirty IPC snapshot, so latch and resync retirement remain forbidden.
+        | VerifiedDirtyRecoveryPublication
+        /// Recovery could not prove a clean result and must retain fail-closed pending state.
+        | UnverifiedRecoveryPublication
+
+    /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
+    let private hasProcessablePendingWatchWorkExceptManual () =
         isGraceWatchResyncPending ()
         || graceStatusHasChanged
         || not (
@@ -2147,16 +2201,35 @@ module Watch =
             && not (hasPendingStatusDifferences ())
         )
 
+    /// Evaluates pending Watch work without counting the startup catch-up marker against its own clean publication.
+    let private hasPendingWatchWorkExceptManual () =
+        hasProcessablePendingWatchWorkExceptManual ()
+        || hasPendingDurableWatchJournalEvidence ()
+
+    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
+    let private hasProcessablePendingWatchWork () = hasProcessablePendingWatchWorkExceptManual ()
+
     /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
     let private hasPendingWatchWork () =
-        hasProcessablePendingWatchWork ()
+        hasManualPendingWatchWorkStatusFlag ()
+        || hasProcessablePendingWatchWork ()
         || hasPendingDurableWatchJournalEvidence ()
 
     /// Reads process-local and durable pending-work facts once for a single status publication decision.
     let private readPendingWatchWorkEvidence () =
         let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
 
-        { HasProcessablePendingWork = hasProcessablePendingWork; HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence () }
+        {
+            HasProcessablePendingWork = hasProcessablePendingWork
+            HasManualPendingStatusEvidence = hasManualPendingWatchWorkStatusFlag ()
+            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+        }
+
+    /// Exposes pending Watch work checks to tests without running the foreground timer loop.
+    let internal pendingWatchWorkEvidenceForWatchTests () =
+        let evidence = readPendingWatchWorkEvidence ()
+
+        evidence.HasProcessablePendingWork, evidence.HasPendingWork
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -2178,7 +2251,21 @@ module Watch =
             false
 
     /// Records the pending-work flag that the next Watch IPC snapshot should publish.
-    let private setGraceWatchPendingWorkStatusFlag hasPendingWork = lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
+    let private setGraceWatchPendingWorkStatusFlag hasPendingWork =
+        lock watchStatusPublishLock (fun () ->
+            Interlocked.Exchange(&manualPendingWatchWorkStatusFlag, (if hasPendingWork then 1 else 0))
+            |> ignore
+
+            setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+    /// Sets the materialization pending status marker for focused Watch tests.
+    let internal setGraceWatchPendingWorkStatusFlagForWatchTests hasPendingWork = setGraceWatchPendingWorkStatusFlag hasPendingWork
+
+    /// Reports whether focused Watch tests still have the manual materialization pending marker set.
+    let internal hasManualPendingWatchWorkStatusFlagForWatchTests () = hasManualPendingWatchWorkStatusFlag ()
+
+    /// Reports the cached pending-work result so recovery tests can prove failed dirty reassertion discards clean evidence.
+    let internal lastPublishedHasPendingWatchWorkForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork)
 
     /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
     let private pendingWatchWorkTransitionNeedsPublication () =
@@ -2197,22 +2284,46 @@ module Watch =
         else
             Blake3Hash String.Empty
 
-    /// Verifies the on-disk Watch IPC snapshot is the snapshot this publication attempt wrote.
-    let private statusMatchesVerifiedPublication
+    /// Verifies the on-disk Watch IPC snapshot has the exact pending-work and content identity expected by a publication.
+    let private statusMatchesExpectedPendingWorkPublication
         (expectedStatus: GraceStatus)
         (expectedDirectoryIds: HashSet<DirectoryVersionId>)
         hasPendingWork
-        publicationStartedAt
         (status: GraceWatchStatus)
         =
-        status.UpdatedAt >= publicationStartedAt
-        && status.HasPendingWatchWork = hasPendingWork
+        status.HasPendingWatchWork = hasPendingWork
         && status.IsWorkingTreeClean = not hasPendingWork
         && status.RootDirectoryId = expectedStatus.RootDirectoryId
         && status.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
         && status.RootDirectoryBlake3Hash = expectedRootDirectoryBlake3Hash expectedStatus
         && not (isNull status.DirectoryIds)
         && status.DirectoryIds.SetEquals(expectedDirectoryIds)
+
+    /// Verifies the current durable GraceStatus still has the exact identity represented by a clean IPC publication.
+    let private graceStatusMatchesExpectedPendingWorkPublication
+        (expectedStatus: GraceStatus)
+        (expectedDirectoryIds: HashSet<DirectoryVersionId>)
+        (currentStatus: GraceStatus)
+        =
+        currentStatus.RootDirectoryId = expectedStatus.RootDirectoryId
+        && currentStatus.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
+        && expectedRootDirectoryBlake3Hash currentStatus = expectedRootDirectoryBlake3Hash expectedStatus
+        && expectedDirectoryIds.SetEquals(currentStatus.Index.Keys)
+
+    /// Re-reads durable GraceStatus for a clean publication return boundary and fails closed when its identity is unavailable or changed.
+    let private tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds =
+        try
+            readGraceStatusFileForPendingWorkTransition()
+                .GetAwaiter()
+                .GetResult()
+            |> graceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds
+        with
+        | _ -> false
+
+    /// Verifies the on-disk Watch IPC snapshot is the snapshot this publication attempt wrote.
+    let private statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt (status: GraceWatchStatus) =
+        status.UpdatedAt >= publicationStartedAt
+        && statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork status
 
     /// Advances the pending-work publication cache only after the exact IPC snapshot proves it reached disk.
     let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt =
@@ -2232,16 +2343,22 @@ module Watch =
 
         transitionWasPublished
 
-    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
-    let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+    /// Publishes Watch IPC after reading pending-work evidence inside the serialized status boundary.
+    let private tryPublishWatchIpcWithPendingWorkEvidenceProbeResult
+        (readPendingWorkEvidence: unit -> PendingWatchWorkEvidence)
+        expectedStatus
+        expectedDirectoryIds
+        (writeSnapshot: unit -> Task<unit>)
+        =
         lock watchStatusPublishLock (fun () ->
             let mutable attempts = 0
             let mutable transitionWasPublished = false
             let mutable pendingWorkChangedDuringWrite = true
+            let mutable publishedHasPendingWork = None
 
             while pendingWorkChangedDuringWrite && attempts < 2 do
                 attempts <- attempts + 1
-                let pendingEvidence = readPendingWatchWorkEvidence ()
+                let pendingEvidence = readPendingWorkEvidence ()
                 let hasPendingWork = pendingEvidence.HasPendingWork
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
                 let publicationStartedAt = getCurrentInstant ()
@@ -2265,27 +2382,125 @@ module Watch =
 
                     transitionWasPublished <-
                         cachePendingWatchWorkPublicationIfVerified statusForVerification directoryIdsForVerification hasPendingWork publicationStartedAt
+
+                    publishedHasPendingWork <- if transitionWasPublished then Some hasPendingWork else None
                 with
                 | ex ->
+                    transitionWasPublished <- false
+                    publishedHasPendingWork <- None
                     lastPublishedHasPendingWatchWork <- None
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
                 pendingWorkChangedDuringWrite <-
-                    (readPendingWatchWorkEvidence ()).HasPendingWork
+                    (readPendingWorkEvidence ()).HasPendingWork
                     <> hasPendingWork
 
-            transitionWasPublished)
+            match transitionWasPublished, pendingWorkChangedDuringWrite, publishedHasPendingWork with
+            | true, false, Some false -> VerifiedCleanPendingWorkPublication
+            | true, false, Some true -> VerifiedDirtyPendingWorkPublication
+            | _ -> UnverifiedPendingWorkPublication)
+
+    /// Reports whether a pending-work publication result proved that any exact IPC snapshot reached disk.
+    let private isPendingWatchWorkPublicationVerified publicationResult =
+        match publicationResult with
+        | VerifiedCleanPendingWorkPublication
+        | VerifiedDirtyPendingWorkPublication -> true
+        | UnverifiedPendingWorkPublication -> false
+
+    /// Publishes Watch IPC after reading pending-work evidence inside the serialized status boundary.
+    let private tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot =
+        tryPublishWatchIpcWithPendingWorkEvidenceProbeResult readPendingWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+        |> isPendingWatchWorkPublicationVerified
+
+    /// Verifies that the inspected Watch IPC snapshot is a usable healthy clean publication of the expected status.
+    let private isUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds (inspection: GraceWatchStatusInspection) =
+        inspection.IsUsable
+        && inspection.EffectiveMode = Some GraceWatchRuntimeMode.HealthyIncremental
+        && (inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds false))
+
+    /// Reads the inspected Watch IPC snapshot and proves it is usable, healthy, clean, and matches the expected status.
+    let private tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds =
+        try
+            inspectGraceWatchStatus().GetAwaiter().GetResult()
+            |> isUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds
+        with
+        | _ -> false
+
+    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
+    let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+        tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWatchWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+
+    /// Reads new pending work while excluding only the current recovery attempt and its materialization latch.
+    let private readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt =
+        let recoveryStillOwnsPublication =
+            isGraceWatchResyncAttemptCurrent attempt
+            && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+
+        {
+            HasProcessablePendingWork =
+                not recoveryStillOwnsPublication
+                || graceStatusHasChanged
+                || not (
+                    filesToProcess.IsEmpty
+                    && directoriesToProcess.IsEmpty
+                    && statusUpdateTriggers.IsEmpty
+                    && not (hasPendingStatusDifferences ())
+                )
+            HasManualPendingStatusEvidence = false
+            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+        }
+
+    /// Publishes clean IPC for one recovered resync attempt while retaining its own fail-closed pending anchors.
+    let private tryPublishWatchIpcForResyncRecovery attempt expectedStatus expectedDirectoryIds writeSnapshot =
+        let publicationResult =
+            tryPublishWatchIpcWithPendingWorkEvidenceProbeResult
+                (fun () -> readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt)
+                expectedStatus
+                expectedDirectoryIds
+                writeSnapshot
+
+        if publicationResult = VerifiedCleanPendingWorkPublication then
+            afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe ()
+
+        if
+            not (isGraceWatchResyncAttemptCurrent attempt)
+            || currentGraceWatchRuntimeMode ()
+               <> GraceWatchRuntimeMode.HealthyIncremental
+        then
+            UnverifiedRecoveryPublication
+        else
+            match publicationResult with
+            | VerifiedDirtyPendingWorkPublication -> VerifiedDirtyRecoveryPublication
+            | VerifiedCleanPendingWorkPublication ->
+                let postPublicationEvidence = readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt
+
+                if postPublicationEvidence.HasPendingWork then
+                    UnverifiedRecoveryPublication
+                elif tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds then
+                    let finalPendingEvidence = readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt
+
+                    if finalPendingEvidence.HasPendingWork then
+                        UnverifiedRecoveryPublication
+                    elif tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds then
+                        VerifiedCleanRecoveryPublication
+                    else
+                        UnverifiedRecoveryPublication
+                else
+                    UnverifiedRecoveryPublication
+            | UnverifiedPendingWorkPublication -> UnverifiedRecoveryPublication
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot =
         tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot
         |> ignore
 
-    /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
-    let private publishPendingWatchWorkTransitionIfNeeded () =
+    /// Publishes a clean or dirty Watch IPC transition and reports whether the exact snapshot was verified on disk.
+    let private tryPublishPendingWatchWorkTransitionIfNeeded () =
         lock watchStatusPublishLock (fun () ->
             let pendingEvidence = readPendingWatchWorkEvidence ()
             let hasPendingWork = pendingEvidence.HasPendingWork
+            let mutable transitionWasPublished = false
 
             if
                 File.Exists(IpcFileName())
@@ -2346,7 +2561,7 @@ module Watch =
                         lastPublishedHasPendingWatchWork <- None
                         logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
-                    let transitionWasPublished =
+                    transitionWasPublished <-
                         try
                             let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
 
@@ -2363,7 +2578,157 @@ module Watch =
                         lastPublishedHasPendingWatchWork <- Some hasPendingWork
                     else
                         lastPublishedHasPendingWatchWork <- None
-                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check.")
+                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
+
+            transitionWasPublished)
+
+    /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
+    let private publishPendingWatchWorkTransitionIfNeeded () =
+        tryPublishPendingWatchWorkTransitionIfNeeded ()
+        |> ignore
+
+    /// Verifies the current Watch IPC file still represents the requested pending-work state and GraceStatus identity.
+    let private tryVerifyCurrentPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork =
+        try
+            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+            inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork)
+        with
+        | _ -> false
+
+    /// Verifies that the persisted IPC snapshot forces readers away from incremental shortcuts during resync.
+    let private isGraceWatchResyncRequiredStatusPublished (inspection: GraceWatchStatusInspection) =
+        inspection.Status
+        |> Option.exists (fun status ->
+            status.HasPendingWatchWork
+            && not status.IsWorkingTreeClean
+            && not inspection.IsUsable
+            && inspection.EffectiveMode
+               <> Some GraceWatchRuntimeMode.HealthyIncremental)
+
+    /// Replaces provisional clean recovery IPC with verified dirty resync IPC before a recovery attempt returns without exact retirement.
+    let private reassertDirtyResyncIpcAfterProvisionalCleanRecovery attempt writeSnapshot =
+        setGraceWatchPendingWorkStatusFlag true
+
+        if isGraceWatchResyncAttemptCurrent attempt then
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+        let dirtyPublicationVerified =
+            tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () -> writeSnapshot GraceStatus.Default emptyDirectoryIds)
+            && (try
+                    inspectGraceWatchStatus().GetAwaiter().GetResult()
+                    |> isGraceWatchResyncRequiredStatusPublished
+                with
+                | _ -> false)
+
+        if not dirtyPublicationVerified then lastPublishedHasPendingWatchWork <- None
+
+        dirtyPublicationVerified
+
+    /// Verifies an already-published clean snapshot through the inspected IPC trust boundary before final materialization success.
+    let private tryVerifyCurrentBranchMaterializationCleanPublication expectedStatus expectedDirectoryIds =
+        tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds
+
+    /// Publishes a final clean materialization snapshot only while pending work is empty and durable status identity remains current.
+    let private tryPublishCurrentBranchMaterializationCleanStatus () =
+        lock watchStatusPublishLock (fun () ->
+            if (readPendingWatchWorkEvidence ()).HasPendingWork then
+                false
+            elif currentGraceWatchRuntimeMode ()
+                 <> GraceWatchRuntimeMode.HealthyIncremental
+                 || isGraceWatchResyncPending () then
+                false
+            else
+                try
+                    let status =
+                        readGraceStatusFileForPendingWorkTransition()
+                            .GetAwaiter()
+                            .GetResult()
+
+                    let directoryIds = status.Index.Keys.ToHashSet()
+
+                    let cleanPublicationVerified =
+                        if tryVerifyCurrentBranchMaterializationCleanPublication status directoryIds then
+                            lastPublishedHasPendingWatchWork <- Some false
+                            true
+                        else
+                            let published =
+                                tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
+                                    updateGraceWatchInterprocessFile status (Some directoryIds))
+
+                            let usableCleanPublication =
+                                published
+                                && tryVerifyCurrentBranchMaterializationCleanPublication status directoryIds
+
+                            if not usableCleanPublication then lastPublishedHasPendingWatchWork <- None
+
+                            usableCleanPublication
+
+                    let finalPendingWorkIsEmpty = not (readPendingWatchWorkEvidence ()).HasPendingWork
+
+                    let finalCleanPublicationVerified =
+                        if cleanPublicationVerified
+                           && finalPendingWorkIsEmpty then
+                            tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication status directoryIds
+                        else
+                            false
+
+                    if not finalCleanPublicationVerified then
+                        lastPublishedHasPendingWatchWork <- None
+
+                    finalCleanPublicationVerified
+                with
+                | ex ->
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch could not prove final clean materialization IPC/status publication: {ex.Message}"
+                    false)
+
+    /// Replaces an unproven clean materialization snapshot with a verified dirty IPC state before degraded resync begins.
+    let private tryPublishCurrentBranchMaterializationDirtyStatus () =
+        lock watchStatusPublishLock (fun () ->
+            let pendingEvidence = readPendingWatchWorkEvidence ()
+
+            if not pendingEvidence.HasPendingWork then
+                false
+            else
+                try
+                    let runtimeMode = currentGraceWatchRuntimeMode ()
+
+                    let status, directoryIds =
+                        if pendingEvidence.HasDurableOnlyPendingWork then
+                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+                        elif
+                            runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                            && not (isGraceWatchResyncPending ())
+                        then
+                            let status =
+                                readGraceStatusFileForPendingWorkTransition()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            status, status.Index.Keys.ToHashSet()
+                        else
+                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+
+                    if tryVerifyCurrentPendingWorkPublication status directoryIds true then
+                        lastPublishedHasPendingWatchWork <- Some true
+                        true
+                    else
+                        tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
+                            match runtimeMode with
+                            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode status (Some directoryIds)
+                            | _ -> updateGraceWatchInterprocessFile status (Some directoryIds))
+                with
+                | ex ->
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch could not verify dirty materialization IPC/status publication: {ex.Message}"
+                    false)
+
+    /// Publishes final clean materialization IPC through the production verification path for focused Watch tests.
+    let internal tryPublishCurrentBranchMaterializationCleanStatusForWatchTests () = tryPublishCurrentBranchMaterializationCleanStatus ()
 
     /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
     let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
@@ -2384,16 +2749,6 @@ module Watch =
 
     /// Completes startup for tests that verify failed recovery does not resume incremental mode.
     let internal promoteStartupModeIfRecoverySucceededForWatchTests () = promoteStartupModeIfRecoverySucceeded ()
-
-    /// Verifies that the persisted IPC snapshot forces readers away from incremental shortcuts during resync.
-    let private isGraceWatchResyncRequiredStatusPublished (inspection: GraceWatchStatusInspection) =
-        inspection.Status
-        |> Option.exists (fun status ->
-            status.HasPendingWatchWork
-            && not status.IsWorkingTreeClean
-            && not inspection.IsUsable
-            && inspection.EffectiveMode
-               <> Some GraceWatchRuntimeMode.HealthyIncremental)
 
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
@@ -2741,6 +3096,7 @@ module Watch =
         uploadedFileVersions.Clear()
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
         lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
+        setGraceWatchPendingWorkStatusFlag false
         clearPendingStatusDifferencesForTests ()
         lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
         clearGraceWatchResyncPending ()
@@ -2769,6 +3125,8 @@ module Watch =
         readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
         clearShouldIgnoreCache ()
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
+        resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests ()
+        resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests ()
         resetSignalRSubscriptionRefreshForWatchTests ()
         resetWatchJournalClientsForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
@@ -3178,6 +3536,1228 @@ module Watch =
     let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
         handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
 
+    /// Provides injectable operations for applying one exact current-branch Reference from local object-cache content.
+    type internal CurrentBranchRemoteMaterializationApplyClients =
+        {
+            GetRemoteDirectoryVersions: DirectoryVersionId -> CorrelationId -> Task<Result<DirectoryVersion array, GraceError>>
+            ReadGraceStatus: unit -> Task<GraceStatus>
+            WriteGraceStatus: GraceStatus -> Task<unit>
+            RequestResync: string -> unit
+            TryCreateUpdateMarker: string -> string -> bool
+            IsUpdateMarkerOwned: string -> string -> bool
+            BeforeTargetMutation: string -> unit
+            DeleteUpdateMarker: string -> unit
+            BeforeFinalVerification: unit -> Task<unit>
+            BeforeStatusReplacementVerification: unit -> Task<unit>
+        }
+
+    /// Lists the exact target paths that a remote Reference materialization will mutate.
+    type internal CurrentBranchRemoteMaterializationPlan =
+        {
+            FileDeletes: RelativePath array
+            DirectoryDeletes: RelativePath array
+            DirectoryCreates: RelativePath array
+            FileWrites: LocalFileVersion array
+            RetainedFiles: LocalFileVersion array
+        }
+
+    /// Converts the active repository path comparison into dictionary lookup semantics.
+    let private materializationStringComparer () =
+        match watchPathComparison with
+        | StringComparison.OrdinalIgnoreCase
+        | StringComparison.InvariantCultureIgnoreCase
+        | StringComparison.CurrentCultureIgnoreCase -> StringComparer.OrdinalIgnoreCase
+        | _ -> StringComparer.Ordinal
+
+    /// Normalizes paths for exact materialization target comparisons.
+    let private normalizedMaterializationPath (relativePath: RelativePath) = normalizeFilePath $"{relativePath}"
+
+    /// Verifies that the persisted status still represents the clean snapshot accepted by the serialized coordinator gate.
+    let private validateCurrentBranchMaterializationAcceptedStatus (acceptedStatus: GraceWatchStatus) (currentStatus: GraceStatus) =
+        let currentDirectoryIds = currentStatus.Index.Keys.ToHashSet()
+
+        if
+            currentStatus.RootDirectoryId
+            <> acceptedStatus.RootDirectoryId
+            || currentStatus.RootDirectorySha256Hash
+               <> acceptedStatus.RootDirectorySha256Hash
+            || currentStatus.RootDirectoryBlake3Hash
+               <> acceptedStatus.RootDirectoryBlake3Hash
+            || not (currentDirectoryIds.SetEquals(acceptedStatus.DirectoryIds))
+        then
+            invalidOp "Remote materialization persisted status no longer matches the clean snapshot accepted by the coordinator gate."
+
+    /// Rejects fetched metadata that is not an exact canonical tree for the configured repository and worktree.
+    let private validateCurrentBranchMaterializationAcceptedMetadata (remoteDirectoryVersions: DirectoryVersion array) =
+        let current = Current()
+        let rootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(current.RootDirectory))
+
+        let reservedPaths =
+            [|
+                current.GraceDirectory
+                current.ObjectDirectory
+                current.DirectoryVersionCache
+                current.GraceStatusFile
+                current.GraceObjectCacheFile
+                current.ConfigurationDirectory
+            |]
+            |> Array.filter (String.IsNullOrWhiteSpace >> not)
+            |> Array.map (fun path -> Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)))
+            |> Array.distinct
+
+        let targetFullPath (relativePath: RelativePath) =
+            let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, string relativePath))
+            let rootWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
+
+            if
+                not (String.Equals(rootDirectory, fullPath, watchPathComparison))
+                && not (fullPath.StartsWith(rootWithSeparator, watchPathComparison))
+            then
+                invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
+
+            fullPath
+
+        let pathIsReserved (relativePath: RelativePath) =
+            let fullPath =
+                targetFullPath relativePath
+                |> Path.TrimEndingDirectorySeparator
+
+            reservedPaths
+            |> Array.exists (fun reservedPath ->
+                String.Equals(fullPath, reservedPath, watchPathComparison)
+                || fullPath.StartsWith(reservedPath + string Path.DirectorySeparatorChar, watchPathComparison))
+
+        let validateCanonicalPath allowRoot (relativePath: RelativePath) =
+            let rawPath = string relativePath
+            let normalizedPath = normalizedMaterializationPath relativePath
+
+            let isCanonical =
+                if allowRoot && rawPath = Constants.RootDirectoryPath then
+                    true
+                else
+                    not (String.IsNullOrWhiteSpace(rawPath))
+                    && rawPath = normalizedPath
+                    && not (Path.IsPathRooted(rawPath))
+                    && not (rawPath.StartsWith("/", StringComparison.Ordinal))
+                    && not (rawPath.EndsWith("/", StringComparison.Ordinal))
+                    && rawPath.Split('/', StringSplitOptions.None)
+                       |> Array.forall (fun segment ->
+                           not (String.IsNullOrWhiteSpace(segment))
+                           && segment <> "."
+                           && segment <> "..")
+
+            if not isCanonical then
+                invalidOp $"Remote materialization path is not in canonical repository-relative form: '{rawPath}'."
+
+            let fullPath =
+                targetFullPath relativePath
+                |> Path.TrimEndingDirectorySeparator
+
+            if
+                not allowRoot
+                && String.Equals(fullPath, rootDirectory, watchPathComparison)
+            then
+                invalidOp $"Remote materialization non-root target resolves to the repository root: '{rawPath}'."
+
+            if pathIsReserved relativePath then
+                invalidOp $"Remote materialization target overlaps Grace local storage: '{rawPath}'."
+
+        for directoryVersion in remoteDirectoryVersions do
+            if directoryVersion.OwnerId <> current.OwnerId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched owner id."
+
+            if directoryVersion.OrganizationId
+               <> current.OrganizationId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched organization id."
+
+            if directoryVersion.RepositoryId
+               <> current.RepositoryId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched repository id."
+
+            validateCanonicalPath true directoryVersion.RelativePath
+
+            for fileVersion in directoryVersion.Files do
+                validateCanonicalPath false fileVersion.RelativePath
+
+    /// Compares declared size and content hashes so equal hashes cannot conceal impossible file metadata.
+    let internal currentBranchMaterializationFileIdentityMatchesForWatchTests
+        expectedSize
+        expectedSha256Hash
+        expectedBlake3Hash
+        actualSize
+        actualSha256Hash
+        actualBlake3Hash
+        =
+        actualSize = expectedSize
+        && actualSha256Hash = expectedSha256Hash
+        && (String.IsNullOrWhiteSpace(string expectedBlake3Hash)
+            || actualBlake3Hash = expectedBlake3Hash)
+
+    /// Reports whether recursive metadata describes a normalized immediate child of its parent path.
+    let internal currentBranchMaterializationPathIsImmediateChildForWatchTests (parentPath: RelativePath) (childPath: RelativePath) =
+        let rawParentPath = string parentPath
+        let rawChildPath = string childPath
+
+        let hasTraversalSegment (path: string) =
+            path
+                .Replace('\\', '/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun segment -> segment = "." || segment = "..")
+
+        let isAbsolutePath (path: string) =
+            Path.IsPathRooted(path)
+            || path.StartsWith("/", StringComparison.Ordinal)
+            || path.StartsWith("\\", StringComparison.Ordinal)
+            || (path.Length >= 2
+                && Char.IsLetter(path[0])
+                && path[1] = ':')
+
+        let parent = normalizedMaterializationPath parentPath
+        let child = normalizedMaterializationPath childPath
+
+        not (String.IsNullOrWhiteSpace(rawChildPath))
+        && not (isAbsolutePath rawChildPath)
+        && not (hasTraversalSegment rawChildPath)
+        && (parent = Constants.RootDirectoryPath
+            && child <> Constants.RootDirectoryPath
+            && not (child.Contains('/'))
+            || parent <> Constants.RootDirectoryPath
+               && child.StartsWith(parent + "/", watchPathComparison)
+               && not (child.Substring(parent.Length + 1).Contains('/')))
+
+    /// Persists completion evidence and retires the marker while preserving the first cleanup failure.
+    let internal completeCurrentBranchMaterializationMarkerForWatchTests writeCompletion deleteMarker =
+        let mutable completionFailure = None
+
+        try
+            writeCompletion ()
+        with
+        | ex -> completionFailure <- Some ex
+
+        try
+            deleteMarker ()
+        with
+        | ex when completionFailure.IsNone -> completionFailure <- Some ex
+        | _ -> ()
+
+        match completionFailure with
+        | Some ex -> raise ex
+        | None -> ()
+
+    /// Creates the shared update marker without replacing a marker owned by another Grace command.
+    let internal tryCreateCurrentBranchMaterializationMarkerForWatchTests (markerFileName: string) (content: string) =
+        let mutable markerCreated = false
+
+        try
+            use stream = new FileStream(markerFileName, FileMode.CreateNew, FileAccess.Write, FileShare.Read)
+            markerCreated <- true
+            use writer = new StreamWriter(stream, UTF8Encoding(false))
+            writer.Write(content)
+            writer.Flush()
+            stream.Flush(true)
+            true
+        with
+        | :? IOException when not markerCreated -> false
+        | ex ->
+            if markerCreated then
+                try
+                    File.Delete(markerFileName)
+                with
+                | _ -> ()
+
+            raise ex
+
+    /// Reports whether the shared marker still contains the purpose value written by this materialization.
+    let private currentBranchMaterializationMarkerIsOwned markerFileName expectedContent =
+        try
+            File.Exists(markerFileName)
+            && String.Equals(File.ReadAllText(markerFileName), expectedContent, StringComparison.Ordinal)
+        with
+        | _ -> false
+
+    /// Reports whether a child materialization path is within a parent materialization path.
+    let private materializationPathIsUnder parentPath childPath =
+        let parentPath = normalizedMaterializationPath parentPath
+        let childPath = normalizedMaterializationPath childPath
+
+        String.Equals(parentPath, Constants.RootDirectoryPath, watchPathComparison)
+        || childPath.StartsWith(parentPath + "/", watchPathComparison)
+
+    /// Gets a full target path while rejecting relative paths that leave the repository root.
+    let private materializationTargetFullPath (relativePath: RelativePath) =
+        let rootDirectory = Path.GetFullPath(Current().RootDirectory)
+        let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, $"{relativePath}"))
+        let comparison = watchPathComparison
+
+        let rootWithSeparator =
+            if rootDirectory.EndsWith(string Path.DirectorySeparatorChar, StringComparison.Ordinal) then
+                rootDirectory
+            else
+                rootDirectory + string Path.DirectorySeparatorChar
+
+        if
+            not (String.Equals(rootDirectory, fullPath, comparison))
+            && not (fullPath.StartsWith(rootWithSeparator, comparison))
+        then
+            invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
+
+        fullPath
+
+    /// Builds a lookup keyed by repository-relative path.
+    let private materializationDirectoriesByPath (status: GraceStatus) =
+        status.Index.Values.ToDictionary(
+            (fun (directoryVersion: LocalDirectoryVersion) -> normalizedMaterializationPath directoryVersion.RelativePath),
+            id,
+            materializationStringComparer ()
+        )
+
+    /// Builds a file lookup keyed by repository-relative path.
+    let private materializationFilesByPath (status: GraceStatus) =
+        let filesByPath = Dictionary<string, LocalFileVersion>(materializationStringComparer ())
+
+        for fileVersion in
+            status.Index.Values
+            |> Seq.collect (fun (directoryVersion: LocalDirectoryVersion) -> directoryVersion.Files :> seq<LocalFileVersion>) do
+            filesByPath[normalizedMaterializationPath fileVersion.RelativePath] <- fileVersion
+
+        filesByPath
+
+    /// Chooses the local timestamp that an unchanged remote file should keep in the replacement status.
+    let private remoteMaterializationFileWriteTimeUtc
+        (currentFiles: Dictionary<string, LocalFileVersion>)
+        materializationStartedUtc
+        (fileVersion: FileVersion)
+        =
+        let path = normalizedMaterializationPath fileVersion.RelativePath
+        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+        if
+            currentFiles.TryGetValue(path, &currentFile)
+            && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                fileVersion.Size
+                fileVersion.Sha256Hash
+                fileVersion.Blake3Hash
+                currentFile.Size
+                currentFile.Sha256Hash
+                currentFile.Blake3Hash
+        then
+            let fullPath = materializationTargetFullPath fileVersion.RelativePath
+
+            if File.Exists(fullPath) then
+                File.GetLastWriteTimeUtc(fullPath)
+            else
+                currentFile.LastWriteTimeUtc
+        else
+            materializationStartedUtc
+
+    /// Creates a GraceStatus snapshot from remote DirectoryVersion metadata without scanning the working tree.
+    let private createRemoteGraceStatus (currentStatus: GraceStatus) (remoteDirectoryVersions: DirectoryVersion array) =
+        let lastWriteTimeUtc = DateTime.UtcNow
+        let currentFiles = materializationFilesByPath currentStatus
+        let index = GraceIndex()
+
+        for directoryVersion in remoteDirectoryVersions do
+            let localFiles =
+                directoryVersion.Files
+                |> Seq.map (fun fileVersion ->
+                    let fileLastWriteTimeUtc = remoteMaterializationFileWriteTimeUtc currentFiles lastWriteTimeUtc fileVersion
+                    fileVersion.ToLocalFileVersion fileLastWriteTimeUtc)
+                |> Seq.toList
+                |> List<LocalFileVersion>
+
+            let localDirectoryVersion =
+                LocalDirectoryVersion.CreateWithHashes
+                    directoryVersion.DirectoryVersionId
+                    directoryVersion.OwnerId
+                    directoryVersion.OrganizationId
+                    directoryVersion.RepositoryId
+                    directoryVersion.RelativePath
+                    directoryVersion.Sha256Hash
+                    directoryVersion.Blake3Hash
+                    directoryVersion.Directories
+                    localFiles
+                    directoryVersion.Size
+                    lastWriteTimeUtc
+
+            index.TryAdd(localDirectoryVersion.DirectoryVersionId, localDirectoryVersion)
+            |> ignore
+
+        let rootDirectoryVersion =
+            index.Values.FirstOrDefault((fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath), LocalDirectoryVersion.Default)
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootDirectoryVersion.DirectoryVersionId
+            RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash
+            RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
+            LastSuccessfulFileUpload = currentStatus.LastSuccessfulFileUpload
+            LastSuccessfulDirectoryVersionUpload = currentStatus.LastSuccessfulDirectoryVersionUpload
+        }
+
+    /// Chooses only paths that are not already covered by an ancestor directory delete.
+    let private topLevelDirectoryDeletePaths (paths: seq<RelativePath>) =
+        let ordered =
+            paths
+            |> Seq.distinctBy normalizedMaterializationPath
+            |> Seq.sortBy (fun path -> (normalizedMaterializationPath path).Length)
+            |> Seq.toArray
+
+        ordered
+        |> Array.filter (fun candidate ->
+            not (
+                ordered
+                |> Array.exists (fun other ->
+                    normalizedMaterializationPath other
+                    <> normalizedMaterializationPath candidate
+                    && materializationPathIsUnder other candidate)
+            ))
+
+    /// Computes the exact target set that differs between local status and the remote Reference tree.
+    let internal buildCurrentBranchRemoteMaterializationPlanForWatchTests (currentStatus: GraceStatus) (remoteStatus: GraceStatus) =
+        let currentDirectories = materializationDirectoriesByPath currentStatus
+        let currentFiles = materializationFilesByPath currentStatus
+        let remoteDirectories = materializationDirectoriesByPath remoteStatus
+        let remoteFiles = materializationFilesByPath remoteStatus
+
+        let directoryDeletes =
+            currentDirectories.Values
+            |> Seq.filter (fun (directoryVersion: LocalDirectoryVersion) ->
+                normalizedMaterializationPath directoryVersion.RelativePath
+                <> Constants.RootDirectoryPath
+                && (not (remoteDirectories.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath))
+                    || remoteFiles.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath)))
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> topLevelDirectoryDeletePaths
+
+        let directoryDeleteSet = directoryDeletes |> HashSet<RelativePath>
+
+        let fileIsUnderDirectoryDelete (relativePath: RelativePath) =
+            directoryDeleteSet
+            |> Seq.exists (fun directoryPath -> materializationPathIsUnder directoryPath relativePath)
+
+        let fileDeletes =
+            currentFiles.Values
+            |> Seq.filter (fun (fileVersion: LocalFileVersion) ->
+                let path = normalizedMaterializationPath fileVersion.RelativePath
+
+                not (fileIsUnderDirectoryDelete fileVersion.RelativePath)
+                && (not (remoteFiles.ContainsKey path)
+                    || remoteDirectories.ContainsKey path))
+            |> Seq.map (fun fileVersion -> fileVersion.RelativePath)
+            |> Seq.distinctBy normalizedMaterializationPath
+            |> Seq.toArray
+
+        let directoryCreates =
+            remoteDirectories.Values
+            |> Seq.filter (fun (directoryVersion: LocalDirectoryVersion) ->
+                normalizedMaterializationPath directoryVersion.RelativePath
+                <> Constants.RootDirectoryPath
+                && (not (currentDirectories.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath))
+                    || currentFiles.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath)))
+            |> Seq.sortBy (fun directoryVersion ->
+                (normalizedMaterializationPath directoryVersion.RelativePath)
+                    .Count(fun c -> c = '/'))
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> Seq.toArray
+
+        let fileWrites =
+            remoteFiles.Values
+            |> Seq.filter (fun (remoteFile: LocalFileVersion) ->
+                let path = normalizedMaterializationPath remoteFile.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                currentDirectories.ContainsKey path
+                || not (currentFiles.TryGetValue(path, &currentFile))
+                || not (
+                    currentBranchMaterializationFileIdentityMatchesForWatchTests
+                        remoteFile.Size
+                        remoteFile.Sha256Hash
+                        remoteFile.Blake3Hash
+                        currentFile.Size
+                        currentFile.Sha256Hash
+                        currentFile.Blake3Hash
+                ))
+            |> Seq.toArray
+
+        let retainedFiles =
+            remoteFiles.Values
+            |> Seq.filter (fun (remoteFile: LocalFileVersion) ->
+                let path = normalizedMaterializationPath remoteFile.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                not (currentDirectories.ContainsKey path)
+                && currentFiles.TryGetValue(path, &currentFile)
+                && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                    remoteFile.Size
+                    remoteFile.Sha256Hash
+                    remoteFile.Blake3Hash
+                    currentFile.Size
+                    currentFile.Sha256Hash
+                    currentFile.Blake3Hash)
+            |> Seq.toArray
+
+        {
+            FileDeletes = fileDeletes
+            DirectoryDeletes = directoryDeletes
+            DirectoryCreates = directoryCreates
+            FileWrites = fileWrites
+            RetainedFiles = retainedFiles
+        }
+
+    /// Verifies a tracked target file still matches the local status snapshot.
+    let private targetFileStillMatchesStatus (fileVersion: LocalFileVersion) =
+        task {
+            let fullPath = materializationTargetFullPath fileVersion.RelativePath
+
+            if not (File.Exists(fullPath)) then
+                return false
+            else
+                match! createLocalFileVersion (FileInfo fullPath) with
+                | Some actual ->
+                    return
+                        currentBranchMaterializationFileIdentityMatchesForWatchTests
+                            fileVersion.Size
+                            fileVersion.Sha256Hash
+                            fileVersion.Blake3Hash
+                            actual.Size
+                            actual.Sha256Hash
+                            actual.Blake3Hash
+                | None -> return false
+        }
+
+    /// Verifies a deleted directory target has no local edits beyond the local status snapshot.
+    let private targetDirectoryStillMatchesStatus (currentStatus: GraceStatus) (relativePath: RelativePath) =
+        task {
+            let fullPath = materializationTargetFullPath relativePath
+
+            if not (Directory.Exists(fullPath)) then
+                return false
+            else
+                let currentDirectories = materializationDirectoriesByPath currentStatus
+                let currentFiles = materializationFilesByPath currentStatus
+
+                let expectedDirectoryPaths =
+                    let targetPath = normalizedMaterializationPath relativePath
+
+                    currentDirectories.Values
+                    |> Seq.filter (fun directoryVersion ->
+                        let directoryPath = normalizedMaterializationPath directoryVersion.RelativePath
+
+                        directoryPath = targetPath
+                        || materializationPathIsUnder relativePath directoryVersion.RelativePath)
+                    |> Seq.map (fun directoryVersion -> normalizedMaterializationPath directoryVersion.RelativePath)
+                    |> HashSet
+
+                let expectedFiles =
+                    currentFiles.Values
+                    |> Seq.filter (fun fileVersion -> materializationPathIsUnder relativePath fileVersion.RelativePath)
+                    |> Seq.toArray
+
+                let expectedFilePaths =
+                    expectedFiles
+                    |> Seq.map (fun fileVersion -> normalizedMaterializationPath fileVersion.RelativePath)
+                    |> HashSet
+
+                let actualFiles =
+                    Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories)
+                    |> Seq.map (fun filePath -> RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, filePath))))
+                    |> Seq.toArray
+
+                let actualDirectoryPaths =
+                    seq {
+                        yield relativePath
+
+                        yield!
+                            Directory.EnumerateDirectories(fullPath, "*", SearchOption.AllDirectories)
+                            |> Seq.map (fun directoryPath -> RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryPath))))
+                    }
+                    |> Seq.map normalizedMaterializationPath
+                    |> HashSet
+
+                let actualFilePaths =
+                    actualFiles
+                    |> Seq.map normalizedMaterializationPath
+                    |> HashSet
+
+                let hasUnexpectedDirectories =
+                    actualDirectoryPaths
+                    |> Seq.exists (expectedDirectoryPaths.Contains >> not)
+
+                let missingExpectedDirectories =
+                    expectedDirectoryPaths
+                    |> Seq.exists (actualDirectoryPaths.Contains >> not)
+
+                let hasUnexpectedFiles =
+                    actualFilePaths
+                    |> Seq.exists (expectedFilePaths.Contains >> not)
+
+                if hasUnexpectedDirectories
+                   || missingExpectedDirectories
+                   || hasUnexpectedFiles then
+                    return false
+                else
+                    let mutable allTrackedFilesMatch = true
+
+                    for fileVersion in expectedFiles do
+                        let! matchesStatus = targetFileStillMatchesStatus fileVersion
+
+                        if not matchesStatus then allTrackedFilesMatch <- false
+
+                    return allTrackedFilesMatch
+        }
+
+    /// Fails before target mutation when a changed target no longer matches the trusted local status.
+    let private verifyCurrentBranchMaterializationTargetsUnchanged (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            let currentFiles = materializationFilesByPath currentStatus
+            let currentDirectories = materializationDirectoriesByPath currentStatus
+
+            for relativePath in plan.FileDeletes do
+                let path = normalizedMaterializationPath relativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                if currentFiles.TryGetValue(path, &currentFile) then
+                    let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                    if not matchesStatus then
+                        invalidOp $"Remote materialization target changed before apply: {relativePath}."
+
+            for relativePath in plan.DirectoryDeletes do
+                let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization directory target changed before apply: {relativePath}."
+
+            for fileVersion in plan.FileWrites do
+                let path = normalizedMaterializationPath fileVersion.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                if currentFiles.TryGetValue(path, &currentFile) then
+                    let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                    if not matchesStatus then
+                        invalidOp $"Remote materialization target changed before apply: {fileVersion.RelativePath}."
+                elif not (currentDirectories.ContainsKey path) then
+                    let fullPath = materializationTargetFullPath fileVersion.RelativePath
+
+                    if
+                        File.Exists(fullPath)
+                        || Directory.Exists(fullPath)
+                    then
+                        invalidOp $"Remote materialization create target appeared before apply: {fileVersion.RelativePath}."
+
+            for relativePath in plan.DirectoryCreates do
+                let path = normalizedMaterializationPath relativePath
+
+                if
+                    not (currentDirectories.ContainsKey path)
+                    && not (currentFiles.ContainsKey path)
+                then
+                    let fullPath = materializationTargetFullPath relativePath
+
+                    if
+                        File.Exists(fullPath)
+                        || Directory.Exists(fullPath)
+                    then
+                        invalidOp $"Remote materialization create target appeared before apply: {relativePath}."
+        }
+
+    /// Verifies files omitted from mutation still match the clean snapshot represented by replacement status.
+    let private verifyCurrentBranchMaterializationRetainedFiles (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for fileVersion in plan.RetainedFiles do
+                let! matchesStatus = targetFileStillMatchesStatus fileVersion
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization retained file changed before status replacement: {fileVersion.RelativePath}."
+        }
+
+    /// Proves the recursive response is exactly one acyclic root closure and that every directory hash matches its canonical contents.
+    let private validateCurrentBranchMaterializationDirectoryClosureAndHashes
+        (rootDirectoryId: DirectoryVersionId)
+        (remoteDirectoryVersions: DirectoryVersion array)
+        =
+        let versionsById = Dictionary<DirectoryVersionId, DirectoryVersion>()
+
+        for directoryVersion in remoteDirectoryVersions do
+            if not (versionsById.TryAdd(directoryVersion.DirectoryVersionId, directoryVersion)) then
+                invalidOp $"Remote materialization metadata contains duplicate DirectoryVersionId {directoryVersion.DirectoryVersionId}."
+
+        if not (versionsById.ContainsKey(rootDirectoryId)) then
+            invalidOp $"Remote materialization metadata did not include requested root DirectoryVersionId {rootDirectoryId}."
+
+        let rootDirectoryVersion = versionsById[rootDirectoryId]
+
+        if normalizedMaterializationPath rootDirectoryVersion.RelativePath
+           <> Constants.RootDirectoryPath then
+            invalidOp $"Remote materialization root DirectoryVersion {rootDirectoryId} has non-root path {rootDirectoryVersion.RelativePath}."
+
+        let visiting = HashSet<DirectoryVersionId>()
+        let visited = HashSet<DirectoryVersionId>()
+
+        let rec validate directoryId =
+            if visiting.Contains(directoryId) then
+                invalidOp $"Remote materialization metadata contains a cycle through DirectoryVersionId {directoryId}."
+
+            if not (visited.Contains(directoryId)) then
+                let directoryVersion = versionsById[directoryId]
+                visiting.Add(directoryId) |> ignore
+                let childIds = HashSet<DirectoryVersionId>()
+                let children = ResizeArray<DirectoryVersion>()
+
+                let expectedDirectorySize = getDirectorySize directoryVersion.Files
+
+                if directoryVersion.Size <> expectedDirectorySize then
+                    invalidOp
+                        $"Remote materialization DirectoryVersion {directoryId} has size {directoryVersion.Size}, but its direct files total {expectedDirectorySize}."
+
+                for childId in directoryVersion.Directories do
+                    if not (childIds.Add(childId)) then
+                        invalidOp $"Remote materialization metadata contains duplicate child DirectoryVersionId {childId} under {directoryId}."
+
+                    let mutable child = Unchecked.defaultof<DirectoryVersion>
+
+                    if not (versionsById.TryGetValue(childId, &child)) then
+                        invalidOp $"Remote materialization metadata is missing child DirectoryVersion entry {directoryVersion.RelativePath}->{childId}."
+
+                    if not (currentBranchMaterializationPathIsImmediateChildForWatchTests directoryVersion.RelativePath child.RelativePath) then
+                        invalidOp
+                            $"Remote materialization child DirectoryVersion path {child.RelativePath} is not an immediate descendant of {directoryVersion.RelativePath}."
+
+                    validate childId
+                    children.Add(child)
+
+                let entries =
+                    seq {
+                        for child in children do
+                            yield DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+
+                        for fileVersion in directoryVersion.Files do
+                            if not (currentBranchMaterializationPathIsImmediateChildForWatchTests directoryVersion.RelativePath fileVersion.RelativePath) then
+                                invalidOp
+                                    $"Remote materialization FileVersion path {fileVersion.RelativePath} is not an immediate child of {directoryVersion.RelativePath}."
+
+                            yield DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash
+                    }
+
+                let expectedSha256Hash = computeSha256ForDirectoryEntries directoryVersion.RelativePath entries
+                let expectedBlake3Hash = computeBlake3ForDirectory directoryVersion.RelativePath entries
+
+                if directoryVersion.Sha256Hash <> expectedSha256Hash then
+                    invalidOp $"Remote materialization DirectoryVersion {directoryId} has a mismatched SHA-256 hash."
+
+                if directoryVersion.Blake3Hash <> expectedBlake3Hash then
+                    invalidOp $"Remote materialization DirectoryVersion {directoryId} has a mismatched BLAKE3 hash."
+
+                visiting.Remove(directoryId) |> ignore
+                visited.Add(directoryId) |> ignore
+
+        validate rootDirectoryId
+
+        if visited.Count <> versionsById.Count then
+            let unreachable =
+                versionsById.Keys
+                |> Seq.filter (visited.Contains >> not)
+                |> Seq.map string
+                |> String.concat ", "
+
+            invalidOp $"Remote materialization metadata contains DirectoryVersion entries outside the accepted root closure: {unreachable}."
+
+    /// Rejects remote paths that cannot map one-to-one onto the active worktree filesystem.
+    let private validateCurrentBranchMaterializationPathRepresentability (remoteDirectoryVersions: DirectoryVersion array) =
+        let targetPaths = Dictionary<string, string>(materializationStringComparer ())
+        let collisions = ResizeArray<string>()
+
+        let remoteTargets =
+            seq {
+                for directoryVersion in remoteDirectoryVersions do
+                    yield directoryVersion.RelativePath
+
+                    for fileVersion in directoryVersion.Files do
+                        yield fileVersion.RelativePath
+            }
+
+        for relativePath in remoteTargets do
+            let normalizedPath = normalizedMaterializationPath relativePath
+            let mutable existingPath = Unchecked.defaultof<string>
+
+            if targetPaths.TryGetValue(normalizedPath, &existingPath) then
+                collisions.Add($"{existingPath} <> {relativePath}")
+            else
+                targetPaths.Add(normalizedPath, $"{relativePath}")
+
+        if collisions.Count > 0 then
+            let collisionDescription = String.concat ", " collisions
+            invalidOp $"Remote materialization metadata contains case-colliding or duplicate target paths: {collisionDescription}."
+
+    /// Verifies the fetched root metadata is the exact id and hash pair carried by the accepted Reference.
+    let private validateCurrentBranchMaterializationRootIdentity
+        (payload: CurrentBranchReferenceNotification)
+        (remoteDirectoryVersions: DirectoryVersion array)
+        =
+        match remoteDirectoryVersions
+              |> Array.tryFind (fun directoryVersion -> directoryVersion.DirectoryVersionId = payload.DirectoryId)
+            with
+        | None -> invalidOp $"Remote materialization metadata did not include requested root DirectoryVersionId {payload.DirectoryId}."
+        | Some rootDirectoryVersion ->
+            if rootDirectoryVersion.Sha256Hash
+               <> payload.Sha256Hash
+               || rootDirectoryVersion.Blake3Hash
+                  <> payload.Blake3Hash then
+                invalidOp $"Remote materialization root identity did not match accepted Reference payload for {payload.DirectoryId}."
+
+    /// Verifies every local object-cache file required by the exact file writes is already present and hash-valid.
+    let private verifyCurrentBranchMaterializationObjectCache (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            let invalidObjectCacheFiles = ResizeArray<string>()
+
+            for fileVersion in plan.FileWrites do
+                let objectCachePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+
+                if not (File.Exists objectCachePath) then
+                    invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                else
+                    try
+                        let actualSize = FileInfo(objectCachePath).Length
+                        use stream = File.Open(objectCachePath, fileStreamOptionsRead)
+                        let! sha256Hash = computeSha256ForFile stream fileVersion.RelativePath
+                        stream.Position <- 0L
+                        let! blake3Hash = computeBlake3ForFile stream
+
+                        if
+                            not
+                                (
+                                    currentBranchMaterializationFileIdentityMatchesForWatchTests
+                                        fileVersion.Size
+                                        fileVersion.Sha256Hash
+                                        fileVersion.Blake3Hash
+                                        actualSize
+                                        sha256Hash
+                                        (Blake3Hash $"{blake3Hash}")
+                                )
+                        then
+                            invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                    with
+                    | _ -> invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+
+            if invalidObjectCacheFiles.Count > 0 then
+                let invalidPaths =
+                    invalidObjectCacheFiles
+                    |> Seq.distinct
+                    |> String.concat ", "
+
+                invalidOp $"Remote materialization cannot start because object-cache content is missing or corrupt for: {invalidPaths}."
+        }
+
+    /// Verifies remote binary flags against the accepted cache or retained working-tree bytes before clean status replacement.
+    let private verifyCurrentBranchMaterializationBinaryClassifications (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for fileVersion in plan.FileWrites do
+                let objectCachePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+                use stream = File.Open(objectCachePath, fileStreamOptionsRead)
+                let! actualIsBinary = isBinaryFile stream
+
+                if actualIsBinary <> fileVersion.IsBinary then
+                    invalidOp $"Remote materialization binary classification does not match object-cache bytes for {fileVersion.RelativePath}."
+
+            for fileVersion in plan.RetainedFiles do
+                let targetPath = materializationTargetFullPath fileVersion.RelativePath
+                use stream = File.Open(targetPath, fileStreamOptionsRead)
+                let! actualIsBinary = isBinaryFile stream
+
+                if actualIsBinary <> fileVersion.IsBinary then
+                    invalidOp $"Remote materialization binary classification does not match retained working-tree bytes for {fileVersion.RelativePath}."
+        }
+
+    /// Applies exact target mutations from local object-cache files while the update marker is present.
+    let private applyCurrentBranchMaterializationTargets (clients: CurrentBranchRemoteMaterializationApplyClients) currentStatus remoteStatus plan =
+        task {
+            let markerFileName = updateInProgressFileName ()
+            let completedFileName = updateMarkerCompletedFileName ()
+            let markerContent = "`grace watch` remote materialization is in progress."
+
+            Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
+            |> ignore
+
+            let markerOwned = clients.TryCreateUpdateMarker markerFileName markerContent
+
+            if not markerOwned then
+                invalidOp "Remote materialization cannot start because another Grace command created the shared update marker."
+
+            let ensureMarkerOwned mutation =
+                clients.BeforeTargetMutation mutation
+
+                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
+                    invalidOp "Remote materialization cannot continue because its shared update marker was replaced."
+
+            let mutable applyFailure = None
+
+            try
+                try
+                    do! clients.BeforeFinalVerification()
+
+                    ensureMarkerOwned "final verification"
+
+                    do! verifyCurrentBranchMaterializationObjectCache plan
+                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
+                    let currentFiles = materializationFilesByPath currentStatus
+
+                    for relativePath in plan.FileDeletes do
+                        let fullPath = materializationTargetFullPath relativePath
+                        let path = normalizedMaterializationPath relativePath
+                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                        if currentFiles.TryGetValue(path, &currentFile) then
+                            let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                            if not matchesStatus then
+                                invalidOp $"Remote materialization delete target changed at mutation boundary: {relativePath}."
+
+                        if File.Exists(fullPath) then
+                            ensureMarkerOwned $"delete file {relativePath}"
+                            File.Delete(fullPath)
+
+                    for relativePath in
+                        plan.DirectoryDeletes
+                        |> Array.sortByDescending (fun path -> (normalizedMaterializationPath path).Length) do
+                        let fullPath = materializationTargetFullPath relativePath
+                        let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
+
+                        if not matchesStatus then
+                            invalidOp $"Remote materialization directory target changed at mutation boundary: {relativePath}."
+
+                        if Directory.Exists(fullPath) then
+                            ensureMarkerOwned $"delete directory {relativePath}"
+                            Directory.Delete(fullPath, true)
+
+                    for relativePath in plan.DirectoryCreates do
+                        let fullPath = materializationTargetFullPath relativePath
+
+                        if
+                            File.Exists(fullPath)
+                            || Directory.Exists(fullPath)
+                        then
+                            invalidOp $"Remote materialization directory create target appeared at mutation boundary: {relativePath}."
+
+                        ensureMarkerOwned $"create directory {relativePath}"
+                        Directory.CreateDirectory(fullPath) |> ignore
+
+                    for fileVersion in plan.FileWrites do
+                        let targetPath = materializationTargetFullPath fileVersion.RelativePath
+                        let sourcePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+                        let path = normalizedMaterializationPath fileVersion.RelativePath
+                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                        let removedByDirectoryDelete =
+                            plan.DirectoryDeletes
+                            |> Array.exists (fun directoryPath ->
+                                normalizedMaterializationPath directoryPath = path
+                                || materializationPathIsUnder directoryPath fileVersion.RelativePath)
+
+                        if
+                            currentFiles.TryGetValue(path, &currentFile)
+                            && not removedByDirectoryDelete
+                        then
+                            let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                            if not matchesStatus then
+                                invalidOp $"Remote materialization write target changed at mutation boundary: {fileVersion.RelativePath}."
+                        elif
+                            File.Exists(targetPath)
+                            || Directory.Exists(targetPath)
+                        then
+                            invalidOp $"Remote materialization write target appeared at mutation boundary: {fileVersion.RelativePath}."
+
+                        do! verifyCurrentBranchMaterializationObjectCache { plan with FileWrites = [| fileVersion |] }
+
+                        ensureMarkerOwned $"create parent directory {fileVersion.RelativePath}"
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
+                        |> ignore
+
+                        ensureMarkerOwned $"copy file {fileVersion.RelativePath}"
+                        File.Copy(sourcePath, targetPath, true)
+                        ensureMarkerOwned $"set file timestamp {fileVersion.RelativePath}"
+                        File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
+
+                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                        if not copiedTargetMatches then
+                            invalidOp $"Remote materialization copied target did not match declared identity: {fileVersion.RelativePath}."
+
+                    do! clients.BeforeStatusReplacementVerification()
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+
+                    for fileVersion in plan.FileWrites do
+                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                        if not copiedTargetMatches then
+                            invalidOp $"Remote materialization copied target changed before status replacement: {fileVersion.RelativePath}."
+
+                    ensureMarkerOwned "write replacement status"
+                    do! clients.WriteGraceStatus remoteStatus
+                    ensureMarkerOwned "publish replacement status in memory"
+                    graceStatus <- remoteStatus
+                    updateGraceStatusDirectoryIds remoteStatus
+                with
+                | ex -> applyFailure <- Some ex
+
+                if clients.IsUpdateMarkerOwned markerFileName markerContent then
+                    let completedUtc = DateTime.UtcNow
+
+                    try
+                        completeCurrentBranchMaterializationMarkerForWatchTests
+                            (fun () ->
+                                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
+                                    invalidOp "Remote materialization cannot complete because its shared update marker was replaced."
+
+                                File.WriteAllText(
+                                    completedFileName,
+                                    serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+                                )
+
+                                recordGraceUpdateMarkerCompletedUtc completedUtc)
+                            (fun () ->
+                                if clients.IsUpdateMarkerOwned markerFileName markerContent then
+                                    clients.DeleteUpdateMarker markerFileName)
+                    with
+                    | ex when applyFailure.IsNone -> applyFailure <- Some ex
+                    | _ -> ()
+            with
+            | ex when applyFailure.IsNone -> applyFailure <- Some ex
+            | _ -> ()
+
+            match applyFailure with
+            | Some ex -> raise ex
+            | None -> ()
+        }
+
+    /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
+    let private applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus =
+        task {
+            configureWatchPathComparisonForCurrentRepository ()
+
+            match! clients.GetRemoteDirectoryVersions payload.DirectoryId payload.CorrelationId with
+            | Error error ->
+                clients.RequestResync $"remote materialization metadata fetch failed before exact apply: {error.Error}"
+                raise (InvalidOperationException(error.Error))
+            | Ok remoteDirectoryVersions ->
+                let! currentStatus =
+                    task {
+                        try
+                            return! clients.ReadGraceStatus()
+                        with
+                        | ex ->
+                            clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
+                            return raise ex
+                    }
+
+                try
+                    validateCurrentBranchMaterializationAcceptedStatus acceptedStatus currentStatus
+                    validateCurrentBranchMaterializationAcceptedMetadata remoteDirectoryVersions
+                    validateCurrentBranchMaterializationDirectoryClosureAndHashes payload.DirectoryId remoteDirectoryVersions
+                    validateCurrentBranchMaterializationPathRepresentability remoteDirectoryVersions
+                    validateCurrentBranchMaterializationRootIdentity payload remoteDirectoryVersions
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization metadata incomplete before exact apply: {ex.Message}"
+                    raise ex
+
+                let remoteStatus =
+                    try
+                        createRemoteGraceStatus currentStatus remoteDirectoryVersions
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization metadata invalid before exact apply: {ex.Message}"
+                        raise ex
+
+                if remoteStatus.RootDirectoryId
+                   <> payload.DirectoryId then
+                    clients.RequestResync $"remote materialization metadata missing requested root before exact apply: {payload.DirectoryId}"
+                    invalidOp $"Remote materialization metadata did not include the requested root DirectoryVersionId {payload.DirectoryId}."
+
+                let plan =
+                    try
+                        buildCurrentBranchRemoteMaterializationPlanForWatchTests currentStatus remoteStatus
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization plan construction failed before exact apply: {ex.Message}"
+                        raise ex
+
+                try
+                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization target changed before exact apply: {ex.Message}"
+                    raise ex
+
+                try
+                    do! verifyCurrentBranchMaterializationObjectCache plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization object cache invalid before exact apply: {ex.Message}"
+                    raise ex
+
+                try
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization binary metadata invalid before exact apply: {ex.Message}"
+                    raise ex
+
+                try
+                    do! applyCurrentBranchMaterializationTargets clients currentStatus remoteStatus plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization failed during exact target apply: {ex.Message}"
+                    raise ex
+        }
+
+    /// Applies exact materialization with an explicitly supplied coordinator-accepted status snapshot.
+    let internal applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests clients payload acceptedStatus =
+        applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
+
+    /// Preserves the direct apply test boundary by deriving an equivalent accepted snapshot from its configured local status.
+    let internal applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients payload =
+        task {
+            let! currentStatus =
+                task {
+                    try
+                        return! clients.ReadGraceStatus()
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
+                        return raise ex
+                }
+
+            let current = Current()
+
+            let acceptedStatus =
+                { GraceWatchStatus.Default with
+                    UpdatedAt = getCurrentInstant ()
+                    RepositoryId = current.RepositoryId
+                    RepositoryName = current.RepositoryName
+                    BranchId = current.BranchId
+                    BranchName = current.BranchName
+                    RootDirectory = current.RootDirectory
+                    RootDirectoryId = currentStatus.RootDirectoryId
+                    RootDirectorySha256Hash = currentStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = currentStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = currentStatus.Index.Keys.ToHashSet()
+                }
+
+            return! applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
+        }
+
+    /// Applies one BranchDto-confirmed current-branch Reference without downloading missing object content.
+    let private applyCurrentBranchReferenceMaterialization payload acceptedStatus =
+        applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
+            {
+                GetRemoteDirectoryVersions =
+                    fun rootDirectoryId correlationId ->
+                        task {
+                            let current = Current()
+
+                            let parameters =
+                                GetParameters(
+                                    OwnerId = $"{current.OwnerId}",
+                                    OwnerName = current.OwnerName,
+                                    OrganizationId = $"{current.OrganizationId}",
+                                    OrganizationName = current.OrganizationName,
+                                    RepositoryId = $"{current.RepositoryId}",
+                                    RepositoryName = current.RepositoryName,
+                                    DirectoryVersionId = $"{rootDirectoryId}",
+                                    CorrelationId = correlationId
+                                )
+
+                            match! DirectoryVersion.GetDirectoryVersionsRecursive parameters with
+                            | Ok returnValue ->
+                                return
+                                    Ok(
+                                        returnValue.ReturnValue
+                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                        |> Seq.toArray
+                                    )
+                            | Error error -> return Error error
+                        }
+                ReadGraceStatus = readGraceStatusFile
+                WriteGraceStatus = writeGraceStatusFile
+                RequestResync = requestGraceWatchExplicitResync
+                TryCreateUpdateMarker = tryCreateCurrentBranchMaterializationMarkerForWatchTests
+                IsUpdateMarkerOwned = currentBranchMaterializationMarkerIsOwned
+                BeforeTargetMutation = ignore
+                DeleteUpdateMarker = File.Delete
+                BeforeFinalVerification = fun () -> Task.FromResult(())
+                BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
+            }
+            payload
+            acceptedStatus
+
+    /// Publishes and verifies the dirty materialization boundary before target mutation can begin.
+    let private tryPublishCurrentBranchMaterializationPendingStatus (_status: GraceWatchStatus) =
+        try
+            let expectedStatus =
+                readGraceStatusFileForPendingWorkTransition()
+                    .GetAwaiter()
+                    .GetResult()
+
+            let directoryIds = expectedStatus.Index.Keys.ToHashSet()
+
+            tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus directoryIds (fun () ->
+                updateGraceWatchInterprocessFile expectedStatus (Some directoryIds))
+        with
+        | ex ->
+            logToAnsiConsole Colors.Error $"Grace Watch could not prove materialization-pending IPC/status publication: {ex.Message}"
+            false
+
+    /// Names the coordinator result for one exact same-branch Reference notification.
+    type internal CurrentBranchMaterializationCoordinatorOutcomeReason =
+        /// The notification was ignored because it did not target the current Watch branch.
+        | NotCurrentBranch = 0
+        /// The notification failed the concrete Reference and root-identity protocol checks.
+        | ProtocolRejected = 1
+        /// BranchDto latest-reference authority made the notification stale or otherwise non-materializable.
+        | LatestAuthorityRejected = 2
+        /// Local Watch status is clean and trusted, so the apply seam completed for this exact Reference.
+        | Applied = 3
+        /// Local Watch status is trustworthy but currently blocks remote materialization until a later safe point.
+        | WaitingForSafePoint = 4
+        /// Watch could not trust local IPC/status authority even after degraded resync revalidation.
+        | WaitingForDegradedResync = 5
+
+    /// Carries the terminal coordinator result for one exact same-branch Reference notification.
+    type internal CurrentBranchMaterializationCoordinatorOutcome =
+        {
+            ReferenceId: ReferenceId
+            Reason: CurrentBranchMaterializationCoordinatorOutcomeReason
+            Decision: LatestCurrentBranchReferenceDecision option
+        }
+
+    /// Names the local status gate that decides whether a BranchDto-latest Reference may reach apply.
+    type internal CurrentBranchMaterializationStatusGate =
+        | NotCurrentBranch
+        | Clean of GraceWatchStatus
+        | Blocked of string
+        | Degraded of string
+
+    /// Coordinates a same-branch Reference once clean IPC and BranchDto latest authority have both been proven.
+    type private CurrentBranchMaterializationCoordinatorClients =
+        {
+            GetCurrentBranch: unit -> Task<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>
+            InspectLocalStatus: unit -> Task<GraceWatchStatusInspection>
+            RequestDegradedResync: string -> unit
+            WaitForSafePoint: CurrentBranchReferenceNotification -> CurrentBranchMaterializationStatusGate -> Task<unit>
+            ReestablishIpc: CurrentBranchReferenceNotification -> string -> Task<unit>
+            ApplyReference: CurrentBranchReferenceNotification -> GraceWatchStatus -> Task<unit>
+            PublishCleanIpcAfterApply: unit -> bool
+            ReassertDirtyIpcAfterFailedCleanPublication: unit -> bool
+            MaxAttempts: int option
+        }
+
     /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
     let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
         let current = Current()
@@ -3185,8 +4765,509 @@ module Watch =
         payload.RepositoryId = current.RepositoryId
         && payload.BranchId = current.BranchId
 
-    /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
-    let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+    /// Reports whether a same-branch Reference notification still matches the repository identity persisted on disk.
+    let private currentBranchReferenceNotificationTargetsPersistedCurrentBranch (payload: CurrentBranchReferenceNotification) =
+        match tryInspectCurrentDirectoryConfiguration () with
+        | Ok inspection ->
+            payload.RepositoryId = inspection.Configuration.RepositoryId
+            && payload.BranchId = inspection.Configuration.BranchId
+        | Error _ -> false
+
+    /// Reports whether cached Watch identity and persisted repository identity both still match the notification.
+    let private currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch (payload: CurrentBranchReferenceNotification) =
+        currentBranchReferenceNotificationTargetsCurrentBranch payload
+        && currentBranchReferenceNotificationTargetsPersistedCurrentBranch payload
+
+    /// Reports whether the local-state database can be opened as durable Watch authority before materialization side effects.
+    let private hasReadableLocalStateDbAuthority () =
+        let inspection = Grace.CLI.LocalStateDb.inspectReadOnly (Current().GraceStatusFile)
+
+        inspection.ParentDirectoryExists
+        && inspection.DbFileExists
+        && not inspection.DbPathIsDirectory
+        && inspection.OpenedReadOnly
+
+    /// Converts current target, local queues, durable DB authority, and inspected IPC into the private materialization gate.
+    let private currentBranchMaterializationStatusGate payload (inspection: GraceWatchStatusInspection) =
+        if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+            NotCurrentBranch
+        elif updateInProgress () then
+            Blocked "Grace update marker is present"
+        elif hasManualPendingWatchWorkStatusFlag () then
+            Blocked "materialization pending status has not reached IPC"
+        elif hasProcessablePendingWatchWork () then
+            Blocked "process-local Watch queues have pending local observations"
+        elif inspection.IsUsable then
+            if not (hasReadableLocalStateDbAuthority ()) then
+                Degraded "missing local-state DB authority"
+            else
+                match inspectDurableWatchJournalPendingEvidence () with
+                | Error _ -> Degraded "unreadable durable Watch journal authority"
+                | Ok true -> Blocked "durable Watch journal has pending local observations"
+                | Ok false -> Clean inspection.Status.Value
+        elif inspection.ReadError.IsSome then
+            Degraded "unreadable Watch IPC/status authority"
+        elif not inspection.Exists then
+            Degraded "missing Watch IPC/status authority"
+        elif not inspection.IsFresh then
+            Degraded "stale Watch IPC/status authority"
+        elif not inspection.HasCurrentRepositoryIdentity then
+            Degraded "ambiguous Watch IPC/status authority"
+        else
+            match inspection.Status, inspection.EffectiveMode with
+            | Some status, Some GraceWatchRuntimeMode.HealthyIncremental when
+                status.HasPendingWatchWork
+                || not status.IsWorkingTreeClean
+                ->
+                Blocked "local Watch status has dirty or pending work"
+            | _, Some GraceWatchRuntimeMode.StartingUp -> Blocked "Watch startup catch-up is still in progress"
+            | _, Some GraceWatchRuntimeMode.Resynchronizing -> Blocked "Watch resync is still in progress"
+            | _, Some GraceWatchRuntimeMode.Suspended -> Degraded "Watch is suspended"
+            | _, Some GraceWatchRuntimeMode.Stopping -> Degraded "Watch IPC/status authority is stopping"
+            | _ -> Degraded "ambiguous Watch IPC/status authority"
+
+    /// Runs #678 protocol and BranchDto latest checks before the coordinator consults the local IPC gate.
+    let private currentBranchMaterializationDecision
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (current: Grace.Shared.Client.Configuration.GraceConfiguration)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        task {
+            match currentBranchReferenceProtocolValidationDecision current.RepositoryId current.BranchId payload with
+            | Some decision -> return Ok decision
+            | None ->
+                match! clients.GetCurrentBranch() with
+                | Error error ->
+                    let errorText = Markup.Escape(error.ToString())
+
+                    logToAnsiConsole Colors.Error $"Failed to refresh BranchDto for current-branch reference notification {payload.ReferenceId}: {errorText}."
+
+                    return Error error
+                | Ok branchReturnValue ->
+                    let branchDto = branchReturnValue.ReturnValue
+                    let! inspection = clients.InspectLocalStatus()
+
+                    let localStatus =
+                        match inspection.Status with
+                        | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
+                        | _ -> None
+
+                    return Ok(decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus branchDto payload)
+        }
+
+    /// Processes one exact same-branch Reference notification behind the serialized materialization lane.
+    let private processCurrentBranchMaterializationNotification
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        task {
+            let current = Current()
+            let mutable terminalOutcome = Unchecked.defaultof<CurrentBranchMaterializationCoordinatorOutcome>
+            let mutable terminal = false
+            let mutable attempts = 0
+            let mutable degradedResyncRequestedForReason: string option = None
+            let mutable acceptedMaterializationDecision: LatestCurrentBranchReferenceDecision option = None
+            let mutable retriedAfterRecoveredLocalStatus = false
+
+            let canRetry () =
+                clients.MaxAttempts
+                |> Option.forall (fun maxAttempts -> attempts < maxAttempts)
+
+            while not terminal && canRetry () do
+                attempts <- attempts + 1
+
+                let! decisionResult =
+                    match acceptedMaterializationDecision with
+                    | Some decision -> Task.FromResult(Ok decision)
+                    | None -> currentBranchMaterializationDecision clients current payload
+
+                match decisionResult with
+                | Error _ ->
+                    terminalOutcome <-
+                        {
+                            ReferenceId = payload.ReferenceId
+                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                            Decision = None
+                        }
+
+                    terminal <- true
+                | Ok decision ->
+                    match decision.Reason with
+                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                        let! inspection = clients.InspectLocalStatus()
+
+                        match currentBranchMaterializationStatusGate payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Clean _ ->
+                            let acceptedDecision = decision
+                            acceptedMaterializationDecision <- Some acceptedDecision
+                            let mutable postLeaseRetryGate: CurrentBranchMaterializationStatusGate option = None
+
+                            let! cleanOutcome =
+                                WorkingDirectoryMaterialization.runWithLease (fun () ->
+                                    task {
+                                        let! leaseInspection = clients.InspectLocalStatus()
+
+                                        if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                            return
+                                                {
+                                                    ReferenceId = payload.ReferenceId
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                    Decision = Some acceptedDecision
+                                                }
+                                        else
+                                            match currentBranchMaterializationStatusGate payload leaseInspection with
+                                            | NotCurrentBranch ->
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                            | Clean leaseStatus ->
+                                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                    return
+                                                        {
+                                                            ReferenceId = payload.ReferenceId
+                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                            Decision = Some acceptedDecision
+                                                        }
+                                                else
+                                                    setGraceWatchPendingWorkStatusFlag true
+                                                    let materializationPendingPublished = tryPublishCurrentBranchMaterializationPendingStatus leaseStatus
+
+                                                    if not materializationPendingPublished then
+                                                        setGraceWatchPendingWorkStatusFlag false
+                                                        clients.RequestDegradedResync "materialization pending Watch IPC/status publication failed"
+
+                                                        return
+                                                            {
+                                                                ReferenceId = payload.ReferenceId
+                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                Decision = Some acceptedDecision
+                                                            }
+                                                    elif not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                        setGraceWatchPendingWorkStatusFlag false
+                                                        publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                        return
+                                                            {
+                                                                ReferenceId = payload.ReferenceId
+                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                                Decision = Some acceptedDecision
+                                                            }
+                                                    else
+                                                        try
+                                                            do! clients.ApplyReference payload leaseStatus
+
+                                                            setGraceWatchPendingWorkStatusFlag false
+
+                                                            if clients.PublishCleanIpcAfterApply() then
+                                                                return
+                                                                    {
+                                                                        ReferenceId = payload.ReferenceId
+                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                                        Decision = Some acceptedDecision
+                                                                    }
+                                                            else
+                                                                setGraceWatchPendingWorkStatusFlag true
+                                                                let dirtyPublicationVerified = clients.ReassertDirtyIpcAfterFailedCleanPublication()
+
+                                                                let resyncReason =
+                                                                    if dirtyPublicationVerified then
+                                                                        "materialization final clean Watch IPC/status publication failed"
+                                                                    else
+                                                                        "materialization final clean Watch IPC/status publication failed and dirty replacement was unproven"
+
+                                                                clients.RequestDegradedResync resyncReason
+
+                                                                return
+                                                                    {
+                                                                        ReferenceId = payload.ReferenceId
+                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                        Decision = Some acceptedDecision
+                                                                    }
+                                                        with
+                                                        | ex ->
+                                                            setGraceWatchPendingWorkStatusFlag true
+                                                            publishPendingWatchWorkTransitionIfNeeded ()
+                                                            return raise ex
+                                            | Blocked reason ->
+                                                logToAnsiConsole
+                                                    Colors.Verbose
+                                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point after lease acquisition: {reason}."
+
+                                                postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                            | Degraded reason ->
+                                                logToAnsiConsole
+                                                    Colors.Important
+                                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync after lease acquisition: {reason}."
+
+                                                postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                    })
+
+                            match postLeaseRetryGate with
+                            | Some (CurrentBranchMaterializationStatusGate.Blocked reason as gate) ->
+                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                            Decision = cleanOutcome.Decision
+                                        }
+
+                                    terminal <- true
+                                elif canRetry () then
+                                    do! clients.WaitForSafePoint payload gate
+                                else
+                                    terminalOutcome <- cleanOutcome
+                                    terminal <- true
+                            | Some (CurrentBranchMaterializationStatusGate.Degraded reason) ->
+                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                            Decision = cleanOutcome.Decision
+                                        }
+
+                                    terminal <- true
+                                elif degradedResyncRequestedForReason <> Some reason then
+                                    clients.RequestDegradedResync reason
+                                    degradedResyncRequestedForReason <- Some reason
+
+                                if not terminal then
+                                    if canRetry () then
+                                        do! clients.ReestablishIpc payload reason
+                                    else
+                                        terminalOutcome <- cleanOutcome
+                                        terminal <- true
+                            | _ ->
+                                terminalOutcome <- cleanOutcome
+                                terminal <- true
+                        | Blocked reason as gate ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
+                                do! clients.WaitForSafePoint payload gate
+                            else
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                        | Degraded reason ->
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.NoApplicableReference ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.ReferenceIdUnavailable
+                    | LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.ProtocolRejected
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync ->
+                        let! inspection = clients.InspectLocalStatus()
+
+                        match currentBranchMaterializationStatusGate payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Clean _ when
+                            not retriedAfterRecoveredLocalStatus
+                            && decision.Reason
+                               <> LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
+                            && canRetry ()
+                            ->
+                            retriedAfterRecoveredLocalStatus <- true
+                        | Clean _ ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Blocked reason as gate ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
+                                do! clients.WaitForSafePoint payload gate
+                            else
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                        | Degraded reason ->
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
+                    | _ ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+
+            return terminalOutcome
+        }
+
+    /// Serializes current-branch materialization so queued References revalidate only when they own the lane.
+    let private runCurrentBranchMaterializationCoordinator
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+
+    /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
+    let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+        let current = Current()
+
+        let parameters =
+            GetBranchParameters(
+                OwnerId = $"{current.OwnerId}",
+                OwnerName = current.OwnerName,
+                OrganizationId = $"{current.OrganizationId}",
+                OrganizationName = current.OrganizationName,
+                RepositoryId = $"{current.RepositoryId}",
+                RepositoryName = current.RepositoryName,
+                BranchId = $"{current.BranchId}",
+                BranchName = current.BranchName,
+                CorrelationId = payload.CorrelationId
+            )
+
+        Grace.SDK.Branch.Get parameters
+
+    /// Handles same-branch Reference notifications with injectable coordinator clients for focused Watch tests.
+    let private handleCurrentBranchReferenceNotificationWithCoordinatorClients clients (payload: CurrentBranchReferenceNotification) =
         task {
             try
                 if not
@@ -3194,31 +5275,166 @@ module Watch =
                     logToAnsiConsole
                         Colors.Verbose
                         $"Skipped current-branch reference notification {payload.ReferenceId} because it targets repository {payload.RepositoryId}, branch {payload.BranchId}, not current branch {Current().BranchId}."
+
+                    return None
                 else
-                    let current = Current()
-                    let! localStatus = getGraceWatchStatus ()
+                    let! outcome = runCurrentBranchMaterializationCoordinator clients payload
 
-                    let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus [| payload |]
+                    match outcome.Decision with
+                    | Some decision ->
+                        match decision.Reason with
+                        | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
+                        | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                            logToAnsiConsole
+                                Colors.Highlighted
+                                $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
+                        | reason ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
 
-                    match decision.Reason with
-                    | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
-                        logToAnsiConsole
-                            Colors.Verbose
-                            $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
-                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
-                        logToAnsiConsole
-                            Colors.Highlighted
-                            $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
-                    | reason ->
-                        logToAnsiConsole
-                            Colors.Verbose
-                            $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
+                        return Some decision
+                    | None -> return None
             with
-            | ex -> logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
+            | ex ->
+                logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
+                return None
+        }
+
+    /// Handles same-branch Reference notifications with injectable readers for focused Watch tests.
+    let private handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus (payload: CurrentBranchReferenceNotification) =
+        let inspectLocalStatus () =
+            task {
+                let! status = readLocalStatus ()
+
+                return
+                    match status with
+                    | Some status ->
+                        { Exists = true; Status = Some status; PersistedMode = Some status.Mode; SafetyFlags = status.SafetyFlags; ReadError = None }
+                    | None ->
+                        {
+                            Exists = false
+                            Status = None
+                            PersistedMode = None
+                            SafetyFlags =
+                                [|
+                                    "missingStatus"
+                                    "requiresExplicitResync"
+                                |]
+                            ReadError = None
+                        }
+            }
+
+        handleCurrentBranchReferenceNotificationWithCoordinatorClients
+            {
+                GetCurrentBranch = getCurrentBranch
+                InspectLocalStatus = inspectLocalStatus
+                RequestDegradedResync = ignore
+                WaitForSafePoint = fun _ _ -> Task.FromResult(())
+                ReestablishIpc = fun _ _ -> Task.FromResult(())
+                ApplyReference = fun _ _ -> Task.FromResult(())
+                PublishCleanIpcAfterApply = fun () -> true
+                ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
+                MaxAttempts = Some 3
+            }
+            payload
+
+    /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
+    let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+        task {
+            let! _ =
+                handleCurrentBranchReferenceNotificationWithCoordinatorClients
+                    {
+                        GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                        InspectLocalStatus = inspectGraceWatchStatus
+                        RequestDegradedResync = requestGraceWatchExplicitResync
+                        WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
+                        ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
+                        ApplyReference = applyCurrentBranchReferenceMaterialization
+                        PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
+                        ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
+                        MaxAttempts = None
+                    }
+                    payload
+
+            return ()
         }
 
     /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
     let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
+
+    /// Exposes same-branch Reference notification handling to Watch tests without opening a HubConnection.
+    let internal handleCurrentBranchReferenceNotificationWithClientsForWatchTests getCurrentBranch readLocalStatus payload =
+        handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus payload
+
+    /// Exposes serialized current-branch materialization coordination to Watch tests without opening a HubConnection.
+    let internal handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+        getCurrentBranch
+        inspectLocalStatus
+        requestDegradedResync
+        waitForSafePoint
+        reestablishIpc
+        applyReference
+        payload
+        =
+        task {
+            if currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                let! outcome =
+                    runCurrentBranchMaterializationCoordinator
+                        {
+                            GetCurrentBranch = getCurrentBranch
+                            InspectLocalStatus = inspectLocalStatus
+                            RequestDegradedResync = requestDegradedResync
+                            WaitForSafePoint = waitForSafePoint
+                            ReestablishIpc = reestablishIpc
+                            ApplyReference = applyReference
+                            PublishCleanIpcAfterApply = fun () -> true
+                            ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
+                            MaxAttempts = Some 3
+                        }
+                        payload
+
+                return Some outcome
+            else
+                return None
+        }
+
+    /// Exposes final clean-publication success and failure ordering to focused coordinator tests.
+    let internal handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
+        getCurrentBranch
+        inspectLocalStatus
+        requestDegradedResync
+        waitForSafePoint
+        reestablishIpc
+        applyReference
+        publishCleanIpcAfterApply
+        reassertDirtyIpcAfterFailedCleanPublication
+        payload
+        =
+        task {
+            if currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                let! outcome =
+                    runCurrentBranchMaterializationCoordinator
+                        {
+                            GetCurrentBranch = getCurrentBranch
+                            InspectLocalStatus = inspectLocalStatus
+                            RequestDegradedResync = requestDegradedResync
+                            WaitForSafePoint = waitForSafePoint
+                            ReestablishIpc = reestablishIpc
+                            ApplyReference = applyReference
+                            PublishCleanIpcAfterApply = publishCleanIpcAfterApply
+                            ReassertDirtyIpcAfterFailedCleanPublication = reassertDirtyIpcAfterFailedCleanPublication
+                            MaxAttempts = Some 3
+                        }
+                        payload
+
+                return Some outcome
+            else
+                return None
+        }
 
     /// Registers SignalR branch groups only after the local refresh still has authority for the active branch.
     let private registerCurrentSignalRParentBranchWithClients
@@ -3499,8 +5715,8 @@ module Watch =
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
                 let hasCurrentCompletedSidecar =
-                    match tryReadGraceUpdateMarkerCompletedUtc () with
-                    | Some completedUtc -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
+                    match tryReadGraceUpdateMarkerCompletion () with
+                    | Some (_, completedUtc) -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
                     | None -> false
 
                 if not hasCurrentCompletedSidecar then
@@ -3521,8 +5737,8 @@ module Watch =
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if isUpdateMarkerPath args.FullPath then
             if not (File.Exists(args.FullPath)) then
-                match tryReadGraceUpdateMarkerCompletedUtcForMarker args.FullPath with
-                | Some completedUtc ->
+                match tryReadGraceUpdateMarkerCompletionForMarker args.FullPath with
+                | Some (GraceUpdateMarkerPurpose.BranchTransition, completedUtc) ->
                     match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
                     | ObservedCurrentMarker ->
                         if deletedMarkerCanCompleteCurrentTransition args.FullPath then
@@ -3550,6 +5766,10 @@ module Watch =
                         logToAnsiConsole
                             Colors.Important
                             $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
+                | Some (GraceUpdateMarkerPurpose.ReferenceMaterialization, completedUtc) ->
+                    forgetObservedGraceUpdateMarkerInstance args.FullPath
+                    recordGraceUpdateMarkerCompletedUtc completedUtc
+                    logToAnsiConsole Colors.Important $"Reference materialization update has finished."
                 | None ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
                     logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
@@ -4216,34 +6436,91 @@ module Watch =
                             graceStatus <- newGraceStatus
                             updateGraceStatusDirectoryIds graceStatus
 
+                            let materializationPendingLatchOwned = hasManualPendingWatchWorkStatusFlag ()
+
                             setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
 
-                            let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
+                            if materializationPendingLatchOwned then
+                                let recoveryPublication =
+                                    tryPublishWatchIpcForResyncRecovery resyncAttempt graceStatus graceStatusDirectoryIds (fun () ->
+                                        updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
-                            if clearedResyncAttempt then
-                                publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
-                                    updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+                                match recoveryPublication with
+                                | VerifiedCleanRecoveryPublication ->
+                                    beforeGraceWatchResyncAttemptRetirementProbe ()
 
-                                if signalRBranchSubscriptionRefreshNeededForTransition () then
-                                    try
-                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
-                                    with
-                                    | ex ->
-                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                                    if tryClearGraceWatchResyncAttempt resyncAttempt then
+                                        setGraceWatchPendingWorkStatusFlag false
+
+                                        if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                            try
+                                                refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                            with
+                                            | ex ->
+                                                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                                logToAnsiConsole
+                                                    Colors.Error
+                                                    $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
 
                                         logToAnsiConsole
-                                            Colors.Error
-                                            $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+                                            Colors.Important
+                                            $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                    else
+                                        let dirtyPublicationVerified =
+                                            reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                                updateGraceWatchInterprocessFileClient status (Some directoryIds))
 
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                        let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                        logToAnsiConsole
+                                            (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                            $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                | recoveryPublication ->
+                                    let dirtyPublicationVerified =
+                                        reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                            updateGraceWatchInterprocessFileClient status (Some directoryIds))
+
+                                    let recoveryPublicationOutcome =
+                                        match recoveryPublication with
+                                        | VerifiedDirtyRecoveryPublication -> "verified dirty"
+                                        | UnverifiedRecoveryPublication -> "unproven"
+                                        | VerifiedCleanRecoveryPublication -> "unexpected verified clean"
+
+                                    let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                    logToAnsiConsole
+                                        (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                        $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
                             else
-                                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+                                let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
 
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
+                                if clearedResyncAttempt then
+                                    setGraceWatchPendingWorkStatusFlag false
+
+                                    publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                        updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+
+                                    if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                        try
+                                            refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                        with
+                                        | ex ->
+                                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                else
+                                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
                         | Some _ ->
                             logToAnsiConsole
                                 Colors.Important
@@ -4816,7 +7093,7 @@ module Watch =
             let mutable attemptedStartupCompletion = false
 
             if
-                not (hasProcessablePendingWatchWork ())
+                not (hasProcessablePendingWatchWorkExceptManual ())
                 && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
             then
                 attemptedStartupCompletion <- true
@@ -4831,23 +7108,27 @@ module Watch =
 
             if
                 attemptedStartupCompletion
-                && not (hasPendingWatchWork ())
+                && not (hasPendingWatchWorkExceptManual ())
             then
                 promoteStartupModeIfRecoverySucceeded ()
 
             if
                 attemptedStartupCompletion
-                && not (hasPendingWatchWork ())
+                && not (hasPendingWatchWorkExceptManual ())
             then
                 let! startupCatchUpStatus = readGraceStatusFileClient ()
                 updateGraceStatusDirectoryIds startupCatchUpStatus
 
-                do!
-                    publishGraceWatchInterprocessFileForCurrentConfidence
+                setGraceWatchPendingWorkStatusFlag false
+
+                let! cleanStartupStatusPublished =
+                    tryPublishGraceWatchInterprocessFileForCurrentConfidence
                         startupCatchUpStatus
                         graceStatusDirectoryIds
                         updateGraceWatchInterprocessFileClient
                         "startup catch-up"
+
+                if not cleanStartupStatusPublished then setGraceWatchPendingWorkStatusFlag true
         }
 
     /// Exposes delayed startup replay completion to tests without starting the foreground watcher loop.

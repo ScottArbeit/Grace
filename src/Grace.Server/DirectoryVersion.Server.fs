@@ -317,14 +317,12 @@ module DirectoryVersion =
 
                         match resolution with
                         | NoMatches ->
-                            let graceReturnValue = GraceReturnValue.Create DirectoryVersion.Default correlationId
-
-                            graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
-                            graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
-                            graceReturnValue.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
-                            graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
-
-                            return! context |> result200Ok graceReturnValue
+                            let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectoryDoesNotExist) correlationId
+                            graceError.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+                            graceError.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+                            graceError.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
+                            graceError.Properties[ nameof BranchId ] <- graceIds.BranchId
+                            return! context |> result400BadRequest graceError
                         | UniqueMatch directoryVersion ->
                             let graceReturnValue = GraceReturnValue.Create directoryVersion correlationId
 

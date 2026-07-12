@@ -1,25 +1,25 @@
 # DirectoryVersionHashLookupResult
 
-Raw directory version returned by hash lookup endpoints. Sha256Hash may be empty only when /directory/getBySha256Hash deliberately returns DirectoryVersion.Default as its no-match sentinel.
+Complete current directory version returned by hash lookup endpoints.
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**var_class** | **str** |  | [optional] 
-**directory_version_id** | **UUID** |  | [optional] 
-**owner_id** | **UUID** |  | [optional] 
-**organization_id** | **UUID** |  | [optional] 
-**repository_id** | **UUID** |  | [optional] 
-**relative_path** | **str** |  | [optional] 
-**sha256_hash** | **str** | Empty value only for the DirectoryVersion.Default no-match sentinel, or lowercase 64-character SHA-256 hash. | [optional] 
-**blake3_hash** | **str** | Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs. | [optional] 
-**directories** | **List[UUID]** |  | [optional] 
-**files** | [**List[FileVersion]**](FileVersion.md) |  | [optional] 
-**size** | **int** |  | [optional] 
+**var_class** | **str** |  | 
+**directory_version_id** | **UUID** |  | 
+**owner_id** | **UUID** |  | 
+**organization_id** | **UUID** |  | 
+**repository_id** | **UUID** |  | 
+**relative_path** | **str** |  | 
+**sha256_hash** | **str** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | 
+**blake3_hash** | **str** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | 
+**directories** | **List[UUID]** |  | 
+**files** | [**List[FileVersion]**](FileVersion.md) |  | 
+**size** | **int** |  | 
 **recursive_size** | **int** |  | [optional] 
-**created_at** | **datetime** |  | [optional] 
-**hashes_validated** | **bool** |  | [optional] 
+**created_at** | **datetime** |  | 
+**hashes_validated** | **bool** |  | 
 
 ## Example
 

@@ -160,6 +160,7 @@ docs/PromotionSetApprovalSummary.md
 docs/RebaseParameters.md
 docs/RecordSavesParameters.md
 docs/ReferenceApiDto.md
+docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
 docs/ReferenceListReturnValue.md
 docs/ReferenceParameters.md
@@ -200,6 +201,7 @@ docs/StartUploadSession.md
 docs/StorageParameters.md
 docs/SwitchParameters.md
 docs/TestWebhookRuleParameters.md
+docs/TypedReferenceApiDto.md
 docs/UndeleteOrganizationParameters.md
 docs/UndeleteOwnerParameters.md
 docs/UndeleteRepositoryParameters.md
@@ -401,6 +403,7 @@ grace_generated_openapi_probe/models/promotion_set_approval_summary.py
 grace_generated_openapi_probe/models/rebase_parameters.py
 grace_generated_openapi_probe/models/record_saves_parameters.py
 grace_generated_openapi_probe/models/reference_api_dto.py
+grace_generated_openapi_probe/models/reference_default_sentinel.py
 grace_generated_openapi_probe/models/reference_dto.py
 grace_generated_openapi_probe/models/reference_list_return_value.py
 grace_generated_openapi_probe/models/reference_parameters.py
@@ -440,6 +443,7 @@ grace_generated_openapi_probe/models/start_upload_session.py
 grace_generated_openapi_probe/models/storage_parameters.py
 grace_generated_openapi_probe/models/switch_parameters.py
 grace_generated_openapi_probe/models/test_webhook_rule_parameters.py
+grace_generated_openapi_probe/models/typed_reference_api_dto.py
 grace_generated_openapi_probe/models/undelete_organization_parameters.py
 grace_generated_openapi_probe/models/undelete_owner_parameters.py
 grace_generated_openapi_probe/models/undelete_repository_parameters.py
@@ -638,6 +642,7 @@ test/test_promotion_set_approval_summary.py
 test/test_rebase_parameters.py
 test/test_record_saves_parameters.py
 test/test_reference_api_dto.py
+test/test_reference_default_sentinel.py
 test/test_reference_dto.py
 test/test_reference_list_return_value.py
 test/test_reference_parameters.py
@@ -678,6 +683,7 @@ test/test_start_upload_session.py
 test/test_storage_parameters.py
 test/test_switch_parameters.py
 test/test_test_webhook_rule_parameters.py
+test/test_typed_reference_api_dto.py
 test/test_undelete_organization_parameters.py
 test/test_undelete_owner_parameters.py
 test/test_undelete_repository_parameters.py

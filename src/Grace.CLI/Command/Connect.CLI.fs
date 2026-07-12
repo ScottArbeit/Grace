@@ -313,17 +313,25 @@ module Connect =
     let internal tryGetDirectoryIdFromBranch (referenceType: ReferenceType) (branchDto: BranchDto) =
         match referenceType with
         | ReferenceType.Promotion when
-            branchDto.LatestPromotion.DirectoryId
-            <> Guid.Empty
+            branchDto.LatestPromotion.ReferenceId
+            <> ReferenceId.Empty
             ->
             Some branchDto.LatestPromotion.DirectoryId
-        | ReferenceType.Commit when branchDto.LatestCommit.DirectoryId <> Guid.Empty -> Some branchDto.LatestCommit.DirectoryId
+        | ReferenceType.Commit when
+            branchDto.LatestCommit.ReferenceId
+            <> ReferenceId.Empty
+            ->
+            Some branchDto.LatestCommit.DirectoryId
         | ReferenceType.Checkpoint when
-            branchDto.LatestCheckpoint.DirectoryId
-            <> Guid.Empty
+            branchDto.LatestCheckpoint.ReferenceId
+            <> ReferenceId.Empty
             ->
             Some branchDto.LatestCheckpoint.DirectoryId
-        | ReferenceType.Save when branchDto.LatestSave.DirectoryId <> Guid.Empty -> Some branchDto.LatestSave.DirectoryId
+        | ReferenceType.Save when
+            branchDto.LatestSave.ReferenceId
+            <> ReferenceId.Empty
+            ->
+            Some branchDto.LatestSave.DirectoryId
         | _ -> None
 
     /// Resolves default directory version id from command options, configuration, or local state.
@@ -432,9 +440,9 @@ module Connect =
 
     /// Coordinates existing file matches remote version behavior for this CLI command path.
     let internal existingFileMatchesRemoteVersion localSha256Hash localBlake3Hash (fileVersion: FileVersion) =
-        localSha256Hash = fileVersion.Sha256Hash
-        && (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash)
-            || localBlake3Hash = fileVersion.Blake3Hash)
+        not (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash))
+        && localSha256Hash = fileVersion.Sha256Hash
+        && localBlake3Hash = fileVersion.Blake3Hash
 
     /// Coordinates collect file conflicts behavior for this CLI command path.
     let private collectFileConflicts (fileVersions: FileVersion array) (force: bool) =

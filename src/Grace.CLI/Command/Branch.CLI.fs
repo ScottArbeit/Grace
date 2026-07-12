@@ -3040,7 +3040,7 @@ module Branch =
             Directory.CreateDirectory(Path.GetDirectoryName(completedFileName))
             |> ignore
 
-            File.WriteAllText(completedFileName, DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture))
+            File.WriteAllText(completedFileName, serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.BranchTransition DateTime.UtcNow)
         with
         | :? IOException -> ()
         | :? UnauthorizedAccessException -> ()
@@ -3072,7 +3072,7 @@ module Branch =
     let internal deleteBranchSwitchWorkflowLeaseIfOwned (switchLeaseFileName: string) (leaseText: string) =
         deleteBranchSwitchUpdateMarkerIfOwned switchLeaseFileName leaseText
 
-    /// Runs a branch-switch workflow under a non-Watch-suppressing lease before state is computed.
+    /// Runs a branch-switch workflow under precompute and materialization leases before state is computed.
     let internal runBranchSwitchWorkflowWithLease
         (operations: BranchSwitchWatchCleanPreflightOperations)
         correlationId
@@ -3116,8 +3116,17 @@ module Branch =
                     match! runBranchSwitchWatchCleanPreflight operations correlationId with
                     | Error error -> return Error error
                     | Ok () ->
-                        let! result = workflow ()
-                        return Ok result
+                        let! result =
+                            WorkingDirectoryMaterialization.runWithLease (fun () ->
+                                task {
+                                    match! runBranchSwitchWatchCleanPreflight operations correlationId with
+                                    | Error error -> return Error error
+                                    | Ok () ->
+                                        let! workflowResult = workflow ()
+                                        return Ok workflowResult
+                                })
+
+                        return result
                 finally
                     if leaseCreatedByThisInvocation then
                         deleteBranchSwitchWorkflowLeaseIfOwned switchLeaseFileName leaseText

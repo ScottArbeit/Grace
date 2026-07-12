@@ -84,7 +84,7 @@ module Branch =
                     latestReferences
                         .Values
                         .OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt)
-                        .FirstOrDefault(ReferenceDto.Default)
+                        .FirstOrDefault(branchDto.BasedOn)
 
                 newBranchDto <- { newBranchDto with LatestReference = latestReference }
 
@@ -737,16 +737,23 @@ module Branch =
                         let! branchDtoWithLatestReferences = updateLatestReferences branchDto correlationId
                         branchDto <- branchDtoWithLatestReferences
 
+                    if not (BranchDto.IsValidPublicProjection branchDto) then
+                        raise (InvalidOperationException $"Branch '{branchDto.BranchId}' cannot be returned with incomplete or mismatched References.")
+
                     return branchDto
                 }
 
-            /// Returns the parent branch id recorded for this branch.
+            /// Returns the parent branch when this branch records one without querying the root-parent sentinel.
             member this.GetParentBranch correlationId =
                 task {
                     this.correlationId <- correlationId
-                    let branchActorProxy = Branch.CreateActorProxy branchDto.ParentBranchId branchDto.RepositoryId correlationId
 
-                    return! branchActorProxy.Get correlationId
+                    if branchDto.ParentBranchId = Constants.DefaultParentBranchId then
+                        return None
+                    else
+                        let branchActorProxy = Branch.CreateActorProxy branchDto.ParentBranchId branchDto.RepositoryId correlationId
+                        let! parentBranch = branchActorProxy.Get correlationId
+                        return Some parentBranch
                 }
 
             /// Returns the latest commit reference tracked by this branch.

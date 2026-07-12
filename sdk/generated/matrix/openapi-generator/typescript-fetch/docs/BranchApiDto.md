@@ -26,10 +26,10 @@ Name | Type
 `autoRebaseEnabled` | boolean
 `promotionMode` | string
 `latestReference` | [ReferenceApiDto](ReferenceApiDto.md)
-`latestPromotion` | [ReferenceApiDto](ReferenceApiDto.md)
-`latestCommit` | [ReferenceApiDto](ReferenceApiDto.md)
-`latestCheckpoint` | [ReferenceApiDto](ReferenceApiDto.md)
-`latestSave` | [ReferenceApiDto](ReferenceApiDto.md)
+`latestPromotion` | [TypedReferenceApiDto](TypedReferenceApiDto.md)
+`latestCommit` | [TypedReferenceApiDto](TypedReferenceApiDto.md)
+`latestCheckpoint` | [TypedReferenceApiDto](TypedReferenceApiDto.md)
+`latestSave` | [TypedReferenceApiDto](TypedReferenceApiDto.md)
 `shouldRecomputeLatestReferences` | boolean
 `createdAt` | Date
 `updatedAt` | Date

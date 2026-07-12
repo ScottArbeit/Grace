@@ -259,11 +259,6 @@ module Reference =
         let directoryVersionBlake3IsEmpty = String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash)
         let commandBlake3IsEmpty = String.IsNullOrWhiteSpace(string blake3Hash)
 
-        let isLegacyEmptyBlake3Root =
-            isRootDirectoryRelativePath
-            && directoryVersionBlake3IsEmpty
-            && commandBlake3IsEmpty
-
         if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
             Error(
                 (GraceError.Create "Reference root DirectoryVersion does not exist." correlationId)
@@ -277,15 +272,13 @@ module Reference =
                     .enhance(nameof DirectoryVersionId, directoryId)
                     .enhance (nameof RelativePath, directoryVersion.RelativePath)
             )
-        elif directoryVersionBlake3IsEmpty
-             && not commandBlake3IsEmpty then
+        elif directoryVersionBlake3IsEmpty then
             Error(
                 (GraceError.Create "Reference root DirectoryVersion must include Blake3Hash before reference creation." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
                     .enhance (nameof DirectoryVersionId, directoryId)
             )
-        elif commandBlake3IsEmpty
-             && not isLegacyEmptyBlake3Root then
+        elif commandBlake3IsEmpty then
             Error(
                 (GraceError.Create "Reference command must include the root DirectoryVersion Blake3Hash." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
@@ -298,8 +291,7 @@ module Reference =
                     .enhance(nameof DirectoryVersionId, directoryId)
                     .enhance (nameof Sha256Hash, sha256Hash)
             )
-        elif directoryVersion.Blake3Hash <> blake3Hash
-             && not isLegacyEmptyBlake3Root then
+        elif directoryVersion.Blake3Hash <> blake3Hash then
             Error(
                 (GraceError.Create "Reference command Blake3Hash does not match the root DirectoryVersion Blake3Hash." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
@@ -308,41 +300,6 @@ module Reference =
             )
         else
             Ok()
-
-    let internal repairLegacyCreatedEventBlake3
-        (getDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersion>)
-        (referenceEvent: ReferenceEvent)
-        =
-        task {
-            match referenceEvent.Event with
-            | Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, blake3Hash, referenceType, referenceText, links) when
-                String.IsNullOrWhiteSpace(string blake3Hash)
-                ->
-                let! directoryVersion = getDirectoryVersion repositoryId directoryId referenceEvent.Metadata.CorrelationId
-
-                match ReferenceDto.TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash directoryVersion with
-                | Some (repairedSha256Hash, repairedBlake3Hash) ->
-                    return
-                        { referenceEvent with
-                            Event =
-                                Created(
-                                    referenceId,
-                                    ownerId,
-                                    organizationId,
-                                    repositoryId,
-                                    branchId,
-                                    directoryId,
-                                    repairedSha256Hash,
-                                    repairedBlake3Hash,
-                                    referenceType,
-                                    referenceText,
-                                    links
-                                )
-                        },
-                        true
-                | None -> return referenceEvent, false
-            | _ -> return referenceEvent, false
-        }
 
     /// Builds command matches reference data needed by the Reference actor.
     let internal createCommandMatchesReference (referenceDto: ReferenceDto) command =
@@ -519,31 +476,8 @@ module Reference =
 
                 logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-                /// Returns directory version data from the Reference actor state or related storage.
-                let getDirectoryVersion repositoryId directoryId correlationId =
-                    task {
-                        let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
-                        let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
-                        return directoryVersionDto.DirectoryVersion
-                    }
-
-                let! repairResults =
-                    state.State
-                    |> Seq.map (fun referenceEvent -> task { return! repairLegacyCreatedEventBlake3 getDirectoryVersion referenceEvent })
-                    |> Task.WhenAll
-
-                let repairedLegacyCreatedEvent =
-                    repairResults
-                    |> Array.exists (fun (_, wasRepaired) -> wasRepaired)
-
-                if repairedLegacyCreatedEvent then
-                    state.State.Clear()
-                    state.State.AddRange(repairResults |> Array.map fst)
-                    do! state.WriteStateAsync()
-
                 referenceDto <-
-                    repairResults
-                    |> Array.map fst
+                    state.State
                     |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
             }
             :> Task

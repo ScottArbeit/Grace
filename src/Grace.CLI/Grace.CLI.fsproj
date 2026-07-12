@@ -36,6 +36,7 @@
 		<Compile Include="Command\Organization.CLI.fs" />
 		<Compile Include="Command\Repository.CLI.fs" />
 		<Compile Include="Command\Diff.CLI.fs" />
+		<Compile Include="Command\WorkingDirectoryMaterialization.CLI.fs" />
 		<Compile Include="Command\Branch.CLI.fs" />
 		<Compile Include="Command\Reference.CLI.fs" />
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />

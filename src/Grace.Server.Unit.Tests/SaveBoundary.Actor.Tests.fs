@@ -77,7 +77,15 @@ type SaveBoundaryActorTests() =
 
     /// Builds manifest File At test data for the server unit save Boundary Actor scenarios in this file.
     let manifestFileAt relativePath (manifest: FileManifest) =
-        let fileVersion = FileVersion.Create relativePath "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
+        let fileVersion =
+            FileVersion.CreateWithHashes
+                relativePath
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                (Blake3Hash manifest.FileContentHash)
+                String.Empty
+                true
+                manifest.Size
+
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
 
@@ -87,7 +95,14 @@ type SaveBoundaryActorTests() =
     let manifestReference (manifest: FileManifest) : DirectoryVersionActor.ManifestReferenceForSaveBoundary =
         { Manifest = manifest; AuthorizedScope = RelativePath "/large.bin" }
 
-    let wholeFile () = FileVersion.Create "/small.txt" "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd" String.Empty false 42L
+    let wholeFile () =
+        FileVersion.CreateWithHashes
+            "/small.txt"
+            "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            String.Empty
+            false
+            42L
 
     /// Builds file With Hashes test data for the server unit save Boundary Actor scenarios in this file.
     let fileWithHashes (relativePath: string) (sha256Hash: string) (blake3Hash: string) size =
@@ -106,13 +121,14 @@ type SaveBoundaryActorTests() =
     let directoryWith (files: FileVersion seq) =
         let fileList = List<FileVersion>(files)
 
-        Grace.Types.Common.DirectoryVersion.Create
+        Grace.Types.Common.DirectoryVersion.CreateWithHashes
             directoryVersionId
             ownerId
             organizationId
             repositoryId
             (RelativePath "/")
             (Sha256Hash "fedcbafedcbafedcbafedcbafedcbafedcbafedcbafedcbafedcbafedcba")
+            (Blake3Hash "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd")
             (List<DirectoryVersionId>())
             fileList
             (fileList
@@ -197,16 +213,16 @@ type SaveBoundaryActorTests() =
         | Ok () -> Assert.Fail("Expected manifest-backed FileVersion BLAKE3 mismatch to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("FileVersion.Blake3Hash"))
 
-    /// Verifies that manifest Save Boundary Allows Legacy Empty File Blake3.
+    /// Verifies that manifest save rejects an empty file BLAKE3 hash.
     [<Test>]
-    member _.ManifestSaveBoundaryAllowsLegacyEmptyFileBlake3() =
+    member _.ManifestSaveBoundaryRejectsEmptyFileBlake3() =
         let manifest = finalizedManifest ()
         let fileVersion = manifestFile manifest
         fileVersion.Blake3Hash <- Blake3Hash String.Empty
 
         match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-empty-blake3" fileVersion manifest with
-        | Ok () -> ()
-        | Error error -> Assert.Fail($"Expected legacy empty BLAKE3 to be accepted, got {error.Error}.")
+        | Ok () -> Assert.Fail("Expected an empty FileVersion BLAKE3 hash to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("FileVersion.Blake3Hash"))
 
     /// Verifies that directory Version Hash Validation Rejects New Manifest Backed File Blake3 Gap.
     [<Test>]
@@ -226,9 +242,9 @@ type SaveBoundaryActorTests() =
                     .And.Contain("Blake3Hash")
             )
 
-    /// Verifies that directory Version Hash Validation Allows Unchanged Legacy Manifest Backed File Blake3 Gap.
+    /// Verifies that a previously validated file cannot grandfather an empty BLAKE3 hash.
     [<Test>]
-    member _.DirectoryVersionHashValidationAllowsUnchangedLegacyManifestBackedFileBlake3Gap() =
+    member _.DirectoryVersionHashValidationRejectsPreviouslyValidatedManifestFileWithoutBlake3() =
         let manifest = finalizedManifest ()
         let fileVersion = manifestFile manifest
         fileVersion.Blake3Hash <- Blake3Hash String.Empty
@@ -243,8 +259,14 @@ type SaveBoundaryActorTests() =
                 []
                 [ previousFileVersion ]
             with
-        | Ok () -> ()
-        | Error error -> Assert.Fail($"Expected unchanged legacy manifest-backed FileVersion without BLAKE3 to validate, got {error.Error}.")
+        | Ok () -> Assert.Fail("Expected a previously validated FileVersion without BLAKE3 to be rejected.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("child file")
+                    .And.Contain("Blake3Hash")
+            )
 
     /// Verifies that directory Version Hash Validation Requires Directory Blake3 Before Save.
     [<Test>]
@@ -304,17 +326,23 @@ type SaveBoundaryActorTests() =
                     .And.Contain("Blake3Hash")
             )
 
-    /// Verifies that directory Version Hash Validation Allows Validated Legacy Child Directory Blake3 Gap.
+    /// Verifies that HashesValidated cannot bypass a missing child directory BLAKE3 hash.
     [<Test>]
-    member _.DirectoryVersionHashValidationAllowsValidatedLegacyChildDirectoryBlake3Gap() =
+    member _.DirectoryVersionHashValidationRejectsValidatedChildDirectoryWithoutBlake3() =
         let child = hashedDirectory (Guid.NewGuid()) (RelativePath "/src/") [] []
         child.HashesValidated <- true
         child.Blake3Hash <- Blake3Hash String.Empty
         let parent = hashedDirectory directoryVersionId (RelativePath "/") [ child ] []
 
         match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-legacy-child-directory-blake3" parent [ child ] with
-        | Ok () -> ()
-        | Error error -> Assert.Fail($"Expected validated legacy child DirectoryVersion without BLAKE3 to validate, got {error.Error}.")
+        | Ok () -> Assert.Fail("Expected HashesValidated not to bypass a missing child DirectoryVersion BLAKE3 hash.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("child directory")
+                    .And.Contain("Blake3Hash")
+            )
 
     /// Verifies that directory Version Hash Validation Rejects New Whole File Blake3 Gap.
     [<Test>]
@@ -339,9 +367,9 @@ type SaveBoundaryActorTests() =
                     .And.Contain("Blake3Hash")
             )
 
-    /// Verifies that directory Version Hash Validation Allows Unchanged Legacy Whole File Blake3 Gap.
+    /// Verifies that a previous whole-file record cannot grandfather an empty BLAKE3 hash.
     [<Test>]
-    member _.DirectoryVersionHashValidationAllowsUnchangedLegacyWholeFileBlake3Gap() =
+    member _.DirectoryVersionHashValidationRejectsPreviouslyValidatedWholeFileWithoutBlake3() =
         let fileVersion =
             fileWithHashes
                 "/a.txt"
@@ -368,8 +396,14 @@ type SaveBoundaryActorTests() =
                 []
                 [ previousFileVersion ]
             with
-        | Ok () -> ()
-        | Error error -> Assert.Fail($"Expected unchanged legacy whole-file FileVersion without BLAKE3 to validate, got {error.Error}.")
+        | Ok () -> Assert.Fail("Expected a previously validated whole-file record without BLAKE3 to be rejected.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("child file")
+                    .And.Contain("Blake3Hash")
+            )
 
     /// Verifies that directory Version Hash Validation Rejects Missing Manifest Child File Blake3.
     [<Test>]

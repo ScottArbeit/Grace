@@ -125,39 +125,6 @@ module Reference =
                 DeleteReason = String.Empty
             }
 
-        /// Recovers full root directory hashes when an older reference stored only a SHA-256 prefix.
-        static member TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
-            let rootRelativePath = directoryVersion.RelativePath
-
-            let isRootDirectoryRelativePath =
-                rootRelativePath = Constants.RootDirectoryPath
-                || rootRelativePath = RelativePath "/"
-
-            let referenceSha256Hash = string sha256Hash
-            let rootSha256Hash = string directoryVersion.Sha256Hash
-
-            let referenceSha256MatchesRoot =
-                not (String.IsNullOrWhiteSpace referenceSha256Hash)
-                && rootSha256Hash.StartsWith(referenceSha256Hash, StringComparison.OrdinalIgnoreCase)
-
-            if
-                String.IsNullOrWhiteSpace(string blake3Hash)
-                && directoryVersion.DirectoryVersionId = directoryId
-                && isRootDirectoryRelativePath
-                && referenceSha256MatchesRoot
-                && not (String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash))
-            then
-                Some(directoryVersion.Sha256Hash, directoryVersion.Blake3Hash)
-            else
-                None
-
-        /// Returns a reference DTO with repaired root directory hashes when legacy data can be matched safely.
-        static member HydrateLegacyRootDirectoryHash directoryVersion referenceDto =
-            match ReferenceDto.TryGetLegacyRootDirectoryHashRepair referenceDto.DirectoryId referenceDto.Sha256Hash referenceDto.Blake3Hash directoryVersion
-                with
-            | Some (fullSha256Hash, blake3Hash) -> { referenceDto with Sha256Hash = fullSha256Hash; Blake3Hash = blake3Hash }, true
-            | None -> referenceDto, false
-
         /// Updates the ReferenceDto based on the ReferenceEvent.
         static member UpdateDto referenceEvent currentReferenceDto =
             let newReferenceDto =
@@ -173,6 +140,12 @@ module Reference =
                            referenceType,
                            referenceText,
                            links) ->
+                    if String.IsNullOrWhiteSpace(string sha256Hash) then
+                        invalidArg (nameof Sha256Hash) "Reference Created events must include the root DirectoryVersion Sha256Hash."
+
+                    if String.IsNullOrWhiteSpace(string blake3Hash) then
+                        invalidArg (nameof Blake3Hash) "Reference Created events must include the root DirectoryVersion Blake3Hash."
+
                     { currentReferenceDto with
                         ReferenceId = referenceId
                         OwnerId = ownerId

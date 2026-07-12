@@ -261,7 +261,7 @@ Name | Type | Description  | Notes
 
 Get a directory version by SHA-256 hash.
 
-Gets a directory version DTO by SHA-256 hash.
+Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace's normal not-found error.
 
 ### Example
 
