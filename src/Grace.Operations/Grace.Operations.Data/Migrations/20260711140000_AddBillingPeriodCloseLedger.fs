@@ -40,7 +40,7 @@ CREATE TABLE ops.ChargePreviewFreshness (
 
 CREATE TABLE ops.ChargeLedgerEntry (
  ChargeLedgerEntryId uniqueidentifier NOT NULL, BillingPeriodId uniqueidentifier NOT NULL, EntryKind int NOT NULL,
- SourceChargePreviewLineId uniqueidentifier NULL, PriorChargeLedgerEntryId uniqueidentifier NULL, FactKind int NOT NULL,
+ SourceChargePreviewLineId uniqueidentifier NULL, PriorChargeLedgerEntryId uniqueidentifier NULL, BillingCorrectionWorkId uniqueidentifier NULL, FactKind int NOT NULL,
  BillableUsageKindMappingId uniqueidentifier NOT NULL, BillableUsageKind int NOT NULL,
  CustomerPricingAssignmentId uniqueidentifier NOT NULL, PricingPlanId uniqueidentifier NOT NULL, PricingRateId uniqueidentifier NOT NULL,
  CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL, UnitName nvarchar(64) NOT NULL,
@@ -58,7 +58,7 @@ CREATE TABLE ops.ChargeLedgerEntry (
  CONSTRAINT CK_ops_ChargeLedgerEntry_UnitQuantity CHECK (UnitQuantity > 0),
  CONSTRAINT CK_ops_ChargeLedgerEntry_UnitPriceMicros CHECK (UnitPriceMicros >= 0));
 CREATE UNIQUE INDEX UX_ops_ChargeLedgerEntry_Initial ON ops.ChargeLedgerEntry(BillingPeriodId,EntryKind,SourceChargePreviewLineId) WHERE SourceChargePreviewLineId IS NOT NULL;
-CREATE UNIQUE INDEX UX_ops_ChargeLedgerEntry_Correction ON ops.ChargeLedgerEntry(BillingPeriodId,CorrelationId,EntryKind,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,PriorChargeLedgerEntryId) WHERE SourceChargePreviewLineId IS NULL;
+CREATE UNIQUE INDEX UX_ops_ChargeLedgerEntry_Correction ON ops.ChargeLedgerEntry(BillingPeriodId,CorrelationId,EntryKind,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,PriorChargeLedgerEntryId,BillingCorrectionWorkId) WHERE SourceChargePreviewLineId IS NULL;
 CREATE INDEX IX_ChargeLedgerEntry_SourceChargePreviewLineId ON ops.ChargeLedgerEntry(SourceChargePreviewLineId);
 CREATE INDEX IX_ChargeLedgerEntry_PriorChargeLedgerEntryId ON ops.ChargeLedgerEntry(PriorChargeLedgerEntryId);
 
@@ -1025,6 +1025,11 @@ EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalPr
             .HasColumnType("uniqueidentifier")
         |> ignore
 
+        ledger
+            .Property<Nullable<Guid>>("BillingCorrectionWorkId")
+            .HasColumnType("uniqueidentifier")
+        |> ignore
+
         ledger.Property<int>("EntryKind").IsRequired()
         |> ignore
 
@@ -1131,6 +1136,7 @@ EXEC(N'CREATE OR ALTER TRIGGER ops.TR_ops_CustomerPricingAssignment_HistoricalPr
                     "Quantity"
                     "ChargeMicros"
                     "PriorChargeLedgerEntryId"
+                    "BillingCorrectionWorkId"
                 |]
             )
             .HasDatabaseName("UX_ops_ChargeLedgerEntry_Correction")

@@ -350,6 +350,8 @@ type ChargeLedgerEntryEntity() =
     member val SourceChargePreviewLineId = Nullable<Guid>() with get, set
     /// Links a correction to the prior immutable entry when one exists.
     member val PriorChargeLedgerEntryId = Nullable<Guid>() with get, set
+    /// Stores the automatic correction work identity so same-correlation late facts remain independently idempotent.
+    member val BillingCorrectionWorkId = Nullable<Guid>() with get, set
     /// Stores the tracked usage-fact kind.
     member val FactKind = 0 with get, set
     /// Stores the complete billable mapping identity.

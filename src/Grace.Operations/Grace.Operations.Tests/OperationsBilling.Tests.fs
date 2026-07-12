@@ -260,6 +260,45 @@ type OperationsBillingTests() =
             Assert.That(workerSource, Does.Contain("schema.EnsureCreatedAsync stoppingToken"))
             Assert.That(workerSource, Does.Contain("TimeSpan.FromMinutes 30.0")))
 
+    /// Verifies the approved third-cycle completeness and identity invariants remain present across runtime and persistence.
+    [<Test>]
+    member _.ThirdCycleStructuralStabilizationCarriesAllApprovedInvariants() =
+        let root =
+            Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..")
+            |> Path.GetFullPath
+
+        let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+        let dataSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsData.fs"))
+        let billingSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBilling.fs"))
+        let workerSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Worker", "OperationsWorker.fs"))
+        let migrationSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260711140000_AddBillingPeriodCloseLedger.fs"))
+
+        multiple (fun () ->
+            // Q2=A: reconcile obsolete pre-close periods and route closed-period facts without a current assignment.
+            Assert.That(dataSource, Does.Contain("FROM ops.BillingPeriod period WITH(UPDLOCK,HOLDLOCK)"))
+            Assert.That(dataSource, Does.Not.Contain("FROM ops.CustomerPricingAssignment assignment"))
+            Assert.That(closeSource, Does.Contain("@HasAssignmentCoverage"))
+            Assert.That(closeSource, Does.Contain("DELETE FROM ops.BillingPeriod WHERE BillingPeriodId=@BillingPeriodId AND State IN(0,1)"))
+            Assert.That(closeSource, Does.Contain("AssignmentCoverageMissing"))
+            // Q3=A: an active non-empty UsageFactId failure remains canonical and later rejected duplicates settle visibly.
+            Assert.That(closeSource, Does.Contain("@CanonicalFailureId"))
+            Assert.That(closeSource, Does.Contain("UsageFactId=@UsageFactId AND ResolvedAtUtc IS NULL"))
+            Assert.That(workerSource, Does.Contain("without replacing its canonical active billing failure"))
+            // Q1=C: no zero-fact pricing gate is introduced; a later missing-pricing correction is retained pending.
+            Assert.That(closeSource, Does.Contain("let! facts = readPricedFacts connection transaction scope cancellationToken"))
+            Assert.That(closeSource, Does.Contain("A failed work item remains pending"))
+            Assert.That(closeSource, Does.Not.Contain("ValidateZeroUsagePricing"))
+            // Separate correction work identities allow same-correlation fact deltas while exact work retries stay unique.
+            Assert.That(closeSource, Does.Contain("BillingCorrectionWorkId"))
+            Assert.That(closeSource, Does.Contain("add delta \"@WorkId\""))
+            Assert.That(billingSource, Does.Contain("\"BillingCorrectionWorkId\""))
+            Assert.That(migrationSource, Does.Contain("BillingCorrectionWorkId uniqueidentifier NULL"))
+            Assert.That(migrationSource, Does.Contain("PriorChargeLedgerEntryId,BillingCorrectionWorkId"))
+            // Materialization locks the unique scope range and treats any residual duplicate race as non-fatal before advancement.
+            Assert.That(closeSource, Does.Contain("ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK)"))
+            Assert.That(closeSource, Does.Contain("IF ERROR_NUMBER() NOT IN(2601,2627) THROW;"))
+            Assert.That(closeSource, Does.Contain("UPDATE ops.BillingPeriod SET State=1 WHERE State=0")))
+
     /// Verifies runtime, newest migration target, and latest snapshot have identical complete structural models.
     [<Test>]
     member _.BillingMigrationSnapshotAndRuntimeAgree() =

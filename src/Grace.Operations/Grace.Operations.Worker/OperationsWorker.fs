@@ -1646,7 +1646,7 @@ module OperationsWorkerSettings =
 
 type private NoOpBillingIngestionFailureRecorder() =
     interface IBillingIngestionFailureRecorder with
-        member _.RecordFailureAsync(_fact, _failureCode, _redactedDetail, _messageIdentity, _cancellationToken) = Task.CompletedTask
+        member _.RecordFailureAsync(_fact, _failureCode, _redactedDetail, _messageIdentity, _cancellationToken) = Task.FromResult true
 
 /// Handles one usage fact message through validation, SQL persistence, and explicit Service Bus settlement.
 type OperationsUsageIngestionProcessor
@@ -1842,7 +1842,7 @@ type OperationsUsageIngestionProcessor
                         else
                             match UsageFact.Validate usageFact with
                             | Error errors ->
-                                do!
+                                let! isCanonicalFailure =
                                     billingFailures.RecordFailureAsync(
                                         usageFact,
                                         "InvalidUsageFact",
@@ -1852,6 +1852,14 @@ type OperationsUsageIngestionProcessor
                                          else
                                              message.MessageId),
                                         cancellationToken
+                                    )
+
+                                if not isCanonicalFailure then
+                                    logger.LogWarning(
+                                        "Settled rejected UsageFact duplicate without replacing its canonical active billing failure. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; MessageId: {MessageId}.",
+                                        usageFact.UsageFactId,
+                                        usageFact.CorrelationId,
+                                        message.MessageId
                                     )
 
                                 logger.LogWarning(
@@ -1869,7 +1877,7 @@ type OperationsUsageIngestionProcessor
 
                                 match stored with
                                 | Error errors ->
-                                    do!
+                                    let! isCanonicalFailure =
                                         billingFailures.RecordFailureAsync(
                                             usageFact,
                                             "StorageValidation",
@@ -1879,6 +1887,14 @@ type OperationsUsageIngestionProcessor
                                              else
                                                  message.MessageId),
                                             cancellationToken
+                                        )
+
+                                    if not isCanonicalFailure then
+                                        logger.LogWarning(
+                                            "Settled rejected UsageFact duplicate without replacing its canonical active billing failure. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; MessageId: {MessageId}.",
+                                            usageFact.UsageFactId,
+                                            usageFact.CorrelationId,
+                                            message.MessageId
                                         )
 
                                     logger.LogWarning(

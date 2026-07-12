@@ -334,6 +334,11 @@ module OperationsBillingModel =
             .HasColumnType("uniqueidentifier")
         |> ignore
 
+        ledger
+            .Property<Nullable<Guid>>("BillingCorrectionWorkId")
+            .HasColumnType("uniqueidentifier")
+        |> ignore
+
         ledger.Property<int>("EntryKind").IsRequired()
         |> ignore
 
@@ -440,6 +445,7 @@ module OperationsBillingModel =
                     "Quantity"
                     "ChargeMicros"
                     "PriorChargeLedgerEntryId"
+                    "BillingCorrectionWorkId"
                 |]
             )
             .HasDatabaseName("UX_ops_ChargeLedgerEntry_Correction")

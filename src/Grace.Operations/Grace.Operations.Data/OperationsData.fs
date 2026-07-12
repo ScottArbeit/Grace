@@ -678,15 +678,10 @@ WHERE UsageFactId=@UsageFactId AND ResolvedAtUtc IS NULL;
 INSERT INTO ops.BillingCorrectionWork
     (BillingCorrectionWorkId,BillingPeriodId,UsageFactId,CorrelationId,CreatedAtUtc)
 SELECT NEWID(), period.BillingPeriodId, @UsageFactId, @CorrelationId, SYSUTCDATETIME()
-FROM ops.CustomerPricingAssignment assignment
-JOIN ops.BillingPeriod period
-  ON period.CustomerId=assignment.CustomerId
- AND period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId
- AND @ObservedAtUtc >= period.PeriodFromUtc AND @ObservedAtUtc < period.PeriodToUtc
-WHERE assignment.OwnerId=@OwnerId AND assignment.OrganizationId=@OrganizationId AND assignment.RepositoryId=@RepositoryId
-  AND @ObservedAtUtc >= assignment.EffectiveFromUtc
-  AND (assignment.EffectiveToUtc IS NULL OR @ObservedAtUtc < assignment.EffectiveToUtc)
-  AND period.State IN (2,3)
+ FROM ops.BillingPeriod period WITH(UPDLOCK,HOLDLOCK)
+ WHERE period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId
+   AND @ObservedAtUtc >= period.PeriodFromUtc AND @ObservedAtUtc < period.PeriodToUtc
+   AND period.State IN (2,3)
   AND NOT EXISTS (SELECT 1 FROM ops.BillingCorrectionWork existing
                   WHERE existing.BillingPeriodId=period.BillingPeriodId AND existing.UsageFactId=@UsageFactId);
 """

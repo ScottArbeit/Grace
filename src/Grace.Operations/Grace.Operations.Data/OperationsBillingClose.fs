@@ -118,9 +118,9 @@ module BillingIngestionFailureIdentity =
 
 /// Records durable scoped billing-relevant ingestion failure evidence before message settlement.
 type IBillingIngestionFailureRecorder =
-    /// Upserts one bounded active failure for a rejected fact identity.
+    /// Persists the canonical active failure and reports whether this rejected message established it.
     abstract RecordFailureAsync:
-        fact: UsageFact * failureCode: string * redactedDetail: string * messageIdentity: string * cancellationToken: CancellationToken -> Task
+        fact: UsageFact * failureCode: string * redactedDetail: string * messageIdentity: string * cancellationToken: CancellationToken -> Task<bool>
 
 /// Persists idempotent scoped failure evidence used by close completeness checks.
 type SqlBillingIngestionFailureRecorder(connectionString: string) =
@@ -143,9 +143,16 @@ type SqlBillingIngestionFailureRecorder(connectionString: string) =
                 command.CommandText <-
                     """
 DECLARE @CustomerId uniqueidentifier=(SELECT TOP(1) CustomerId FROM ops.CustomerPricingAssignment WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND @ObservedAtUtc>=EffectiveFromUtc AND (EffectiveToUtc IS NULL OR @ObservedAtUtc<EffectiveToUtc) ORDER BY EffectiveFromUtc DESC,CustomerPricingAssignmentId);
-IF NOT EXISTS(SELECT 1 FROM ops.BillingIngestionFailure WHERE BillingIngestionFailureId=@FailureId AND ResolvedAtUtc IS NULL)
-INSERT INTO ops.BillingIngestionFailure(BillingIngestionFailureId,UsageFactId,CustomerId,OwnerId,OrganizationId,RepositoryId,ObservedAtUtc,FailureCode,FailureDetail,CreatedAtUtc)
-VALUES(@FailureId,@UsageFactId,@CustomerId,@OwnerId,@OrganizationId,@RepositoryId,@ObservedAtUtc,@FailureCode,@FailureDetail,SYSUTCDATETIME());"""
+DECLARE @CanonicalFailureId uniqueidentifier=NULL;
+IF @UsageFactId IS NOT NULL
+ SELECT TOP(1) @CanonicalFailureId=BillingIngestionFailureId FROM ops.BillingIngestionFailure WITH(UPDLOCK,HOLDLOCK) WHERE UsageFactId=@UsageFactId AND ResolvedAtUtc IS NULL;
+IF @CanonicalFailureId IS NULL AND NOT EXISTS(SELECT 1 FROM ops.BillingIngestionFailure WITH(UPDLOCK,HOLDLOCK) WHERE BillingIngestionFailureId=@FailureId AND ResolvedAtUtc IS NULL)
+BEGIN
+ INSERT INTO ops.BillingIngestionFailure(BillingIngestionFailureId,UsageFactId,CustomerId,OwnerId,OrganizationId,RepositoryId,ObservedAtUtc,FailureCode,FailureDetail,CreatedAtUtc)
+ VALUES(@FailureId,@UsageFactId,@CustomerId,@OwnerId,@OrganizationId,@RepositoryId,@ObservedAtUtc,@FailureCode,@FailureDetail,SYSUTCDATETIME());
+ SELECT CAST(1 AS bit);
+END
+ELSE SELECT CAST(0 AS bit);"""
 
                 let add name dbType value = command.Parameters.Add(name, dbType).Value <- value
 
@@ -161,8 +168,8 @@ VALUES(@FailureId,@UsageFactId,@CustomerId,@OwnerId,@OrganizationId,@RepositoryI
                 add "@ObservedAtUtc" SqlDbType.DateTime2 (fact.ObservedAt.ToDateTimeUtc())
                 command.Parameters.Add("@FailureCode", SqlDbType.NVarChar, 64).Value <- failureCode
                 command.Parameters.Add("@FailureDetail", SqlDbType.NVarChar, 1024).Value <- detail
-                let! _ = command.ExecuteNonQueryAsync cancellationToken
-                return ()
+                let! isCanonical = command.ExecuteScalarAsync cancellationToken
+                return Convert.ToBoolean isCanonical
             }
 
 /// Exposes idempotent billing materialization, close, correction, and repair operations.
@@ -531,6 +538,8 @@ SELECT Value FROM (
                 command.CommandText <-
                     """
 DECLARE @CurrentMonthFrom datetime2(7)=DATETIMEFROMPARTS(YEAR(@NowUtc),MONTH(@NowUtc),1,0,0,0,0);
+DECLARE @Inserted int=0;
+BEGIN TRY
 ;WITH AssignmentMonths AS (
  SELECT a.CustomerId,a.OwnerId,a.OrganizationId,a.RepositoryId,
         DATETIMEFROMPARTS(YEAR(a.EffectiveFromUtc),MONTH(a.EffectiveFromUtc),1,0,0,0,0) PeriodFromUtc,
@@ -541,16 +550,20 @@ DECLARE @CurrentMonthFrom datetime2(7)=DATETIMEFROMPARTS(YEAR(@NowUtc),MONTH(@No
  FROM AssignmentMonths
  WHERE DATEADD(month,1,PeriodFromUtc)<=@CurrentMonthFrom
    AND (EffectiveToUtc IS NULL OR DATEADD(month,1,PeriodFromUtc)<EffectiveToUtc))
-INSERT INTO ops.BillingPeriod(BillingPeriodId,CustomerId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,State,ConsecutiveCloseFailureCount,CreatedAtUtc)
-SELECT NEWID(),a.CustomerId,a.OwnerId,a.OrganizationId,a.RepositoryId,a.PeriodFromUtc,DATEADD(month,1,a.PeriodFromUtc),0,0,SYSUTCDATETIME()
-FROM AssignmentMonths a
-WHERE a.PeriodFromUtc<DATEADD(month,1,@CurrentMonthFrom)
-  AND DATEADD(month,1,a.PeriodFromUtc)>a.EffectiveFromUtc
-  AND (a.EffectiveToUtc IS NULL OR a.PeriodFromUtc<a.EffectiveToUtc)
-  AND NOT EXISTS(SELECT 1 FROM ops.BillingPeriod p WHERE p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId AND p.PeriodFromUtc=a.PeriodFromUtc AND p.PeriodToUtc=DATEADD(month,1,a.PeriodFromUtc))
-GROUP BY a.CustomerId,a.OwnerId,a.OrganizationId,a.RepositoryId,a.PeriodFromUtc
-OPTION(MAXRECURSION 0);
-DECLARE @Inserted int=@@ROWCOUNT;
+ INSERT INTO ops.BillingPeriod(BillingPeriodId,CustomerId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,State,ConsecutiveCloseFailureCount,CreatedAtUtc)
+ SELECT NEWID(),a.CustomerId,a.OwnerId,a.OrganizationId,a.RepositoryId,a.PeriodFromUtc,DATEADD(month,1,a.PeriodFromUtc),0,0,SYSUTCDATETIME()
+ FROM AssignmentMonths a
+ WHERE a.PeriodFromUtc<DATEADD(month,1,@CurrentMonthFrom)
+   AND DATEADD(month,1,a.PeriodFromUtc)>a.EffectiveFromUtc
+   AND (a.EffectiveToUtc IS NULL OR a.PeriodFromUtc<a.EffectiveToUtc)
+   AND NOT EXISTS(SELECT 1 FROM ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK) WHERE p.CustomerId=a.CustomerId AND p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId AND p.PeriodFromUtc=a.PeriodFromUtc AND p.PeriodToUtc=DATEADD(month,1,a.PeriodFromUtc))
+ GROUP BY a.CustomerId,a.OwnerId,a.OrganizationId,a.RepositoryId,a.PeriodFromUtc
+ OPTION(MAXRECURSION 0);
+ SET @Inserted=@@ROWCOUNT;
+END TRY
+BEGIN CATCH
+ IF ERROR_NUMBER() NOT IN(2601,2627) THROW;
+END CATCH;
 UPDATE ops.BillingPeriod SET State=1 WHERE State=0 AND @NowUtc>=DATEADD(hour,24,PeriodToUtc);
 SELECT @Inserted+@@ROWCOUNT;"""
 
@@ -608,21 +621,46 @@ SELECT @Inserted+@@ROWCOUNT;"""
                     else
                         do! lockScope connection transaction scope cancellationToken
 
+                        use assignmentReconciliation =
+                            command
+                                connection
+                                transaction
+                                """
+DECLARE @HasAssignmentCoverage bit=CASE WHEN EXISTS(SELECT 1 FROM ops.CustomerPricingAssignment WITH(UPDLOCK,HOLDLOCK) WHERE CustomerId=@CustomerId AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND EffectiveFromUtc<@PeriodToUtc AND (EffectiveToUtc IS NULL OR EffectiveToUtc>@PeriodFromUtc)) THEN 1 ELSE 0 END;
+IF @HasAssignmentCoverage=0
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM ops.RawUsageFact WITH(UPDLOCK,HOLDLOCK) WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc)
+    AND NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingPeriodId=@BillingPeriodId)
+  DELETE FROM ops.BillingPeriod WHERE BillingPeriodId=@BillingPeriodId AND State IN(0,1);
+ ELSE
+  UPDATE ops.BillingPeriod SET State=1,CloseBlockedCode=N'AssignmentCoverageMissing',CloseBlockedDetail=N'Accepted usage or posted billing history requires assignment coverage repair.',LastCloseAttemptAtUtc=@NowUtc,ConsecutiveCloseFailureCount=ConsecutiveCloseFailureCount+1 WHERE BillingPeriodId=@BillingPeriodId AND State IN(0,1);
+END;
+SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM ops.BillingPeriod WHERE BillingPeriodId=@BillingPeriodId) THEN N'PeriodReconciled' WHEN @HasAssignmentCoverage=0 THEN N'AssignmentCoverageMissing' ELSE NULL END;"""
+
+                        addScope assignmentReconciliation scope
+                        add assignmentReconciliation "@BillingPeriodId" SqlDbType.UniqueIdentifier billingPeriodId
+                        add assignmentReconciliation "@NowUtc" SqlDbType.DateTime2 nowUtc
+                        let! reconciliationCode = assignmentReconciliation.ExecuteScalarAsync cancellationToken
+
                         use blocker =
                             command
                                 connection
                                 transaction
-                                "SELECT TOP(1) FailureCode FROM ops.BillingIngestionFailure WHERE ResolvedAtUtc IS NULL AND (CustomerId=@CustomerId OR CustomerId IS NULL) AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc;"
+                                "IF @ReconciliationCode IS NOT NULL SELECT @ReconciliationCode ELSE SELECT TOP(1) FailureCode FROM ops.BillingIngestionFailure WHERE ResolvedAtUtc IS NULL AND (CustomerId=@CustomerId OR CustomerId IS NULL) AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc;"
 
                         addScope blocker scope
+                        add blocker "@ReconciliationCode" SqlDbType.NVarChar (if isNull reconciliationCode then box DBNull.Value else reconciliationCode)
                         let! blockerCode = blocker.ExecuteScalarAsync cancellationToken
 
-                        if not (isNull blockerCode) then
+                        if String.Equals(string blockerCode, "PeriodReconciled", StringComparison.Ordinal) then
+                            do! transaction.CommitAsync cancellationToken
+                            return BillingCloseOutcome.AlreadyFinal
+                        elif not (isNull blockerCode) then
                             use update =
                                 command
                                     connection
                                     transaction
-                                    "UPDATE ops.BillingPeriod SET State=1,CloseBlockedCode=@Code,CloseBlockedDetail=N'Billing-relevant ingestion evidence remains unresolved.',LastCloseAttemptAtUtc=@NowUtc,ConsecutiveCloseFailureCount=ConsecutiveCloseFailureCount+1 WHERE BillingPeriodId=@Id;"
+                                    "UPDATE ops.BillingPeriod SET State=1,CloseBlockedCode=@Code,CloseBlockedDetail=CASE WHEN @Code=N'AssignmentCoverageMissing' THEN N'Accepted usage or posted billing history requires assignment coverage repair.' ELSE N'Billing-relevant ingestion evidence remains unresolved.' END,LastCloseAttemptAtUtc=@NowUtc,ConsecutiveCloseFailureCount=ConsecutiveCloseFailureCount+1 WHERE BillingPeriodId=@Id;"
 
                             add update "@Code" SqlDbType.NVarChar (string blockerCode)
                             add update "@NowUtc" SqlDbType.DateTime2 nowUtc
@@ -803,12 +841,13 @@ Posted AS (
         SUM(Quantity) Quantity,SUM(ChargeMicros) ChargeMicros,MIN(ChargeLedgerEntryId) PriorId
  FROM ops.ChargeLedgerEntry WHERE BillingPeriodId=@PeriodId AND (EntryKind=0 OR (InitiatedByPrincipalId=N'Grace.Operations' AND ReasonCode=N'LateUsageFact'))
  GROUP BY FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc)
-INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,SourceChargePreviewLineId,PriorChargeLedgerEntryId,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId,CreatedAtUtc)
-SELECT NEWID(),@PeriodId,1,NULL,p.PriorId,COALESCE(e.FactKind,p.FactKind),COALESCE(e.BillableUsageKindMappingId,p.BillableUsageKindMappingId),COALESCE(e.BillableUsageKind,p.BillableUsageKind),COALESCE(e.CustomerPricingAssignmentId,p.CustomerPricingAssignmentId),COALESCE(e.PricingPlanId,p.PricingPlanId),COALESCE(e.PricingRateId,p.PricingRateId),COALESCE(e.CurrencyCode,p.CurrencyCode),COALESCE(e.UnitName,p.UnitName),COALESCE(e.UnitQuantity,p.UnitQuantity),COALESCE(e.UnitPriceMicros,p.UnitPriceMicros),COALESCE(e.EffectiveFromUtc,p.EffectiveFromUtc),COALESCE(e.EffectiveToUtc,p.EffectiveToUtc),COALESCE(e.Quantity,0)-COALESCE(p.Quantity,0),COALESCE(e.ChargeMicros,0)-COALESCE(p.ChargeMicros,0),N'Grace.Operations',N'LateUsageFact',N'Automatic correction for an accepted late usage fact.',@Correlation,SYSUTCDATETIME()
+INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,SourceChargePreviewLineId,PriorChargeLedgerEntryId,BillingCorrectionWorkId,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId,CreatedAtUtc)
+SELECT NEWID(),@PeriodId,1,NULL,p.PriorId,@WorkId,COALESCE(e.FactKind,p.FactKind),COALESCE(e.BillableUsageKindMappingId,p.BillableUsageKindMappingId),COALESCE(e.BillableUsageKind,p.BillableUsageKind),COALESCE(e.CustomerPricingAssignmentId,p.CustomerPricingAssignmentId),COALESCE(e.PricingPlanId,p.PricingPlanId),COALESCE(e.PricingRateId,p.PricingRateId),COALESCE(e.CurrencyCode,p.CurrencyCode),COALESCE(e.UnitName,p.UnitName),COALESCE(e.UnitQuantity,p.UnitQuantity),COALESCE(e.UnitPriceMicros,p.UnitPriceMicros),COALESCE(e.EffectiveFromUtc,p.EffectiveFromUtc),COALESCE(e.EffectiveToUtc,p.EffectiveToUtc),COALESCE(e.Quantity,0)-COALESCE(p.Quantity,0),COALESCE(e.ChargeMicros,0)-COALESCE(p.ChargeMicros,0),N'Grace.Operations',N'LateUsageFact',N'Automatic correction for an accepted late usage fact.',@Correlation,SYSUTCDATETIME()
 FROM Expected e FULL OUTER JOIN Posted p ON e.FactKind=p.FactKind AND e.BillableUsageKindMappingId=p.BillableUsageKindMappingId AND e.BillableUsageKind=p.BillableUsageKind AND e.CustomerPricingAssignmentId=p.CustomerPricingAssignmentId AND e.PricingPlanId=p.PricingPlanId AND e.PricingRateId=p.PricingRateId AND e.CurrencyCode=p.CurrencyCode AND e.UnitName=p.UnitName AND e.UnitQuantity=p.UnitQuantity AND e.UnitPriceMicros=p.UnitPriceMicros AND e.EffectiveFromUtc=p.EffectiveFromUtc AND e.EffectiveToUtc=p.EffectiveToUtc
 WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,0)<>COALESCE(p.ChargeMicros,0);"""
 
                             add delta "@PeriodId" SqlDbType.UniqueIdentifier periodId
+                            add delta "@WorkId" SqlDbType.UniqueIdentifier workIds[workIndex]
                             delta.Parameters.Add("@Correlation", SqlDbType.NVarChar, OperationsUsageSql.CorrelationIdMaxLength).Value <- correlationId
                             let! inserted = delta.ExecuteNonQueryAsync cancellationToken
 
@@ -965,7 +1004,7 @@ WHERE COALESCE(e.Quantity,0)<>COALESCE(p.Quantity,0) OR COALESCE(e.ChargeMicros,
                         command
                             connection
                             transaction
-                            "IF NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WHERE ChargeLedgerEntryId=@EntryId) INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,SourceChargePreviewLineId,PriorChargeLedgerEntryId,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId,CreatedAtUtc) VALUES(@EntryId,@PeriodId,@Kind,NULL,@Prior,@FactKind,@Mapping,@BillableKind,@Assignment,@Plan,@Rate,@Currency,@Unit,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,@Principal,@ReasonCode,@ReasonText,@Correlation,SYSUTCDATETIME()); UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@PeriodId AND State IN(2,3);"
+                            "IF NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WHERE ChargeLedgerEntryId=@EntryId) INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,SourceChargePreviewLineId,PriorChargeLedgerEntryId,BillingCorrectionWorkId,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId,CreatedAtUtc) VALUES(@EntryId,@PeriodId,@Kind,NULL,@Prior,NULL,@FactKind,@Mapping,@BillableKind,@Assignment,@Plan,@Rate,@Currency,@Unit,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,@Principal,@ReasonCode,@ReasonText,@Correlation,SYSUTCDATETIME()); UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@PeriodId AND State IN(2,3);"
 
                     add insert "@EntryId" SqlDbType.UniqueIdentifier entryId
                     add insert "@PeriodId" SqlDbType.UniqueIdentifier correction.BillingPeriodId
