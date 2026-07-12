@@ -2283,8 +2283,13 @@ module Watch =
 
         transitionWasPublished
 
-    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
-    let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+    /// Publishes Watch IPC after reading pending-work evidence inside the serialized status boundary.
+    let private tryPublishWatchIpcWithPendingWorkEvidenceProbe
+        (readPendingWorkEvidence: unit -> PendingWatchWorkEvidence)
+        expectedStatus
+        expectedDirectoryIds
+        (writeSnapshot: unit -> Task<unit>)
+        =
         lock watchStatusPublishLock (fun () ->
             let mutable attempts = 0
             let mutable transitionWasPublished = false
@@ -2292,7 +2297,7 @@ module Watch =
 
             while pendingWorkChangedDuringWrite && attempts < 2 do
                 attempts <- attempts + 1
-                let pendingEvidence = readPendingWatchWorkEvidence ()
+                let pendingEvidence = readPendingWorkEvidence ()
                 let hasPendingWork = pendingEvidence.HasPendingWork
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
                 let publicationStartedAt = getCurrentInstant ()
@@ -2323,11 +2328,45 @@ module Watch =
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
                 pendingWorkChangedDuringWrite <-
-                    (readPendingWatchWorkEvidence ()).HasPendingWork
+                    (readPendingWorkEvidence ()).HasPendingWork
                     <> hasPendingWork
 
             transitionWasPublished
             && not pendingWorkChangedDuringWrite)
+
+    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
+    let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+        tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWatchWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+
+    /// Reads new pending work while excluding only the current recovery attempt and its materialization latch.
+    let private readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt =
+        let recoveryStillOwnsPublication =
+            isGraceWatchResyncAttemptCurrent attempt
+            && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+
+        {
+            HasProcessablePendingWork =
+                not recoveryStillOwnsPublication
+                || graceStatusHasChanged
+                || not (
+                    filesToProcess.IsEmpty
+                    && directoriesToProcess.IsEmpty
+                    && statusUpdateTriggers.IsEmpty
+                    && not (hasPendingStatusDifferences ())
+                )
+            HasManualPendingStatusEvidence = false
+            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+        }
+
+    /// Publishes clean IPC for one recovered resync attempt while retaining its own fail-closed pending anchors.
+    let private tryPublishWatchIpcForResyncRecovery attempt expectedStatus expectedDirectoryIds writeSnapshot =
+        tryPublishWatchIpcWithPendingWorkEvidenceProbe
+            (fun () -> readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt)
+            expectedStatus
+            expectedDirectoryIds
+            writeSnapshot
+        && isGraceWatchResyncAttemptCurrent attempt
+        && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot =
@@ -6248,36 +6287,90 @@ module Watch =
                             graceStatus <- newGraceStatus
                             updateGraceStatusDirectoryIds graceStatus
 
+                            let materializationPendingLatchOwned = hasManualPendingWatchWorkStatusFlag ()
+
                             setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
 
-                            let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
+                            if materializationPendingLatchOwned then
+                                let cleanPublicationVerified =
+                                    tryPublishWatchIpcForResyncRecovery resyncAttempt graceStatus graceStatusDirectoryIds (fun () ->
+                                        updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
-                            if clearedResyncAttempt then
-                                setGraceWatchPendingWorkStatusFlag false
+                                if cleanPublicationVerified then
+                                    setGraceWatchPendingWorkStatusFlag false
 
-                                publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
-                                    updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+                                    if tryClearGraceWatchResyncAttempt resyncAttempt then
+                                        if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                            try
+                                                refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                            with
+                                            | ex ->
+                                                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
 
-                                if signalRBranchSubscriptionRefreshNeededForTransition () then
-                                    try
-                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
-                                    with
-                                    | ex ->
-                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                                                logToAnsiConsole
+                                                    Colors.Error
+                                                    $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+                                        logToAnsiConsole
+                                            Colors.Important
+                                            $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                    else
+                                        setGraceWatchPendingWorkStatusFlag true
+                                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                        logToAnsiConsole
+                                            Colors.Important
+                                            $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed clean publication."
+                                else
+                                    setGraceWatchPendingWorkStatusFlag true
+
+                                    if isGraceWatchResyncAttemptCurrent resyncAttempt then
+                                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                                        let dirtyPublicationVerified =
+                                            tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+
+                                        if not dirtyPublicationVerified then lastPublishedHasPendingWatchWork <- None
 
                                         logToAnsiConsole
                                             Colors.Error
-                                            $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
-
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                            $"Grace Watch retained resync attempt {resyncAttempt} because clean recovery IPC publication was unproven."
+                                    else
+                                        logToAnsiConsole
+                                            Colors.Important
+                                            $"Grace Watch retained materialization pending status because recovery publication for stale resync attempt {resyncAttempt} was unproven."
                             else
-                                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+                                let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
 
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
+                                if clearedResyncAttempt then
+                                    setGraceWatchPendingWorkStatusFlag false
+
+                                    publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                        updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+
+                                    if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                        try
+                                            refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                        with
+                                        | ex ->
+                                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                else
+                                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
                         | Some _ ->
                             logToAnsiConsole
                                 Colors.Important

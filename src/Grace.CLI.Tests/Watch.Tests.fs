@@ -12905,15 +12905,16 @@ module WatchTests =
             Watch.requestGraceWatchExplicitResyncForWatchTests "superseding recovery cancellation"
             Task.FromResult(List<FileSystemDifference>()))
 
-    /// Verifies successful active resync clears the materialization latch before clean IPC is republished and revalidated.
+    /// Verifies successful active resync retains its pending anchors until clean IPC is republished and verified.
     [<Test; Category("CurrentBranchMaterializationPublication")>]
-    let ``successful resync clears materialization pending latch before clean publication`` () =
+    let ``successful resync clears materialization pending latch only after verified clean publication`` () =
         withTempRepo (fun _ ->
             Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
             Watch.requestGraceWatchExplicitResyncForWatchTests "materialization clean proof failed"
 
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let publicationLatchStates = ResizeArray<bool>()
+            let publicationResyncStates = ResizeArray<bool>()
             let readStatus () = Task.FromResult(status)
             let upload _ _ = Task.FromResult(())
             let updateGraceStatus _ _ = Task.FromResult(Some status)
@@ -12923,7 +12924,8 @@ module WatchTests =
 
             let updateIpc _ _ =
                 publicationLatchStates.Add(Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ())
-                Task.FromResult(())
+                publicationResyncStates.Add(Watch.isGraceWatchResyncPendingForWatchTests ())
+                Services.updateGraceWatchInterprocessFile status (Some(HashSet<DirectoryVersionId>(status.Index.Keys)))
 
             (Watch.processChangedFilesWithClients
                 readStatus
@@ -12941,12 +12943,122 @@ module WatchTests =
             |> should equal false
 
             publicationLatchStates.ToArray()
-            |> should equal [| false |]
+            |> should equal [| true |]
+
+            publicationResyncStates.ToArray()
+            |> should equal [| true |]
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
 
             Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
 
             Watch.tryPublishCurrentBranchMaterializationCleanStatusForWatchTests ()
             |> should equal true)
+
+    /// Verifies a swallowed clean recovery write retains the materialization latch and active resync retry.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``swallowed resync clean publication retains materialization latch and retry`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+            Watch.requestGraceWatchExplicitResyncForWatchTests "materialization clean proof failed"
+
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let readStatus () = Task.FromResult(status)
+            let upload _ _ = Task.FromResult(())
+            let updateGraceStatus _ _ = Task.FromResult(Some status)
+            let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+            let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
+            let applyIncremental _ _ _ = Task.FromResult(())
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            match inspection.Status with
+            | Some publishedStatus ->
+                publishedStatus.HasPendingWatchWork
+                |> should equal true
+
+                publishedStatus.IsWorkingTreeClean
+                |> should equal false
+            | None -> Assert.Fail("Expected existing dirty Watch IPC after swallowed clean recovery publication."))
+
+    /// Verifies new resync work observed during clean recovery publication keeps the IPC dirty and latch retained.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``pending work during resync clean publication retains materialization latch`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+            Watch.requestGraceWatchExplicitResyncForWatchTests "materialization clean proof failed"
+
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable publicationCalls = 0
+            let readStatus () = Task.FromResult(status)
+            let upload _ _ = Task.FromResult(())
+            let updateGraceStatus _ _ = Task.FromResult(Some status)
+            let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+            let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
+            let applyIncremental _ _ _ = Task.FromResult(())
+
+            let updateIpc currentStatus directoryIds =
+                publicationCalls <- publicationCalls + 1
+
+                if publicationCalls = 1 then
+                    Watch.requestGraceWatchExplicitResyncForWatchTests "pending work arrived during clean recovery publication"
+
+                Services.updateGraceWatchInterprocessFile currentStatus directoryIds
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            publicationCalls
+            |> should be (greaterThanOrEqualTo 2)
+
+            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            match inspection.Status with
+            | Some publishedStatus ->
+                publishedStatus.HasPendingWatchWork
+                |> should equal true
+
+                publishedStatus.IsWorkingTreeClean
+                |> should equal false
+            | None -> Assert.Fail("Expected dirty Watch IPC after pending work arrived during clean recovery publication."))
 
     /// Verifies that scan-derived file uploads keep resync retryable instead of suspending Watch.
     [<Test>]
