@@ -1123,6 +1123,201 @@ module WatchTests =
             Watch.localObservationCandidateSnapshotForWatchTests ()
             |> should equal Array.empty<Watch.WatchObservationCandidate>)
 
+    /// Verifies first production candidate acceptance immediately replaces clean IPC and duplicate acceptance does not rewrite it.
+    [<Test>]
+    let ``raw candidate acceptance immediately publishes dirty IPC without duplicate rewrites`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let changedPath = Path.Combine(root, "candidate-dirty-ipc.txt")
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(changedPath, "first candidate")
+            Watch.OnChanged(changedEvent changedPath)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.length
+            |> should equal 1
+
+            let dirtyIpc = File.ReadAllText(Services.IpcFileName())
+
+            File.WriteAllText(changedPath, "duplicate candidate")
+            Watch.OnChanged(changedEvent changedPath)
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal dirtyIpc
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.length
+            |> should equal 1)
+
+    /// Verifies a failed immediate dirty publication retains the accepted candidate until the normal timer retry can drain it.
+    [<Test>]
+    let ``raw candidate dirty publication failure retains candidate for timer retry`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let changedPath = Path.Combine(root, "candidate-dirty-retry.txt")
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(changedPath, "candidate retained after blocked IPC write")
+
+            use blockedIpc = new FileStream(Services.IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            Watch.OnChanged(changedEvent changedPath)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.length
+            |> should equal 1
+
+            blockedIpc.Dispose()
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false)
+
+    /// Verifies active markers retain earlier create and delete candidates, consume marker-window candidates, and drain retained work once after deletion.
+    [<Test>]
+    let ``active marker preserves pre-marker candidates and consumes marker-window candidates`` () =
+        let verifyCreate () =
+            withTempRepo (fun root ->
+                let status = graceStatusTracking Array.empty<string> Array.empty<string>
+                let changedPath = Path.Combine(root, "pre-marker-create.txt")
+                let updateMarkerFile = Services.updateInProgressFileName ()
+                let markerStartedAt = DateTime.UtcNow
+
+                File.WriteAllText(changedPath, "pre-marker user work")
+                Watch.setGraceStatusForWatchTests status
+                Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged changedPath (markerStartedAt.AddTicks(-1L))
+                |> ignore
+
+                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                |> ignore
+
+                File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, markerStartedAt)
+
+                Watch.processDueLocalObservationCandidatesForWatchTests markerStartedAt
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> Array.length
+                |> should equal 1
+
+                (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                    .FilesToProcess
+                |> should equal Array.empty<string>
+
+                File.Delete(updateMarkerFile)
+                Watch.processDueLocalObservationCandidatesForWatchTests (markerStartedAt.AddTicks(1L))
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+                (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                    .FilesToProcess
+                |> should equal [| changedPath |]
+
+                Watch.processDueLocalObservationCandidatesForWatchTests (markerStartedAt.AddTicks(2L))
+
+                (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                    .FilesToProcess
+                |> should equal [| changedPath |])
+
+        let verifyDelete () =
+            withTempRepo (fun root ->
+                let relativePath = "pre-marker-delete.txt"
+                let changedPath = Path.Combine(root, relativePath)
+                let status = graceStatusTracking [| relativePath |] Array.empty<string>
+                let updateMarkerFile = Services.updateInProgressFileName ()
+                let markerStartedAt = DateTime.UtcNow
+
+                Watch.setGraceStatusForWatchTests status
+                Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.Deleted changedPath (markerStartedAt.AddTicks(-1L))
+                |> ignore
+
+                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                |> ignore
+
+                File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, markerStartedAt)
+
+                Watch.processDueLocalObservationCandidatesForWatchTests markerStartedAt
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> Array.length
+                |> should equal 1
+
+                File.Delete(updateMarkerFile)
+                Watch.processDueLocalObservationCandidatesForWatchTests (markerStartedAt.AddTicks(1L))
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+                (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                    .StatusUpdateTriggers
+                |> should equal [| relativePath |])
+
+        let verifyMarkerWindowSuppression () =
+            withTempRepo (fun root ->
+                let status = graceStatusTracking Array.empty<string> Array.empty<string>
+                let changedPath = Path.Combine(root, "marker-window.txt")
+                let updateMarkerFile = Services.updateInProgressFileName ()
+                let markerStartedAt = DateTime.UtcNow
+
+                File.WriteAllText(changedPath, "Grace-owned marker-window work")
+                Watch.setGraceStatusForWatchTests status
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged changedPath markerStartedAt
+                |> ignore
+
+                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                |> ignore
+
+                File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, markerStartedAt.AddTicks(-1L))
+
+                Watch.processDueLocalObservationCandidatesForWatchTests markerStartedAt
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+                (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                    .FilesToProcess
+                |> should equal Array.empty<string>)
+
+        verifyCreate ()
+        verifyDelete ()
+        verifyMarkerWindowSuppression ()
+
     /// Verifies candidate observation time keeps pre-marker user work distinct from delayed Grace-owned marker effects.
     [<Test>]
     let ``candidate marker suppression respects observation time at deterministic boundary`` () =
