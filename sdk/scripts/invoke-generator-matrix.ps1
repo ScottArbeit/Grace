@@ -95,6 +95,18 @@ function Invoke-CapturedScript {
     }
 }
 
+function Get-ProbeExitCode {
+    param([object[]] $Results)
+
+    foreach ($result in $Results) {
+        if ($result.exitCode -ne 0) {
+            return 1
+        }
+    }
+
+    return 0
+}
+
 function Select-EvidenceLines {
     param([string[]] $Lines)
 
@@ -595,7 +607,7 @@ if (-not $SkipProbes) {
     $probeEntries.Add([ordered]@{
         name = 'TypeScript generated client import/build and PascalCase wire round trip'
         command = 'npm install --ignore-scripts; npm run build; node sdk/proof/generated-client-wire/typescript-wire-proof.cjs'
-        exitCode = $npmInstall.exitCode + $npmBuild.exitCode + $typescriptWireProof.exitCode
+        exitCode = Get-ProbeExitCode @($npmInstall, $npmBuild, $typescriptWireProof)
         evidence = @((Select-EvidenceLines $npmInstall.output) + (Select-EvidenceLines $npmBuild.output) + $typescriptWireProof.output)
     })
 
@@ -612,7 +624,7 @@ if (-not $SkipProbes) {
     $probeEntries.Add([ordered]@{
         name = 'Python generated client import/build and UUID wire round trip'
         command = 'python -m pip install -e . --quiet; python sdk/proof/generated-client-wire/python_wire_proof.py'
-        exitCode = $pythonInstall.exitCode + $pythonImport.exitCode + $pythonWireProof.exitCode
+        exitCode = Get-ProbeExitCode @($pythonInstall, $pythonImport, $pythonWireProof)
         evidence = @((Select-EvidenceLines $pythonInstall.output) + (Select-EvidenceLines $pythonImport.output) + $pythonWireProof.output)
     })
 

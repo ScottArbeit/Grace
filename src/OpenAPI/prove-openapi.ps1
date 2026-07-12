@@ -75,7 +75,7 @@ function Get-DirectoryManifestHash {
     }
 
     $lines = Get-ChildItem -Path $Path -Recurse -File |
-        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache)\\' } |
+        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache|[^\\]+\.egg-info)\\' } |
         Where-Object { $_.Name -notin @('package-lock.json', 'Cargo.lock') } |
         Sort-Object FullName |
         ForEach-Object {

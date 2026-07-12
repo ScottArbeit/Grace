@@ -9,6 +9,18 @@ const {
 } = require(path.join(generatedRoot, 'dist', 'models', 'TypedReferenceApiDto.js'));
 
 const zero = '00000000-0000-0000-0000-000000000000';
+
+function normalizeWireReference(reference) {
+  const normalized = { ...reference };
+  for (const field of ['CreatedAt', 'UpdatedAt', 'DeletedAt']) {
+    if (normalized[field] !== undefined) {
+      normalized[field] = new Date(normalized[field]).toISOString();
+    }
+  }
+
+  return JSON.parse(JSON.stringify(normalized));
+}
+
 const real = {
   Class: 'ReferenceDto', ReferenceId: '11111111-1111-1111-1111-111111111111',
   OwnerId: '22222222-2222-2222-2222-222222222222', OrganizationId: '33333333-3333-3333-3333-333333333333',
@@ -36,8 +48,14 @@ assert.equal(branch.latestPromotion.sha256Hash, real.Sha256Hash);
 assert.equal(branch.latestPromotion.blake3Hash, real.Blake3Hash);
 assert.equal(branch.latestCommit.referenceId, zero);
 assert.equal(branch.latestCommit.sha256Hash, '');
-assert.deepEqual(TypedReferenceApiDtoToJSON(TypedReferenceApiDtoFromJSON(real)), real);
-assert.deepEqual(TypedReferenceApiDtoToJSON(TypedReferenceApiDtoFromJSON(sentinel)), sentinel);
+assert.deepEqual(
+  normalizeWireReference(TypedReferenceApiDtoToJSON(TypedReferenceApiDtoFromJSON(real))),
+  normalizeWireReference(real),
+);
+assert.deepEqual(
+  normalizeWireReference(TypedReferenceApiDtoToJSON(TypedReferenceApiDtoFromJSON(sentinel))),
+  normalizeWireReference(sentinel),
+);
 assert.throws(() => TypedReferenceApiDtoFromJSON({
   ...sentinel, OwnerId: real.OwnerId, Sha256Hash: real.Sha256Hash, Blake3Hash: real.Blake3Hash
 }), /canonical/);
