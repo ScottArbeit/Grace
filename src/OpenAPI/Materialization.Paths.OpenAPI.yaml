@@ -35,7 +35,6 @@
                     CacheSelection:
                       Class: MaterializationCacheSelection
                       SelectionKind: bypassCache
-                      CacheScope: null
                     RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]
       responses:
         '200':

@@ -37,8 +37,7 @@ class TestMaterializationCacheSelection(unittest.TestCase):
         if include_optional:
             return MaterializationCacheSelection(
                 var_class = 'MaterializationCacheSelection',
-                selection_kind = 'bypassCache',
-                cache_scope = ''
+                selection_kind = 'bypassCache'
             )
         else:
             return MaterializationCacheSelection(

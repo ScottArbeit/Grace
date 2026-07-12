@@ -52,6 +52,19 @@ type MaterializationPlanRouteTests() =
             Duration.FromHours 1
         )
 
+    /// Builds a current read-through registration with exactly the supplied approved repository scopes.
+    let scopedCacheRegistration servicePrincipalId mode scopes =
+        CacheRegistration.Create(
+            servicePrincipalId,
+            "https://cache.example.test",
+            scopes,
+            [ Capability.ReadThrough ],
+            [ mode ],
+            Instant.FromUtc(2026, 7, 11, 20, 0),
+            Duration.FromHours 2,
+            Duration.FromHours 1
+        )
+
     let signedGrant mode identities =
         let payload =
             ArtifactGrantPayload.Create(
@@ -128,6 +141,10 @@ type MaterializationPlanRouteTests() =
     /// Builds a repository DTO with a current default branch name.
     let repository defaultBranchName =
         { RepositoryDto.Default with RepositoryId = repositoryId; OwnerId = ownerId; OrganizationId = organizationId; DefaultBranchName = defaultBranchName }
+
+    /// Builds the fully resolved stable target identity supplied to cache-plan selection.
+    let resolvedTarget: Materialization.ResolvedMaterializationTarget =
+        { OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetRootDirectoryVersionId = targetRootDirectoryVersionId }
 
     /// Builds a reference DTO that points at one root directory version.
     let reference referenceId branchId directoryVersionId =
@@ -898,31 +915,37 @@ type MaterializationPlanRouteTests() =
     [<Test>]
     member _.PathScopedArtifactRequestIsRejectedBeforeProjectionArtifactsRun() =
         task {
-            let mutable projectionCalled = false
+            for artifactKind in
+                [
+                    MaterializationArtifactKind.WholeFileContent
+                    MaterializationArtifactKind.FileManifest
+                    MaterializationArtifactKind.ContentBlock
+                ] do
+                let mutable projectionCalled = false
 
-            let request =
-                MaterializationPlanRequest.Create(
-                    MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
-                    MaterializationExecutionMode.Direct,
-                    MaterializationCacheSelection.Bypass,
-                    [
-                        MaterializationArtifactKind.DirectoryVersionZip
-                        MaterializationArtifactKind.RecursiveDirectoryMetadata
-                        MaterializationArtifactKind.WholeFileContent
-                    ]
-                )
+                let request =
+                    MaterializationPlanRequest.Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.Direct,
+                        MaterializationCacheSelection.Bypass,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                            artifactKind
+                        ]
+                    )
 
-            let! result =
-                Materialization.createDirectPlanForResolvedRoot
-                    request
-                    targetRootDirectoryVersionId
-                    (fun _ ->
-                        projectionCalled <- true
-                        Task.FromResult(Ok(rootArtifacts ())))
-                    correlationId
+                let! result =
+                    Materialization.createDirectPlanForResolvedRoot
+                        request
+                        targetRootDirectoryVersionId
+                        (fun _ ->
+                            projectionCalled <- true
+                            Task.FromResult(Ok(rootArtifacts ())))
+                        correlationId
 
-            assertErrorContains "path-scoped artifact kinds are not supported" result
-            Assert.That(projectionCalled, Is.False)
+                assertErrorContains "path-scoped artifact kinds are not supported" result
+                Assert.That(projectionCalled, Is.False)
         }
 
     /// Verifies cache-backed modes stay explicitly unsupported until cache selection is implemented.
@@ -1100,7 +1123,7 @@ type MaterializationPlanRouteTests() =
                             ]
                         )
                         .WithHolderPublicKey(holderPublicKey ()))
-                    targetRootDirectoryVersionId
+                    resolvedTarget
                     (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
                     (fun _ -> Task.FromResult(Array.empty))
                     (fun _ _ -> Task.FromResult(Ok(Unchecked.defaultof<_>)))
@@ -1131,7 +1154,7 @@ type MaterializationPlanRouteTests() =
             let! result =
                 Materialization.createCachePlanForResolvedRoot
                     request
-                    targetRootDirectoryVersionId
+                    resolvedTarget
                     (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
                     (fun _ -> Task.FromResult([| cacheRegistration mode |]))
                     (fun _ identities -> Task.FromResult(Ok(signedGrant mode identities)))
@@ -1146,4 +1169,153 @@ type MaterializationPlanRouteTests() =
                     Assert.That(artifact.Source.Value.SourceKind, Is.EqualTo(MaterializationArtifactSourceKind.CacheEntry))
                     Assert.That(artifact.Source.Value.DirectUri.IsNone, Is.True)
                     Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
+        }
+
+    /// Verifies that cache-mode selection requests one stable-ID repository scope instead of accepting caller scope input.
+    [<Test>]
+    member _.CachePlanSelectionUsesStableRepositoryScope() =
+        task {
+            let mutable selectedScope = None
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.CacheRequired,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun query ->
+                        selectedScope <- query.Scope
+                        Task.FromResult(Array.empty))
+                    (fun _ _ -> Task.FromResult(Ok(Unchecked.defaultof<_>)))
+                    correlationId
+
+            assertErrorContains "No eligible Cache registration" result
+
+            let expected = $"repository:{ownerId:D}/{organizationId:D}/{repositoryId:D}"
+            Assert.That(selectedScope, Is.EqualTo(Some expected))
+        }
+
+    /// Verifies cache eligibility accepts only an exact stable repository scope, including explicitly listed multi-repository registrations.
+    [<Test>]
+    member _.RepositoryScopeEligibilityRejectsLookalikesAndStoragePoolScopes() =
+        let expectedScope = Materialization.repositoryCacheScope resolvedTarget
+        let reroutedRoot = { resolvedTarget with TargetRootDirectoryVersionId = DirectoryVersionId.Parse "88888888-8888-8888-8888-888888888888" }
+        let otherRepositoryScope = $"repository:{ownerId:D}/{organizationId:D}/99999999-9999-9999-9999-999999999999"
+
+        let registrations =
+            [|
+                scopedCacheRegistration "cache-missing" MaterializationExecutionMode.CacheRequired Seq.empty
+                scopedCacheRegistration "cache-unrelated" MaterializationExecutionMode.CacheRequired [ otherRepositoryScope ]
+                scopedCacheRegistration
+                    "cache-malformed"
+                    MaterializationExecutionMode.CacheRequired
+                    [
+                        $"repository:{ownerId:D}/{organizationId:D}/not-a-guid"
+                    ]
+                scopedCacheRegistration
+                    "cache-name-lookalike"
+                    MaterializationExecutionMode.CacheRequired
+                    [
+                        "repository:owner-name/organization-name/repository-name"
+                    ]
+                scopedCacheRegistration "cache-wrong-case" MaterializationExecutionMode.CacheRequired [ expectedScope.ToUpperInvariant() ]
+                scopedCacheRegistration "cache-storage-pool" MaterializationExecutionMode.CacheRequired [ "storage-pool:rerouted-pool" ]
+                scopedCacheRegistration
+                    "cache-multi-unrelated"
+                    MaterializationExecutionMode.CacheRequired
+                    [
+                        otherRepositoryScope
+                        "repository:other-owner/other-organization/other-repository"
+                    ]
+                scopedCacheRegistration "cache-exact" MaterializationExecutionMode.CacheRequired [ expectedScope ]
+                scopedCacheRegistration "cache-multi-explicit" MaterializationExecutionMode.CacheRequired [ otherRepositoryScope; expectedScope ]
+            |]
+
+        let query =
+            CacheRegistrationSelectionQuery.Create(Some expectedScope, [ Capability.ReadThrough ], Some MaterializationExecutionMode.CacheRequired, true, false)
+
+        let eligible =
+            Grace.Types.CacheRegistration.Lifecycle.selectEligible
+                { Class = nameof CacheRegistrationState; Registrations = registrations }
+                query
+                (Instant.FromUtc(2026, 7, 11, 20, 30))
+
+        Assert.That(Materialization.repositoryCacheScope reroutedRoot, Is.EqualTo(expectedScope))
+
+        let expectedServicePrincipalIds: string array =
+            [|
+                "cache-exact"
+                "cache-multi-explicit"
+            |]
+
+        Assert.That(
+            eligible
+            |> Array.map (fun registration -> registration.ServicePrincipalId),
+            Is.EqualTo(expectedServicePrincipalIds :> obj)
+        )
+
+    /// Verifies every unsupported path-scoped kind fails before cache projection, selection, or grant work in both cache modes.
+    [<Test>]
+    member _.CacheModesRejectUnsupportedPathScopedArtifactsBeforeAnyWork() =
+        task {
+            for mode, selection in
+                [
+                    MaterializationExecutionMode.CachePreferred, MaterializationCacheSelection.Preferred
+                    MaterializationExecutionMode.CacheRequired, MaterializationCacheSelection.Required
+                ] do
+                for artifactKind in
+                    [
+                        MaterializationArtifactKind.WholeFileContent
+                        MaterializationArtifactKind.FileManifest
+                        MaterializationArtifactKind.ContentBlock
+                    ] do
+                    let mutable projectionCalled = false
+                    let mutable selectionCalled = false
+                    let mutable grantCalled = false
+
+                    let request =
+                        MaterializationPlanRequest
+                            .Create(
+                                MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                                mode,
+                                selection,
+                                [
+                                    MaterializationArtifactKind.DirectoryVersionZip
+                                    MaterializationArtifactKind.RecursiveDirectoryMetadata
+                                    artifactKind
+                                ]
+                            )
+                            .WithHolderPublicKey(holderPublicKey ())
+
+                    let! result =
+                        Materialization.createCachePlanForResolvedRoot
+                            request
+                            resolvedTarget
+                            (fun _ ->
+                                projectionCalled <- true
+                                Task.FromResult(Ok(rootArtifacts ())))
+                            (fun _ ->
+                                selectionCalled <- true
+                                Task.FromResult([| cacheRegistration mode |]))
+                            (fun _ identities ->
+                                grantCalled <- true
+                                Task.FromResult(Ok(signedGrant mode identities)))
+                            correlationId
+
+                    assertErrorContains "Requested path-scoped artifact kinds are not supported" result
+                    Assert.That(projectionCalled, Is.False)
+                    Assert.That(selectionCalled, Is.False)
+                    Assert.That(grantCalled, Is.False)
         }

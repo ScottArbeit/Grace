@@ -48,8 +48,7 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                 execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
-                    selection_kind = 'bypassCache', 
-                    cache_scope = '', ),
+                    selection_kind = 'bypassCache', ),
                 requested_artifact_kinds = [
                     'directoryVersionZip'
                     ],
@@ -74,8 +73,7 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                 execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
-                    selection_kind = 'bypassCache', 
-                    cache_scope = '', ),
+                    selection_kind = 'bypassCache', ),
                 requested_artifact_kinds = [
                     'directoryVersionZip'
                     ],

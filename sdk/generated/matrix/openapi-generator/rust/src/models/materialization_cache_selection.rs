@@ -18,8 +18,6 @@ pub struct MaterializationCacheSelection {
     pub class: String,
     #[serde(rename = "SelectionKind")]
     pub selection_kind: models::MaterializationCacheSelectionKind,
-    #[serde(rename = "CacheScope", skip_serializing_if = "Option::is_none")]
-    pub cache_scope: Option<String>,
 }
 
 impl MaterializationCacheSelection {
@@ -28,7 +26,6 @@ impl MaterializationCacheSelection {
         MaterializationCacheSelection {
             class,
             selection_kind,
-            cache_scope: None,
         }
     }
 }

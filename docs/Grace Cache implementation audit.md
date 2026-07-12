@@ -103,9 +103,13 @@ docs-only classification with current evidence for the behavior they own.
 ### CachePreferred Materialization
 
 - Implementation seam: mode selection and materialization path that tries Grace Cache first and can
-  fall back to Direct only when the accepted contract allows it.
+  fall back to Direct only when the accepted contract allows it. Grace Server derives the only eligible
+  cache-registration scope as `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` from the fully
+  resolved target's stable IDs; callers cannot supply a cache scope, and storage-pool scopes do not
+  participate in plan selection.
 - Proof seam: positive and negative tests for cache hit, cache miss, grant failure, cache outage,
-  and fallback observability.
+  fallback observability, exact stable-ID scope matching, and exclusion of missing, unrelated,
+  malformed, name-like, wrong-case, storage-pool-only, and unlisted multi-repository registrations.
 - Status classification: `implemented and proven` for server-side plan selection and source shape.
 - Issue or PR evidence: #620 owns current-registration selection, ordinary-absence Direct fallback,
   holder-bound grant issuance, complete-plan validation, generated contracts, and Fast validation.
@@ -114,7 +118,9 @@ docs-only classification with current evidence for the behavior they own.
 ### CacheRequired Materialization
 
 - Implementation seam: mode selection and materialization path that fails closed when Grace Cache
-  cannot serve the authorized content.
+  cannot serve the authorized content. Direct, CachePreferred, and CacheRequired root plans reject
+  `WholeFileContent`, `FileManifest`, and `ContentBlock` requests before projection, registration
+  selection, grant issuance, or partial plan publication.
 - Proof seam: tests proving no Direct source is used when CacheRequired cannot satisfy the request,
   including cache miss, stale grant, malformed grant, and unavailable cache cases.
 - Status classification: `implemented and proven` for server-side plan selection and source shape.

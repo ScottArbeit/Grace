@@ -62,9 +62,6 @@
           example: MaterializationCacheSelection
         SelectionKind:
           $ref: '#/MaterializationCacheSelectionKind'
-        CacheScope:
-          type: string
-          nullable: true
       required: [Class, SelectionKind]
     MaterializationPlanRequest:
       description: Request contract for server-side Materialization Plan creation.
@@ -101,7 +98,6 @@
         CacheSelection:
           Class: MaterializationCacheSelection
           SelectionKind: bypassCache
-          CacheScope: null
         RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]
     PlanParameters:
       description: Parameters for the /materialization/plan endpoint. Repository authority accepts the same ID-or-name pairs resolved by ValidateIdsMiddleware; provide either OwnerId or OwnerName, either OrganizationId or OrganizationName, and either RepositoryId or RepositoryName.

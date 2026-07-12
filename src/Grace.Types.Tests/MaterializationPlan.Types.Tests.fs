@@ -865,92 +865,20 @@ type MaterializationPlanContractTests() =
 
             assertInvalid expected (Validation.validateArtifactSource source)
 
-    /// Verifies that cache-scope identity is either absent or a non-blank value.
-    [<TestCase("")>]
-    [<TestCase("   ")>]
-    member _.CacheSelectionRejectsBlankCacheScope(cacheScope: string) =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some cacheScope }
-
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateCacheSelection cacheSelection)
-
-    /// Verifies that blank optional cache-scope identity fails before request and plan contracts validate.
-    [<TestCase("")>]
-    [<TestCase("   ")>]
-    member _.RequestAndPlanRejectBlankCacheScope(cacheScope: string) =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some cacheScope }
-
-        let request =
-            MaterializationPlanRequest.Create(
-                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                [
-                    MaterializationArtifactKind.DirectoryVersionZip
-                ]
-            )
-
-        let plan =
-            MaterializationPlan.Create(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
-            )
-
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateRequest request)
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validatePlan plan)
-
-    /// Verifies that null optional cache-scope identity fails before request and plan contracts validate.
+    /// Verifies that cache registration scope is server-owned and cannot be supplied through the public selection contract.
     [<Test>]
-    member _.RequestAndPlanRejectNullCacheScope() =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some Unchecked.defaultof<string> }
+    member _.CacheSelectionDoesNotSerializeCallerSuppliedScope() =
+        let callerSuppliedJson = """{"Class":"MaterializationCacheSelection","SelectionKind":"requireCache","CacheScope":"storage-pool:caller-supplied"}"""
 
-        let request =
-            MaterializationPlanRequest.Create(
-                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                [
-                    MaterializationArtifactKind.DirectoryVersionZip
-                ]
-            )
+        let selection = JsonSerializer.Deserialize<MaterializationCacheSelection>(callerSuppliedJson, Grace.Shared.Constants.JsonSerializerOptions)
 
-        let plan =
-            MaterializationPlan.Create(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
-            )
+        let json: string = JsonSerializer.Serialize<MaterializationCacheSelection>(selection, Grace.Shared.Constants.JsonSerializerOptions)
 
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateRequest request)
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validatePlan plan)
+        use document = JsonDocument.Parse(json)
+        let mutable cacheScope = Unchecked.defaultof<JsonElement>
 
-    /// Verifies that a non-blank cache-scope identity remains valid at request and plan seams.
-    [<Test>]
-    member _.RequestAndPlanAllowNonBlankCacheScope() =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some "scope/materialization-main" }
-
-        let request =
-            MaterializationPlanRequest.Create(
-                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                [
-                    MaterializationArtifactKind.DirectoryVersionZip
-                ]
-            )
-
-        let plan =
-            MaterializationPlan.Create(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
-            )
-
-        assertValid (Validation.validateRequest request)
-        assertValid (Validation.validatePlan plan)
+        Assert.That(selection.SelectionKind, Is.EqualTo(MaterializationCacheSelectionKind.RequireCache))
+        Assert.That(document.RootElement.TryGetProperty("CacheScope", &cacheScope), Is.False)
 
     /// Verifies that all current artifact kinds are accepted in request artifact selection.
     [<Test>]

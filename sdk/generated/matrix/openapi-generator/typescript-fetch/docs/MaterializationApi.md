@@ -35,7 +35,7 @@ async function example() {
 
   const body = {
     // PlanParameters
-    planParameters: {"CorrelationId":"cli-20260707T105500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","Request":{"Class":"MaterializationPlanRequest","TargetSelector":{"Class":"MaterializationTargetSelector","SelectorKind":"directoryVersionId","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","ReferenceId":null,"BranchName":null},"ExecutionMode":"direct","CacheSelection":{"Class":"MaterializationCacheSelection","SelectionKind":"bypassCache","CacheScope":null},"RequestedArtifactKinds":["directoryVersionZip","recursiveDirectoryMetadata"]}},
+    planParameters: {"CorrelationId":"cli-20260707T105500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","Request":{"Class":"MaterializationPlanRequest","TargetSelector":{"Class":"MaterializationTargetSelector","SelectorKind":"directoryVersionId","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","ReferenceId":null,"BranchName":null},"ExecutionMode":"direct","CacheSelection":{"Class":"MaterializationCacheSelection","SelectionKind":"bypassCache"},"RequestedArtifactKinds":["directoryVersionZip","recursiveDirectoryMetadata"]}},
   } satisfies CreateMaterializationPlanRequest;
 
   try {

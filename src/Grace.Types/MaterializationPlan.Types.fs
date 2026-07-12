@@ -161,20 +161,16 @@ module MaterializationPlan =
         {
             Class: string
             SelectionKind: MaterializationCacheSelectionKind
-            CacheScope: string option
         }
 
         /// Requests direct materialization without consulting cache entries.
-        static member Bypass =
-            { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.BypassCache; CacheScope = None }
+        static member Bypass = { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.BypassCache }
 
         /// Allows Grace to prefer cache entries while still permitting direct artifact sources.
-        static member Preferred =
-            { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.PreferCache; CacheScope = None }
+        static member Preferred = { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.PreferCache }
 
         /// Requires Grace to satisfy planned artifacts from cache sources only.
-        static member Required =
-            { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.RequireCache; CacheScope = None }
+        static member Required = { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.RequireCache }
 
     /// Describes a fetchable or deferred location for one planned artifact.
     [<CLIMutable; GenerateSerializer>]
@@ -637,10 +633,6 @@ module MaterializationPlan =
 
                 if not (isSupportedCacheSelectionKind cacheSelection.SelectionKind) then
                     errors.Add($"CacheSelection.SelectionKind '{int cacheSelection.SelectionKind}' is not supported.")
-
-                match cacheSelection.CacheScope with
-                | Some cacheScope when String.IsNullOrWhiteSpace cacheScope -> errors.Add("CacheSelection.CacheScope must not be blank when specified.")
-                | _ -> ()
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
 
