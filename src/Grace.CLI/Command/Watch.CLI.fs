@@ -2104,6 +2104,14 @@ module Watch =
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
+    let mutable private beforeGraceWatchResyncAttemptRetirementProbe = fun () -> ()
+
+    /// Overrides the exact resync-attempt retirement probe for deterministic Watch recovery race tests.
+    let internal setBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests probe = beforeGraceWatchResyncAttemptRetirementProbe <- probe
+
+    /// Restores the exact resync-attempt retirement probe after deterministic Watch recovery race tests.
+    let internal resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests () = beforeGraceWatchResyncAttemptRetirementProbe <- fun () -> ()
+
     let mutable private manualPendingWatchWorkStatusFlag = 0
 
     /// Reports whether a coordinator-owned side effect must keep Watch IPC dirty before normal queues can observe it.
@@ -2475,6 +2483,16 @@ module Watch =
         with
         | _ -> false
 
+    /// Verifies that the persisted IPC snapshot forces readers away from incremental shortcuts during resync.
+    let private isGraceWatchResyncRequiredStatusPublished (inspection: GraceWatchStatusInspection) =
+        inspection.Status
+        |> Option.exists (fun status ->
+            status.HasPendingWatchWork
+            && not status.IsWorkingTreeClean
+            && not inspection.IsUsable
+            && inspection.EffectiveMode
+               <> Some GraceWatchRuntimeMode.HealthyIncremental)
+
     /// Verifies an already-published clean snapshot through the inspected IPC trust boundary before final materialization success.
     let private tryVerifyCurrentBranchMaterializationCleanPublication expectedStatus expectedDirectoryIds =
         try
@@ -2592,16 +2610,6 @@ module Watch =
 
     /// Completes startup for tests that verify failed recovery does not resume incremental mode.
     let internal promoteStartupModeIfRecoverySucceededForWatchTests () = promoteStartupModeIfRecoverySucceeded ()
-
-    /// Verifies that the persisted IPC snapshot forces readers away from incremental shortcuts during resync.
-    let private isGraceWatchResyncRequiredStatusPublished (inspection: GraceWatchStatusInspection) =
-        inspection.Status
-        |> Option.exists (fun status ->
-            status.HasPendingWatchWork
-            && not status.IsWorkingTreeClean
-            && not inspection.IsUsable
-            && inspection.EffectiveMode
-               <> Some GraceWatchRuntimeMode.HealthyIncremental)
 
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
@@ -2978,6 +2986,7 @@ module Watch =
         readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
         clearShouldIgnoreCache ()
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
+        resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests ()
         resetSignalRSubscriptionRefreshForWatchTests ()
         resetWatchJournalClientsForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
@@ -6297,9 +6306,11 @@ module Watch =
                                         updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
                                 if cleanPublicationVerified then
-                                    setGraceWatchPendingWorkStatusFlag false
+                                    beforeGraceWatchResyncAttemptRetirementProbe ()
 
                                     if tryClearGraceWatchResyncAttempt resyncAttempt then
+                                        setGraceWatchPendingWorkStatusFlag false
+
                                         if signalRBranchSubscriptionRefreshNeededForTransition () then
                                             try
                                                 refreshSignalRSubscriptionsAfterTransitionCompletion ()
@@ -6318,9 +6329,24 @@ module Watch =
                                         setGraceWatchPendingWorkStatusFlag true
                                         setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
+                                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                                        let dirtyPublicationVerified =
+                                            tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                                            && (try
+                                                    inspectGraceWatchStatus().GetAwaiter().GetResult()
+                                                    |> isGraceWatchResyncRequiredStatusPublished
+                                                with
+                                                | _ -> false)
+
+                                        if not dirtyPublicationVerified then lastPublishedHasPendingWatchWork <- None
+
+                                        let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
                                         logToAnsiConsole
-                                            Colors.Important
-                                            $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed clean publication."
+                                            (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                            $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
                                 else
                                     setGraceWatchPendingWorkStatusFlag true
 
