@@ -4,7 +4,7 @@ open Grace.Operations.Data
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Migrations
 
-/// Adds effective-dated pricing plans, billable mappings, rates, and customer assignments.
+/// Adds effective-dated pricing plans, billable mappings, rates, and owner assignments.
 [<Microsoft.EntityFrameworkCore.Infrastructure.DbContextAttribute(typeof<OperationsDbContext>)>]
 [<Migration("20260709110000_AddPricingPlanRateAssignment")>]
 type AddPricingPlanRateAssignment() =
@@ -96,27 +96,25 @@ END;
 
         migrationBuilder.Sql(
             $"""
-IF OBJECT_ID(N'{OperationsPricingSql.CustomerPricingAssignmentTable}', N'U') IS NULL
+IF OBJECT_ID(N'{OperationsPricingSql.PricingAssignmentTable}', N'U') IS NULL
 BEGIN
-    CREATE TABLE {OperationsPricingSql.CustomerPricingAssignmentTable}
+    CREATE TABLE {OperationsPricingSql.PricingAssignmentTable}
     (
-        CustomerPricingAssignmentId uniqueidentifier NOT NULL,
-        CustomerId uniqueidentifier NOT NULL,
+        PricingAssignmentId uniqueidentifier NOT NULL,
         OwnerId uniqueidentifier NOT NULL,
         OrganizationId uniqueidentifier NOT NULL,
         RepositoryId uniqueidentifier NOT NULL,
         PricingPlanId uniqueidentifier NOT NULL,
         EffectiveFromUtc datetime2(7) NOT NULL,
         EffectiveToUtc datetime2(7) NULL,
-        CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_CustomerPricingAssignment_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
-        CONSTRAINT PK_ops_CustomerPricingAssignment PRIMARY KEY CLUSTERED (CustomerPricingAssignmentId),
-        CONSTRAINT FK_ops_CustomerPricingAssignment_PricingPlan FOREIGN KEY (PricingPlanId) REFERENCES {OperationsPricingSql.PricingPlanTable}(PricingPlanId),
-        CONSTRAINT CK_ops_CustomerPricingAssignment_Id_NotEmpty CHECK (CustomerPricingAssignmentId <> '00000000-0000-0000-0000-000000000000'),
-        CONSTRAINT CK_ops_CustomerPricingAssignment_CustomerId_NotEmpty CHECK (CustomerId <> '00000000-0000-0000-0000-000000000000'),
-        CONSTRAINT CK_ops_CustomerPricingAssignment_OwnerId_NotEmpty CHECK (OwnerId <> '00000000-0000-0000-0000-000000000000'),
-        CONSTRAINT CK_ops_CustomerPricingAssignment_OrganizationId_NotEmpty CHECK (OrganizationId <> '00000000-0000-0000-0000-000000000000'),
-        CONSTRAINT CK_ops_CustomerPricingAssignment_RepositoryId_NotEmpty CHECK (RepositoryId <> '00000000-0000-0000-0000-000000000000'),
-        CONSTRAINT CK_ops_CustomerPricingAssignment_EffectiveRange CHECK (EffectiveToUtc IS NULL OR EffectiveToUtc > EffectiveFromUtc)
+        CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_PricingAssignment_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_ops_PricingAssignment PRIMARY KEY CLUSTERED (PricingAssignmentId),
+        CONSTRAINT FK_ops_PricingAssignment_PricingPlan FOREIGN KEY (PricingPlanId) REFERENCES {OperationsPricingSql.PricingPlanTable}(PricingPlanId),
+        CONSTRAINT CK_ops_PricingAssignment_Id_NotEmpty CHECK (PricingAssignmentId <> '00000000-0000-0000-0000-000000000000'),
+        CONSTRAINT CK_ops_PricingAssignment_OwnerId_NotEmpty CHECK (OwnerId <> '00000000-0000-0000-0000-000000000000'),
+        CONSTRAINT CK_ops_PricingAssignment_OrganizationId_NotEmpty CHECK (OrganizationId <> '00000000-0000-0000-0000-000000000000'),
+        CONSTRAINT CK_ops_PricingAssignment_RepositoryId_NotEmpty CHECK (RepositoryId <> '00000000-0000-0000-0000-000000000000'),
+        CONSTRAINT CK_ops_PricingAssignment_EffectiveRange CHECK (EffectiveToUtc IS NULL OR EffectiveToUtc > EffectiveFromUtc)
     );
 END;
 """
@@ -204,36 +202,36 @@ IF NOT EXISTS
 (
     SELECT 1
     FROM sys.indexes
-    WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.CustomerPricingAssignmentTable}')
-    AND name = N'{OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName}'
+    WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.PricingAssignmentTable}')
+    AND name = N'{OperationsPricingSql.PricingAssignmentPricingPlanIndexName}'
 )
 BEGIN
-    CREATE INDEX {OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName}
-        ON {OperationsPricingSql.CustomerPricingAssignmentTable}(PricingPlanId);
+    CREATE INDEX {OperationsPricingSql.PricingAssignmentPricingPlanIndexName}
+        ON {OperationsPricingSql.PricingAssignmentTable}(PricingPlanId);
 END;
 
 IF NOT EXISTS
 (
     SELECT 1
     FROM sys.indexes
-    WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.CustomerPricingAssignmentTable}')
-    AND name = N'UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom'
+    WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.PricingAssignmentTable}')
+    AND name = N'UX_ops_PricingAssignment_ScopeEffectiveFrom'
 )
 BEGIN
-    CREATE UNIQUE INDEX UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom
-        ON {OperationsPricingSql.CustomerPricingAssignmentTable}(CustomerId, OwnerId, OrganizationId, RepositoryId, EffectiveFromUtc);
+    CREATE UNIQUE INDEX UX_ops_PricingAssignment_ScopeEffectiveFrom
+        ON {OperationsPricingSql.PricingAssignmentTable}(OwnerId, OrganizationId, RepositoryId, EffectiveFromUtc);
 END;
 
 IF NOT EXISTS
 (
     SELECT 1
     FROM sys.indexes
-    WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.CustomerPricingAssignmentTable}')
-    AND name = N'{OperationsPricingSql.CustomerPricingAssignmentScopeIndexName}'
+    WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.PricingAssignmentTable}')
+    AND name = N'{OperationsPricingSql.PricingAssignmentScopeIndexName}'
 )
 BEGIN
-    CREATE INDEX {OperationsPricingSql.CustomerPricingAssignmentScopeIndexName}
-        ON {OperationsPricingSql.CustomerPricingAssignmentTable}(CustomerId, OwnerId, OrganizationId, RepositoryId, EffectiveFromUtc, EffectiveToUtc);
+    CREATE INDEX {OperationsPricingSql.PricingAssignmentScopeIndexName}
+        ON {OperationsPricingSql.PricingAssignmentTable}(OwnerId, OrganizationId, RepositoryId, EffectiveFromUtc, EffectiveToUtc);
 END;
 """
         )
@@ -323,8 +321,8 @@ END;');
 
         migrationBuilder.Sql(
             $"""
-EXEC(N'CREATE OR ALTER TRIGGER ops.{OperationsPricingSql.CustomerPricingAssignmentOverlapTriggerName}
-ON {OperationsPricingSql.CustomerPricingAssignmentTable}
+EXEC(N'CREATE OR ALTER TRIGGER ops.{OperationsPricingSql.PricingAssignmentOverlapTriggerName}
+ON {OperationsPricingSql.PricingAssignmentTable}
 AFTER INSERT, UPDATE
 AS
 BEGIN
@@ -334,17 +332,16 @@ BEGIN
     (
         SELECT 1
         FROM inserted AS candidate
-        INNER JOIN {OperationsPricingSql.CustomerPricingAssignmentTable} AS existing WITH (UPDLOCK, HOLDLOCK)
-            ON existing.CustomerId = candidate.CustomerId
-            AND existing.OwnerId = candidate.OwnerId
+        INNER JOIN {OperationsPricingSql.PricingAssignmentTable} AS existing WITH (UPDLOCK, HOLDLOCK)
+            ON existing.OwnerId = candidate.OwnerId
             AND existing.OrganizationId = candidate.OrganizationId
             AND existing.RepositoryId = candidate.RepositoryId
-            AND existing.CustomerPricingAssignmentId <> candidate.CustomerPricingAssignmentId
+            AND existing.PricingAssignmentId <> candidate.PricingAssignmentId
             AND candidate.EffectiveFromUtc < ISNULL(existing.EffectiveToUtc, CONVERT(datetime2(7), ''9999-12-31T23:59:59.9999999''))
             AND existing.EffectiveFromUtc < ISNULL(candidate.EffectiveToUtc, CONVERT(datetime2(7), ''9999-12-31T23:59:59.9999999''))
     )
     BEGIN
-        THROW 57414, ''Customer pricing assignment effective windows cannot overlap for the same customer repository scope.'', 1;
+        THROW 57414, ''Owner pricing assignment effective windows cannot overlap for the same owner repository scope.'', 1;
     END;
 END;');
 """
@@ -353,7 +350,7 @@ END;');
 
     /// Removes the pricing foundation schema in reverse dependency order.
     override _.Down(migrationBuilder: MigrationBuilder) =
-        migrationBuilder.Sql($"DROP TRIGGER IF EXISTS ops.{OperationsPricingSql.CustomerPricingAssignmentOverlapTriggerName};")
+        migrationBuilder.Sql($"DROP TRIGGER IF EXISTS ops.{OperationsPricingSql.PricingAssignmentOverlapTriggerName};")
         |> ignore
 
         migrationBuilder.Sql($"DROP TRIGGER IF EXISTS ops.{OperationsPricingSql.PricingRateOverlapTriggerName};")
@@ -366,7 +363,7 @@ END;');
         |> ignore
 
         migrationBuilder.Sql(
-            $"IF OBJECT_ID(N'{OperationsPricingSql.CustomerPricingAssignmentTable}', N'U') IS NOT NULL DROP TABLE {OperationsPricingSql.CustomerPricingAssignmentTable};"
+            $"IF OBJECT_ID(N'{OperationsPricingSql.PricingAssignmentTable}', N'U') IS NOT NULL DROP TABLE {OperationsPricingSql.PricingAssignmentTable};"
         )
         |> ignore
 
@@ -840,26 +837,20 @@ END;');
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
-        let assignment = modelBuilder.Entity<CustomerPricingAssignmentEntity>()
+        let assignment = modelBuilder.Entity<PricingAssignmentEntity>()
 
-        assignment.ToTable("CustomerPricingAssignment", "ops")
+        assignment.ToTable("PricingAssignment", "ops")
         |> ignore
 
         assignment
-            .HasKey([| "CustomerPricingAssignmentId" |])
-            .HasName("PK_ops_CustomerPricingAssignment")
+            .HasKey([| "PricingAssignmentId" |])
+            .HasName("PK_ops_PricingAssignment")
         |> ignore
 
         assignment
-            .Property<System.Guid>("CustomerPricingAssignmentId")
+            .Property<System.Guid>("PricingAssignmentId")
             .HasColumnType("uniqueidentifier")
             .ValueGeneratedNever()
-        |> ignore
-
-        assignment
-            .Property<System.Guid>("CustomerId")
-            .HasColumnType("uniqueidentifier")
-            .IsRequired()
         |> ignore
 
         assignment
@@ -906,27 +897,25 @@ END;');
 
         assignment
             .HasIndex([| "PricingPlanId" |])
-            .HasDatabaseName("IX_CustomerPricingAssignment_PricingPlanId")
+            .HasDatabaseName("IX_PricingAssignment_PricingPlanId")
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
                     "EffectiveFromUtc"
                 |]
             )
-            .HasDatabaseName("UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom")
+            .HasDatabaseName("UX_ops_PricingAssignment_ScopeEffectiveFrom")
             .IsUnique()
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -934,13 +923,13 @@ END;');
                     "EffectiveToUtc"
                 |]
             )
-            .HasDatabaseName("IX_ops_CustomerPricingAssignment_ScopeEffective")
+            .HasDatabaseName("IX_ops_PricingAssignment_ScopeEffective")
         |> ignore
 
         assignment
             .HasOne(fun assignment -> assignment.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
-            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
+            .HasConstraintName("FK_ops_PricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore

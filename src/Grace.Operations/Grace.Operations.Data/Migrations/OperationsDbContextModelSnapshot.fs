@@ -470,26 +470,20 @@ type OperationsDbContextModelSnapshot() =
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
-        let assignment = modelBuilder.Entity<CustomerPricingAssignmentEntity>()
+        let assignment = modelBuilder.Entity<PricingAssignmentEntity>()
 
-        assignment.ToTable("CustomerPricingAssignment", "ops")
+        assignment.ToTable("PricingAssignment", "ops")
         |> ignore
 
         assignment
-            .HasKey([| "CustomerPricingAssignmentId" |])
-            .HasName("PK_ops_CustomerPricingAssignment")
+            .HasKey([| "PricingAssignmentId" |])
+            .HasName("PK_ops_PricingAssignment")
         |> ignore
 
         assignment
-            .Property<System.Guid>("CustomerPricingAssignmentId")
+            .Property<System.Guid>("PricingAssignmentId")
             .HasColumnType("uniqueidentifier")
             .ValueGeneratedNever()
-        |> ignore
-
-        assignment
-            .Property<System.Guid>("CustomerId")
-            .HasColumnType("uniqueidentifier")
-            .IsRequired()
         |> ignore
 
         assignment
@@ -536,27 +530,25 @@ type OperationsDbContextModelSnapshot() =
 
         assignment
             .HasIndex([| "PricingPlanId" |])
-            .HasDatabaseName("IX_CustomerPricingAssignment_PricingPlanId")
+            .HasDatabaseName("IX_PricingAssignment_PricingPlanId")
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
                     "EffectiveFromUtc"
                 |]
             )
-            .HasDatabaseName("UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom")
+            .HasDatabaseName("UX_ops_PricingAssignment_ScopeEffectiveFrom")
             .IsUnique()
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -564,14 +556,14 @@ type OperationsDbContextModelSnapshot() =
                     "EffectiveToUtc"
                 |]
             )
-            .HasDatabaseName("IX_ops_CustomerPricingAssignment_ScopeEffective")
+            .HasDatabaseName("IX_ops_PricingAssignment_ScopeEffective")
         |> ignore
 
         assignment
             .HasOne(fun assignment -> assignment.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
-            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
+            .HasConstraintName("FK_ops_PricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
@@ -617,12 +609,11 @@ type OperationsDbContextModelSnapshot() =
 
         for name in
             [
-                "CustomerId"
                 "OwnerId"
                 "OrganizationId"
                 "RepositoryId"
                 "BillableUsageKindMappingId"
-                "CustomerPricingAssignmentId"
+                "PricingAssignmentId"
                 "PricingPlanId"
                 "PricingRateId"
             ] do
@@ -680,7 +671,6 @@ type OperationsDbContextModelSnapshot() =
         line
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -694,7 +684,6 @@ type OperationsDbContextModelSnapshot() =
         line
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -703,7 +692,7 @@ type OperationsDbContextModelSnapshot() =
                     "FactKind"
                     "BillableUsageKindMappingId"
                     "BillableUsageKind"
-                    "CustomerPricingAssignmentId"
+                    "PricingAssignmentId"
                     "PricingPlanId"
                     "PricingRateId"
                     "CurrencyCode"

@@ -19,7 +19,6 @@ type AddChargePreviewLines() =
 CREATE TABLE ops.ChargePreviewLine
 (
     ChargePreviewLineId uniqueidentifier NOT NULL,
-    CustomerId uniqueidentifier NOT NULL,
     OwnerId uniqueidentifier NOT NULL,
     OrganizationId uniqueidentifier NOT NULL,
     RepositoryId uniqueidentifier NOT NULL,
@@ -28,7 +27,7 @@ CREATE TABLE ops.ChargePreviewLine
     FactKind int NOT NULL,
     BillableUsageKindMappingId uniqueidentifier NOT NULL,
     BillableUsageKind int NOT NULL,
-    CustomerPricingAssignmentId uniqueidentifier NOT NULL,
+    PricingAssignmentId uniqueidentifier NOT NULL,
     PricingPlanId uniqueidentifier NOT NULL,
     PricingRateId uniqueidentifier NOT NULL,
     CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL,
@@ -47,10 +46,10 @@ CREATE TABLE ops.ChargePreviewLine
     CONSTRAINT CK_ops_ChargePreviewLine_Currency CHECK (LEN(CurrencyCode) = 3 AND CurrencyCode COLLATE Latin1_General_100_BIN2 = UPPER(CurrencyCode) COLLATE Latin1_General_100_BIN2 AND CurrencyCode COLLATE Latin1_General_100_BIN2 NOT LIKE '%[^A-Z]%')
 );
 CREATE INDEX IX_ops_ChargePreviewLine_Scope
-    ON ops.ChargePreviewLine(CustomerId, OwnerId, OrganizationId, RepositoryId, PeriodFromUtc, PeriodToUtc);
+    ON ops.ChargePreviewLine(OwnerId, OrganizationId, RepositoryId, PeriodFromUtc, PeriodToUtc);
 CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
-    ON ops.ChargePreviewLine(CustomerId, OwnerId, OrganizationId, RepositoryId, PeriodFromUtc, PeriodToUtc,
-        FactKind, BillableUsageKindMappingId, BillableUsageKind, CustomerPricingAssignmentId, PricingPlanId,
+    ON ops.ChargePreviewLine(OwnerId, OrganizationId, RepositoryId, PeriodFromUtc, PeriodToUtc,
+        FactKind, BillableUsageKindMappingId, BillableUsageKind, PricingAssignmentId, PricingPlanId,
         PricingRateId, CurrencyCode, UnitName, UnitQuantity, UnitPriceMicros, EffectiveFromUtc, EffectiveToUtc);
 """
         )
@@ -520,26 +519,20 @@ CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
-        let assignment = modelBuilder.Entity<CustomerPricingAssignmentEntity>()
+        let assignment = modelBuilder.Entity<PricingAssignmentEntity>()
 
-        assignment.ToTable("CustomerPricingAssignment", "ops")
+        assignment.ToTable("PricingAssignment", "ops")
         |> ignore
 
         assignment
-            .HasKey([| "CustomerPricingAssignmentId" |])
-            .HasName("PK_ops_CustomerPricingAssignment")
+            .HasKey([| "PricingAssignmentId" |])
+            .HasName("PK_ops_PricingAssignment")
         |> ignore
 
         assignment
-            .Property<System.Guid>("CustomerPricingAssignmentId")
+            .Property<System.Guid>("PricingAssignmentId")
             .HasColumnType("uniqueidentifier")
             .ValueGeneratedNever()
-        |> ignore
-
-        assignment
-            .Property<System.Guid>("CustomerId")
-            .HasColumnType("uniqueidentifier")
-            .IsRequired()
         |> ignore
 
         assignment
@@ -586,27 +579,25 @@ CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
 
         assignment
             .HasIndex([| "PricingPlanId" |])
-            .HasDatabaseName("IX_CustomerPricingAssignment_PricingPlanId")
+            .HasDatabaseName("IX_PricingAssignment_PricingPlanId")
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
                     "EffectiveFromUtc"
                 |]
             )
-            .HasDatabaseName("UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom")
+            .HasDatabaseName("UX_ops_PricingAssignment_ScopeEffectiveFrom")
             .IsUnique()
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -614,14 +605,14 @@ CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
                     "EffectiveToUtc"
                 |]
             )
-            .HasDatabaseName("IX_ops_CustomerPricingAssignment_ScopeEffective")
+            .HasDatabaseName("IX_ops_PricingAssignment_ScopeEffective")
         |> ignore
 
         assignment
             .HasOne(fun assignment -> assignment.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
-            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
+            .HasConstraintName("FK_ops_PricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
@@ -667,12 +658,11 @@ CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
 
         for name in
             [
-                "CustomerId"
                 "OwnerId"
                 "OrganizationId"
                 "RepositoryId"
                 "BillableUsageKindMappingId"
-                "CustomerPricingAssignmentId"
+                "PricingAssignmentId"
                 "PricingPlanId"
                 "PricingRateId"
             ] do
@@ -730,7 +720,6 @@ CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
         line
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -744,7 +733,6 @@ CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
         line
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -753,7 +741,7 @@ CREATE UNIQUE INDEX UX_ops_ChargePreviewLine_CompleteGrain
                     "FactKind"
                     "BillableUsageKindMappingId"
                     "BillableUsageKind"
-                    "CustomerPricingAssignmentId"
+                    "PricingAssignmentId"
                     "PricingPlanId"
                     "PricingRateId"
                     "CurrencyCode"

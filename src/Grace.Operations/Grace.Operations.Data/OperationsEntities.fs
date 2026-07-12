@@ -100,7 +100,7 @@ type UsageAggregateMinuteEntity() =
     /// Stores the SQL-created or SQL-updated UTC timestamp for the aggregate row.
     member val UpdatedAtUtc = DateTime.MinValue with get, set
 
-/// Represents one effective-dated customer pricing plan.
+/// Represents one effective-dated owner pricing plan.
 [<AllowNullLiteral>]
 type PricingPlanEntity() =
 
@@ -154,13 +154,13 @@ type PricingRateEntity() =
     /// Stores the durable pricing rate identity selected by later preview and ledger slices.
     member val PricingRateId = Guid.Empty with get, set
 
-    /// Stores the pricing plan whose customers can receive this rate.
+    /// Stores the pricing plan whose owners can receive this rate.
     member val PricingPlanId = Guid.Empty with get, set
 
     /// Stores the internal billable usage-kind integer priced by this rate.
     member val BillableUsageKind = 0 with get, set
 
-    /// Stores the customer billing currency for this rate without provider cost or margin data.
+    /// Stores the owner billing currency for this rate without provider cost or margin data.
     member val CurrencyCode = String.Empty with get, set
 
     /// Stores the rate unit label, such as byte-minute.
@@ -169,7 +169,7 @@ type PricingRateEntity() =
     /// Stores the measured quantity represented by one billable unit.
     member val UnitQuantity = 0L with get, set
 
-    /// Stores the customer price in micros of the configured currency per unit quantity.
+    /// Stores the owner price in micros of the configured currency per unit quantity.
     member val UnitPriceMicros = 0L with get, set
 
     /// Stores when the rate can first be selected.
@@ -184,26 +184,24 @@ type PricingRateEntity() =
     /// References the pricing plan for EF schema relationship generation.
     member val PricingPlan: PricingPlanEntity = null with get, set
 
-/// Represents one effective-dated assignment of a customer and repository scope to a pricing plan.
+/// Represents one effective-dated assignment of a owner and repository scope to a pricing plan.
 [<AllowNullLiteral>]
-type CustomerPricingAssignmentEntity() =
+type PricingAssignmentEntity() =
 
     /// Stores the durable assignment identity selected by later preview and ledger slices.
-    member val CustomerPricingAssignmentId = Guid.Empty with get, set
+    member val PricingAssignmentId = Guid.Empty with get, set
 
-    /// Stores the Operations customer identity receiving the assigned pricing plan.
-    member val CustomerId = Guid.Empty with get, set
-
-    /// Stores the Grace owner scope for the customer assignment.
+    /// Stores the Operations owner identity receiving the assigned pricing plan.
+    /// Stores the Grace owner scope for the owner assignment.
     member val OwnerId = Guid.Empty with get, set
 
-    /// Stores the Grace organization scope for the customer assignment.
+    /// Stores the Grace organization scope for the owner assignment.
     member val OrganizationId = Guid.Empty with get, set
 
-    /// Stores the Grace repository scope for the customer assignment.
+    /// Stores the Grace repository scope for the owner assignment.
     member val RepositoryId = Guid.Empty with get, set
 
-    /// Stores the pricing plan selected for this customer and repository scope.
+    /// Stores the pricing plan selected for this owner and repository scope.
     member val PricingPlanId = Guid.Empty with get, set
 
     /// Stores when the assignment can first be selected.
@@ -212,7 +210,7 @@ type CustomerPricingAssignmentEntity() =
     /// Stores the exclusive end of the assignment window, or null for open-ended assignments.
     member val EffectiveToUtc = Nullable<DateTime>() with get, set
 
-    /// Stores the SQL-created UTC timestamp for the customer assignment row.
+    /// Stores the SQL-created UTC timestamp for the owner assignment row.
     member val CreatedAtUtc = DateTime.MinValue with get, set
 
     /// References the pricing plan for EF schema relationship generation.
@@ -225,9 +223,7 @@ type ChargePreviewLineEntity() =
     /// Stores the deterministic identity derived from the complete preview-line grain.
     member val ChargePreviewLineId = Guid.Empty with get, set
 
-    /// Stores the customer whose provisional charge is represented.
-    member val CustomerId = Guid.Empty with get, set
-
+    /// Stores the owner whose provisional charge is represented.
     /// Stores the Grace owner scope for the charged repository.
     member val OwnerId = Guid.Empty with get, set
 
@@ -252,8 +248,8 @@ type ChargePreviewLineEntity() =
     /// Stores the billable usage kind selected by the mapping.
     member val BillableUsageKind = 0 with get, set
 
-    /// Stores the complete customer pricing assignment identity selected for the source facts.
-    member val CustomerPricingAssignmentId = Guid.Empty with get, set
+    /// Stores the complete owner pricing assignment identity selected for the source facts.
+    member val PricingAssignmentId = Guid.Empty with get, set
 
     /// Stores the complete pricing plan identity selected for the source facts.
     member val PricingPlanId = Guid.Empty with get, set
@@ -270,7 +266,7 @@ type ChargePreviewLineEntity() =
     /// Stores the measured quantity represented by one priced unit.
     member val UnitQuantity = 0L with get, set
 
-    /// Stores the selected customer price in whole currency micros per unit quantity.
+    /// Stores the selected owner price in whole currency micros per unit quantity.
     member val UnitPriceMicros = 0L with get, set
 
     /// Stores the inclusive start of the complete pricing applicability segment intersected with the preview period.

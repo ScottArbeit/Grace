@@ -22,7 +22,6 @@ module private ChargePreviewTestData =
 
     let scope =
         {
-            CustomerId = Guid.Parse "11111111-1111-1111-1111-111111111111"
             OwnerId = Guid.Parse "22222222-2222-2222-2222-222222222222"
             OrganizationId = Guid.Parse "33333333-3333-3333-3333-333333333333"
             RepositoryId = Guid.Parse "44444444-4444-4444-4444-444444444444"
@@ -36,7 +35,7 @@ module private ChargePreviewTestData =
             FactKind = 1
             Quantity = quantity
             ObservedAtUtc = observedAt
-            CustomerPricingAssignmentId = Guid.Parse "55555555-5555-5555-5555-555555555555"
+            PricingAssignmentId = Guid.Parse "55555555-5555-5555-5555-555555555555"
             BillableUsageKindMappingId = Guid.Parse "66666666-6666-6666-6666-666666666666"
             BillableUsageKind = 10
             PricingPlanId = Guid.Parse "77777777-7777-7777-7777-777777777777"
@@ -114,7 +113,7 @@ type OperationsChargePreviewTests() =
 
         let changedAssignment =
             { ChargePreviewTestData.fact (Guid.NewGuid()) 3L (ChargePreviewTestData.utc 6 0) with
-                CustomerPricingAssignmentId = Guid.NewGuid()
+                PricingAssignmentId = Guid.NewGuid()
                 EffectiveFromUtc = ChargePreviewTestData.utc 5 0
             }
 
@@ -397,9 +396,8 @@ type OperationsChargePreviewTests() =
         let source = OperationsChargePreviewSql.SelectSourceAndPricing
 
         ChargePreviewTestData.multiple (fun () ->
-            Assert.That(source, Does.Contain("@CustomerId"))
+            Assert.That(source, Does.Not.Contain("@" + "Customer" + "Id"))
             Assert.That(source, Does.Contain("@RepositoryId"))
-            Assert.That(source, Does.Not.Contain(ChargePreviewTestData.scope.CustomerId.ToString("D")))
             Assert.That(OperationsChargePreviewSql.AcquireScopeLock, Does.Contain("sys.sp_getapplock"))
             Assert.That(OperationsChargePreviewSql.AcquireScopeLock, Does.Contain("@LockOwner='Transaction'"))
             Assert.That(OperationsChargePreviewSql.DeleteScope, Does.Contain("PeriodFromUtc=@PeriodFromUtc"))

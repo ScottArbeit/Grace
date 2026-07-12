@@ -36,26 +36,26 @@ module OperationsChargePreviewSql =
 
     /// Deletes only the exact preview scope being atomically replaced.
     let DeleteScope =
-        "DELETE FROM ops.ChargePreviewLine WHERE CustomerId=@CustomerId AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND PeriodFromUtc=@PeriodFromUtc AND PeriodToUtc=@PeriodToUtc;"
+        "DELETE FROM ops.ChargePreviewLine WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND PeriodFromUtc=@PeriodFromUtc AND PeriodToUtc=@PeriodToUtc;"
 
     /// Reads compact immutable usage fields and every independently effective pricing prerequisite after scope locking.
     let SelectSourceAndPricing =
         """
 SELECT fact.UsageFactId, fact.FactKind, fact.Quantity, fact.ObservedAtUtc,
-       assignment.CustomerPricingAssignmentId, assignment.PricingPlanId AS AssignedPricingPlanId,
+       assignment.PricingAssignmentId, assignment.PricingPlanId AS AssignedPricingPlanId,
        plan.PricingPlanId, mapping.BillableUsageKindMappingId, mapping.BillableUsageKind,
        rate.PricingRateId, rate.CurrencyCode, rate.UnitName, rate.UnitQuantity, rate.UnitPriceMicros,
        applicability.EffectiveFromUtc, applicability.EffectiveToUtc
 FROM ops.RawUsageFact AS fact
 OUTER APPLY (
-    SELECT TOP (1) candidate.CustomerPricingAssignmentId, candidate.PricingPlanId,
+    SELECT TOP (1) candidate.PricingAssignmentId, candidate.PricingPlanId,
            candidate.EffectiveFromUtc, candidate.EffectiveToUtc
-    FROM ops.CustomerPricingAssignment AS candidate
-    WHERE candidate.CustomerId = @CustomerId AND candidate.OwnerId = @OwnerId
+    FROM ops.PricingAssignment AS candidate
+    WHERE candidate.OwnerId = @OwnerId
       AND candidate.OrganizationId = @OrganizationId AND candidate.RepositoryId = @RepositoryId
       AND candidate.EffectiveFromUtc <= fact.ObservedAtUtc
       AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc < candidate.EffectiveToUtc)
-    ORDER BY candidate.EffectiveFromUtc DESC, candidate.CustomerPricingAssignmentId
+    ORDER BY candidate.EffectiveFromUtc DESC, candidate.PricingAssignmentId
 ) AS assignment
 OUTER APPLY (
     SELECT TOP (1) candidate.PricingPlanId, candidate.EffectiveFromUtc, candidate.EffectiveToUtc
@@ -148,12 +148,11 @@ module OperationsChargePreviewModel =
 
         for name in
             [
-                "CustomerId"
                 "OwnerId"
                 "OrganizationId"
                 "RepositoryId"
                 "BillableUsageKindMappingId"
-                "CustomerPricingAssignmentId"
+                "PricingAssignmentId"
                 "PricingPlanId"
                 "PricingRateId"
             ] do
@@ -211,7 +210,6 @@ module OperationsChargePreviewModel =
         line
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -225,7 +223,6 @@ module OperationsChargePreviewModel =
         line
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -234,7 +231,7 @@ module OperationsChargePreviewModel =
                     "FactKind"
                     "BillableUsageKindMappingId"
                     "BillableUsageKind"
-                    "CustomerPricingAssignmentId"
+                    "PricingAssignmentId"
                     "PricingPlanId"
                     "PricingRateId"
                     "CurrencyCode"
@@ -249,8 +246,8 @@ module OperationsChargePreviewModel =
             .IsUnique()
         |> ignore
 
-/// Identifies one explicit customer/repository/half-open UTC preview rebuild scope.
-type ChargePreviewScope = { CustomerId: Guid; OwnerId: Guid; OrganizationId: Guid; RepositoryId: Guid; PeriodFromUtc: DateTime; PeriodToUtc: DateTime }
+/// Identifies one explicit owner/repository/half-open UTC preview rebuild scope.
+type ChargePreviewScope = { OwnerId: Guid; OrganizationId: Guid; RepositoryId: Guid; PeriodFromUtc: DateTime; PeriodToUtc: DateTime }
 
 /// Names an independently required pricing prerequisite that was absent for a usage fact.
 [<RequireQualifiedAccess>]
@@ -262,7 +259,7 @@ type MissingPricingPrerequisite =
 
 /// Reports why a complete charge-preview candidate could not be built.
 type ChargePreviewRebuildException(scope: ChargePreviewScope, usageFactId: Guid, prerequisite: MissingPricingPrerequisite) =
-    inherit InvalidOperationException($"Charge-preview rebuild for customer {scope.CustomerId}, repository {scope.RepositoryId}, period [{scope.PeriodFromUtc:o}, {scope.PeriodToUtc:o}) is missing pricing {prerequisite} for usage fact {usageFactId}.")
+    inherit InvalidOperationException($"Charge-preview rebuild for owner {scope.OwnerId}, repository {scope.RepositoryId}, period [{scope.PeriodFromUtc:o}, {scope.PeriodToUtc:o}) is missing pricing {prerequisite} for usage fact {usageFactId}.")
     /// Gets the rebuild scope that remains unchanged after this failure.
     member _.Scope = scope
     /// Gets the usage fact whose complete pricing could not be resolved.
@@ -277,7 +274,7 @@ type ChargePreviewPricedFact =
         FactKind: int
         Quantity: int64
         ObservedAtUtc: DateTime
-        CustomerPricingAssignmentId: Guid
+        PricingAssignmentId: Guid
         BillableUsageKindMappingId: Guid
         BillableUsageKind: int
         PricingPlanId: Guid
@@ -334,7 +331,6 @@ module ChargePreviewCalculation =
             String.Join(
                 "|",
                 [|
-                    scope.CustomerId.ToString("D")
                     scope.OwnerId.ToString("D")
                     scope.OrganizationId.ToString("D")
                     scope.RepositoryId.ToString("D")
@@ -343,7 +339,7 @@ module ChargePreviewCalculation =
                     fact.FactKind.ToString(CultureInfo.InvariantCulture)
                     fact.BillableUsageKindMappingId.ToString("D")
                     fact.BillableUsageKind.ToString(CultureInfo.InvariantCulture)
-                    fact.CustomerPricingAssignmentId.ToString("D")
+                    fact.PricingAssignmentId.ToString("D")
                     fact.PricingPlanId.ToString("D")
                     fact.PricingRateId.ToString("D")
                     fact.CurrencyCode
@@ -370,7 +366,7 @@ module ChargePreviewCalculation =
             fact.FactKind,
             fact.BillableUsageKindMappingId,
             fact.BillableUsageKind,
-            fact.CustomerPricingAssignmentId,
+            fact.PricingAssignmentId,
             fact.PricingPlanId,
             fact.PricingRateId,
             fact.CurrencyCode,
@@ -393,7 +389,6 @@ module ChargePreviewCalculation =
             let quantity = int64 total
             let entity = ChargePreviewLineEntity()
             entity.ChargePreviewLineId <- lineId scope first
-            entity.CustomerId <- scope.CustomerId
             entity.OwnerId <- scope.OwnerId
             entity.OrganizationId <- scope.OrganizationId
             entity.RepositoryId <- scope.RepositoryId
@@ -402,7 +397,7 @@ module ChargePreviewCalculation =
             entity.FactKind <- first.FactKind
             entity.BillableUsageKindMappingId <- first.BillableUsageKindMappingId
             entity.BillableUsageKind <- first.BillableUsageKind
-            entity.CustomerPricingAssignmentId <- first.CustomerPricingAssignmentId
+            entity.PricingAssignmentId <- first.PricingAssignmentId
             entity.PricingPlanId <- first.PricingPlanId
             entity.PricingRateId <- first.PricingRateId
             entity.CurrencyCode <- first.CurrencyCode
@@ -426,7 +421,6 @@ type IChargePreviewRebuilder =
 type SqlChargePreviewRebuilder(connectionString: string) =
 
     let addScopeParameters (command: SqlCommand) scope =
-        command.Parameters.Add("@CustomerId", SqlDbType.UniqueIdentifier).Value <- scope.CustomerId
         command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- scope.OwnerId
         command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- scope.OrganizationId
         command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- scope.RepositoryId
@@ -464,7 +458,7 @@ type SqlChargePreviewRebuilder(connectionString: string) =
                     lockCommand.CommandTimeout <- 65
 
                     let lockIdentity =
-                        $"ops:charge-preview:{scope.CustomerId:D}:{scope.OwnerId:D}:{scope.OrganizationId:D}:{scope.RepositoryId:D}:{scope.PeriodFromUtc.Ticks}:{scope.PeriodToUtc.Ticks}"
+                        $"ops:charge-preview:{scope.OwnerId:D}:{scope.OrganizationId:D}:{scope.RepositoryId:D}:{scope.PeriodFromUtc.Ticks}:{scope.PeriodToUtc.Ticks}"
 
                     let lockHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes lockIdentity))
                     lockCommand.Parameters.Add("@LockResource", SqlDbType.NVarChar, 255).Value <- $"ops:charge-preview:{lockHash}"
@@ -501,7 +495,7 @@ type SqlChargePreviewRebuilder(connectionString: string) =
                                     FactKind = reader.GetInt32 1
                                     Quantity = reader.GetInt64 2
                                     ObservedAtUtc = reader.GetDateTime 3
-                                    CustomerPricingAssignmentId = reader.GetGuid 4
+                                    PricingAssignmentId = reader.GetGuid 4
                                     PricingPlanId = reader.GetGuid 6
                                     BillableUsageKindMappingId = reader.GetGuid 7
                                     BillableUsageKind = reader.GetInt32 8
@@ -533,7 +527,7 @@ type SqlChargePreviewRebuilder(connectionString: string) =
                         insert.Transaction <- transaction
 
                         insert.CommandText <-
-                            "INSERT INTO ops.ChargePreviewLine (ChargePreviewLineId,CustomerId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,CustomerPricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (@Id,@CustomerId,@OwnerId,@OrganizationId,@RepositoryId,@PeriodFromUtc,@PeriodToUtc,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@TotalQuantity,@Charge);"
+                            "INSERT INTO ops.ChargePreviewLine (ChargePreviewLineId,OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros) VALUES (@Id,@OwnerId,@OrganizationId,@RepositoryId,@PeriodFromUtc,@PeriodToUtc,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@TotalQuantity,@Charge);"
 
                         addScopeParameters insert scope
                         let add name dbType value = insert.Parameters.Add(name, dbType).Value <- value
@@ -541,7 +535,7 @@ type SqlChargePreviewRebuilder(connectionString: string) =
                         add "@FactKind" SqlDbType.Int line.FactKind
                         add "@MappingId" SqlDbType.UniqueIdentifier line.BillableUsageKindMappingId
                         add "@BillableKind" SqlDbType.Int line.BillableUsageKind
-                        add "@AssignmentId" SqlDbType.UniqueIdentifier line.CustomerPricingAssignmentId
+                        add "@AssignmentId" SqlDbType.UniqueIdentifier line.PricingAssignmentId
                         add "@PlanId" SqlDbType.UniqueIdentifier line.PricingPlanId
                         add "@RateId" SqlDbType.UniqueIdentifier line.PricingRateId
                         insert.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- line.CurrencyCode

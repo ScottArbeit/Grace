@@ -1,12 +1,12 @@
 /*
-Seeds the first Operations pricing foundation rows without assigning any customer to a plan.
+Seeds the first Operations pricing foundation rows without assigning any owner to a plan.
 
 This script intentionally creates:
 - one effective pricing plan shell,
 - one explicit billable mapping for UsageFactKind.RepositoryStorageBytesMinute,
-- one customer price for that mapped usage kind.
+- one owner price for that mapped usage kind.
 
-Tracked usage remains non-billable for customers until an explicit row exists in ops.CustomerPricingAssignment.
+Tracked usage remains non-billable for owners until an explicit row exists in ops.PricingAssignment.
 */
 
 DECLARE @PlanId uniqueidentifier = '57400000-0000-0000-0000-000000000001';
