@@ -467,26 +467,20 @@ module OperationsModel =
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
-        let assignment = modelBuilder.Entity<CustomerPricingAssignmentEntity>()
+        let assignment = modelBuilder.Entity<PricingAssignmentEntity>()
 
-        assignment.ToTable(OperationsPricingSql.CustomerPricingAssignmentTableName, OperationsUsageSql.SchemaName)
+        assignment.ToTable(OperationsPricingSql.PricingAssignmentTableName, OperationsUsageSql.SchemaName)
         |> ignore
 
         assignment
-            .HasKey([| "CustomerPricingAssignmentId" |])
-            .HasName("PK_ops_CustomerPricingAssignment")
+            .HasKey([| "PricingAssignmentId" |])
+            .HasName("PK_ops_PricingAssignment")
         |> ignore
 
         assignment
-            .Property<System.Guid>("CustomerPricingAssignmentId")
+            .Property<System.Guid>("PricingAssignmentId")
             .HasColumnType("uniqueidentifier")
             .ValueGeneratedNever()
-        |> ignore
-
-        assignment
-            .Property<System.Guid>("CustomerId")
-            .HasColumnType("uniqueidentifier")
-            .IsRequired()
         |> ignore
 
         assignment
@@ -533,27 +527,25 @@ module OperationsModel =
 
         assignment
             .HasIndex([| "PricingPlanId" |])
-            .HasDatabaseName(OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName)
+            .HasDatabaseName(OperationsPricingSql.PricingAssignmentPricingPlanIndexName)
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
                     "EffectiveFromUtc"
                 |]
             )
-            .HasDatabaseName("UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom")
+            .HasDatabaseName("UX_ops_PricingAssignment_ScopeEffectiveFrom")
             .IsUnique()
         |> ignore
 
         assignment
             .HasIndex(
                 [|
-                    "CustomerId"
                     "OwnerId"
                     "OrganizationId"
                     "RepositoryId"
@@ -561,14 +553,14 @@ module OperationsModel =
                     "EffectiveToUtc"
                 |]
             )
-            .HasDatabaseName(OperationsPricingSql.CustomerPricingAssignmentScopeIndexName)
+            .HasDatabaseName(OperationsPricingSql.PricingAssignmentScopeIndexName)
         |> ignore
 
         assignment
             .HasOne(fun assignment -> assignment.PricingPlan)
             .WithMany()
             .HasForeignKey("PricingPlanId")
-            .HasConstraintName("FK_ops_CustomerPricingAssignment_PricingPlan")
+            .HasConstraintName("FK_ops_PricingAssignment_PricingPlan")
             .OnDelete(DeleteBehavior.Restrict)
         |> ignore
 
@@ -598,9 +590,9 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     [<DefaultValue>]
     val mutable private pricingRates: DbSet<PricingRateEntity>
 
-    /// Exposes customer pricing assignments for EF migrations and schema inspection.
+    /// Exposes owner-scoped pricing assignments for EF migrations and schema inspection.
     [<DefaultValue>]
-    val mutable private customerPricingAssignments: DbSet<CustomerPricingAssignmentEntity>
+    val mutable private pricingAssignments: DbSet<PricingAssignmentEntity>
 
     /// Provides EF access to provisional charge-preview lines.
     [<DefaultValue>]
@@ -631,10 +623,10 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
         with get () = this.pricingRates
         and set value = this.pricingRates <- value
 
-    /// Provides the EF set for customer pricing assignments.
-    member this.CustomerPricingAssignments
-        with get () = this.customerPricingAssignments
-        and set value = this.customerPricingAssignments <- value
+    /// Provides the EF set for owner-scoped pricing assignments.
+    member this.PricingAssignments
+        with get () = this.pricingAssignments
+        and set value = this.pricingAssignments <- value
 
     /// Provides the EF set for provisional charge-preview lines.
     member this.ChargePreviewLines

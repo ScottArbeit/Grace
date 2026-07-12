@@ -16,25 +16,22 @@ open System.IO
 /// Provides deterministic pricing catalog rows for Operations pricing tests.
 module OperationsPricingTestData =
 
-    /// Provides the customer that owns the default pricing assignment.
-    let customerId = Guid.Parse("57400000-1000-0000-0000-000000000001")
-
-    /// Provides a second customer used to prove customer isolation.
-    let otherCustomerId = Guid.Parse("57400000-1000-0000-0000-000000000002")
-
-    /// Provides the owner used by the default customer assignment.
+    /// Provides the owner used by the default pricing assignment.
     let ownerId = OwnerId.Parse("57400000-2000-0000-0000-000000000001")
 
-    /// Provides the organization used by the default customer assignment.
+    /// Provides a second owner used to prove owner isolation.
+    let otherOwnerId = OwnerId.Parse("57400000-2000-0000-0000-000000000002")
+
+    /// Provides the organization used by the default owner assignment.
     let organizationId = OrganizationId.Parse("57400000-3000-0000-0000-000000000001")
 
-    /// Provides the repository used by the default customer assignment.
+    /// Provides the repository used by the default owner assignment.
     let repositoryId = RepositoryId.Parse("57400000-4000-0000-0000-000000000001")
 
     /// Provides a second repository used to prove repository isolation.
     let otherRepositoryId = RepositoryId.Parse("57400000-4000-0000-0000-000000000002")
 
-    /// Provides the pricing plan selected by the default customer assignment.
+    /// Provides the pricing plan selected by the default owner assignment.
     let planId = Guid.Parse("57400000-5000-0000-0000-000000000001")
 
     /// Provides the internal billable usage-kind id for repository storage.
@@ -49,7 +46,6 @@ module OperationsPricingTestData =
     /// Builds a query for repository storage pricing at the supplied timestamp.
     let query observedAt =
         {
-            CustomerId = customerId
             OwnerId = ownerId
             OrganizationId = organizationId
             RepositoryId = repositoryId
@@ -70,7 +66,7 @@ module OperationsPricingTestData =
             EffectiveTo = None
         }
 
-    /// Provides the initial customer rate for repository storage.
+    /// Provides the initial owner rate for repository storage.
     let julyRate =
         {
             PricingRateId = Guid.Parse("57400000-7000-0000-0000-000000000001")
@@ -98,11 +94,10 @@ module OperationsPricingTestData =
             EffectiveTo = None
         }
 
-    /// Provides the customer assignment that makes the plan selectable for one repository scope.
+    /// Provides the owner assignment that makes the plan selectable for one repository scope.
     let assignment =
         {
-            CustomerPricingAssignmentId = Guid.Parse("57400000-8000-0000-0000-000000000001")
-            CustomerId = customerId
+            PricingAssignmentId = Guid.Parse("57400000-8000-0000-0000-000000000001")
             OwnerId = ownerId
             OrganizationId = organizationId
             RepositoryId = repositoryId
@@ -111,14 +106,9 @@ module OperationsPricingTestData =
             EffectiveTo = None
         }
 
-    /// Provides a complete catalog with one customer assignment and two effective rates.
+    /// Provides a complete catalog with one owner assignment and two effective rates.
     let catalog =
-        {
-            PricingPlans = [ plan ]
-            BillableUsageKindMappings = [ mapping ]
-            PricingRates = [ julyRate; augustRate ]
-            CustomerPricingAssignments = [ assignment ]
-        }
+        { PricingPlans = [ plan ]; BillableUsageKindMappings = [ mapping ]; PricingRates = [ julyRate; augustRate ]; PricingAssignments = [ assignment ] }
 
 /// Covers Operations pricing schema, seed, and deterministic selection behavior.
 [<TestFixture>]
@@ -172,7 +162,7 @@ type OperationsPricingTests() =
         match contributor with
         | "assignment" ->
             { OperationsPricingTestData.catalog with
-                CustomerPricingAssignments =
+                PricingAssignments =
                     [
                         { OperationsPricingTestData.assignment with EffectiveFrom = effectiveFrom; EffectiveTo = effectiveTo }
                     ]
@@ -200,15 +190,15 @@ type OperationsPricingTests() =
             }
         | _ -> invalidArg (nameof contributor) $"Unknown pricing contributor '{contributor}'."
 
-    /// Verifies effective-rate selection requires customer assignment, mapping, and rate rows.
+    /// Verifies effective-rate selection requires owner assignment, mapping, and rate rows.
     [<Test>]
-    member _.EffectiveRateSelectionFindsCustomerRateForBillableUsageKind() =
+    member _.EffectiveRateSelectionFindsOwnerRateForBillableUsageKind() =
         let selected = PricingRateSelection.trySelect (OperationsPricingTestData.query (Instant.FromUtc(2026, 7, 15, 12, 0))) OperationsPricingTestData.catalog
 
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(selected.IsSome, Is.True)
-                Assert.That(selected.Value.CustomerId, Is.EqualTo(OperationsPricingTestData.customerId))
+                Assert.That(selected.Value.OwnerId, Is.EqualTo(OperationsPricingTestData.ownerId))
                 Assert.That(selected.Value.PricingPlanId, Is.EqualTo(OperationsPricingTestData.planId))
                 Assert.That(selected.Value.PricingRateId, Is.EqualTo(OperationsPricingTestData.julyRate.PricingRateId))
                 Assert.That(selected.Value.BillableUsageKind, Is.EqualTo(OperationsPricingTestData.repositoryStorageBillableUsageKind))
@@ -246,7 +236,7 @@ type OperationsPricingTests() =
             Action (fun () ->
                 Assert.That(selected.Value.EffectiveFrom, Is.EqualTo(effectiveFrom))
                 Assert.That(selected.Value.EffectiveTo, Is.EqualTo(effectiveTo))
-                Assert.That(selected.Value.CustomerPricingAssignmentId, Is.EqualTo(OperationsPricingTestData.assignment.CustomerPricingAssignmentId))
+                Assert.That(selected.Value.PricingAssignmentId, Is.EqualTo(OperationsPricingTestData.assignment.PricingAssignmentId))
                 Assert.That(selected.Value.PricingPlanId, Is.EqualTo(OperationsPricingTestData.plan.PricingPlanId))
                 Assert.That(selected.Value.BillableUsageKindMappingId, Is.EqualTo(OperationsPricingTestData.mapping.BillableUsageKindMappingId))
                 Assert.That(selected.Value.PricingRateId, Is.EqualTo(OperationsPricingTestData.julyRate.PricingRateId))
@@ -337,18 +327,17 @@ type OperationsPricingTests() =
                 Assert.That(atBoundary.Value.UnitPriceMicros, Is.EqualTo(20L)))
         )
 
-    /// Verifies customer and repository identifiers must both match before pricing can be selected.
+    /// Verifies owner and repository identifiers must both match before pricing can be selected.
     [<Test>]
-    member _.EffectiveRateSelectionDoesNotLeakAcrossCustomerOrRepositoryScope() =
-        let otherCustomerQuery =
-            { OperationsPricingTestData.query (Instant.FromUtc(2026, 7, 15, 12, 0)) with CustomerId = OperationsPricingTestData.otherCustomerId }
+    member _.EffectiveRateSelectionDoesNotLeakAcrossOwnerOrRepositoryScope() =
+        let otherOwnerQuery = { OperationsPricingTestData.query (Instant.FromUtc(2026, 7, 15, 12, 0)) with OwnerId = OperationsPricingTestData.otherOwnerId }
 
         let otherRepositoryQuery =
             { OperationsPricingTestData.query (Instant.FromUtc(2026, 7, 15, 12, 0)) with RepositoryId = OperationsPricingTestData.otherRepositoryId }
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(PricingRateSelection.trySelect otherCustomerQuery OperationsPricingTestData.catalog, Is.EqualTo(None))
+                Assert.That(PricingRateSelection.trySelect otherOwnerQuery OperationsPricingTestData.catalog, Is.EqualTo(None))
                 Assert.That(PricingRateSelection.trySelect otherRepositoryQuery OperationsPricingTestData.catalog, Is.EqualTo(None)))
         )
 
@@ -358,7 +347,7 @@ type OperationsPricingTests() =
         let plan = entityType typeof<PricingPlanEntity>
         let mapping = entityType typeof<BillableUsageKindMappingEntity>
         let rate = entityType typeof<PricingRateEntity>
-        let assignment = entityType typeof<CustomerPricingAssignmentEntity>
+        let assignment = entityType typeof<PricingAssignmentEntity>
         let currencyCode = rate.FindProperty("CurrencyCode")
         let rateForeignKeyName = pricingPlanForeignKeyName rate
         let assignmentForeignKeyName = pricingPlanForeignKeyName assignment
@@ -369,11 +358,11 @@ type OperationsPricingTests() =
 
         let hasAssignmentIndex =
             assignment.GetIndexes()
-            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.CustomerPricingAssignmentScopeIndexName)
+            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.PricingAssignmentScopeIndexName)
 
         let hasAssignmentPricingPlanIndex =
             assignment.GetIndexes()
-            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName)
+            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.PricingAssignmentPricingPlanIndexName)
 
         Assert.Multiple(
             Action (fun () ->
@@ -381,11 +370,11 @@ type OperationsPricingTests() =
                 Assert.That(plan.FindPrimaryKey().GetName(), Is.EqualTo("PK_ops_PricingPlan"))
                 Assert.That(mapping.GetTableName(), Is.EqualTo(OperationsPricingSql.BillableUsageKindMappingTableName))
                 Assert.That(rate.GetTableName(), Is.EqualTo(OperationsPricingSql.PricingRateTableName))
-                Assert.That(assignment.GetTableName(), Is.EqualTo(OperationsPricingSql.CustomerPricingAssignmentTableName))
+                Assert.That(assignment.GetTableName(), Is.EqualTo(OperationsPricingSql.PricingAssignmentTableName))
                 Assert.That(currencyCode.GetColumnType(), Is.EqualTo("varchar(3)"))
                 Assert.That(currencyCode.GetCollation(), Is.EqualTo("Latin1_General_100_BIN2"))
                 Assert.That(rateForeignKeyName, Is.EqualTo("FK_ops_PricingRate_PricingPlan"))
-                Assert.That(assignmentForeignKeyName, Is.EqualTo("FK_ops_CustomerPricingAssignment_PricingPlan"))
+                Assert.That(assignmentForeignKeyName, Is.EqualTo("FK_ops_PricingAssignment_PricingPlan"))
                 Assert.That(hasRateIndex, Is.True)
                 Assert.That(hasAssignmentIndex, Is.True)
                 Assert.That(hasAssignmentPricingPlanIndex, Is.True))
@@ -396,11 +385,11 @@ type OperationsPricingTests() =
     member _.OperationsModelSnapshotContainsPricingFoundationEntities() =
         let snapshot = OperationsDbContextModelSnapshot()
         let rate = snapshot.Model.FindEntityType(typeof<PricingRateEntity>)
-        let assignment = snapshot.Model.FindEntityType(typeof<CustomerPricingAssignmentEntity>)
+        let assignment = snapshot.Model.FindEntityType(typeof<PricingAssignmentEntity>)
 
         let hasAssignmentPricingPlanIndex =
             assignment.GetIndexes()
-            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName)
+            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.PricingAssignmentPricingPlanIndexName)
 
         Assert.Multiple(
             Action (fun () ->
@@ -409,7 +398,7 @@ type OperationsPricingTests() =
                 Assert.That(rate, Is.Not.Null)
                 Assert.That(assignment, Is.Not.Null)
                 Assert.That(pricingPlanForeignKeyName rate, Is.EqualTo("FK_ops_PricingRate_PricingPlan"))
-                Assert.That(pricingPlanForeignKeyName assignment, Is.EqualTo("FK_ops_CustomerPricingAssignment_PricingPlan"))
+                Assert.That(pricingPlanForeignKeyName assignment, Is.EqualTo("FK_ops_PricingAssignment_PricingPlan"))
                 Assert.That(hasAssignmentPricingPlanIndex, Is.True))
         )
 
@@ -418,18 +407,18 @@ type OperationsPricingTests() =
     member _.PricingMigrationTargetModelContainsReviewedForeignKeyNames() =
         let migration = AddPricingPlanRateAssignment()
         let rate = migration.TargetModel.FindEntityType(typeof<PricingRateEntity>)
-        let assignment = migration.TargetModel.FindEntityType(typeof<CustomerPricingAssignmentEntity>)
+        let assignment = migration.TargetModel.FindEntityType(typeof<PricingAssignmentEntity>)
 
         let hasAssignmentPricingPlanIndex =
             assignment.GetIndexes()
-            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName)
+            |> Seq.exists (fun index -> index.GetDatabaseName() = OperationsPricingSql.PricingAssignmentPricingPlanIndexName)
 
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(rate, Is.Not.Null)
                 Assert.That(assignment, Is.Not.Null)
                 Assert.That(pricingPlanForeignKeyName rate, Is.EqualTo("FK_ops_PricingRate_PricingPlan"))
-                Assert.That(pricingPlanForeignKeyName assignment, Is.EqualTo("FK_ops_CustomerPricingAssignment_PricingPlan"))
+                Assert.That(pricingPlanForeignKeyName assignment, Is.EqualTo("FK_ops_PricingAssignment_PricingPlan"))
                 Assert.That(hasAssignmentPricingPlanIndex, Is.True))
         )
 
@@ -463,18 +452,19 @@ type OperationsPricingTests() =
                 Assert.That(script, Does.Contain("CREATE TABLE ops.PricingPlan"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.BillableUsageKindMapping"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.PricingRate"))
-                Assert.That(script, Does.Contain("CREATE TABLE ops.CustomerPricingAssignment"))
+                Assert.That(script, Does.Contain("CREATE TABLE ops.PricingAssignment"))
                 Assert.That(script, Does.Contain("CK_ops_PricingRate_EffectiveRange"))
                 Assert.That(script, Does.Contain("CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL"))
                 Assert.That(script, Does.Contain("LEN(CurrencyCode) = 3"))
                 Assert.That(script, Does.Contain("CurrencyCode COLLATE Latin1_General_100_BIN2 = UPPER(CurrencyCode)"))
                 Assert.That(script, Does.Contain("CurrencyCode COLLATE Latin1_General_100_BIN2 NOT LIKE"))
                 Assert.That(script, Does.Contain("CONSTRAINT FK_ops_PricingRate_PricingPlan FOREIGN KEY"))
-                Assert.That(script, Does.Contain("CONSTRAINT FK_ops_CustomerPricingAssignment_PricingPlan FOREIGN KEY"))
-                Assert.That(script, Does.Contain($"CREATE INDEX {OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName}"))
-                Assert.That(script, Does.Contain("ON ops.CustomerPricingAssignment(PricingPlanId)"))
+                Assert.That(script, Does.Contain("CONSTRAINT FK_ops_PricingAssignment_PricingPlan FOREIGN KEY"))
+                Assert.That(script, Does.Contain($"CREATE INDEX {OperationsPricingSql.PricingAssignmentPricingPlanIndexName}"))
+                Assert.That(script, Does.Contain("ON ops.PricingAssignment(PricingPlanId)"))
                 Assert.That(script, Does.Contain(OperationsPricingSql.PricingRateOverlapTriggerName))
-                Assert.That(script, Does.Contain(OperationsPricingSql.CustomerPricingAssignmentOverlapTriggerName))
+                Assert.That(script, Does.Contain(OperationsPricingSql.PricingAssignmentOverlapTriggerName))
+                Assert.That(script, Does.Contain("ON existing.OwnerId = candidate.OwnerId"))
                 Assert.That(lockHintCount, Is.EqualTo(4))
                 Assert.That(dynamicTriggerCount, Is.EqualTo(4))
                 Assert.That(script, Does.Contain("effective windows cannot overlap")))
@@ -497,7 +487,7 @@ type OperationsPricingTests() =
                 Assert.That(targetModelSource, Does.Contain(".UseCollation(\"Latin1_General_100_BIN2\")")))
         )
 
-    /// Verifies the SQL selector cannot return a customer rate through missing mapping or loose scope matching.
+    /// Verifies the SQL selector cannot return a owner rate through missing mapping or loose scope matching.
     [<Test>]
     member _.EffectiveRateSqlRequiresExplicitMappingRateAndRepositoryScope() =
         let sql = OperationsPricingSql.SelectEffectivePricingRate
@@ -506,8 +496,7 @@ type OperationsPricingTests() =
             Action (fun () ->
                 Assert.That(sql, Does.Contain("INNER JOIN ops.BillableUsageKindMapping AS mapping"))
                 Assert.That(sql, Does.Contain("INNER JOIN ops.PricingRate AS rate"))
-                Assert.That(sql, Does.Contain("assignment.CustomerId = @CustomerId"))
-                Assert.That(sql, Does.Contain("assignment.OwnerId = @OwnerId"))
+                Assert.That(sql, Does.Contain("WHERE assignment.OwnerId = @OwnerId"))
                 Assert.That(sql, Does.Contain("assignment.OrganizationId = @OrganizationId"))
                 Assert.That(sql, Does.Contain("assignment.RepositoryId = @RepositoryId"))
                 Assert.That(sql, Does.Contain("mapping.FactKind = @FactKind"))
@@ -521,7 +510,7 @@ type OperationsPricingTests() =
                 Assert.That(sql, Does.Contain("ORDER BY")))
         )
 
-    /// Verifies the initial seed script exists and does not assign customers or post charges.
+    /// Verifies the initial seed script exists and does not assign owners or post charges.
     [<Test>]
     member _.InitialPricingSeedScriptDocumentsFoundationRowsOnly() =
         let seedPath = Path.Combine(operationsRoot (), "scripts", "seed-pricing-foundation.sql")
@@ -533,6 +522,38 @@ type OperationsPricingTests() =
                 Assert.That(script, Does.Contain("ops.PricingPlan"))
                 Assert.That(script, Does.Contain("ops.BillableUsageKindMapping"))
                 Assert.That(script, Does.Contain("ops.PricingRate"))
-                Assert.That(script, Does.Not.Contain("INSERT INTO ops.CustomerPricingAssignment"))
+                Assert.That(script, Does.Not.Contain("INSERT INTO ops.PricingAssignment"))
                 Assert.That(script, Does.Not.Contain("ChargeLedger")))
         )
+
+    /// Proves the current Operations source contains no unsupported second-identity names.
+    [<Test>]
+    member _.OperationsSourceContainsNoUnsupportedPricingIdentityTerms() =
+        let forbiddenTerms =
+            [
+                "Customer" + "Id"
+                "Customer" + "PricingAssignment"
+            ]
+
+        let sourceFiles =
+            Directory.EnumerateFiles(operationsRoot (), "*", SearchOption.AllDirectories)
+            |> Seq.filter (fun path ->
+                let relativePath = Path.GetRelativePath(operationsRoot (), path)
+
+                not (relativePath.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                && not (relativePath.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)))
+
+        let residuals =
+            sourceFiles
+            |> Seq.collect (fun path ->
+                let source = File.ReadAllText path
+
+                forbiddenTerms
+                |> Seq.choose (fun term ->
+                    if source.Contains(term, StringComparison.Ordinal) then
+                        Some(path, term)
+                    else
+                        None))
+            |> Seq.toList
+
+        Assert.That(residuals, Is.Empty, $"Unsupported pricing identity terms remain: {residuals}")

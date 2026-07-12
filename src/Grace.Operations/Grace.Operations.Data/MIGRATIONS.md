@@ -6,8 +6,8 @@ schema is intentionally narrow:
 - `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary and keeps
   the exact accepted broker payload in `RawPayload` for replay and audit.
 - `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
-- `ops.ChargePreviewLine` stores deterministic provisional customer charge lines rebuilt from compact immutable usage
-  facts and complete effective pricing. A rebuild atomically replaces one customer/repository/half-open-period scope;
+- `ops.ChargePreviewLine` stores deterministic provisional owner charge lines rebuilt from compact immutable usage
+  facts and complete effective pricing. A rebuild atomically replaces one owner/repository/half-open-period scope;
   these rows are neither invoices nor immutable ledger entries.
 - The EF migrations history table lives in `ops.__EFMigrationsHistory` so operations schema state stays with the
   operations schema.

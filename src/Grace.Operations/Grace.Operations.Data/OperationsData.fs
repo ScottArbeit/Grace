@@ -48,22 +48,13 @@ type UsageAggregateMinuteKey =
 /// Describes the aggregate quantity projected for one Grace repository resource and UTC minute.
 type UsageAggregateMinute = { Key: UsageAggregateMinuteKey; Quantity: int64 }
 
-/// Carries one customer, repository scope, fact kind, and timestamp for effective pricing lookup.
-type PricingRateSelectionQuery =
-    {
-        CustomerId: Guid
-        OwnerId: OwnerId
-        OrganizationId: OrganizationId
-        RepositoryId: RepositoryId
-        FactKind: UsageFactKind
-        ObservedAt: Instant
-    }
+/// Carries one owner, repository scope, fact kind, and timestamp for effective pricing lookup.
+type PricingRateSelectionQuery = { OwnerId: OwnerId; OrganizationId: OrganizationId; RepositoryId: RepositoryId; FactKind: UsageFactKind; ObservedAt: Instant }
 
-/// Describes the effective customer rate selected for a tracked usage fact.
+/// Describes the effective owner rate selected for a tracked usage fact.
 type EffectivePricingRate =
     {
-        CustomerPricingAssignmentId: Guid
-        CustomerId: Guid
+        PricingAssignmentId: Guid
         OwnerId: OwnerId
         OrganizationId: OrganizationId
         RepositoryId: RepositoryId
@@ -107,11 +98,10 @@ type PricingRate =
         EffectiveTo: Instant option
     }
 
-/// Describes an effective-dated customer assignment to one pricing plan for a Grace repository scope.
-type CustomerPricingAssignment =
+/// Describes an effective-dated owner assignment to one pricing plan for a Grace repository scope.
+type PricingAssignment =
     {
-        CustomerPricingAssignmentId: Guid
-        CustomerId: Guid
+        PricingAssignmentId: Guid
         OwnerId: OwnerId
         OrganizationId: OrganizationId
         RepositoryId: RepositoryId
@@ -126,10 +116,10 @@ type PricingCatalogSnapshot =
         PricingPlans: PricingPlan list
         BillableUsageKindMappings: BillableUsageKindMapping list
         PricingRates: PricingRate list
-        CustomerPricingAssignments: CustomerPricingAssignment list
+        PricingAssignments: PricingAssignment list
     }
 
-/// Selects customer rates only when every effective-dated pricing prerequisite is present.
+/// Selects owner rates only when every effective-dated pricing prerequisite is present.
 [<RequireQualifiedAccess>]
 module PricingRateSelection =
 
@@ -151,7 +141,7 @@ module PricingRateSelection =
                 compare (identity left) (identity right))
         |> List.tryHead
 
-    /// Intersects selected pricing prerequisites into the complete customer-price applicability window.
+    /// Intersects selected pricing prerequisites into the complete owner-price applicability window.
     let private intersectEffectiveWindows windows =
         let effectiveFrom = windows |> List.map fst |> List.max
 
@@ -162,17 +152,16 @@ module PricingRateSelection =
 
         effectiveFrom, effectiveTo
 
-    /// Selects the effective rate for a customer usage fact without making unmapped tracked facts billable.
+    /// Selects the effective rate for a owner usage fact without making unmapped tracked facts billable.
     let trySelect (query: PricingRateSelectionQuery) (catalog: PricingCatalogSnapshot) =
         let assignment =
-            catalog.CustomerPricingAssignments
+            catalog.PricingAssignments
             |> List.filter (fun candidate ->
-                candidate.CustomerId = query.CustomerId
-                && candidate.OwnerId = query.OwnerId
+                candidate.OwnerId = query.OwnerId
                 && candidate.OrganizationId = query.OrganizationId
                 && candidate.RepositoryId = query.RepositoryId
                 && contains query.ObservedAt candidate.EffectiveFrom candidate.EffectiveTo)
-            |> latestBy (fun candidate -> candidate.EffectiveFrom) (fun candidate -> candidate.CustomerPricingAssignmentId)
+            |> latestBy (fun candidate -> candidate.EffectiveFrom) (fun candidate -> candidate.PricingAssignmentId)
 
         let plan =
             assignment
@@ -211,8 +200,7 @@ module PricingRateSelection =
 
             Some
                 {
-                    CustomerPricingAssignmentId = selectedAssignment.CustomerPricingAssignmentId
-                    CustomerId = selectedAssignment.CustomerId
+                    PricingAssignmentId = selectedAssignment.PricingAssignmentId
                     OwnerId = selectedAssignment.OwnerId
                     OrganizationId = selectedAssignment.OrganizationId
                     RepositoryId = selectedAssignment.RepositoryId
@@ -348,7 +336,7 @@ type IOperationsUsageArchiveStore =
     /// Clears expired temporary support rehydrations left behind after caller or process failure.
     abstract CleanupExpiredRehydratedPayloadsAsync: expiresBefore: Instant * batchSize: int * cancellationToken: CancellationToken -> Task<int>
 
-/// Selects effective customer pricing rates from the Operations pricing catalog.
+/// Selects effective owner pricing rates from the Operations pricing catalog.
 type IOperationsPricingCatalog =
 
     /// Returns a rate only when assignment, plan, usage-kind mapping, and rate rows are all effective.
@@ -380,7 +368,6 @@ type SqlOperationsPricingCatalog(connectionString: string) =
 
     /// Adds the effective-rate lookup parameters with the repository scope required to prevent leakage.
     let addSelectionParameters (command: SqlCommand) (query: PricingRateSelectionQuery) =
-        addParameter command "@CustomerId" SqlDbType.UniqueIdentifier query.CustomerId
         addParameter command "@OwnerId" SqlDbType.UniqueIdentifier query.OwnerId
         addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier query.OrganizationId
         addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier query.RepositoryId
@@ -399,8 +386,7 @@ type SqlOperationsPricingCatalog(connectionString: string) =
         let effectiveToOrdinal = reader.GetOrdinal("EffectiveToUtc")
 
         {
-            CustomerPricingAssignmentId = reader.GetGuid(reader.GetOrdinal("CustomerPricingAssignmentId"))
-            CustomerId = reader.GetGuid(reader.GetOrdinal("CustomerId"))
+            PricingAssignmentId = reader.GetGuid(reader.GetOrdinal("PricingAssignmentId"))
             OwnerId = reader.GetGuid(reader.GetOrdinal("OwnerId"))
             OrganizationId = reader.GetGuid(reader.GetOrdinal("OrganizationId"))
             RepositoryId = reader.GetGuid(reader.GetOrdinal("RepositoryId"))
@@ -419,7 +405,7 @@ type SqlOperationsPricingCatalog(connectionString: string) =
             EffectiveTo = readEffectiveTo reader effectiveToOrdinal
         }
 
-    /// Returns the effective customer rate selected by SQL, or None for non-billable usage.
+    /// Returns the effective owner rate selected by SQL, or None for non-billable usage.
     member _.TrySelectEffectiveRateAsync(query: PricingRateSelectionQuery, cancellationToken: CancellationToken) =
         task {
             use! connection = openConnectionAsync cancellationToken

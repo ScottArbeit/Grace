@@ -28,13 +28,13 @@ module OperationsPricingSql =
     [<Literal>]
     let PricingRateTable = "ops.PricingRate"
 
-    /// Names the customer pricing assignment table without schema qualification for EF migrations.
+    /// Names the owner pricing assignment table without schema qualification for EF migrations.
     [<Literal>]
-    let CustomerPricingAssignmentTableName = "CustomerPricingAssignment"
+    let PricingAssignmentTableName = "PricingAssignment"
 
-    /// Names the customer pricing assignment table.
+    /// Names the owner pricing assignment table.
     [<Literal>]
-    let CustomerPricingAssignmentTable = "ops.CustomerPricingAssignment"
+    let PricingAssignmentTable = "ops.PricingAssignment"
 
     /// Limits stable pricing plan codes used by operator seed scripts and later APIs.
     [<Literal>]
@@ -48,7 +48,7 @@ module OperationsPricingSql =
     [<Literal>]
     let CurrencyCodeLength = 3
 
-    /// Limits billing unit labels such as byte-minute before later customer preview surfaces format them.
+    /// Limits billing unit labels such as byte-minute before later owner preview surfaces format them.
     [<Literal>]
     let UnitNameMaxLength = 64
 
@@ -64,17 +64,17 @@ module OperationsPricingSql =
     [<Literal>]
     let PricingRateOverlapTriggerName = "TR_ops_PricingRate_PreventOverlap"
 
-    /// Names the trigger that rejects overlapping customer assignments for the same repository scope.
+    /// Names the trigger that rejects overlapping owner assignments for the same repository scope.
     [<Literal>]
-    let CustomerPricingAssignmentOverlapTriggerName = "TR_ops_CustomerPricingAssignment_PreventOverlap"
+    let PricingAssignmentOverlapTriggerName = "TR_ops_PricingAssignment_PreventOverlap"
 
-    /// Names the indexed lookup path for effective customer plan assignments.
+    /// Names the indexed lookup path for effective owner plan assignments.
     [<Literal>]
-    let CustomerPricingAssignmentScopeIndexName = "IX_ops_CustomerPricingAssignment_ScopeEffective"
+    let PricingAssignmentScopeIndexName = "IX_ops_PricingAssignment_ScopeEffective"
 
-    /// Names the foreign-key lookup path from customer assignments to pricing plans.
+    /// Names the foreign-key lookup path from owner assignments to pricing plans.
     [<Literal>]
-    let CustomerPricingAssignmentPricingPlanIndexName = "IX_CustomerPricingAssignment_PricingPlanId"
+    let PricingAssignmentPricingPlanIndexName = "IX_PricingAssignment_PricingPlanId"
 
     /// Names the indexed lookup path for effective rate selection.
     [<Literal>]
@@ -84,13 +84,12 @@ module OperationsPricingSql =
     [<Literal>]
     let BillableUsageKindMappingEffectiveIndexName = "IX_ops_BillableUsageKindMapping_FactKindEffective"
 
-    /// Selects the effective customer pricing rate only when assignment, plan, billable mapping, and rate all exist.
+    /// Selects the effective owner pricing rate only when assignment, plan, billable mapping, and rate all exist.
     [<Literal>]
     let SelectEffectivePricingRate =
         """
 SELECT TOP (1)
-    assignment.CustomerPricingAssignmentId,
-    assignment.CustomerId,
+    assignment.PricingAssignmentId,
     assignment.OwnerId,
     assignment.OrganizationId,
     assignment.RepositoryId,
@@ -105,7 +104,7 @@ SELECT TOP (1)
     rate.UnitPriceMicros,
     applicability.EffectiveFromUtc,
     applicability.EffectiveToUtc
-FROM ops.CustomerPricingAssignment AS assignment WITH (READCOMMITTEDLOCK)
+FROM ops.PricingAssignment AS assignment WITH (READCOMMITTEDLOCK)
 INNER JOIN ops.PricingPlan AS plan WITH (READCOMMITTEDLOCK)
     ON plan.PricingPlanId = assignment.PricingPlanId
 INNER JOIN ops.BillableUsageKindMapping AS mapping WITH (READCOMMITTEDLOCK)
@@ -127,8 +126,7 @@ CROSS APPLY
             (rate.EffectiveFromUtc, rate.EffectiveToUtc)
     ) AS contributor(EffectiveFromUtc, EffectiveToUtc)
 ) AS applicability
-WHERE assignment.CustomerId = @CustomerId
-AND assignment.OwnerId = @OwnerId
+WHERE assignment.OwnerId = @OwnerId
 AND assignment.OrganizationId = @OrganizationId
 AND assignment.RepositoryId = @RepositoryId
 AND assignment.EffectiveFromUtc <= @ObservedAtUtc
@@ -144,6 +142,6 @@ ORDER BY
     rate.EffectiveFromUtc DESC,
     mapping.EffectiveFromUtc DESC,
     plan.EffectiveFromUtc DESC,
-    assignment.CustomerPricingAssignmentId ASC,
+    assignment.PricingAssignmentId ASC,
     rate.PricingRateId ASC;
 """
