@@ -13,6 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
+import type { TypedReferenceApiDto } from './TypedReferenceApiDto';
+import {
+    TypedReferenceApiDtoFromJSON,
+    TypedReferenceApiDtoFromJSONTyped,
+    TypedReferenceApiDtoToJSON,
+    TypedReferenceApiDtoToJSONTyped,
+} from './TypedReferenceApiDto';
 import type { ReferenceApiDto } from './ReferenceApiDto';
 import {
     ReferenceApiDtoFromJSON,
@@ -32,151 +39,151 @@ export interface BranchApiDto {
      * @type {string}
      * @memberof BranchApiDto
      */
-    _class?: string;
+    _class: string;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    branchId?: string;
+    branchId: string;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    branchName?: string;
+    branchName: string;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    parentBranchId?: string;
+    parentBranchId: string;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    ownerId?: string;
+    ownerId: string;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    organizationId?: string;
+    organizationId: string;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    repositoryId?: string;
+    repositoryId: string;
     /**
      * 
      * @type {ReferenceApiDto}
      * @memberof BranchApiDto
      */
-    basedOn?: ReferenceApiDto;
+    basedOn: ReferenceApiDto;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    userId?: string;
+    userId: string;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    assignEnabled?: boolean;
+    assignEnabled: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    promotionEnabled?: boolean;
+    promotionEnabled: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    commitEnabled?: boolean;
+    commitEnabled: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    checkpointEnabled?: boolean;
+    checkpointEnabled: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    saveEnabled?: boolean;
+    saveEnabled: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    tagEnabled?: boolean;
+    tagEnabled: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    externalEnabled?: boolean;
+    externalEnabled: boolean;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    autoRebaseEnabled?: boolean;
+    autoRebaseEnabled: boolean;
     /**
      * 
      * @type {string}
      * @memberof BranchApiDto
      */
-    promotionMode?: string;
+    promotionMode: string;
     /**
      * 
      * @type {ReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestReference?: ReferenceApiDto;
+    latestReference: ReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestPromotion?: ReferenceApiDto;
+    latestPromotion: TypedReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestCommit?: ReferenceApiDto;
+    latestCommit: TypedReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestCheckpoint?: ReferenceApiDto;
+    latestCheckpoint: TypedReferenceApiDto;
     /**
      * 
-     * @type {ReferenceApiDto}
+     * @type {TypedReferenceApiDto}
      * @memberof BranchApiDto
      */
-    latestSave?: ReferenceApiDto;
+    latestSave: TypedReferenceApiDto;
     /**
      * 
      * @type {boolean}
      * @memberof BranchApiDto
      */
-    shouldRecomputeLatestReferences?: boolean;
+    shouldRecomputeLatestReferences: boolean;
     /**
      * 
      * @type {Date}
      * @memberof BranchApiDto
      */
-    createdAt?: Date;
+    createdAt: Date;
     /**
      * 
      * @type {Date}
@@ -194,13 +201,39 @@ export interface BranchApiDto {
      * @type {string}
      * @memberof BranchApiDto
      */
-    deleteReason?: string;
+    deleteReason: string;
 }
 
 /**
  * Check if a given object implements the BranchApiDto interface.
  */
 export function instanceOfBranchApiDto(value: object): value is BranchApiDto {
+    if (!('_class' in value) || value['_class'] === undefined) return false;
+    if (!('branchId' in value) || value['branchId'] === undefined) return false;
+    if (!('branchName' in value) || value['branchName'] === undefined) return false;
+    if (!('parentBranchId' in value) || value['parentBranchId'] === undefined) return false;
+    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
+    if (!('organizationId' in value) || value['organizationId'] === undefined) return false;
+    if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
+    if (!('basedOn' in value) || value['basedOn'] === undefined) return false;
+    if (!('userId' in value) || value['userId'] === undefined) return false;
+    if (!('assignEnabled' in value) || value['assignEnabled'] === undefined) return false;
+    if (!('promotionEnabled' in value) || value['promotionEnabled'] === undefined) return false;
+    if (!('commitEnabled' in value) || value['commitEnabled'] === undefined) return false;
+    if (!('checkpointEnabled' in value) || value['checkpointEnabled'] === undefined) return false;
+    if (!('saveEnabled' in value) || value['saveEnabled'] === undefined) return false;
+    if (!('tagEnabled' in value) || value['tagEnabled'] === undefined) return false;
+    if (!('externalEnabled' in value) || value['externalEnabled'] === undefined) return false;
+    if (!('autoRebaseEnabled' in value) || value['autoRebaseEnabled'] === undefined) return false;
+    if (!('promotionMode' in value) || value['promotionMode'] === undefined) return false;
+    if (!('latestReference' in value) || value['latestReference'] === undefined) return false;
+    if (!('latestPromotion' in value) || value['latestPromotion'] === undefined) return false;
+    if (!('latestCommit' in value) || value['latestCommit'] === undefined) return false;
+    if (!('latestCheckpoint' in value) || value['latestCheckpoint'] === undefined) return false;
+    if (!('latestSave' in value) || value['latestSave'] === undefined) return false;
+    if (!('shouldRecomputeLatestReferences' in value) || value['shouldRecomputeLatestReferences'] === undefined) return false;
+    if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
+    if (!('deleteReason' in value) || value['deleteReason'] === undefined) return false;
     return true;
 }
 
@@ -214,34 +247,34 @@ export function BranchApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boolea
     }
     return {
         
-        '_class': json['Class'] == null ? undefined : json['Class'],
-        'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
-        'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
-        'parentBranchId': json['ParentBranchId'] == null ? undefined : json['ParentBranchId'],
-        'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
-        'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
-        'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
-        'basedOn': json['BasedOn'] == null ? undefined : ReferenceApiDtoFromJSON(json['BasedOn']),
-        'userId': json['UserId'] == null ? undefined : json['UserId'],
-        'assignEnabled': json['AssignEnabled'] == null ? undefined : json['AssignEnabled'],
-        'promotionEnabled': json['PromotionEnabled'] == null ? undefined : json['PromotionEnabled'],
-        'commitEnabled': json['CommitEnabled'] == null ? undefined : json['CommitEnabled'],
-        'checkpointEnabled': json['CheckpointEnabled'] == null ? undefined : json['CheckpointEnabled'],
-        'saveEnabled': json['SaveEnabled'] == null ? undefined : json['SaveEnabled'],
-        'tagEnabled': json['TagEnabled'] == null ? undefined : json['TagEnabled'],
-        'externalEnabled': json['ExternalEnabled'] == null ? undefined : json['ExternalEnabled'],
-        'autoRebaseEnabled': json['AutoRebaseEnabled'] == null ? undefined : json['AutoRebaseEnabled'],
-        'promotionMode': json['PromotionMode'] == null ? undefined : json['PromotionMode'],
-        'latestReference': json['LatestReference'] == null ? undefined : ReferenceApiDtoFromJSON(json['LatestReference']),
-        'latestPromotion': json['LatestPromotion'] == null ? undefined : ReferenceApiDtoFromJSON(json['LatestPromotion']),
-        'latestCommit': json['LatestCommit'] == null ? undefined : ReferenceApiDtoFromJSON(json['LatestCommit']),
-        'latestCheckpoint': json['LatestCheckpoint'] == null ? undefined : ReferenceApiDtoFromJSON(json['LatestCheckpoint']),
-        'latestSave': json['LatestSave'] == null ? undefined : ReferenceApiDtoFromJSON(json['LatestSave']),
-        'shouldRecomputeLatestReferences': json['ShouldRecomputeLatestReferences'] == null ? undefined : json['ShouldRecomputeLatestReferences'],
-        'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
+        '_class': json['Class'],
+        'branchId': json['BranchId'],
+        'branchName': json['BranchName'],
+        'parentBranchId': json['ParentBranchId'],
+        'ownerId': json['OwnerId'],
+        'organizationId': json['OrganizationId'],
+        'repositoryId': json['RepositoryId'],
+        'basedOn': ReferenceApiDtoFromJSON(json['BasedOn']),
+        'userId': json['UserId'],
+        'assignEnabled': json['AssignEnabled'],
+        'promotionEnabled': json['PromotionEnabled'],
+        'commitEnabled': json['CommitEnabled'],
+        'checkpointEnabled': json['CheckpointEnabled'],
+        'saveEnabled': json['SaveEnabled'],
+        'tagEnabled': json['TagEnabled'],
+        'externalEnabled': json['ExternalEnabled'],
+        'autoRebaseEnabled': json['AutoRebaseEnabled'],
+        'promotionMode': json['PromotionMode'],
+        'latestReference': ReferenceApiDtoFromJSON(json['LatestReference']),
+        'latestPromotion': TypedReferenceApiDtoFromJSON(json['LatestPromotion']),
+        'latestCommit': TypedReferenceApiDtoFromJSON(json['LatestCommit']),
+        'latestCheckpoint': TypedReferenceApiDtoFromJSON(json['LatestCheckpoint']),
+        'latestSave': TypedReferenceApiDtoFromJSON(json['LatestSave']),
+        'shouldRecomputeLatestReferences': json['ShouldRecomputeLatestReferences'],
+        'createdAt': (new Date(json['CreatedAt'])),
         'updatedAt': json['UpdatedAt'] == null ? undefined : (new Date(json['UpdatedAt'])),
         'deletedAt': json['DeletedAt'] == null ? undefined : (new Date(json['DeletedAt'])),
-        'deleteReason': json['DeleteReason'] == null ? undefined : json['DeleteReason'],
+        'deleteReason': json['DeleteReason'],
     };
 }
 
@@ -275,12 +308,12 @@ export function BranchApiDtoToJSONTyped(value?: BranchApiDto | null, ignoreDiscr
         'AutoRebaseEnabled': value['autoRebaseEnabled'],
         'PromotionMode': value['promotionMode'],
         'LatestReference': ReferenceApiDtoToJSON(value['latestReference']),
-        'LatestPromotion': ReferenceApiDtoToJSON(value['latestPromotion']),
-        'LatestCommit': ReferenceApiDtoToJSON(value['latestCommit']),
-        'LatestCheckpoint': ReferenceApiDtoToJSON(value['latestCheckpoint']),
-        'LatestSave': ReferenceApiDtoToJSON(value['latestSave']),
+        'LatestPromotion': TypedReferenceApiDtoToJSON(value['latestPromotion']),
+        'LatestCommit': TypedReferenceApiDtoToJSON(value['latestCommit']),
+        'LatestCheckpoint': TypedReferenceApiDtoToJSON(value['latestCheckpoint']),
+        'LatestSave': TypedReferenceApiDtoToJSON(value['latestSave']),
         'ShouldRecomputeLatestReferences': value['shouldRecomputeLatestReferences'],
-        'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
+        'CreatedAt': value['createdAt'].toISOString(),
         'UpdatedAt': value['updatedAt'] == null ? value['updatedAt'] : value['updatedAt'].toISOString(),
         'DeletedAt': value['deletedAt'] == null ? value['deletedAt'] : value['deletedAt'].toISOString(),
         'DeleteReason': value['deleteReason'],

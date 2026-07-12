@@ -1646,18 +1646,36 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    /// Implements validations for the server request pipeline.
-                    let validations (parameters: BranchParameters) = [||]
-
-                    /// Implements query for the server request pipeline.
-                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
-                        task {
-                            let! parentBranchDto = actorProxy.GetParentBranch(getCorrelationId context)
-                            return parentBranchDto
-                        }
-
                     let! parameters = context |> parse<BranchParameters>
-                    let! result = processQuery context parameters validations 1 query
+                    let correlationId = getCorrelationId context
+                    let parameterDictionary = getParametersAsDictionary parameters
+                    let branchActorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                    let! parentBranch = branchActorProxy.GetParentBranch correlationId
+
+                    let! result =
+                        match parentBranch with
+                        | Some parentBranchDto ->
+                            context
+                            |> result200Ok (
+                                (GraceReturnValue.Create parentBranchDto correlationId)
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof BranchId, graceIds.BranchId)
+                                    .enhance ("Path", context.Request.Path.Value)
+                            )
+                        | None ->
+                            context
+                            |> result400BadRequest (
+                                (GraceError.Create (BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist) correlationId)
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof BranchId, graceIds.BranchId)
+                                    .enhance ("Path", context.Request.Path.Value)
+                            )
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -1702,7 +1720,10 @@ module Branch =
 
                 try
                     /// Implements validations for the server request pipeline.
-                    let validations (parameters: GetReferenceParameters) = [||]
+                    let validations (parameters: GetReferenceParameters) =
+                        [|
+                            Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
+                        |]
 
                     /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =

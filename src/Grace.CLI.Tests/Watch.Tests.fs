@@ -19482,7 +19482,13 @@ module WatchTests =
         let filePath = FilePath @"C:\repo\dir\cached-file.txt"
 
         let cachedFileVersion =
-            FileVersion.Create "dir/cached-file.txt" (Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") String.Empty true 12L
+            FileVersion.CreateWithHashes
+                "dir/cached-file.txt"
+                (Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                (Blake3Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                String.Empty
+                true
+                12L
 
         /// Tracks uploaded File Versions changes so this scenario can assert the resulting side effect explicitly.
         let mutable uploadedFileVersions = Array.empty<FileVersion>

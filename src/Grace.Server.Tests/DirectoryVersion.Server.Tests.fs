@@ -261,9 +261,9 @@ type DirectoryVersionServer() =
             )
         }
 
-    /// Verifies the get by SHA returns default sentinel when no directory version matches scenario.
+    /// Verifies the get by SHA returns Grace's normal not-found error when no directory version matches.
     [<Test>]
-    member _.GetByShaReturnsDefaultSentinelWhenNoDirectoryVersionMatches() =
+    member _.GetByShaReturnsNotFoundErrorWhenNoDirectoryVersionMatches() =
         task {
             let repositoryId = repositoryIds[0]
             let missingDirectoryId = Guid.NewGuid()
@@ -271,12 +271,11 @@ type DirectoryVersionServer() =
             let getByShaParameters = DirectoryVersionServerTestHelpers.getBySha256HashParameters repositoryId missingDirectoryId missingSha256Hash
 
             let! getByShaResponse = Client.PostAsync("/directory/getBySha256Hash", createJsonContent getByShaParameters)
-            do! DirectoryVersionServerTestHelpers.assertOk getByShaResponse
-            let! getBySha = deserializeContent<GraceReturnValue<DirectoryVersionServerTestHelpers.DirectoryVersionModel>> getByShaResponse
 
-            Assert.That(getBySha.ReturnValue.DirectoryVersionId, Is.EqualTo(DirectoryVersion.Default.DirectoryVersionId))
-            Assert.That(getBySha.ReturnValue.Sha256Hash, Is.EqualTo(DirectoryVersion.Default.Sha256Hash))
-            Assert.That(getBySha.ReturnValue.Blake3Hash, Is.EqualTo(DirectoryVersion.Default.Blake3Hash))
+            do!
+                DirectoryVersionServerTestHelpers.assertBadRequestGraceError
+                    (DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectoryDoesNotExist)
+                    getByShaResponse
         }
 
     /// Verifies the get by SHA rejects malformed prefixes before lookup scenario.

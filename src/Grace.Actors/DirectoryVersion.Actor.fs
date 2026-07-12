@@ -122,8 +122,8 @@ module DirectoryVersion =
                     stopwatch.Stop()
 
                     if computedSha256Hash = fileVersion.Sha256Hash
-                       && (String.IsNullOrWhiteSpace fileVersion.Blake3Hash
-                           || computedBlake3Hash = fileVersion.Blake3Hash) then
+                       && not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
+                       && computedBlake3Hash = fileVersion.Blake3Hash then
                         return Valid(fileVersion, computedSha256Hash, computedBlake3Hash, stopwatch.Elapsed.TotalMilliseconds)
                     else
                         return
@@ -194,58 +194,6 @@ module DirectoryVersion =
 
     /// Checks whether legacy file metadata is missing one of the expected hashes.
     let private hasMissingHash (value: string) = String.IsNullOrWhiteSpace value
-
-    /// Checks whether a legacy directory hash gap has already been validated.
-    let private hasValidatedLegacyDirectoryBlake3Gap (directoryVersion: DirectoryVersion) =
-        hasMissingHash directoryVersion.Blake3Hash
-        && not (hasMissingHash directoryVersion.Sha256Hash)
-        && directoryVersion.HashesValidated
-
-    /// Checks whether manifest-backed legacy file metadata lacks a Blake3 hash.
-    let private hasLegacyManifestBackedFileBlake3Gap (fileVersion: FileVersion) =
-        let contentReference = normalizeContentReference fileVersion
-
-        match contentReference.ReferenceType, contentReference.Manifest with
-        | FileContentReferenceType.FileManifest, Some manifest ->
-            hasMissingHash fileVersion.Blake3Hash
-            && not (String.IsNullOrWhiteSpace manifest.FileContentHash)
-            && ContentAddress.isValidAddress manifest.FileContentHash
-            && fileVersion.Size = manifest.Size
-        | _ -> false
-
-    /// Checks whether whole-file legacy metadata lacks a Blake3 hash.
-    let private hasLegacyWholeFileBlake3Gap (fileVersion: FileVersion) =
-        hasMissingHash fileVersion.Blake3Hash
-        && not (hasMissingHash fileVersion.Sha256Hash)
-        && isWholeFileContentReference fileVersion
-
-    /// Coordinates content reference identity logic for the DirectoryVersion actor.
-    let private contentReferenceIdentity (fileVersion: FileVersion) =
-        let contentReference = normalizeContentReference fileVersion
-
-        match contentReference.ReferenceType, contentReference.Manifest with
-        | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
-        | referenceType, _ -> $"{referenceType}"
-
-    /// Coordinates file identity logic for the DirectoryVersion actor.
-    let private fileIdentity (fileVersion: FileVersion) =
-        (fileVersion.RelativePath, fileVersion.Size, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
-
-    /// Checks whether an unchanged whole-file legacy Blake3 gap can be accepted.
-    let private hasUnchangedLegacyWholeFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
-        hasLegacyWholeFileBlake3Gap fileVersion
-        && previouslyValidatedFiles
-           |> Seq.exists (fun previousFile ->
-               hasLegacyWholeFileBlake3Gap previousFile
-               && fileIdentity previousFile = fileIdentity fileVersion)
-
-    /// Checks whether an unchanged manifest-backed legacy Blake3 gap can be accepted.
-    let private hasUnchangedLegacyManifestBackedFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
-        hasLegacyManifestBackedFileBlake3Gap fileVersion
-        && previouslyValidatedFiles
-           |> Seq.exists (fun previousFile ->
-               hasLegacyManifestBackedFileBlake3Gap previousFile
-               && fileIdentity previousFile = fileIdentity fileVersion)
 
     /// Normalizes directory-version children and files before save-boundary validation.
     let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
@@ -320,10 +268,7 @@ module DirectoryVersion =
                                 directoryVersion
                                 $"has child directory '{childDirectoryVersion.RelativePath}' without Sha256Hash."
                         )
-                elif
-                    hasMissingHash childDirectoryVersion.Blake3Hash
-                    && not (hasValidatedLegacyDirectoryBlake3Gap childDirectoryVersion)
-                then
+                elif hasMissingHash childDirectoryVersion.Blake3Hash then
                     error <-
                         Some(
                             directoryVersionHashError
@@ -342,11 +287,7 @@ module DirectoryVersion =
 
                 if hasMissingHash fileVersion.Sha256Hash then
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Sha256Hash.")
-                elif
-                    hasMissingHash fileVersion.Blake3Hash
-                    && not (hasUnchangedLegacyManifestBackedFileBlake3Gap previouslyValidatedFiles fileVersion)
-                    && not (hasUnchangedLegacyWholeFileBlake3Gap previouslyValidatedFiles fileVersion)
-                then
+                elif hasMissingHash fileVersion.Blake3Hash then
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Blake3Hash.")
 
                 fileIndex <- fileIndex + 1
@@ -468,10 +409,9 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must include a ChunkingSuiteId before Save.")
             elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid FileContentHash before Save.")
-            elif
-                not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
-                && fileVersion.Blake3Hash <> manifest.FileContentHash
-            then
+            elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
+                Error(manifestValidationError correlationId fileVersion "must include FileVersion.Blake3Hash before Save.")
+            elif fileVersion.Blake3Hash <> manifest.FileContentHash then
                 Error(manifestValidationError correlationId fileVersion "must match FileVersion.Blake3Hash before Save.")
             elif manifest.Size <= 0L then
                 Error(manifestValidationError correlationId fileVersion "must have a positive size before Save.")

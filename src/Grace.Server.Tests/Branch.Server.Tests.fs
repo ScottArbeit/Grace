@@ -134,6 +134,23 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Gets selected repository branches through the persisted-identity query route.
+    let getRepositoryBranchesByIdAsync (repositoryId: string) (branchIds: BranchId array) =
+        task {
+            let parameters = Parameters.Repository.GetBranchesByBranchIdParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchIds <- branchIds
+            parameters.MaxCount <- branchIds.Length
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/repository/getBranchesByBranchId", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
+        }
+
     /// Saves branch through the branch test routes.
     let saveBranchAsync (repositoryId: string) (branch: Branch.BranchDto) =
         task {
@@ -922,6 +939,71 @@ module BranchServerTestHelpers =
 [<Parallelizable(ParallelScope.All)>]
 type BranchServer() =
 
+    /// Verifies branch-by-id resolves initial main through the strict normalized public projection.
+    [<Test>]
+    member _.GetBranchesByBranchIdReturnsNormalizedInitialMain() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = Guid.Parse(repositoryDefaultBranchIds[0])
+            let! branches = BranchServerTestHelpers.getRepositoryBranchesByIdAsync repositoryId [| branchId |]
+
+            Assert.That(branches, Has.Length.EqualTo(1))
+            Assert.That(branches[0].BranchId, Is.EqualTo(branchId))
+
+            [|
+                branches[0].BasedOn
+                branches[0].LatestReference
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(ReferenceId.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
+            Assert.That(Branch.BranchDto.IsValidPublicProjection(branches[0]), Is.True, serialize branches[0])
+        }
+
+    /// Verifies the root branch parent route returns Grace's controlled no-parent error without querying a default parent actor.
+    [<Test>]
+    member _.GetParentBranchReturnsControlledErrorForRootBranch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parameters = BranchServerTestHelpers.getBranchParameters repositoryId repositoryDefaultBranchIds[0]
+
+            let! response = Client.PostAsync("/branch/getParentBranch", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    /// Verifies branch Reference lookup rejects the default ReferenceId through the normal validation envelope.
+    [<Test>]
+    member _.GetReferenceRejectsEmptyReferenceId() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parameters = Parameters.Branch.GetReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- repositoryDefaultBranchIds[0]
+            parameters.ReferenceId <- $"{ReferenceId.Empty}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/getReference", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = BranchError.getErrorMessage BranchError.InvalidReferenceId
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
     /// Verifies the create get list reference and version routes round trip branch identity scenario.
     [<Test>]
     member _.CreateGetListReferenceAndVersionRoutesRoundTripBranchIdentity() =
@@ -929,12 +1011,39 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let parentBranchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+
+            [|
+                parentBranch.BasedOn
+                parentBranch.LatestReference
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
             let branchName = $"Branch{Guid.NewGuid():N}"
 
             let! createdBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch branchName
             BranchServerTestHelpers.assertBranchMatches repositoryId $"{createdBranch.BranchId}" branchName createdBranch
             Assert.That(createdBranch.ParentBranchId, Is.EqualTo(parentBranch.BranchId))
             Assert.That(createdBranch.BasedOn.ReferenceId, Is.EqualTo(parentBranch.BasedOn.ReferenceId))
+
+            [|
+                createdBranch.BasedOn
+                createdBranch.LatestReference
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(Guid.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
+            [|
+                createdBranch.LatestPromotion
+                createdBranch.LatestCommit
+                createdBranch.LatestCheckpoint
+                createdBranch.LatestSave
+            |]
+            |> Array.iter (fun reference -> Assert.That(reference, Is.EqualTo(Reference.ReferenceDto.Default)))
 
             let! fetchedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{createdBranch.BranchId}"
             BranchServerTestHelpers.assertBranchMatches repositoryId $"{createdBranch.BranchId}" branchName fetchedBranch
@@ -1745,7 +1854,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/bad-parameters.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/bad-parameters.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
             parameters.MaxReferences <- MaximumMaxReferences + 1
 
@@ -1765,7 +1874,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/null-path.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/null-path.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
             parameters.Path <- null
 
@@ -1800,7 +1909,7 @@ type BranchServer() =
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
-            let fileVersion = FileVersion.Create "annotate/null-reference-types.fs" String.Empty String.Empty false 1L
+            let fileVersion = FileVersion.CreateWithHashes "annotate/null-reference-types.fs" String.Empty "blake3" String.Empty false 1L
             let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
 
             let json =

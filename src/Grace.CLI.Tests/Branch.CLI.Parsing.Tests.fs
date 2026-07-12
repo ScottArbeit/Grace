@@ -349,13 +349,21 @@ module BranchCommandParsingTests =
                 true
                 DateTime.UtcNow
 
-        let legacy =
-            LocalFileVersion.Create (RelativePath "src/conflict.txt") sharedSha256 false 12L (NodaTime.Instant.FromUtc(2026, 6, 22, 12, 2)) true DateTime.UtcNow
+        let matching =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "src/conflict.txt")
+                sharedSha256
+                (Blake3Hash "first-blake3")
+                false
+                12L
+                (NodaTime.Instant.FromUtc(2026, 6, 22, 12, 2))
+                true
+                DateTime.UtcNow
 
         Branch.fileContentHashesMatch first second
         |> should equal false
 
-        Branch.fileContentHashesMatch first legacy
+        Branch.fileContentHashesMatch first matching
         |> should equal true
 
     /// Verifies that reference assign parses blake3 hash option.

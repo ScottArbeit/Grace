@@ -22,7 +22,7 @@ import {
 } from './FileVersion';
 
 /**
- * Raw directory version returned by hash lookup endpoints. Sha256Hash may be empty only when /directory/getBySha256Hash deliberately returns DirectoryVersion.Default as its no-match sentinel.
+ * Complete current directory version returned by hash lookup endpoints.
  * @export
  * @interface DirectoryVersionHashLookupResult
  */
@@ -32,67 +32,67 @@ export interface DirectoryVersionHashLookupResult {
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    _class?: string;
+    _class: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    directoryVersionId?: string;
+    directoryVersionId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    ownerId?: string;
+    ownerId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    organizationId?: string;
+    organizationId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    repositoryId?: string;
+    repositoryId: string;
     /**
      * 
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    relativePath?: string;
+    relativePath: string;
     /**
-     * Empty value only for the DirectoryVersion.Default no-match sentinel, or lowercase 64-character SHA-256 hash.
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    sha256Hash?: string;
+    sha256Hash: string;
     /**
-     * Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
      * @type {string}
      * @memberof DirectoryVersionHashLookupResult
      */
-    blake3Hash?: string;
+    blake3Hash: string;
     /**
      * 
      * @type {Array<string>}
      * @memberof DirectoryVersionHashLookupResult
      */
-    directories?: Array<string>;
+    directories: Array<string>;
     /**
      * 
      * @type {Array<FileVersion>}
      * @memberof DirectoryVersionHashLookupResult
      */
-    files?: Array<FileVersion>;
+    files: Array<FileVersion>;
     /**
      * 
      * @type {number}
      * @memberof DirectoryVersionHashLookupResult
      */
-    size?: number;
+    size: number;
     /**
      * 
      * @type {number}
@@ -104,19 +104,32 @@ export interface DirectoryVersionHashLookupResult {
      * @type {Date}
      * @memberof DirectoryVersionHashLookupResult
      */
-    createdAt?: Date;
+    createdAt: Date;
     /**
      * 
      * @type {boolean}
      * @memberof DirectoryVersionHashLookupResult
      */
-    hashesValidated?: boolean;
+    hashesValidated: boolean;
 }
 
 /**
  * Check if a given object implements the DirectoryVersionHashLookupResult interface.
  */
 export function instanceOfDirectoryVersionHashLookupResult(value: object): value is DirectoryVersionHashLookupResult {
+    if (!('_class' in value) || value['_class'] === undefined) return false;
+    if (!('directoryVersionId' in value) || value['directoryVersionId'] === undefined) return false;
+    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
+    if (!('organizationId' in value) || value['organizationId'] === undefined) return false;
+    if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
+    if (!('relativePath' in value) || value['relativePath'] === undefined) return false;
+    if (!('sha256Hash' in value) || value['sha256Hash'] === undefined) return false;
+    if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
+    if (!('directories' in value) || value['directories'] === undefined) return false;
+    if (!('files' in value) || value['files'] === undefined) return false;
+    if (!('size' in value) || value['size'] === undefined) return false;
+    if (!('createdAt' in value) || value['createdAt'] === undefined) return false;
+    if (!('hashesValidated' in value) || value['hashesValidated'] === undefined) return false;
     return true;
 }
 
@@ -130,20 +143,20 @@ export function DirectoryVersionHashLookupResultFromJSONTyped(json: any, ignoreD
     }
     return {
         
-        '_class': json['Class'] == null ? undefined : json['Class'],
-        'directoryVersionId': json['DirectoryVersionId'] == null ? undefined : json['DirectoryVersionId'],
-        'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
-        'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
-        'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
-        'relativePath': json['RelativePath'] == null ? undefined : json['RelativePath'],
-        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
-        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
-        'directories': json['Directories'] == null ? undefined : json['Directories'],
-        'files': json['Files'] == null ? undefined : ((json['Files'] as Array<any>).map(FileVersionFromJSON)),
-        'size': json['Size'] == null ? undefined : json['Size'],
+        '_class': json['Class'],
+        'directoryVersionId': json['DirectoryVersionId'],
+        'ownerId': json['OwnerId'],
+        'organizationId': json['OrganizationId'],
+        'repositoryId': json['RepositoryId'],
+        'relativePath': json['RelativePath'],
+        'sha256Hash': json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'],
+        'directories': json['Directories'],
+        'files': ((json['Files'] as Array<any>).map(FileVersionFromJSON)),
+        'size': json['Size'],
         'recursiveSize': json['RecursiveSize'] == null ? undefined : json['RecursiveSize'],
-        'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
-        'hashesValidated': json['HashesValidated'] == null ? undefined : json['HashesValidated'],
+        'createdAt': (new Date(json['CreatedAt'])),
+        'hashesValidated': json['HashesValidated'],
     };
 }
 
@@ -167,10 +180,10 @@ export function DirectoryVersionHashLookupResultToJSONTyped(value?: DirectoryVer
         'Sha256Hash': value['sha256Hash'],
         'Blake3Hash': value['blake3Hash'],
         'Directories': value['directories'],
-        'Files': value['files'] == null ? undefined : ((value['files'] as Array<any>).map(FileVersionToJSON)),
+        'Files': ((value['files'] as Array<any>).map(FileVersionToJSON)),
         'Size': value['size'],
         'RecursiveSize': value['recursiveSize'],
-        'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
+        'CreatedAt': value['createdAt'].toISOString(),
         'HashesValidated': value['hashesValidated'],
     };
 }

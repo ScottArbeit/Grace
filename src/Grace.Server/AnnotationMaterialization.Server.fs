@@ -70,6 +70,10 @@ module internal AnnotationMaterialization =
                     correlationId
                     $"Annotation target '{fileVersion.RelativePath}' is too large to materialize as text. Size {fileVersion.Size} bytes exceeds the {MaxMaterializedTextBytes} byte limit."
             )
+        elif String.IsNullOrWhiteSpace fileVersion.Sha256Hash then
+            Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' must include FileVersion.Sha256Hash before materialization.")
+        elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
+            Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' must include FileVersion.Blake3Hash before materialization.")
         elif isNull (box fileVersion.ContentReference) then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' has no ContentReference.")
         else
@@ -85,15 +89,9 @@ module internal AnnotationMaterialization =
                     correlationId
                     $"Annotation target '{fileVersion.RelativePath}' materialized {bytes.Length} bytes, but FileVersion.Size is {fileVersion.Size} bytes."
             )
-        elif
-            not (String.IsNullOrWhiteSpace fileVersion.Sha256Hash)
-            && not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase))
-        then
+        elif not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase)) then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Sha256Hash.")
-        elif
-            not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
-            && not (String.Equals(blake3Hex bytes, fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase))
-        then
+        elif not (String.Equals(blake3Hex bytes, fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase)) then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Blake3Hash.")
         else
             Ok(copyBytes bytes)

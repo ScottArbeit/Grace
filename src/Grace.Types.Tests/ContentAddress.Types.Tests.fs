@@ -224,10 +224,10 @@ type ContentAddressTypesTests() =
         let preimage = ContentAddress.manifestPreimage manifest.ChunkingSuiteId manifest.FileContentHash manifest.Size manifest.Blocks
         let address = ContentAddress.computeManifestAddressForManifest manifest
 
-        let firstPath = FileVersion.Create "src/assets/movie.bin" "abc123" "https://example.test/a" true manifest.Size
+        let firstPath = FileVersion.CreateWithHashes "src/assets/movie.bin" "abc123" "def456" "https://example.test/a" true manifest.Size
         firstPath.ContentReference <- FileContentReference.FileManifest { manifest with ManifestAddress = address }
 
-        let secondPath = FileVersion.Create "other/path/movie.bin" "abc123" "https://example.test/b" true manifest.Size
+        let secondPath = FileVersion.CreateWithHashes "other/path/movie.bin" "abc123" "def456" "https://example.test/b" true manifest.Size
         secondPath.ContentReference <- FileContentReference.FileManifest { manifest with ManifestAddress = address }
 
         Assert.That(preimage, Is.EqualTo(expectedPreimage))

@@ -91,7 +91,7 @@ module LocalStateDbTests =
 
     /// Builds a deterministic file version for test scenarios fixture for the CLI local State Db assertions.
     let private createFileVersion relativePath sha256Hash isBinary size createdAt lastWriteTime =
-        LocalFileVersion.Create relativePath sha256Hash isBinary size createdAt true lastWriteTime
+        LocalFileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash "fixture-blake3") isBinary size createdAt true lastWriteTime
 
     /// Builds a deterministic file version with hashes for test scenarios fixture for the CLI local State Db assertions.
     let private createFileVersionWithHashes relativePath sha256Hash blake3Hash isBinary size createdAt lastWriteTime =
@@ -3571,7 +3571,7 @@ module LocalStateDbTests =
 
                 let rootDir = createDirectoryVersion configuration rootId Constants.RootDirectoryPath "root-hash" [| srcId |] [||] 0L lastWrite1
 
-                let file1 = LocalFileVersion.Create "src/file.txt" "hash-1" true 10L now false lastWrite1
+                let file1 = LocalFileVersion.CreateWithHashes "src/file.txt" "hash-1" "blake3-1" true 10L now false lastWrite1
 
                 let srcDir1 = createDirectoryVersion configuration srcId "src" "src-hash" [||] [| file1 |] file1.Size lastWrite1
 
@@ -3613,7 +3613,7 @@ module LocalStateDbTests =
                 fileRead1.LastWriteTimeUtc.Ticks
                 |> should equal lastWrite1.Ticks
 
-                let file2 = LocalFileVersion.Create "src/file.txt" "hash-2" false 25L now true lastWrite2
+                let file2 = LocalFileVersion.CreateWithHashes "src/file.txt" "hash-2" "blake3-2" false 25L now true lastWrite2
 
                 let srcDir2 = createDirectoryVersion configuration srcId "src" "src-hash-2" [||] [| file2 |] file2.Size lastWrite2
 

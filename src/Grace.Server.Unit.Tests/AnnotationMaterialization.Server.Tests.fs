@@ -37,7 +37,8 @@ type AnnotationMaterializationServerTests() =
         gzipStream.Dispose()
         compressed.ToArray()
 
-    let fileVersion relativePath isBinary (bytes: byte array) = FileVersion.Create relativePath (sha256Hex bytes) String.Empty isBinary (int64 bytes.Length)
+    let fileVersion relativePath isBinary (bytes: byte array) =
+        FileVersion.CreateWithHashes relativePath (sha256Hex bytes) (ContentAddress.computeBlake3Hex bytes) String.Empty isBinary (int64 bytes.Length)
 
     /// Builds whole File Reader From test data for the server unit annotation Materialization scenarios in this file.
     let wholeFileReaderFrom (objects: IDictionary<string, byte array>) : AnnotationMaterialization.ObjectPayloadReader =
@@ -325,9 +326,9 @@ type AnnotationMaterializationServerTests() =
         materializeManifest metadata objects readPlacements target
         |> expectErrorContains "FileVersion.Blake3Hash"
 
-    /// Verifies that materialization Allows Legacy Empty File Blake3.
+    /// Verifies that materialization rejects an empty file BLAKE3 hash.
     [<Test>]
-    member _.MaterializationAllowsLegacyEmptyFileBlake3() =
+    member _.MaterializationRejectsEmptyFileBlake3() =
         let bytes = textBytes "legacy manifest payload"
         let target, block, manifest = manifestFile "/src/LegacyLarge.fs" bytes
         target.Blake3Hash <- Blake3Hash String.Empty
@@ -338,11 +339,27 @@ type AnnotationMaterializationServerTests() =
         metadata[(manifest.StoragePoolId, manifest.ManifestAddress, block.Address)] <- metadataFor manifest.StoragePoolId manifest.Blocks[0] placement
         let readPlacements = ResizeArray<ContentBlockAddress * ContentBlockStoragePlacement>()
 
-        let result =
-            materializeManifest metadata objects readPlacements target
-            |> expectOk
+        materializeManifest metadata objects readPlacements target
+        |> expectErrorContains "FileVersion.Blake3Hash"
 
-        Assert.That(result.Text, Is.EqualTo("legacy manifest payload"))
+        Assert.That(readPlacements, Is.Empty)
+
+    /// Verifies that missing SHA-256 is rejected before annotation materialization reads storage.
+    [<Test>]
+    member _.MaterializationRejectsEmptyFileSha256BeforeStorageRead() =
+        let bytes = textBytes "missing sha256"
+        let target = fileVersion "/src/MissingSha.fs" false bytes
+        target.Sha256Hash <- Sha256Hash String.Empty
+        let mutable readerCalled = false
+
+        let reader _ _ _ =
+            readerCalled <- true
+            task { return Ok bytes }
+
+        materializeWholeFile reader target
+        |> expectErrorContains "FileVersion.Sha256Hash"
+
+        Assert.That(readerCalled, Is.False)
 
     /// Verifies that binary Target Is Rejected Before Storage Read.
     [<Test>]
@@ -369,9 +386,10 @@ type AnnotationMaterializationServerTests() =
     [<Test>]
     member _.TooLargeTargetIsRejectedBeforeStorageRead() =
         let target =
-            FileVersion.Create
+            FileVersion.CreateWithHashes
                 "/src/Huge.txt"
                 String.Empty
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 String.Empty
                 false
                 (AnnotationMaterialization.MaxMaterializedTextBytes
