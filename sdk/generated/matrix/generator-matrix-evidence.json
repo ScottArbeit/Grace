@@ -62,8 +62,8 @@
       "language": "TypeScript",
       "command": "docker run openapitools/openapi-generator-cli:v7.22.0 generate -g typescript-fetch --skip-validate-spec",
       "exitCode": 0,
-      "outcome": "Accepted with guardrails",
-      "conclusion": "Generated output is deterministic and compiles, but only when spec validation is skipped.",
+      "outcome": "Rejected after probe failure",
+      "conclusion": "Required TypeScript generated client import/build and PascalCase wire round trip probe failed, so this accepted proof point is not satisfied.",
       "outputPath": "sdk\\generated\\matrix\\openapi-generator\\typescript-fetch",
       "evidence": [
         "Errors:",
@@ -127,9 +127,9 @@
     {
       "name": "TypeScript generated client import/build and PascalCase wire round trip",
       "command": "npm install --ignore-scripts; npm run build; node sdk/proof/generated-client-wire/typescript-wire-proof.cjs",
-      "exitCode": 0,
+      "exitCode": 1,
       "evidence": [
-        "found 0 vulnerabilities> tsc && tsc -p tsconfig.esm.jsonTypeScript PascalCase BranchApiDto wire round trip passed"
+        "found 0 vulnerabilities> tsc && tsc -p tsconfig.esm.jsonnode:assert:95   throw new AssertionError(obj);   ^  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal: + actual - expected ... Skipped lines    {     Blake3Hash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',     BranchId: '55555555-5555-5555-5555-555555555555',     Class: 'ReferenceDto', +   CreatedAt: '2026-07-11T20:00:00.000Z', -   CreatedAt: '2026-07-11T20:00:00Z',     DeleteReason: '', +   DeletedAt: undefined,     DirectoryId: '66666666-6666-6666-6666-666666666666',     Links: [],     OrganizationId: '33333333-3333-3333-3333-333333333333',     OwnerId: '22222222-2222-2222-2222-222222222222',     ReferenceId: '11111111-1111-1111-1111-111111111111', ...     Sha256Hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', +   UpdatedAt: undefined   }      at Object.<anonymous> (C:\\Source\\Grace-701-strict-blake3\\sdk\\proof\\generated-client-wire\\typescript-wire-proof.cjs:39:8)     at Module._compile (node:internal/modules/cjs/loader:1692:14)     at Object..js (node:internal/modules/cjs/loader:1824:10)     at Module.load (node:internal/modules/cjs/loader:1427:32)     at Module._load (node:internal/modules/cjs/loader:1250:12)     at TracingChannel.traceSync (node:diagnostics_channel:322:14)     at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)     at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:152:5)     at node:internal/main/run_main_module:33:47 {   generatedMessage: true,   code: 'ERR_ASSERTION',   actual: {     Class: 'ReferenceDto',     ReferenceId: '11111111-1111-1111-1111-111111111111',     OwnerId: '22222222-2222-2222-2222-222222222222',     OrganizationId: '33333333-3333-3333-3333-333333333333',     RepositoryId: '44444444-4444-4444-4444-444444444444',     BranchId: '55555555-5555-5555-5555-555555555555',     DirectoryId: '66666666-6666-6666-6666-666666666666',     Sha256Hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',     Blake3Hash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',     ReferenceType: 'Promotion',     ReferenceText: 'initial',     Links: [],     CreatedAt: '2026-07-11T20:00:00.000Z',     UpdatedAt: undefined,     DeletedAt: undefined,     DeleteReason: ''   },   expected: {     Class: 'ReferenceDto',     ReferenceId: '11111111-1111-1111-1111-111111111111',     OwnerId: '22222222-2222-2222-2222-222222222222',     OrganizationId: '33333333-3333-3333-3333-333333333333',     RepositoryId: '44444444-4444-4444-4444-444444444444',     BranchId: '55555555-5555-5555-5555-555555555555',     DirectoryId: '66666666-6666-6666-6666-666666666666',     Sha256Hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',     Blake3Hash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',     ReferenceType: 'Promotion',     ReferenceText: 'initial',     Links: [],     CreatedAt: '2026-07-11T20:00:00Z',     DeleteReason: ''   },   operator: 'deepStrictEqual' }  Node.js v24.3.0"
       ]
     },
     {
@@ -152,21 +152,21 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "cb5f2069286bebae97f54d8f39399413f07dd454a31bdd20e01b49557304ab6f"
+      "manifestSha256": "9fd5c61bf22d3df15ac49205d479b684cc30fe031acf7338fa448cfa7625cfe0"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "637bf907b2cd42554aa2b9fac197e571e25a9986af205693c3ebb5853ef93fb1"
+      "manifestSha256": "b2c2671c424f739392490ff1c2a32a024e327f2ae11fd8b53a81381345310544"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "8c161f527ed0cce0440e470c487b88499d9d1395837924a588968e1dca06045e"
+      "manifestSha256": "859840fde86c66930a947b4eca6c8159abdd96b94ad072637e0ae6fd479c2ba8"
     }
   ],
-  "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",
-  "acceptedTier": "raw-openapi-generator-behind-facades",
+  "overallConclusion": "Accepted OpenAPI Generator proof points were not satisfied: TypeScript probe failed with exit code 1. Kiota and NSwag remain rejected until OpenAPI schema-shape debt is fixed.",
+  "acceptedTier": "none",
   "sdkGradeGeneratedClientAccepted": false,
-  "pendingSdkGradeRationale": "OpenAPI Generator TypeScript, Python, and Rust compile/import probes pass only with --skip-validate-spec; Kiota and NSwag remain rejected on schema-shape debt, so no SDK-grade generated-client package is accepted.",
+  "pendingSdkGradeRationale": "At least one accepted OpenAPI Generator raw-client proof point failed generation or compile/import probing; no generated-client tier is accepted by this run.",
   "traceability": {
     "B-043": "OpenAPI proof now validates committed generator matrix evidence as the raw generated-client acceptance path.",
     "B-044": "Stable SDK package export/import proof remains pending until package metadata, facade exports, import execution, and generator isolation are verified.",
@@ -176,7 +176,7 @@
   },
   "residualRisks": [
     "OpenAPI validation errors remain in DirectoryVersion, FileVersion, DiffPiece, FileDiff, FileSystemDifference, and GraceResult shapes.",
-    "OpenAPI Generator output is accepted only as a raw-client proof point behind facades, not as a stable package surface.",
-    "Rust feasibility is proven at cargo-check level, but Rust facade support remains deferred."
+    "OpenAPI Generator raw-client proof points are not accepted until generation and all required compile/import probes pass.",
+    "Rust feasibility is not proven by this run until the Rust cargo-check probe passes."
   ]
 }

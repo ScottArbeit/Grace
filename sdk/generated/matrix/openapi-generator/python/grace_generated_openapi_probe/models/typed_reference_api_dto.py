@@ -16,6 +16,7 @@
 from __future__ import annotations
 import json
 import pprint
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
 from typing import Any, List, Optional
 from grace_generated_openapi_probe.models.reference_api_dto import ReferenceApiDto
@@ -91,7 +92,13 @@ class TypedReferenceApiDto(BaseModel):
         raw_value = json.loads(json_str)
         if raw_value.get("ReferenceId") == "00000000-0000-0000-0000-000000000000":
             sentinel = ReferenceDefaultSentinel.from_json(json_str)
-            if sentinel.created_by is not None or sentinel.updated_at is not None or sentinel.deleted_at is not None:
+            zero = UUID("00000000-0000-0000-0000-000000000000")
+            if (sentinel.var_class != "ReferenceDto" or sentinel.reference_id != zero or sentinel.owner_id != zero or
+                sentinel.organization_id != zero or sentinel.repository_id != zero or sentinel.branch_id != zero or
+                sentinel.directory_id != zero or sentinel.sha256_hash != "" or sentinel.blake3_hash != "" or
+                sentinel.reference_type != "Save" or sentinel.reference_text != "" or sentinel.links != [] or
+                sentinel.created_at != "2000-01-01T00:00:00Z" or sentinel.created_by is not None or
+                sentinel.updated_at is not None or sentinel.deleted_at is not None or sentinel.delete_reason != ""):
                 raise ValueError("Typed Reference absence must be the canonical ReferenceDto.Default sentinel.")
             instance.actual_instance = sentinel
             return instance

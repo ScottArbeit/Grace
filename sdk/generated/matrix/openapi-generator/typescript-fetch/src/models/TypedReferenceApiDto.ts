@@ -38,22 +38,26 @@ export function TypedReferenceApiDtoFromJSON(json: any): TypedReferenceApiDto {
     return TypedReferenceApiDtoFromJSONTyped(json, false);
 }
 
+function assertCanonicalReferenceDefaultSentinel(sentinel: ReferenceDefaultSentinel): void {
+    const zero = '00000000-0000-0000-0000-000000000000';
+    if (sentinel._class !== 'ReferenceDto' || sentinel.referenceId !== zero || sentinel.ownerId !== zero ||
+        sentinel.organizationId !== zero || sentinel.repositoryId !== zero || sentinel.branchId !== zero ||
+        sentinel.directoryId !== zero || sentinel.sha256Hash !== '' || sentinel.blake3Hash !== '' ||
+        sentinel.referenceType !== 'Save' || sentinel.referenceText !== '' || sentinel.links.length !== 0 ||
+        sentinel.createdAt !== '2000-01-01T00:00:00Z' ||
+        sentinel.createdBy !== undefined || sentinel.updatedAt !== undefined || sentinel.deletedAt !== undefined ||
+        sentinel.deleteReason !== '') {
+        throw new Error('Typed Reference absence must be the canonical ReferenceDto.Default sentinel.');
+    }
+}
+
 export function TypedReferenceApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): TypedReferenceApiDto {
     if (json == null || typeof json !== 'object') {
         return json;
     }
     if (json['ReferenceId'] === '00000000-0000-0000-0000-000000000000') {
         const sentinel = ReferenceDefaultSentinelFromJSONTyped(json, true);
-        const zero = '00000000-0000-0000-0000-000000000000';
-        if (sentinel._class !== 'ReferenceDto' || sentinel.referenceId !== zero || sentinel.ownerId !== zero ||
-            sentinel.organizationId !== zero || sentinel.repositoryId !== zero || sentinel.branchId !== zero ||
-            sentinel.directoryId !== zero || sentinel.sha256Hash !== '' || sentinel.blake3Hash !== '' ||
-            sentinel.referenceType !== 'Save' || sentinel.referenceText !== '' || sentinel.links.length !== 0 ||
-            sentinel.createdAt !== '2000-01-01T00:00:00Z' ||
-            sentinel.createdBy !== undefined || sentinel.updatedAt !== undefined || sentinel.deletedAt !== undefined ||
-            sentinel.deleteReason !== '') {
-            throw new Error('Typed Reference absence must be the canonical ReferenceDto.Default sentinel.');
-        }
+        assertCanonicalReferenceDefaultSentinel(sentinel);
         return sentinel;
     }
     return ReferenceApiDtoFromJSONTyped(json, true);
@@ -70,11 +74,13 @@ export function TypedReferenceApiDtoToJSONTyped(value?: TypedReferenceApiDto | n
     if (typeof value !== 'object') {
         return value;
     }
+    if ((value as ReferenceDefaultSentinel).referenceId === '00000000-0000-0000-0000-000000000000') {
+        const sentinel = value as ReferenceDefaultSentinel;
+        assertCanonicalReferenceDefaultSentinel(sentinel);
+        return ReferenceDefaultSentinelToJSON(sentinel);
+    }
     if (instanceOfReferenceApiDto(value)) {
         return ReferenceApiDtoToJSON(value as ReferenceApiDto);
-    }
-    if (instanceOfReferenceDefaultSentinel(value)) {
-        return ReferenceDefaultSentinelToJSON(value as ReferenceDefaultSentinel);
     }
     return {};
 }

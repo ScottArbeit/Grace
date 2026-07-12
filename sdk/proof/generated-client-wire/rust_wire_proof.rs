@@ -40,4 +40,8 @@ fn typed_reference_wire_variants_are_semantic() {
         non_canonical[field] = value;
         assert!(serde_json::from_value::<TypedReferenceApiDto>(non_canonical).is_err());
     }
+
+    let mut non_canonical = sentinel();
+    non_canonical["Links"] = json!(["unexpected-link"]);
+    assert!(serde_json::from_value::<TypedReferenceApiDto>(non_canonical).is_err());
 }

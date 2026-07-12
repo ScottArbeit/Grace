@@ -192,7 +192,7 @@ impl<'de> Deserialize<'de> for TypedReferenceApiDto {
         if is_sentinel {
             let reference = serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
                 .map_err(serde::de::Error::custom)?;
-            if reference.created_by.is_some() || reference.updated_at.is_some() || reference.deleted_at.is_some() {
+            if !reference.links.is_empty() || reference.created_by.is_some() || reference.updated_at.is_some() || reference.deleted_at.is_some() {
                 return Err(serde::de::Error::custom("Typed Reference absence must be the canonical ReferenceDto.Default sentinel."));
             }
             Ok(Self::ReferenceDefaultSentinel(Box::new(reference)))

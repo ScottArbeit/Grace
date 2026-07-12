@@ -1,3 +1,4 @@
+import json
 import sys
 from uuid import UUID
 
@@ -28,6 +29,8 @@ assert real.reference_id == UUID(REAL["ReferenceId"])
 assert real.sha256_hash == REAL["Sha256Hash"] and real.blake3_hash == REAL["Blake3Hash"]
 assert isinstance(sentinel, ReferenceDefaultSentinel)
 assert sentinel.reference_id == UUID(ZERO)
+assert json.loads(TypedReferenceApiDto.from_dict(REAL).to_json()) == REAL
+assert json.loads(TypedReferenceApiDto.from_dict(SENTINEL).to_json()) == SENTINEL
 
 try:
     TypedReferenceApiDto.from_dict({
@@ -50,5 +53,12 @@ for field, value in {
         pass
     else:
         raise AssertionError(f"sentinel with non-canonical {field} was accepted")
+
+try:
+    TypedReferenceApiDto.from_dict({**SENTINEL, "Links": ["unexpected-link"]})
+except ValueError:
+    pass
+else:
+    raise AssertionError("sentinel with non-canonical Links was accepted")
 
 print("Python UUID-coerced typed Reference wire round trip passed")

@@ -3,7 +3,10 @@ const path = require('node:path');
 
 const generatedRoot = process.argv[2];
 const { BranchApiDtoFromJSON } = require(path.join(generatedRoot, 'dist', 'models', 'BranchApiDto.js'));
-const { TypedReferenceApiDtoFromJSON } = require(path.join(generatedRoot, 'dist', 'models', 'TypedReferenceApiDto.js'));
+const {
+  TypedReferenceApiDtoFromJSON,
+  TypedReferenceApiDtoToJSON,
+} = require(path.join(generatedRoot, 'dist', 'models', 'TypedReferenceApiDto.js'));
 
 const zero = '00000000-0000-0000-0000-000000000000';
 const real = {
@@ -33,6 +36,8 @@ assert.equal(branch.latestPromotion.sha256Hash, real.Sha256Hash);
 assert.equal(branch.latestPromotion.blake3Hash, real.Blake3Hash);
 assert.equal(branch.latestCommit.referenceId, zero);
 assert.equal(branch.latestCommit.sha256Hash, '');
+assert.deepEqual(TypedReferenceApiDtoToJSON(TypedReferenceApiDtoFromJSON(real)), real);
+assert.deepEqual(TypedReferenceApiDtoToJSON(TypedReferenceApiDtoFromJSON(sentinel)), sentinel);
 assert.throws(() => TypedReferenceApiDtoFromJSON({
   ...sentinel, OwnerId: real.OwnerId, Sha256Hash: real.Sha256Hash, Blake3Hash: real.Blake3Hash
 }), /canonical/);

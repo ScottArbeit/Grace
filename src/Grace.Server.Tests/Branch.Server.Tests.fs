@@ -962,6 +962,48 @@ type BranchServer() =
             Assert.That(Branch.BranchDto.IsValidPublicProjection(branches[0]), Is.True, serialize branches[0])
         }
 
+    /// Verifies the root branch parent route returns Grace's controlled no-parent error without querying a default parent actor.
+    [<Test>]
+    member _.GetParentBranchReturnsControlledErrorForRootBranch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parameters = BranchServerTestHelpers.getBranchParameters repositoryId repositoryDefaultBranchIds[0]
+
+            let! response = Client.PostAsync("/branch/getParentBranch", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    /// Verifies branch Reference lookup rejects the default ReferenceId through the normal validation envelope.
+    [<Test>]
+    member _.GetReferenceRejectsEmptyReferenceId() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parameters = Parameters.Branch.GetReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- repositoryDefaultBranchIds[0]
+            parameters.ReferenceId <- $"{ReferenceId.Empty}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/getReference", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+
+            let error = deserialize<GraceError> body
+            let expected = BranchError.getErrorMessage BranchError.InvalidReferenceId
+            Assert.That(error.Error, Is.EqualTo(expected))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
     /// Verifies the create get list reference and version routes round trip branch identity scenario.
     [<Test>]
     member _.CreateGetListReferenceAndVersionRoutesRoundTripBranchIdentity() =

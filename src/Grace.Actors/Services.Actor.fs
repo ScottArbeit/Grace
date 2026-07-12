@@ -3149,6 +3149,12 @@ module Services =
     /// Gets a list of ReferenceDtos based on ReferenceIds. The list is returned in the same order as the supplied ReferenceIds.
     let getReferencesByReferenceId (repositoryId: RepositoryId) (referenceIds: IEnumerable<ReferenceId>) (maxCount: int) (correlationId: CorrelationId) =
         task {
+            let referenceIds = referenceIds |> Seq.toArray
+
+            if referenceIds
+               |> Array.exists (fun referenceId -> referenceId = ReferenceId.Empty) then
+                invalidArg (nameof referenceIds) "ReferenceId.Empty cannot be queried as a public Reference."
+
             let referenceDtos = List<ReferenceDto>()
 
             if referenceIds.Count() > 0 then
@@ -3172,9 +3178,7 @@ module Services =
                         )
                         |> ignore
                         // Then we add a parameter for each referenceId.
-                        referenceIds
-                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                            .Distinct()
+                        referenceIds.Distinct()
                         |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
                         // Then we remove the last comma and close the parenthesis.
                         queryText
@@ -3190,9 +3194,7 @@ module Services =
                                 .WithParameter("@partitionKey", repositoryId)
 
                         // Add a .WithParameter for each referenceId.
-                        referenceIds
-                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                            .Distinct()
+                        referenceIds.Distinct()
                         |> Seq.iteri (fun i referenceId ->
                             queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}")
                             |> ignore)
@@ -3229,12 +3231,8 @@ module Services =
                         // Add the results to the list in the same order as the supplied referenceIds.
                         referenceIds
                         |> Seq.iter (fun referenceId ->
-                            if referenceId <> ReferenceId.Empty then
-                                if queryResults.ContainsKey(referenceId) then
-                                    referenceDtos.Add(queryResults[referenceId])
-                            else
-                                // In case the caller supplied an empty referenceId, add a default ReferenceDto.
-                                referenceDtos.Add(ReferenceDto.Default))
+                            if queryResults.ContainsKey(referenceId) then
+                                referenceDtos.Add(queryResults[referenceId]))
 
                         Activity
                             .Current

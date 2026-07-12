@@ -183,22 +183,26 @@ function Set-GeneratedClientSemanticUnionFixes {
     $typescript = [System.IO.File]::ReadAllText($typescriptPath)
     $typescriptPattern = '(?s)export function TypedReferenceApiDtoFromJSONTyped\(json: any, ignoreDiscriminator: boolean\): TypedReferenceApiDto \{.*?\n\}\n\nexport function TypedReferenceApiDtoToJSON'
     $typescriptReplacement = @'
+function assertCanonicalReferenceDefaultSentinel(sentinel: ReferenceDefaultSentinel): void {
+    const zero = '00000000-0000-0000-0000-000000000000';
+    if (sentinel._class !== 'ReferenceDto' || sentinel.referenceId !== zero || sentinel.ownerId !== zero ||
+        sentinel.organizationId !== zero || sentinel.repositoryId !== zero || sentinel.branchId !== zero ||
+        sentinel.directoryId !== zero || sentinel.sha256Hash !== '' || sentinel.blake3Hash !== '' ||
+        sentinel.referenceType !== 'Save' || sentinel.referenceText !== '' || sentinel.links.length !== 0 ||
+        sentinel.createdAt !== '2000-01-01T00:00:00Z' ||
+        sentinel.createdBy !== undefined || sentinel.updatedAt !== undefined || sentinel.deletedAt !== undefined ||
+        sentinel.deleteReason !== '') {
+        throw new Error('Typed Reference absence must be the canonical ReferenceDto.Default sentinel.');
+    }
+}
+
 export function TypedReferenceApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): TypedReferenceApiDto {
     if (json == null || typeof json !== 'object') {
         return json;
     }
     if (json['ReferenceId'] === '00000000-0000-0000-0000-000000000000') {
         const sentinel = ReferenceDefaultSentinelFromJSONTyped(json, true);
-        const zero = '00000000-0000-0000-0000-000000000000';
-        if (sentinel._class !== 'ReferenceDto' || sentinel.referenceId !== zero || sentinel.ownerId !== zero ||
-            sentinel.organizationId !== zero || sentinel.repositoryId !== zero || sentinel.branchId !== zero ||
-            sentinel.directoryId !== zero || sentinel.sha256Hash !== '' || sentinel.blake3Hash !== '' ||
-            sentinel.referenceType !== 'Save' || sentinel.referenceText !== '' || sentinel.links.length !== 0 ||
-            sentinel.createdAt !== '2000-01-01T00:00:00Z' ||
-            sentinel.createdBy !== undefined || sentinel.updatedAt !== undefined || sentinel.deletedAt !== undefined ||
-            sentinel.deleteReason !== '') {
-            throw new Error('Typed Reference absence must be the canonical ReferenceDto.Default sentinel.');
-        }
+        assertCanonicalReferenceDefaultSentinel(sentinel);
         return sentinel;
     }
     return ReferenceApiDtoFromJSONTyped(json, true);
@@ -208,7 +212,29 @@ export function TypedReferenceApiDtoToJSON
 '@
     $updatedTypescript = [regex]::Replace($typescript, $typescriptPattern, $typescriptReplacement, 1)
     if ($updatedTypescript -eq $typescript) { throw "TypeScript typed Reference post-generation anchor was not found: $typescriptPath" }
-    [System.IO.File]::WriteAllText($typescriptPath, $updatedTypescript, $utf8)
+    $typescriptToJsonPattern = '(?ms)export function TypedReferenceApiDtoToJSONTyped\(value\?: TypedReferenceApiDto \| null, ignoreDiscriminator: boolean = false\): any \{.*?^\}'
+    $typescriptToJsonReplacement = @'
+export function TypedReferenceApiDtoToJSONTyped(value?: TypedReferenceApiDto | null, ignoreDiscriminator: boolean = false): any {
+    if (value == null) {
+        return value;
+    }
+    if (typeof value !== 'object') {
+        return value;
+    }
+    if ((value as ReferenceDefaultSentinel).referenceId === '00000000-0000-0000-0000-000000000000') {
+        const sentinel = value as ReferenceDefaultSentinel;
+        assertCanonicalReferenceDefaultSentinel(sentinel);
+        return ReferenceDefaultSentinelToJSON(sentinel);
+    }
+    if (instanceOfReferenceApiDto(value)) {
+        return ReferenceApiDtoToJSON(value as ReferenceApiDto);
+    }
+    return {};
+}
+'@
+    $updatedTypescriptWithToJson = [regex]::Replace($updatedTypescript, $typescriptToJsonPattern, $typescriptToJsonReplacement, 1)
+    if ($updatedTypescriptWithToJson -eq $updatedTypescript) { throw "TypeScript typed Reference serialization post-generation anchor was not found: $typescriptPath" }
+    [System.IO.File]::WriteAllText($typescriptPath, $updatedTypescriptWithToJson, $utf8)
 
     $pythonPath = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\python\grace_generated_openapi_probe\models\reference_default_sentinel.py'
     $python = [System.IO.File]::ReadAllText($pythonPath)
@@ -220,6 +246,9 @@ export function TypedReferenceApiDtoToJSON
 
     $pythonUnionPath = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\python\grace_generated_openapi_probe\models\typed_reference_api_dto.py'
     $pythonUnion = [System.IO.File]::ReadAllText($pythonUnionPath)
+    $pythonUnionWithUuid = $pythonUnion.Replace("import json`nimport pprint", "import json`nimport pprint`nfrom uuid import UUID")
+    if ($pythonUnionWithUuid -eq $pythonUnion) { throw "Python typed Reference UUID import post-generation anchor was not found: $pythonUnionPath" }
+    $pythonUnion = $pythonUnionWithUuid
     $pythonUnionNeedle = @'
         match = 0
 
@@ -231,7 +260,13 @@ export function TypedReferenceApiDtoToJSON
         raw_value = json.loads(json_str)
         if raw_value.get("ReferenceId") == "00000000-0000-0000-0000-000000000000":
             sentinel = ReferenceDefaultSentinel.from_json(json_str)
-            if sentinel.created_by is not None or sentinel.updated_at is not None or sentinel.deleted_at is not None:
+            zero = UUID("00000000-0000-0000-0000-000000000000")
+            if (sentinel.var_class != "ReferenceDto" or sentinel.reference_id != zero or sentinel.owner_id != zero or
+                sentinel.organization_id != zero or sentinel.repository_id != zero or sentinel.branch_id != zero or
+                sentinel.directory_id != zero or sentinel.sha256_hash != "" or sentinel.blake3_hash != "" or
+                sentinel.reference_type != "Save" or sentinel.reference_text != "" or sentinel.links != [] or
+                sentinel.created_at != "2000-01-01T00:00:00Z" or sentinel.created_by is not None or
+                sentinel.updated_at is not None or sentinel.deleted_at is not None or sentinel.delete_reason != ""):
                 raise ValueError("Typed Reference absence must be the canonical ReferenceDto.Default sentinel.")
             instance.actual_instance = sentinel
             return instance
@@ -263,7 +298,7 @@ impl<'de> Deserialize<'de> for TypedReferenceApiDto {
         if is_sentinel {
             let reference = serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
                 .map_err(serde::de::Error::custom)?;
-            if reference.created_by.is_some() || reference.updated_at.is_some() || reference.deleted_at.is_some() {
+            if !reference.links.is_empty() || reference.created_by.is_some() || reference.updated_at.is_some() || reference.deleted_at.is_some() {
                 return Err(serde::de::Error::custom("Typed Reference absence must be the canonical ReferenceDto.Default sentinel."));
             }
             Ok(Self::ReferenceDefaultSentinel(Box::new(reference)))

@@ -891,22 +891,30 @@ module Repository =
                         context
                         |> parse<GetReferencesByReferenceIdParameters>
 
-                    context.Items.Add("ReferenceIds", parameters.ReferenceIds)
-                    let! result = processQuery context parameters validations parameters.MaxCount query
+                    if parameters.ReferenceIds
+                       |> Seq.exists (fun referenceId -> referenceId = ReferenceId.Empty) then
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create (ReferenceError.getErrorMessage ReferenceError.InvalidReferenceId) (getCorrelationId context)
+                            )
+                    else
+                        context.Items.Add("ReferenceIds", parameters.ReferenceIds)
+                        let! result = processQuery context parameters validations parameters.MaxCount query
 
-                    let duration_ms = getDurationRightAligned_ms startTime
+                        let duration_ms = getDurationRightAligned_ms startTime
 
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        duration_ms,
-                        (getCorrelationId context),
-                        context.Request.Path,
-                        graceIds.RepositoryIdString
-                    )
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            duration_ms,
+                            (getCorrelationId context),
+                            context.Request.Path,
+                            graceIds.RepositoryIdString
+                        )
 
-                    return result
+                        return result
                 with
                 | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
