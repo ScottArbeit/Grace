@@ -764,8 +764,10 @@ Configure cache registration with these environment variables when the registrat
   disabled.
 * `grace__cache__registration__service_principal_ids`: semicolon-delimited OIDC service principal IDs that may register
   cache services.
-* `grace__cache__registration__allowed_scopes`: semicolon-delimited server-approved cache registration scopes. Use
-  stable server-defined scope keys such as repository or StoragePool scopes; do not use endpoint URLs as scopes.
+* `grace__cache__registration__allowed_scopes`: semicolon-delimited server-approved cache registration scopes. For
+  materialization-plan selection, each repository scope must use
+  `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` with stable IDs. Repository names and `storage-pool:*` scopes
+  do not match this selector. A Cache that serves multiple repositories must list each repository scope explicitly.
 * `grace__cache__registration__allowed_capabilities`: semicolon-delimited server-approved cache registration
   capabilities.
 
@@ -774,7 +776,7 @@ PowerShell:
 ```powershell
 $env:grace__cache__registration__enabled="true"
 $env:grace__cache__registration__service_principal_ids="cache-service-client"
-$env:grace__cache__registration__allowed_scopes="repository:owner/org/repo;storage-pool:pool-1"
+$env:grace__cache__registration__allowed_scopes="repository:<OwnerId>/<OrganizationId>/<RepositoryId>"
 $env:grace__cache__registration__allowed_capabilities="Register;PublishHealth"
 ```
 
@@ -783,7 +785,7 @@ bash / zsh:
 ```bash
 export grace__cache__registration__enabled="true"
 export grace__cache__registration__service_principal_ids="cache-service-client"
-export grace__cache__registration__allowed_scopes="repository:owner/org/repo;storage-pool:pool-1"
+export grace__cache__registration__allowed_scopes="repository:<OwnerId>/<OrganizationId>/<RepositoryId>"
 export grace__cache__registration__allowed_capabilities="Register;PublishHealth"
 ```
 

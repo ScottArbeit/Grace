@@ -105,8 +105,9 @@ docs-only classification with current evidence for the behavior they own.
 - Implementation seam: mode selection and materialization path that tries Grace Cache first and can
   fall back to Direct only when the accepted contract allows it. Grace Server derives the only eligible
   cache-registration scope as `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` from the fully
-  resolved target's stable IDs; callers cannot supply a cache scope, and storage-pool scopes do not
-  participate in plan selection.
+  resolved target's stable IDs; callers cannot supply a cache scope. Repository names and `storage-pool:*`
+  scopes do not participate in plan selection, and a multi-repository Cache lists every repository scope
+  explicitly.
 - Proof seam: positive and negative tests for cache hit, cache miss, grant failure, cache outage,
   fallback observability, exact stable-ID scope matching, and exclusion of missing, unrelated,
   malformed, name-like, wrong-case, storage-pool-only, and unlisted multi-repository registrations.

@@ -40,7 +40,7 @@ export interface CacheRegistrationRequest {
      */
     endpoint: string;
     /**
-     * 
+     * Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.
      * @type {Array<string>}
      * @memberof CacheRegistrationRequest
      */

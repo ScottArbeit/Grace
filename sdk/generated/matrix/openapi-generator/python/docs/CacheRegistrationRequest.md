@@ -8,7 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **var_class** | **str** |  | 
 **endpoint** | **str** |  | 
-**requested_scopes** | **List[str]** |  | 
+**requested_scopes** | **List[str]** | Materialization-plan selection requires stable &#x60;repository:&lt;OwnerId&gt;/&lt;OrganizationId&gt;/&lt;RepositoryId&gt;&#x60; scopes; repository names and &#x60;storage-pool:*&#x60; scopes do not match, and multi-repository Cache registrations list each repository scope explicitly. | 
 **requested_capabilities** | **List[str]** |  | 
 **requested_execution_modes** | [**List[MaterializationExecutionMode]**](MaterializationExecutionMode.md) |  | 
 
