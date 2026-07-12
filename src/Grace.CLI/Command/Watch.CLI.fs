@@ -2245,22 +2245,25 @@ module Watch =
         else
             Blake3Hash String.Empty
 
-    /// Verifies the on-disk Watch IPC snapshot is the snapshot this publication attempt wrote.
-    let private statusMatchesVerifiedPublication
+    /// Verifies the on-disk Watch IPC snapshot has the exact pending-work and content identity expected by a publication.
+    let private statusMatchesExpectedPendingWorkPublication
         (expectedStatus: GraceStatus)
         (expectedDirectoryIds: HashSet<DirectoryVersionId>)
         hasPendingWork
-        publicationStartedAt
         (status: GraceWatchStatus)
         =
-        status.UpdatedAt >= publicationStartedAt
-        && status.HasPendingWatchWork = hasPendingWork
+        status.HasPendingWatchWork = hasPendingWork
         && status.IsWorkingTreeClean = not hasPendingWork
         && status.RootDirectoryId = expectedStatus.RootDirectoryId
         && status.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
         && status.RootDirectoryBlake3Hash = expectedRootDirectoryBlake3Hash expectedStatus
         && not (isNull status.DirectoryIds)
         && status.DirectoryIds.SetEquals(expectedDirectoryIds)
+
+    /// Verifies the on-disk Watch IPC snapshot is the snapshot this publication attempt wrote.
+    let private statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt (status: GraceWatchStatus) =
+        status.UpdatedAt >= publicationStartedAt
+        && statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork status
 
     /// Advances the pending-work publication cache only after the exact IPC snapshot proves it reached disk.
     let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt =
@@ -2315,6 +2318,7 @@ module Watch =
                         cachePendingWatchWorkPublicationIfVerified statusForVerification directoryIdsForVerification hasPendingWork publicationStartedAt
                 with
                 | ex ->
+                    transitionWasPublished <- false
                     lastPublishedHasPendingWatchWork <- None
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
@@ -2322,7 +2326,8 @@ module Watch =
                     (readPendingWatchWorkEvidence ()).HasPendingWork
                     <> hasPendingWork
 
-            transitionWasPublished)
+            transitionWasPublished
+            && not pendingWorkChangedDuringWrite)
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot =
@@ -2420,6 +2425,91 @@ module Watch =
     let private publishPendingWatchWorkTransitionIfNeeded () =
         tryPublishPendingWatchWorkTransitionIfNeeded ()
         |> ignore
+
+    /// Verifies the current Watch IPC file still represents the requested pending-work state and GraceStatus identity.
+    let private tryVerifyCurrentPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork =
+        try
+            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+            inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork)
+        with
+        | _ -> false
+
+    /// Publishes a final clean materialization snapshot only while both pre- and post-publication pending-work probes are empty.
+    let private tryPublishCurrentBranchMaterializationCleanStatus () =
+        lock watchStatusPublishLock (fun () ->
+            if (readPendingWatchWorkEvidence ()).HasPendingWork then
+                false
+            elif currentGraceWatchRuntimeMode ()
+                 <> GraceWatchRuntimeMode.HealthyIncremental
+                 || isGraceWatchResyncPending () then
+                false
+            else
+                try
+                    let status =
+                        readGraceStatusFileForPendingWorkTransition()
+                            .GetAwaiter()
+                            .GetResult()
+
+                    let directoryIds = status.Index.Keys.ToHashSet()
+
+                    let cleanPublicationVerified =
+                        if tryVerifyCurrentPendingWorkPublication status directoryIds false then
+                            lastPublishedHasPendingWatchWork <- Some false
+                            true
+                        else
+                            tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
+                                updateGraceWatchInterprocessFile status (Some directoryIds))
+
+                    cleanPublicationVerified
+                    && not (readPendingWatchWorkEvidence ()).HasPendingWork
+                with
+                | ex ->
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch could not prove final clean materialization IPC/status publication: {ex.Message}"
+                    false)
+
+    /// Replaces an unproven clean materialization snapshot with a verified dirty IPC state before degraded resync begins.
+    let private tryPublishCurrentBranchMaterializationDirtyStatus () =
+        lock watchStatusPublishLock (fun () ->
+            let pendingEvidence = readPendingWatchWorkEvidence ()
+
+            if not pendingEvidence.HasPendingWork then
+                false
+            else
+                try
+                    let runtimeMode = currentGraceWatchRuntimeMode ()
+
+                    let status, directoryIds =
+                        if pendingEvidence.HasDurableOnlyPendingWork then
+                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+                        elif
+                            runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                            && not (isGraceWatchResyncPending ())
+                        then
+                            let status =
+                                readGraceStatusFileForPendingWorkTransition()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            status, status.Index.Keys.ToHashSet()
+                        else
+                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+
+                    if tryVerifyCurrentPendingWorkPublication status directoryIds true then
+                        lastPublishedHasPendingWatchWork <- Some true
+                        true
+                    else
+                        tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
+                            match runtimeMode with
+                            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode status (Some directoryIds)
+                            | _ -> updateGraceWatchInterprocessFile status (Some directoryIds))
+                with
+                | ex ->
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch could not verify dirty materialization IPC/status publication: {ex.Message}"
+                    false)
 
     /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
     let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
@@ -4453,7 +4543,7 @@ module Watch =
             ReestablishIpc: CurrentBranchReferenceNotification -> string -> Task<unit>
             ApplyReference: CurrentBranchReferenceNotification -> GraceWatchStatus -> Task<unit>
             PublishCleanIpcAfterApply: unit -> bool
-            ReassertDirtyIpcAfterFailedCleanPublication: unit -> unit
+            ReassertDirtyIpcAfterFailedCleanPublication: unit -> bool
             MaxAttempts: int option
         }
 
@@ -4678,9 +4768,15 @@ module Watch =
                                                                     }
                                                             else
                                                                 setGraceWatchPendingWorkStatusFlag true
-                                                                clients.ReassertDirtyIpcAfterFailedCleanPublication()
+                                                                let dirtyPublicationVerified = clients.ReassertDirtyIpcAfterFailedCleanPublication()
 
-                                                                clients.RequestDegradedResync "materialization final clean Watch IPC/status publication failed"
+                                                                let resyncReason =
+                                                                    if dirtyPublicationVerified then
+                                                                        "materialization final clean Watch IPC/status publication failed"
+                                                                    else
+                                                                        "materialization final clean Watch IPC/status publication failed and dirty replacement was unproven"
+
+                                                                clients.RequestDegradedResync resyncReason
 
                                                                 return
                                                                     {
@@ -5030,7 +5126,7 @@ module Watch =
                 ReestablishIpc = fun _ _ -> Task.FromResult(())
                 ApplyReference = fun _ _ -> Task.FromResult(())
                 PublishCleanIpcAfterApply = fun () -> true
-                ReassertDirtyIpcAfterFailedCleanPublication = ignore
+                ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
                 MaxAttempts = Some 3
             }
             payload
@@ -5047,11 +5143,8 @@ module Watch =
                         WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
                         ApplyReference = applyCurrentBranchReferenceMaterialization
-                        PublishCleanIpcAfterApply = tryPublishPendingWatchWorkTransitionIfNeeded
-                        ReassertDirtyIpcAfterFailedCleanPublication =
-                            fun () ->
-                                publishPendingWatchWorkTransitionIfNeeded ()
-                                |> ignore
+                        PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
+                        ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
                         MaxAttempts = None
                     }
                     payload
@@ -5088,7 +5181,7 @@ module Watch =
                             ReestablishIpc = reestablishIpc
                             ApplyReference = applyReference
                             PublishCleanIpcAfterApply = fun () -> true
-                            ReassertDirtyIpcAfterFailedCleanPublication = ignore
+                            ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
                             MaxAttempts = Some 3
                         }
                         payload
