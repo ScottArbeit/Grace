@@ -1578,9 +1578,9 @@ function Test-GeneratedClientMatrixProof {
     }
 
     foreach ($probeName in @(
-            'TypeScript generated client import/build',
-            'Python generated client import/build',
-            'Rust generated client cargo check'
+        'TypeScript generated client import/build and PascalCase wire round trip',
+        'Python generated client import/build and UUID wire round trip',
+        'Rust generated client semantic union wire round trip'
         )) {
         $probe = @($evidence.probes) | Where-Object { $_.name -eq $probeName } | Select-Object -First 1
         if ($null -eq $probe) {

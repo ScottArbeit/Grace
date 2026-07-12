@@ -39,19 +39,24 @@ export function TypedReferenceApiDtoFromJSON(json: any): TypedReferenceApiDto {
 }
 
 export function TypedReferenceApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): TypedReferenceApiDto {
-    if (json == null) {
+    if (json == null || typeof json !== 'object') {
         return json;
     }
-    if (typeof json !== 'object') {
-        return json;
+    if (json['ReferenceId'] === '00000000-0000-0000-0000-000000000000') {
+        const sentinel = ReferenceDefaultSentinelFromJSONTyped(json, true);
+        const zero = '00000000-0000-0000-0000-000000000000';
+        if (sentinel._class !== 'ReferenceDto' || sentinel.referenceId !== zero || sentinel.ownerId !== zero ||
+            sentinel.organizationId !== zero || sentinel.repositoryId !== zero || sentinel.branchId !== zero ||
+            sentinel.directoryId !== zero || sentinel.sha256Hash !== '' || sentinel.blake3Hash !== '' ||
+            sentinel.referenceType !== 'Save' || sentinel.referenceText !== '' || sentinel.links.length !== 0 ||
+            sentinel.createdAt !== '2000-01-01T00:00:00Z' ||
+            sentinel.createdBy !== undefined || sentinel.updatedAt !== undefined || sentinel.deletedAt !== undefined ||
+            sentinel.deleteReason !== '') {
+            throw new Error('Typed Reference absence must be the canonical ReferenceDto.Default sentinel.');
+        }
+        return sentinel;
     }
-    if (instanceOfReferenceApiDto(json)) {
-        return ReferenceApiDtoFromJSONTyped(json, true);
-    }
-    if (instanceOfReferenceDefaultSentinel(json)) {
-        return ReferenceDefaultSentinelFromJSONTyped(json, true);
-    }
-    return {} as any;
+    return ReferenceApiDtoFromJSONTyped(json, true);
 }
 
 export function TypedReferenceApiDtoToJSON(json: any): any {

@@ -213,6 +213,26 @@ module Branch =
                 DeleteReason = String.Empty
             }
 
+        /// Reports whether a Reference is the canonical typed-slot absence sentinel independent of sequence object identity.
+        static member IsCanonicalReferenceDefault(referenceDto: ReferenceDto) =
+            referenceDto.Class = nameof ReferenceDto
+            && referenceDto.ReferenceId = ReferenceId.Empty
+            && referenceDto.OwnerId = OwnerId.Empty
+            && referenceDto.OrganizationId = OrganizationId.Empty
+            && referenceDto.RepositoryId = RepositoryId.Empty
+            && referenceDto.BranchId = BranchId.Empty
+            && referenceDto.DirectoryId = DirectoryVersionId.Empty
+            && String.IsNullOrEmpty(string referenceDto.Sha256Hash)
+            && String.IsNullOrEmpty(string referenceDto.Blake3Hash)
+            && referenceDto.ReferenceType = ReferenceType.Save
+            && String.IsNullOrEmpty(string referenceDto.ReferenceText)
+            && Seq.isEmpty referenceDto.Links
+            && referenceDto.CreatedBy.IsNone
+            && referenceDto.CreatedAt = Constants.DefaultTimestamp
+            && referenceDto.UpdatedAt.IsNone
+            && referenceDto.DeletedAt.IsNone
+            && String.IsNullOrEmpty referenceDto.DeleteReason
+
         /// Reports whether a BranchDto can cross the public boundary with strict real References and canonical typed sentinels.
         static member IsValidPublicProjection(branchDto: BranchDto) =
             let isRealReference (referenceDto: ReferenceDto) =
@@ -221,7 +241,7 @@ module Branch =
                 && not (String.IsNullOrWhiteSpace(string referenceDto.Blake3Hash))
 
             let isTypedReferenceOrDefault expectedType (referenceDto: ReferenceDto) =
-                referenceDto = ReferenceDto.Default
+                BranchDto.IsCanonicalReferenceDefault referenceDto
                 || (isRealReference referenceDto
                     && referenceDto.ReferenceType = expectedType)
 

@@ -165,6 +165,25 @@ type BranchDtoHashTests() =
             let partialSentinel = { ReferenceDto.Default with Sha256Hash = sha256Hash }
             Assert.That(BranchDto.IsValidPublicProjection(setSlot partialSentinel), Is.False)
 
+    /// Verifies canonical sentinel recognition survives serialization with a newly allocated empty Links sequence.
+    [<Test>]
+    member _.PublicProjectionRecognizesDeserializedCanonicalSentinels() =
+        let deserializedDefault = Utilities.deserialize<ReferenceDto> (Utilities.serialize ReferenceDto.Default)
+        let realReference = referenceDto ReferenceType.Promotion
+
+        let branch =
+            { BranchDto.Default with
+                BasedOn = realReference
+                LatestReference = realReference
+                LatestPromotion = realReference
+                LatestCommit = deserializedDefault
+                LatestCheckpoint = deserializedDefault
+                LatestSave = deserializedDefault
+            }
+
+        Assert.That(BranchDto.IsCanonicalReferenceDefault deserializedDefault, Is.True)
+        Assert.That(BranchDto.IsValidPublicProjection branch, Is.True)
+
     /// Verifies that BasedOn and LatestReference never accept the typed-slot sentinel or partial real References.
     [<Test>]
     member _.PublicProjectionKeepsRequiredReferencesStrict() =

@@ -134,6 +134,23 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Gets selected repository branches through the persisted-identity query route.
+    let getRepositoryBranchesByIdAsync (repositoryId: string) (branchIds: BranchId array) =
+        task {
+            let parameters = Parameters.Repository.GetBranchesByBranchIdParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchIds <- branchIds
+            parameters.MaxCount <- branchIds.Length
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/repository/getBranchesByBranchId", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
+        }
+
     /// Saves branch through the branch test routes.
     let saveBranchAsync (repositoryId: string) (branch: Branch.BranchDto) =
         task {
@@ -921,6 +938,29 @@ module BranchServerTestHelpers =
 /// Covers branch server scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type BranchServer() =
+
+    /// Verifies branch-by-id resolves initial main through the strict normalized public projection.
+    [<Test>]
+    member _.GetBranchesByBranchIdReturnsNormalizedInitialMain() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = Guid.Parse(repositoryDefaultBranchIds[0])
+            let! branches = BranchServerTestHelpers.getRepositoryBranchesByIdAsync repositoryId [| branchId |]
+
+            Assert.That(branches, Has.Length.EqualTo(1))
+            Assert.That(branches[0].BranchId, Is.EqualTo(branchId))
+
+            [|
+                branches[0].BasedOn
+                branches[0].LatestReference
+            |]
+            |> Array.iter (fun reference ->
+                Assert.That(reference.ReferenceId, Is.Not.EqualTo(ReferenceId.Empty))
+                Assert.That(string reference.Sha256Hash, Is.Not.Empty)
+                Assert.That(string reference.Blake3Hash, Is.Not.Empty))
+
+            Assert.That(Branch.BranchDto.IsValidPublicProjection(branches[0]), Is.True, serialize branches[0])
+        }
 
     /// Verifies the create get list reference and version routes round trip branch identity scenario.
     [<Test>]

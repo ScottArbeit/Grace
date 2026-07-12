@@ -9,15 +9,15 @@
  */
 
 use crate::models;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// TypedReferenceApiDto : A complete real Reference or the canonical absence sentinel for one type-specific latest slot.
 /// A complete real Reference or the canonical absence sentinel for one type-specific latest slot.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum TypedReferenceApiDto {
-    ReferenceApiDto(Box<models::ReferenceApiDto>),
     ReferenceDefaultSentinel(Box<models::ReferenceDefaultSentinel>),
+    ReferenceApiDto(Box<models::ReferenceApiDto>),
 }
 
 impl Default for TypedReferenceApiDto {
@@ -181,4 +181,22 @@ impl Default for DeleteReason {
         Self::Empty
     }
 }
-
+impl<'de> Deserialize<'de> for TypedReferenceApiDto {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let is_sentinel = value.get("ReferenceId").and_then(serde_json::Value::as_str)
+            == Some("00000000-0000-0000-0000-000000000000");
+        if is_sentinel {
+            serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
+                .map(|reference| Self::ReferenceDefaultSentinel(Box::new(reference)))
+                .map_err(serde::de::Error::custom)
+        } else {
+            serde_json::from_value::<models::ReferenceApiDto>(value)
+                .map(|reference| Self::ReferenceApiDto(Box::new(reference)))
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}

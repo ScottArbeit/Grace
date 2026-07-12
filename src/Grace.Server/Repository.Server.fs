@@ -954,7 +954,7 @@ module Repository =
                                     .Select(fun branchId -> Guid.Parse(branchId))
 
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
-                            return! getBranchesByBranchId repositoryId branchIds maxCount includeDeleted
+                            return! getBranchesByBranchId repositoryId branchIds maxCount includeDeleted (getCorrelationId context)
                         }
 
                     let! parameters = context |> parse<GetBranchesByBranchIdParameters>

@@ -2455,10 +2455,30 @@ module Services =
     /// Gets the latest rebase from a branch.
     let getLatestRebase = getLatestReferenceByType ReferenceType.Rebase
 
+    /// Resolves persisted branch identities through BranchActor.Get so every public query uses the normalized projection contract.
+    let private getPublicBranchDtos (repositoryId: RepositoryId) (branchIds: IEnumerable<BranchId>) correlationId =
+        task {
+            let branches = ConcurrentDictionary<BranchId, BranchDto>()
+
+            do!
+                Parallel.ForEachAsync(
+                    branchIds,
+                    (fun branchId ct ->
+                        ValueTask(
+                            task {
+                                let actorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                                let! branchDto = actorProxy.Get correlationId
+                                branches[branchDto.BranchId] <- branchDto
+                            }
+                        ))
+                )
+
+            return branches.Values.ToArray()
+        }
+
     /// Gets a list of branches for a given repository.
     let getBranches (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: RepositoryId) (maxCount: int) includeDeleted correlationId =
         task {
-            let branches = ConcurrentDictionary<BranchId, BranchDto>()
             let branchIds = List<BranchId>()
 
             match actorStateStorageProvider with
@@ -2507,19 +2527,6 @@ module Services =
                             for branchIdValue in branchIdValues do
                                 branchIds.Add(branchIdValue.branchId)
 
-                        do!
-                            Parallel.ForEachAsync(
-                                branchIds,
-                                (fun branchId ct ->
-                                    ValueTask(
-                                        task {
-                                            let actorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
-                                            let! branchDto = actorProxy.Get correlationId
-                                            branches[branchDto.BranchId] <- branchDto
-                                        }
-                                    ))
-                            )
-
                         if indexMetrics.Length >= 2
                            && requestCharge.Length >= 2
                            && Activity.Current <> null then
@@ -2537,9 +2544,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
+            let! branches = getPublicBranchDtos repositoryId branchIds correlationId
+
             return
                 branches
-                    .Values
                     .OrderBy(fun branchDto -> branchDto.UpdatedAt)
                     .ToArray()
         }
@@ -3242,9 +3250,9 @@ module Services =
         }
 
     /// Gets a list of BranchDtos based on BranchIds.
-    let getBranchesByBranchId (repositoryId: RepositoryId) (branchIds: IEnumerable<BranchId>) (maxCount: int) includeDeleted =
+    let getBranchesByBranchId (repositoryId: RepositoryId) (branchIds: IEnumerable<BranchId>) (maxCount: int) includeDeleted correlationId =
         task {
-            let branchDtos = List<BranchDto>()
+            let matchingBranchIds = List<BranchId>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -3259,9 +3267,9 @@ module Services =
                     let queryDefinition =
                         QueryDefinition(
                             $"""
-                            SELECT TOP @maxCount c.State
+                            SELECT TOP @maxCount c.State[0].Event.created.branchId
                             FROM c
-                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                            WHERE STRINGEQUALS(c.State[0].Event.created.branchId, @branchId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                                 {includeDeletedEntitiesClause includeDeleted}
@@ -3272,28 +3280,24 @@ module Services =
                             .WithParameter("@grainType", StateName.Branch)
                             .WithParameter("@partitionKey", repositoryId)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<BranchEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
                         requestCharge <- requestCharge + results.RequestCharge
-                        let eventsForAllBranches = results.Resource
 
-                        eventsForAllBranches
-                        |> Seq.iter (fun eventsForOneBranch ->
-                            let branchDto =
-                                eventsForOneBranch.State
-                                |> Array.fold (fun branchDto branchEvent -> branchDto |> BranchDto.UpdateDto branchEvent) BranchDto.Default
-
-                            branchDtos.Add(branchDto))
+                        results.Resource
+                        |> Seq.iter (fun branchIdValue -> matchingBranchIds.Add(branchIdValue.branchId))
 
                 if Activity.Current <> null then
                     Activity
                         .Current
-                        .SetTag("referenceDtos.Count", $"{branchDtos.Count}")
+                        .SetTag("branchDtos.Count", $"{matchingBranchIds.Count}")
                         .SetTag("totalRequestCharge", $"{requestCharge}")
                     |> ignore
             | MongoDB -> ()
+
+            let! branchDtos = getPublicBranchDtos repositoryId matchingBranchIds correlationId
 
             return
                 branchDtos
@@ -3304,7 +3308,7 @@ module Services =
     /// Gets a list of child BranchDtos for a given parent branch.
     let getChildBranches (repositoryId: RepositoryId) (parentBranchId: BranchId) (maxCount: int) includeDeleted correlationId =
         task {
-            let childBranches = List<BranchDto>()
+            let childBranchIds = List<BranchId>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -3315,7 +3319,7 @@ module Services =
                     let queryDefinition =
                         QueryDefinition(
                             $"""
-                            SELECT TOP @maxCount c.State
+                            SELECT TOP @maxCount c.State[0].Event.created.branchId
                             FROM c
                             WHERE STRINGEQUALS(c.State[0].Event.created.parentBranchId, @parentBranchId, true)
                                 AND c.GrainType = @grainType
@@ -3328,27 +3332,21 @@ module Services =
                             .WithParameter("@grainType", StateName.Branch)
                             .WithParameter("@partitionKey", repositoryId)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<BranchEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         addTiming TimingFlag.BeforeStorageQuery "getChildBranches" correlationId
                         let! results = iterator.ReadNextAsync()
                         addTiming TimingFlag.AfterStorageQuery "getChildBranches" correlationId
                         requestCharge <- requestCharge + results.RequestCharge
-                        let eventsForAllBranches = results.Resource
 
-                        eventsForAllBranches
-                        |> Seq.iter (fun eventsForOneBranch ->
-                            let branchDto =
-                                eventsForOneBranch.State
-                                |> Array.fold (fun branchDto branchEvent -> branchDto |> BranchDto.UpdateDto branchEvent) BranchDto.Default
-
-                            childBranches.Add(branchDto))
+                        results.Resource
+                        |> Seq.iter (fun branchIdValue -> childBranchIds.Add(branchIdValue.branchId))
 
                     if (Activity.Current <> null) then
                         Activity
                             .Current
-                            .SetTag("childBranches.Count", $"{childBranches.Count}")
+                            .SetTag("childBranches.Count", $"{childBranchIds.Count}")
                             .SetTag("totalRequestCharge", $"{requestCharge}")
                         |> ignore
                 with
@@ -3360,6 +3358,8 @@ module Services =
                         correlationId
                     )
             | MongoDB -> ()
+
+            let! childBranches = getPublicBranchDtos repositoryId childBranchIds correlationId
 
             return
                 childBranches

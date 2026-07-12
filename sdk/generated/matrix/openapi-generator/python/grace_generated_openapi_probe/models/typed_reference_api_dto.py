@@ -88,6 +88,11 @@ class TypedReferenceApiDto(BaseModel):
         error_messages = []
         match = 0
 
+        raw_value = json.loads(json_str)
+        if raw_value.get("ReferenceId") == "00000000-0000-0000-0000-000000000000":
+            instance.actual_instance = ReferenceDefaultSentinel.from_json(json_str)
+            return instance
+
         # deserialize data into ReferenceApiDto
         try:
             instance.actual_instance = ReferenceApiDto.from_json(json_str)

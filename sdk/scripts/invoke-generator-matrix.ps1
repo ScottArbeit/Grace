@@ -173,6 +173,114 @@ function Write-GeneratedOutputAttributes {
     [System.IO.File]::WriteAllText($attributesPath, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Set-GeneratedClientSemanticUnionFixes {
+    param([string] $RepoRoot)
+
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    $zero = '00000000-0000-0000-0000-000000000000'
+
+    $typescriptPath = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\typescript-fetch\src\models\TypedReferenceApiDto.ts'
+    $typescript = [System.IO.File]::ReadAllText($typescriptPath)
+    $typescriptPattern = '(?s)export function TypedReferenceApiDtoFromJSONTyped\(json: any, ignoreDiscriminator: boolean\): TypedReferenceApiDto \{.*?\n\}\n\nexport function TypedReferenceApiDtoToJSON'
+    $typescriptReplacement = @'
+export function TypedReferenceApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boolean): TypedReferenceApiDto {
+    if (json == null || typeof json !== 'object') {
+        return json;
+    }
+    if (json['ReferenceId'] === '00000000-0000-0000-0000-000000000000') {
+        const sentinel = ReferenceDefaultSentinelFromJSONTyped(json, true);
+        const zero = '00000000-0000-0000-0000-000000000000';
+        if (sentinel._class !== 'ReferenceDto' || sentinel.referenceId !== zero || sentinel.ownerId !== zero ||
+            sentinel.organizationId !== zero || sentinel.repositoryId !== zero || sentinel.branchId !== zero ||
+            sentinel.directoryId !== zero || sentinel.sha256Hash !== '' || sentinel.blake3Hash !== '' ||
+            sentinel.referenceType !== 'Save' || sentinel.referenceText !== '' || sentinel.links.length !== 0 ||
+            sentinel.createdAt !== '2000-01-01T00:00:00Z' ||
+            sentinel.createdBy !== undefined || sentinel.updatedAt !== undefined || sentinel.deletedAt !== undefined ||
+            sentinel.deleteReason !== '') {
+            throw new Error('Typed Reference absence must be the canonical ReferenceDto.Default sentinel.');
+        }
+        return sentinel;
+    }
+    return ReferenceApiDtoFromJSONTyped(json, true);
+}
+
+export function TypedReferenceApiDtoToJSON
+'@
+    $updatedTypescript = [regex]::Replace($typescript, $typescriptPattern, $typescriptReplacement, 1)
+    if ($updatedTypescript -eq $typescript) { throw "TypeScript typed Reference post-generation anchor was not found: $typescriptPath" }
+    [System.IO.File]::WriteAllText($typescriptPath, $updatedTypescript, $utf8)
+
+    $pythonPath = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\python\grace_generated_openapi_probe\models\reference_default_sentinel.py'
+    $python = [System.IO.File]::ReadAllText($pythonPath)
+    $pythonNeedle = "if value not in set(['$zero']):"
+    $pythonReplacement = "if value not in set([UUID('$zero')]):"
+    $updatedPython = $python.Replace($pythonNeedle, $pythonReplacement)
+    if ($updatedPython -eq $python) { throw "Python sentinel UUID post-generation anchor was not found: $pythonPath" }
+    [System.IO.File]::WriteAllText($pythonPath, $updatedPython, $utf8)
+
+    $pythonUnionPath = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\python\grace_generated_openapi_probe\models\typed_reference_api_dto.py'
+    $pythonUnion = [System.IO.File]::ReadAllText($pythonUnionPath)
+    $pythonUnionNeedle = @'
+        match = 0
+
+        # deserialize data into ReferenceApiDto
+'@
+    $pythonUnionReplacement = @'
+        match = 0
+
+        raw_value = json.loads(json_str)
+        if raw_value.get("ReferenceId") == "00000000-0000-0000-0000-000000000000":
+            instance.actual_instance = ReferenceDefaultSentinel.from_json(json_str)
+            return instance
+
+        # deserialize data into ReferenceApiDto
+'@
+    $updatedPythonUnion = $pythonUnion.Replace($pythonUnionNeedle, $pythonUnionReplacement)
+    if ($updatedPythonUnion -eq $pythonUnion) { throw "Python typed Reference dispatch post-generation anchor was not found: $pythonUnionPath" }
+    [System.IO.File]::WriteAllText($pythonUnionPath, $updatedPythonUnion, $utf8)
+
+    $rustPath = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\rust\src\models\typed_reference_api_dto.rs'
+    $rust = [System.IO.File]::ReadAllText($rustPath)
+    $rust = $rust.Replace('use serde::{Deserialize, Serialize};', 'use serde::{Deserialize, Deserializer, Serialize};')
+    $rust = $rust.Replace('#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]', '#[derive(Clone, Debug, PartialEq, Serialize)]')
+    $rust = $rust.Replace(
+        "    ReferenceApiDto(Box<models::ReferenceApiDto>),`n    ReferenceDefaultSentinel(Box<models::ReferenceDefaultSentinel>),",
+        "    ReferenceDefaultSentinel(Box<models::ReferenceDefaultSentinel>),`n    ReferenceApiDto(Box<models::ReferenceApiDto>),"
+    )
+    $rustAppend = @'
+
+impl<'de> Deserialize<'de> for TypedReferenceApiDto {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let is_sentinel = value.get("ReferenceId").and_then(serde_json::Value::as_str)
+            == Some("00000000-0000-0000-0000-000000000000");
+        if is_sentinel {
+            serde_json::from_value::<models::ReferenceDefaultSentinel>(value)
+                .map(|reference| Self::ReferenceDefaultSentinel(Box::new(reference)))
+                .map_err(serde::de::Error::custom)
+        } else {
+            serde_json::from_value::<models::ReferenceApiDto>(value)
+                .map(|reference| Self::ReferenceApiDto(Box::new(reference)))
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}
+'@
+    if ($rust -notmatch 'ReferenceDefaultSentinel\(Box<models::ReferenceDefaultSentinel>\),\r?\n    ReferenceApiDto') {
+        throw "Rust typed Reference variant-order post-generation anchor was not found: $rustPath"
+    }
+    $rust = $rust.TrimEnd() + $rustAppend + "`n"
+    [System.IO.File]::WriteAllText($rustPath, $rust, $utf8)
+
+    $rustProofSource = Join-Path $RepoRoot 'sdk\proof\generated-client-wire\rust_wire_proof.rs'
+    $rustProofTarget = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\rust\tests\typed_reference_wire.rs'
+    New-Directory (Split-Path -Parent $rustProofTarget)
+    Copy-Item -LiteralPath $rustProofSource -Destination $rustProofTarget -Force
+}
+
 function Get-DirectoryManifestHash {
     param([string] $Path)
 
@@ -402,6 +510,8 @@ if (-not $SkipGeneration) {
         'Generated configuration supports bearer token, API key, user agent, and reqwest client customization.' `
         'Facade required; raw Rust surface is broad and not ready for stable package publication.' `
         $openApiRustPath))
+
+    Set-GeneratedClientSemanticUnionFixes $repoRoot
 }
 else {
     $existingEvidencePath = Join-Path $matrixRoot 'generator-matrix-evidence.json'
@@ -437,11 +547,15 @@ if (-not $SkipProbes) {
         (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\typescript-fetch')
     $npmBuild = Invoke-CapturedNative $npmExecutable @('run', 'build') `
         (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\typescript-fetch')
+    $typescriptWireProof = Invoke-CapturedNative 'node' @(
+        (Join-Path $repoRoot 'sdk\proof\generated-client-wire\typescript-wire-proof.cjs'),
+        (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\typescript-fetch')
+    ) $repoRoot
     $probeEntries.Add([ordered]@{
-        name = 'TypeScript generated client import/build'
-        command = 'npm install --ignore-scripts; npm run build'
-        exitCode = $npmInstall.exitCode + $npmBuild.exitCode
-        evidence = @((Select-EvidenceLines $npmInstall.output) + (Select-EvidenceLines $npmBuild.output))
+        name = 'TypeScript generated client import/build and PascalCase wire round trip'
+        command = 'npm install --ignore-scripts; npm run build; node sdk/proof/generated-client-wire/typescript-wire-proof.cjs'
+        exitCode = $npmInstall.exitCode + $npmBuild.exitCode + $typescriptWireProof.exitCode
+        evidence = @((Select-EvidenceLines $npmInstall.output) + (Select-EvidenceLines $npmBuild.output) + $typescriptWireProof.output)
     })
 
     $pythonInstall = Invoke-CapturedNative 'python' @('-m', 'pip', 'install', '-e', '.', '--quiet') `
@@ -450,18 +564,22 @@ if (-not $SkipProbes) {
         '-c',
         'import grace_generated_openapi_probe; from grace_generated_openapi_probe.api_client import ApiClient; print(grace_generated_openapi_probe.__version__); print(ApiClient.__name__)'
     ) (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\python')
+    $pythonWireProof = Invoke-CapturedNative 'python' @(
+        (Join-Path $repoRoot 'sdk\proof\generated-client-wire\python_wire_proof.py'),
+        (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\python')
+    ) $repoRoot
     $probeEntries.Add([ordered]@{
-        name = 'Python generated client import/build'
-        command = 'python -m pip install -e . --quiet; python -c "import grace_generated_openapi_probe ..."'
-        exitCode = $pythonInstall.exitCode + $pythonImport.exitCode
-        evidence = @((Select-EvidenceLines $pythonInstall.output) + (Select-EvidenceLines $pythonImport.output))
+        name = 'Python generated client import/build and UUID wire round trip'
+        command = 'python -m pip install -e . --quiet; python sdk/proof/generated-client-wire/python_wire_proof.py'
+        exitCode = $pythonInstall.exitCode + $pythonImport.exitCode + $pythonWireProof.exitCode
+        evidence = @((Select-EvidenceLines $pythonInstall.output) + (Select-EvidenceLines $pythonImport.output) + $pythonWireProof.output)
     })
 
-    $cargoCheck = Invoke-CapturedNative 'cargo' @('check') `
+    $cargoCheck = Invoke-CapturedNative 'cargo' @('test', '--test', 'typed_reference_wire') `
         (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\rust')
     $probeEntries.Add([ordered]@{
-        name = 'Rust generated client cargo check'
-        command = 'cargo check'
+        name = 'Rust generated client semantic union wire round trip'
+        command = 'cargo test --test typed_reference_wire'
         exitCode = $cargoCheck.exitCode
         evidence = @(Select-EvidenceLines $cargoCheck.output)
     })
@@ -516,9 +634,9 @@ if ($SkipProbes) {
 }
 else {
     $probeExpectations = @(
-        @{ name = 'TypeScript generated client import/build'; language = 'TypeScript' },
-        @{ name = 'Python generated client import/build'; language = 'Python' },
-        @{ name = 'Rust generated client cargo check'; language = 'Rust' }
+        @{ name = 'TypeScript generated client import/build and PascalCase wire round trip'; language = 'TypeScript' },
+        @{ name = 'Python generated client import/build and UUID wire round trip'; language = 'Python' },
+        @{ name = 'Rust generated client semantic union wire round trip'; language = 'Rust' }
     )
 
     foreach ($expectation in $probeExpectations) {

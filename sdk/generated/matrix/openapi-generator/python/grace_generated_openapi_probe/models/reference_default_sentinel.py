@@ -60,42 +60,42 @@ class ReferenceDefaultSentinel(BaseModel):
     @field_validator('reference_id')
     def reference_id_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['00000000-0000-0000-0000-000000000000']):
+        if value not in set([UUID('00000000-0000-0000-0000-000000000000')]):
             raise ValueError("must be one of enum values ('00000000-0000-0000-0000-000000000000')")
         return value
 
     @field_validator('owner_id')
     def owner_id_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['00000000-0000-0000-0000-000000000000']):
+        if value not in set([UUID('00000000-0000-0000-0000-000000000000')]):
             raise ValueError("must be one of enum values ('00000000-0000-0000-0000-000000000000')")
         return value
 
     @field_validator('organization_id')
     def organization_id_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['00000000-0000-0000-0000-000000000000']):
+        if value not in set([UUID('00000000-0000-0000-0000-000000000000')]):
             raise ValueError("must be one of enum values ('00000000-0000-0000-0000-000000000000')")
         return value
 
     @field_validator('repository_id')
     def repository_id_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['00000000-0000-0000-0000-000000000000']):
+        if value not in set([UUID('00000000-0000-0000-0000-000000000000')]):
             raise ValueError("must be one of enum values ('00000000-0000-0000-0000-000000000000')")
         return value
 
     @field_validator('branch_id')
     def branch_id_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['00000000-0000-0000-0000-000000000000']):
+        if value not in set([UUID('00000000-0000-0000-0000-000000000000')]):
             raise ValueError("must be one of enum values ('00000000-0000-0000-0000-000000000000')")
         return value
 
     @field_validator('directory_id')
     def directory_id_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['00000000-0000-0000-0000-000000000000']):
+        if value not in set([UUID('00000000-0000-0000-0000-000000000000')]):
             raise ValueError("must be one of enum values ('00000000-0000-0000-0000-000000000000')")
         return value
 
