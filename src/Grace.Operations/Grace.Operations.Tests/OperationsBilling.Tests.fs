@@ -76,6 +76,57 @@ type OperationsBillingTests() =
         )
         |> ignore
 
+    /// Verifies manual replay identity is stable only for the exact immutable correction and correlation tuple.
+    [<Test>]
+    member _.ManualCorrectionIdentityDistinguishesConflictingCorrelationReplays() =
+        let correction: ManualBillingCorrection =
+            {
+                BillingPeriodId = Guid.Parse("01010101-0101-0101-0101-010101010101")
+                EntryKind = ChargeLedgerEntryKind.Adjustment
+                PriorChargeLedgerEntryId = None
+                FactKind = 1
+                BillableUsageKindMappingId = Guid.Parse("02020202-0202-0202-0202-020202020202")
+                BillableUsageKind = 1
+                PricingAssignmentId = Guid.Parse("03030303-0303-0303-0303-030303030303")
+                PricingPlanId = Guid.Parse("04040404-0404-0404-0404-040404040404")
+                PricingRateId = Guid.Parse("05050505-0505-0505-0505-050505050505")
+                CurrencyCode = "USD"
+                UnitName = "byte-minute"
+                UnitQuantity = 1L
+                UnitPriceMicros = 5L
+                EffectiveFromUtc = utc 2028 1 1 0
+                EffectiveToUtc = utc 2028 2 1 0
+                QuantityDelta = 1L
+                ChargeMicrosDelta = 5L
+            }
+
+        let correlationId = "manual-replay-identity"
+        let original = ManualBillingCorrectionIdentity.entryId correction correlationId
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(ManualBillingCorrectionIdentity.entryId correction correlationId, Is.EqualTo(original))
+                Assert.That(ManualBillingCorrectionIdentity.entryId ({ correction with QuantityDelta = 2L }) correlationId, Is.Not.EqualTo(original)))
+        )
+
+    /// Verifies SQL datetime2 normalization preserves the stored instant before UTC-only month rules evaluate it.
+    [<Test>]
+    member _.SqlDateTimeNormalizationPreservesUtcMonthInstant() =
+        let stored = DateTime(2028, 1, 31, 23, 0, 0, DateTimeKind.Unspecified)
+        let normalized = DateTime.SpecifyKind(stored, DateTimeKind.Utc)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(normalized.Ticks, Is.EqualTo(stored.Ticks))
+                Assert.That(normalized.Kind, Is.EqualTo(DateTimeKind.Utc))
+
+                Assert.That(
+                    BillingPeriodRules.intersectingMonths normalized None (utc 2028 2 2 0)
+                    |> List.length,
+                    Is.EqualTo(2)
+                ))
+        )
+
     /// Proves current Operations source, schema, tests, docs, and seed carry neither forbidden identifier.
     [<Test>]
     member _.OperationsTreeHasNoForbiddenIdentityTerms() =
@@ -115,6 +166,17 @@ type OperationsBillingTests() =
         Assert.That(closeSource, Does.Contain("BillingCorrectionWork"))
         Assert.That(closeSource, Does.Contain("AssignmentCoverageMissing"))
         Assert.That(workerSource, Does.Contain("TimeSpan.FromMinutes(30.0)"))
+
+        Assert.That(
+            workerSource.IndexOf("try", StringComparison.Ordinal),
+            Is.LessThan(workerSource.IndexOf("schema.EnsureCreatedAsync", StringComparison.Ordinal))
+        )
+
+        Assert.That(
+            workerSource.IndexOf("schema.EnsureCreatedAsync", StringComparison.Ordinal),
+            Is.LessThan(workerSource.IndexOf("service.RunAsync", StringComparison.Ordinal))
+        )
+
         Assert.That(billingSource, Does.Contain("TR_ops_ChargeLedgerEntry_Immutable"))
         Assert.That(billingSource, Does.Contain("AFTER INSERT, UPDATE, DELETE"))
         Assert.That(migrationSource, Does.Contain("BillingCorrectionWork"))
@@ -133,6 +195,9 @@ type OperationsBillingTests() =
                 Assert.That(ledgerIndex, Is.GreaterThan(rebuildIndex))
                 Assert.That(source, Does.Contain("AcceptedFactsDigest"))
                 Assert.That(source, Does.Contain("PricingDigest"))
+                Assert.That(source, Does.Contain("@Principal,@ReasonCode,@ReasonText,@Correlation"))
+                Assert.That(source, Does.Contain("return! runScope scope nowUtc provenance cancellationToken"))
+                Assert.That(source, Does.Contain("BillingPeriodRules.intersectingMonths (utcFromSql (reader.GetDateTime(3)))"))
                 Assert.That(OperationsBillingSql.AcquireScopeLock, Does.Contain("LockOwner='Transaction'"))
                 Assert.That(source, Does.Contain("OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId")))
         )
@@ -150,6 +215,8 @@ type OperationsBillingTests() =
                 Assert.That(source, Does.Contain("ReasonCode=N'AutomaticLateUsage'"))
                 Assert.That(source, Does.Contain("ORDER BY CreatedAtUtc DESC,ChargeLedgerEntryId DESC"))
                 Assert.That(source, Does.Contain("MissingPricing"))
+                Assert.That(source, Does.Contain("let effectiveFrom = max scope.PeriodFromUtc pricingEffectiveFrom"))
+                Assert.That(source, Does.Contain("let effectiveTo = min scope.PeriodToUtc pricingEffectiveTo"))
                 Assert.That(source, Does.Contain("CompletedAtUtc=SYSUTCDATETIME()")))
         )
 
@@ -165,6 +232,8 @@ type OperationsBillingTests() =
                 Assert.That(source, Does.Contain("Trace.TraceWarning"))
                 Assert.That(source, Does.Contain("let validateManualPricingGrain"))
                 Assert.That(source, Does.Contain("let validateManualPrior"))
+                Assert.That(source, Does.Contain("existingManualCorrectionEntry"))
+                Assert.That(source, Does.Contain("CorrelationId is already assigned to a different manual correction."))
                 Assert.That(source, Does.Contain("Manual correction pricing grain is not applicable to the locked owner period."))
                 Assert.That(source, Does.Contain("Accepted usage fact resolved canonical failure evidence."))
                 Assert.That(source, Does.Not.Contain("Customer" + "Id")))
@@ -228,6 +297,23 @@ type OperationsBillingTests() =
                     Assert.That(OperationsBillingSql.CreateHistoricalPricingProtectionTriggers, Does.Contain(trigger))
 
                 Assert.That(OperationsBillingSql.CreateHistoricalPricingProtectionTriggers, Does.Contain("AFTER INSERT, UPDATE, DELETE"))
+
+                Assert.That(
+                    OperationsBillingSql.CreateHistoricalPricingProtectionTriggers,
+                    Does.Contain("WHERE a.EffectiveFromUtc < p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc > p.PeriodFromUtc))")
+                )
+
                 Assert.That(migrationSource, Does.Contain("Split([| \"GO\" |], StringSplitOptions.RemoveEmptyEntries)"))
+
+                Assert.That(
+                    migrationSource.IndexOf("DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection", StringComparison.Ordinal),
+                    Is.LessThan(migrationSource.IndexOf("DROP TABLE IF EXISTS ops.BillingPeriod", StringComparison.Ordinal))
+                )
+
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable"))
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_PricingAssignment_HistoricalProtection"))
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection"))
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection"))
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection"))
                 Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("TR_ops_ChargeLedgerEntry_Immutable")))
         )

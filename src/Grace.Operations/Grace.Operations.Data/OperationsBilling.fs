@@ -702,6 +702,7 @@ BEGIN
         JOIN ops.PricingAssignment a ON a.PricingPlanId=d.PricingPlanId
         JOIN ops.BillingPeriod p ON p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId
           AND p.State IN (2,3) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc))
+        WHERE a.EffectiveFromUtc < p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc > p.PeriodFromUtc))
         THROW 51004, 'Pricing rate overlaps immutable billing history.', 1;
 END;
 GO

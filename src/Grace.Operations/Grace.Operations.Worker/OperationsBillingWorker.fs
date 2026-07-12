@@ -14,13 +14,13 @@ type OperationsBillingWorkerService(schema: IOperationsUsageSchemaInitializer, s
     /// Performs one immediate schema-gated pass then repeats every thirty minutes; persisted state remains the only lifecycle source.
     override _.ExecuteAsync(stoppingToken: CancellationToken) =
         task {
-            do! schema.EnsureCreatedAsync(stoppingToken)
             use timer = new PeriodicTimer(TimeSpan.FromMinutes(30.0))
             let mutable keepRunning = true
 
             while keepRunning
                   && not stoppingToken.IsCancellationRequested do
                 try
+                    do! schema.EnsureCreatedAsync(stoppingToken)
                     do! service.RunAsync(DateTime.UtcNow, stoppingToken)
                 with
                 | :? OperationCanceledException when stoppingToken.IsCancellationRequested -> keepRunning <- false

@@ -213,6 +213,13 @@ type SqlBillingPeriodService(connectionString: string) =
         add command "@PeriodFromUtc" SqlDbType.DateTime2 scope.PeriodFromUtc
         add command "@PeriodToUtc" SqlDbType.DateTime2 scope.PeriodToUtc
 
+    /// Interprets SQL datetime2 values as stored UTC timestamps without changing their represented instant.
+    let utcFromSql (value: DateTime) =
+        match value.Kind with
+        | DateTimeKind.Utc -> value
+        | DateTimeKind.Unspecified -> DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        | _ -> invalidArg "value" "Billing SQL timestamps must be UTC or unspecified datetime2 values."
+
     let lockScope (connection: SqlConnection) (transaction: SqlTransaction) (scope: BillingPeriodScope) (cancellationToken: CancellationToken) =
         task {
             use lockCommand = connection.CreateCommand()
@@ -399,7 +406,7 @@ AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc) THEN 1 ELSE 0 
                                 UsageFactId = usageFactId
                                 FactKind = reader.GetInt32(1)
                                 Quantity = reader.GetInt64(2)
-                                ObservedAtUtc = reader.GetDateTime(3)
+                                ObservedAtUtc = utcFromSql (reader.GetDateTime(3))
                                 PricingAssignmentId = reader.GetGuid(4)
                                 PricingPlanId = reader.GetGuid(6)
                                 BillableUsageKindMappingId = reader.GetGuid(7)
@@ -409,8 +416,8 @@ AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc) THEN 1 ELSE 0 
                                 UnitName = reader.GetString(11)
                                 UnitQuantity = reader.GetInt64(12)
                                 UnitPriceMicros = reader.GetInt64(13)
-                                EffectiveFromUtc = reader.GetDateTime(14)
-                                EffectiveToUtc = reader.GetDateTime(15)
+                                EffectiveFromUtc = utcFromSql (reader.GetDateTime(14))
+                                EffectiveToUtc = utcFromSql (reader.GetDateTime(15))
                             }
 
             do! reader.CloseAsync()
@@ -570,11 +577,32 @@ SELECT CASE WHEN EXISTS(
                     && reader.GetString(8) = correction.UnitName
                     && reader.GetInt64(9) = correction.UnitQuantity
                     && reader.GetInt64(10) = correction.UnitPriceMicros
-                    && reader.GetDateTime(11) = correction.EffectiveFromUtc
-                    && reader.GetDateTime(12) = correction.EffectiveToUtc
+                    && utcFromSql (reader.GetDateTime(11)) = correction.EffectiveFromUtc
+                    && utcFromSql (reader.GetDateTime(12)) = correction.EffectiveToUtc
 
                 if not matches then
                     invalidArg "PriorChargeLedgerEntryId" "Manual correction predecessor has an incompatible period or pricing grain."
+        }
+
+    /// Finds a previously posted manual correction under the same immutable period and operator correlation.
+    let existingManualCorrectionEntry
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (billingPeriodId: Guid)
+        (correlationId: string)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            use command = connection.CreateCommand()
+            command.Transaction <- transaction
+
+            command.CommandText <-
+                "SELECT ChargeLedgerEntryId FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingPeriodId=@BillingPeriodId AND CorrelationId=@Correlation AND SourceChargePreviewLineId IS NULL AND BillingCorrectionWorkId IS NULL AND EntryKind IN(1,2);"
+
+            add command "@BillingPeriodId" SqlDbType.UniqueIdentifier billingPeriodId
+            add command "@Correlation" SqlDbType.NVarChar correlationId
+            let! value = command.ExecuteScalarAsync(cancellationToken)
+            return if isNull value then None else Some(value :?> Guid)
         }
 
     let close
@@ -636,7 +664,7 @@ SELECT CASE WHEN EXISTS(
                     post.CommandText <-
                         """
 INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,SourceChargePreviewLineId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId)
-SELECT NEWID(),@BillingPeriodId,0,l.ChargePreviewLineId,l.FactKind,l.BillableUsageKindMappingId,l.BillableUsageKind,l.PricingAssignmentId,l.PricingPlanId,l.PricingRateId,l.CurrencyCode,l.UnitName,l.UnitQuantity,l.UnitPriceMicros,l.EffectiveFromUtc,l.EffectiveToUtc,l.TotalQuantity,l.ChargeMicros,N'Grace.Operations',N'FinalClose',N'Final preview ledger posting.',@Correlation
+SELECT NEWID(),@BillingPeriodId,0,l.ChargePreviewLineId,l.FactKind,l.BillableUsageKindMappingId,l.BillableUsageKind,l.PricingAssignmentId,l.PricingPlanId,l.PricingRateId,l.CurrencyCode,l.UnitName,l.UnitQuantity,l.UnitPriceMicros,l.EffectiveFromUtc,l.EffectiveToUtc,l.TotalQuantity,l.ChargeMicros,@Principal,@ReasonCode,@ReasonText,@Correlation
 FROM ops.ChargePreviewLine l WITH(UPDLOCK,HOLDLOCK)
 WHERE l.OwnerId=@OwnerId AND l.OrganizationId=@OrganizationId AND l.RepositoryId=@RepositoryId AND l.PeriodFromUtc=@PeriodFromUtc AND l.PeriodToUtc=@PeriodToUtc
 AND NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry e WITH(UPDLOCK,HOLDLOCK) WHERE e.BillingPeriodId=@BillingPeriodId AND e.SourceChargePreviewLineId=l.ChargePreviewLineId);
@@ -665,7 +693,8 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                     return BillingCloseOutcome.Blocked("MissingPricing")
         }
 
-    let runScope (scope: BillingPeriodScope) (nowUtc: DateTime) (cancellationToken: CancellationToken) =
+    /// Runs one owner-period lifecycle transaction using the caller's durable close provenance if a close is eligible.
+    let runScope (scope: BillingPeriodScope) (nowUtc: DateTime) (provenance: BillingOperationProvenance) (cancellationToken: CancellationToken) =
         task {
             use connection = new SqlConnection(connectionString)
             do! connection.OpenAsync(cancellationToken)
@@ -694,19 +723,7 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                         currentState = int BillingPeriodState.Provisional
                         && BillingPeriodRules.isCloseEligible scope.PeriodToUtc nowUtc
                         ->
-                        close
-                            connection
-                            transaction
-                            scope
-                            periodId
-                            nowUtc
-                            {
-                                InitiatedByPrincipalId = "Grace.Operations"
-                                ReasonCode = "ScheduledClose"
-                                ReasonText = "Scheduled owner billing close."
-                                CorrelationId = $"billing-close:{periodId:D}"
-                            }
-                            cancellationToken
+                        close connection transaction scope periodId nowUtc provenance cancellationToken
                     | Some (_, currentState) when currentState >= int BillingPeriodState.Closed -> Task.FromResult(BillingCloseOutcome.AlreadyTerminal)
                     | _ -> Task.FromResult(BillingCloseOutcome.NotEligible)
 
@@ -738,9 +755,9 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                 hasRow <- next
 
                 if hasRow then
-                    let endUtc = if reader.IsDBNull(4) then None else Some(reader.GetDateTime(4))
+                    let endUtc = if reader.IsDBNull(4) then None else Some(utcFromSql (reader.GetDateTime(4)))
 
-                    for fromUtc, toUtc in BillingPeriodRules.intersectingMonths (reader.GetDateTime(3)) endUtc nowUtc do
+                    for fromUtc, toUtc in BillingPeriodRules.intersectingMonths (utcFromSql (reader.GetDateTime(3))) endUtc nowUtc do
                         scopes.Add(
                             {
                                 OwnerId = reader.GetGuid(0)
@@ -770,8 +787,8 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                             OwnerId = existingReader.GetGuid(0)
                             OrganizationId = existingReader.GetGuid(1)
                             RepositoryId = existingReader.GetGuid(2)
-                            PeriodFromUtc = existingReader.GetDateTime(3)
-                            PeriodToUtc = existingReader.GetDateTime(4)
+                            PeriodFromUtc = utcFromSql (existingReader.GetDateTime(3))
+                            PeriodToUtc = utcFromSql (existingReader.GetDateTime(4))
                         }: BillingPeriodScope
                     )
 
@@ -834,8 +851,8 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                             OwnerId = workReader.GetGuid(2)
                             OrganizationId = workReader.GetGuid(3)
                             RepositoryId = workReader.GetGuid(4)
-                            PeriodFromUtc = workReader.GetDateTime(5)
-                            PeriodToUtc = workReader.GetDateTime(6)
+                            PeriodFromUtc = utcFromSql (workReader.GetDateTime(5))
+                            PeriodToUtc = utcFromSql (workReader.GetDateTime(6))
                         }
 
                     let state = workReader.GetInt32(7)
@@ -861,7 +878,7 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
 
                     let factKind = factReader.GetInt32(0)
                     let quantity = factReader.GetInt64(1)
-                    let observedAtUtc = factReader.GetDateTime(2)
+                    let observedAtUtc = utcFromSql (factReader.GetDateTime(2))
                     do! factReader.CloseAsync()
 
                     use price = connection.CreateCommand()
@@ -896,13 +913,16 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                         let unitName = priceReader.GetString(10)
                         let unitQuantity = priceReader.GetInt64(11)
                         let unitPrice = priceReader.GetInt64(12)
-                        let effectiveFrom = priceReader.GetDateTime(13)
+                        let pricingEffectiveFrom = utcFromSql (priceReader.GetDateTime(13))
 
-                        let effectiveTo =
+                        let pricingEffectiveTo =
                             if priceReader.IsDBNull(14) then
                                 scope.PeriodToUtc
                             else
-                                priceReader.GetDateTime(14)
+                                utcFromSql (priceReader.GetDateTime(14))
+
+                        let effectiveFrom = max scope.PeriodFromUtc pricingEffectiveFrom
+                        let effectiveTo = min scope.PeriodToUtc pricingEffectiveTo
 
                         do! priceReader.CloseAsync()
                         let charge = ChargePreviewCalculation.calculateChargeMicros quantity unitPrice unitQuantity
@@ -980,7 +1000,17 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                 let! scopes = materializedScopes nowUtc cancellationToken
 
                 for scope in scopes do
-                    let! _ = runScope scope nowUtc cancellationToken
+                    let periodId = BillingPeriodRules.periodId scope
+
+                    let scheduledProvenance: BillingOperationProvenance =
+                        {
+                            InitiatedByPrincipalId = "Grace.Operations"
+                            ReasonCode = "ScheduledClose"
+                            ReasonText = "Scheduled owner billing close."
+                            CorrelationId = $"billing-close:{periodId:D}"
+                        }
+
+                    let! _ = runScope scope nowUtc scheduledProvenance cancellationToken
                     ()
 
                 let! pendingWork = pendingCorrectionWork cancellationToken
@@ -992,7 +1022,7 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
         member _.RetryCloseAsync(scope, nowUtc, provenance, cancellationToken) =
             task {
                 BillingProvenance.validate provenance
-                return! runScope scope nowUtc cancellationToken
+                return! runScope scope nowUtc provenance cancellationToken
             }
 
         member _.RecordAcceptedLateFactAsync(ownerId, organizationId, repositoryId, observedAtUtc, usageFactId, cancellationToken) =
@@ -1077,55 +1107,65 @@ END;
                             OwnerId = reader.GetGuid(0)
                             OrganizationId = reader.GetGuid(1)
                             RepositoryId = reader.GetGuid(2)
-                            PeriodFromUtc = reader.GetDateTime(3)
-                            PeriodToUtc = reader.GetDateTime(4)
+                            PeriodFromUtc = utcFromSql (reader.GetDateTime(3))
+                            PeriodToUtc = utcFromSql (reader.GetDateTime(4))
                         }
 
                     do! reader.CloseAsync()
                     do! lockScope connection transaction scope cancellationToken
                     ManualBillingCorrectionValidation.validateApplicability scope.PeriodFromUtc scope.PeriodToUtc correction
-                    do! validateManualPricingGrain connection transaction scope correction cancellationToken
-                    do! validateManualPrior connection transaction correction cancellationToken
                     let entryId = ManualBillingCorrectionIdentity.entryId correction provenance.CorrelationId
-                    use insert = connection.CreateCommand()
-                    insert.Transaction <- transaction
 
-                    insert.CommandText <-
-                        """
+                    let! existingEntry =
+                        existingManualCorrectionEntry connection transaction correction.BillingPeriodId provenance.CorrelationId cancellationToken
+
+                    match existingEntry with
+                    | Some existingEntryId when existingEntryId = entryId -> ()
+                    | Some _ -> invalidArg "CorrelationId" "CorrelationId is already assigned to a different manual correction."
+                    | None ->
+                        do! validateManualPricingGrain connection transaction scope correction cancellationToken
+                        do! validateManualPrior connection transaction correction cancellationToken
+                        use insert = connection.CreateCommand()
+                        insert.Transaction <- transaction
+
+                        insert.CommandText <-
+                            """
 INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,PriorChargeLedgerEntryId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId)
 VALUES(@Id,@BillingPeriodId,@EntryKind,@PriorId,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,@Principal,@ReasonCode,@ReasonText,@Correlation);
 UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@BillingPeriodId AND State=2;
 """
 
-                    add insert "@Id" SqlDbType.UniqueIdentifier entryId
-                    add insert "@BillingPeriodId" SqlDbType.UniqueIdentifier correction.BillingPeriodId
-                    add insert "@EntryKind" SqlDbType.Int (int correction.EntryKind)
-                    let prior = insert.Parameters.Add("@PriorId", SqlDbType.UniqueIdentifier)
+                        add insert "@Id" SqlDbType.UniqueIdentifier entryId
+                        add insert "@BillingPeriodId" SqlDbType.UniqueIdentifier correction.BillingPeriodId
+                        add insert "@EntryKind" SqlDbType.Int (int correction.EntryKind)
+                        let prior = insert.Parameters.Add("@PriorId", SqlDbType.UniqueIdentifier)
 
-                    prior.Value <-
-                        correction.PriorChargeLedgerEntryId
-                        |> Option.map box
-                        |> Option.defaultValue DBNull.Value
+                        prior.Value <-
+                            correction.PriorChargeLedgerEntryId
+                            |> Option.map box
+                            |> Option.defaultValue DBNull.Value
 
-                    add insert "@FactKind" SqlDbType.Int correction.FactKind
-                    add insert "@MappingId" SqlDbType.UniqueIdentifier correction.BillableUsageKindMappingId
-                    add insert "@BillableKind" SqlDbType.Int correction.BillableUsageKind
-                    add insert "@AssignmentId" SqlDbType.UniqueIdentifier correction.PricingAssignmentId
-                    add insert "@PlanId" SqlDbType.UniqueIdentifier correction.PricingPlanId
-                    add insert "@RateId" SqlDbType.UniqueIdentifier correction.PricingRateId
-                    add insert "@Currency" SqlDbType.VarChar correction.CurrencyCode
-                    add insert "@UnitName" SqlDbType.NVarChar correction.UnitName
-                    add insert "@UnitQuantity" SqlDbType.BigInt correction.UnitQuantity
-                    add insert "@UnitPrice" SqlDbType.BigInt correction.UnitPriceMicros
-                    add insert "@EffectiveFrom" SqlDbType.DateTime2 correction.EffectiveFromUtc
-                    add insert "@EffectiveTo" SqlDbType.DateTime2 correction.EffectiveToUtc
-                    add insert "@Quantity" SqlDbType.BigInt correction.QuantityDelta
-                    add insert "@Charge" SqlDbType.BigInt correction.ChargeMicrosDelta
-                    add insert "@Principal" SqlDbType.NVarChar provenance.InitiatedByPrincipalId
-                    add insert "@ReasonCode" SqlDbType.NVarChar provenance.ReasonCode
-                    add insert "@ReasonText" SqlDbType.NVarChar provenance.ReasonText
-                    add insert "@Correlation" SqlDbType.NVarChar provenance.CorrelationId
-                    let! _ = insert.ExecuteNonQueryAsync(cancellationToken)
+                        add insert "@FactKind" SqlDbType.Int correction.FactKind
+                        add insert "@MappingId" SqlDbType.UniqueIdentifier correction.BillableUsageKindMappingId
+                        add insert "@BillableKind" SqlDbType.Int correction.BillableUsageKind
+                        add insert "@AssignmentId" SqlDbType.UniqueIdentifier correction.PricingAssignmentId
+                        add insert "@PlanId" SqlDbType.UniqueIdentifier correction.PricingPlanId
+                        add insert "@RateId" SqlDbType.UniqueIdentifier correction.PricingRateId
+                        add insert "@Currency" SqlDbType.VarChar correction.CurrencyCode
+                        add insert "@UnitName" SqlDbType.NVarChar correction.UnitName
+                        add insert "@UnitQuantity" SqlDbType.BigInt correction.UnitQuantity
+                        add insert "@UnitPrice" SqlDbType.BigInt correction.UnitPriceMicros
+                        add insert "@EffectiveFrom" SqlDbType.DateTime2 correction.EffectiveFromUtc
+                        add insert "@EffectiveTo" SqlDbType.DateTime2 correction.EffectiveToUtc
+                        add insert "@Quantity" SqlDbType.BigInt correction.QuantityDelta
+                        add insert "@Charge" SqlDbType.BigInt correction.ChargeMicrosDelta
+                        add insert "@Principal" SqlDbType.NVarChar provenance.InitiatedByPrincipalId
+                        add insert "@ReasonCode" SqlDbType.NVarChar provenance.ReasonCode
+                        add insert "@ReasonText" SqlDbType.NVarChar provenance.ReasonText
+                        add insert "@Correlation" SqlDbType.NVarChar provenance.CorrelationId
+                        let! _ = insert.ExecuteNonQueryAsync(cancellationToken)
+                        ()
+
                     do! transaction.CommitAsync(cancellationToken)
                 with
                 | ex ->

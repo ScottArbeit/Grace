@@ -23,6 +23,7 @@ open System.IO.Compression
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
 
@@ -1647,7 +1648,20 @@ module OperationsWorkerSettings =
 /// Provides no-op billing dependencies for focused ingestion tests that do not configure the Operations billing store.
 type private NoOpBillingIngestionFailureRecorder() =
     interface IBillingIngestionFailureRecorder with
-        member _.RecordFailureAsync(_usageFactId, _ownerId, _organizationId, _repositoryId, _observedAtUtc, _correlationId, _failureCode, _detail, _cancellationToken) = Task.CompletedTask
+        member _.RecordFailureAsync
+            (
+                _usageFactId,
+                _ownerId,
+                _organizationId,
+                _repositoryId,
+                _observedAtUtc,
+                _correlationId,
+                _failureCode,
+                _detail,
+                _cancellationToken
+            ) =
+            Task.CompletedTask
+
         member _.ResolveFailureAsync(_usageFactId, _resolutionDetail, _cancellationToken) = Task.CompletedTask
 
 /// Provides no-op late-fact handling for focused ingestion tests.
@@ -1758,8 +1772,34 @@ type OperationsUsageIngestionProcessor
 
     /// Deserializes a usage fact using the shared Grace JSON contract options.
     let deserializeUsageFact (body: byte array) =
-        use stream = new MemoryStream(body)
-        JsonSerializer.Deserialize<UsageFact>(stream, Constants.JsonSerializerOptions)
+        use document = JsonDocument.Parse(ReadOnlyMemory<byte>(body), usageFactSchemaDocumentOptions)
+
+        let nullScopeProperty =
+            if document.RootElement.ValueKind = JsonValueKind.Object then
+                document.RootElement.EnumerateObject()
+                |> Seq.tryFind (fun property ->
+                    String.Equals(property.Name, "Scope", StringComparison.OrdinalIgnoreCase)
+                    && property.Value.ValueKind = JsonValueKind.Null)
+            else
+                None
+
+        match nullScopeProperty with
+        | Some scopeProperty ->
+            let root =
+                JsonNode
+                    .Parse(Encoding.UTF8.GetString(body))
+                    .AsObject()
+
+            root[scopeProperty.Name] <- JsonNode.Parse(
+                """{"OwnerId":"00000000-0000-0000-0000-000000000000","OrganizationId":"00000000-0000-0000-0000-000000000000","RepositoryId":"00000000-0000-0000-0000-000000000000"}"""
+            )
+
+            use stream = new MemoryStream(Encoding.UTF8.GetBytes(root.ToJsonString()))
+            let usageFact = JsonSerializer.Deserialize<UsageFact>(stream, Constants.JsonSerializerOptions)
+            { usageFact with Scope = Unchecked.defaultof<UsageFactScope> }
+        | None ->
+            use stream = new MemoryStream(body)
+            JsonSerializer.Deserialize<UsageFact>(stream, Constants.JsonSerializerOptions)
 
     /// Builds the deterministic unsupported-schema description used for settlement and readiness.
     let unsupportedSchemaDescription schemaVersion = $"UsageFact SchemaVersion '{schemaVersion}' is not supported. Expected '{UsageFactSchemaVersion}'."
@@ -1855,7 +1895,22 @@ type OperationsUsageIngestionProcessor
                         else
                             match UsageFact.Validate usageFact with
                             | Error errors ->
-                                do! billingFailures.RecordFailureAsync(Some usageFact.UsageFactId, Some usageFact.Scope.OwnerId, Some usageFact.Scope.OrganizationId, Some usageFact.Scope.RepositoryId, Some(usageFact.ObservedAt.ToDateTimeUtc()), string usageFact.CorrelationId, "InvalidUsageFact", "Usage fact failed contract validation.", cancellationToken)
+                                let scope = if isNull (box usageFact.Scope) then None else Some usageFact.Scope
+
+                                do!
+                                    billingFailures.RecordFailureAsync(
+                                        Some usageFact.UsageFactId,
+                                        scope |> Option.map (fun value -> value.OwnerId),
+                                        scope
+                                        |> Option.map (fun value -> value.OrganizationId),
+                                        scope
+                                        |> Option.map (fun value -> value.RepositoryId),
+                                        Some(usageFact.ObservedAt.ToDateTimeUtc()),
+                                        string usageFact.CorrelationId,
+                                        "InvalidUsageFact",
+                                        "Usage fact failed contract validation.",
+                                        cancellationToken
+                                    )
 
                                 logger.LogWarning(
                                     "Dead-lettering invalid UsageFact. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
@@ -1872,7 +1927,18 @@ type OperationsUsageIngestionProcessor
 
                                 match stored with
                                 | Error errors ->
-                                    do! billingFailures.RecordFailureAsync(Some usageFact.UsageFactId, Some usageFact.Scope.OwnerId, Some usageFact.Scope.OrganizationId, Some usageFact.Scope.RepositoryId, Some(usageFact.ObservedAt.ToDateTimeUtc()), string usageFact.CorrelationId, "StorageValidation", "Usage fact failed durable storage validation.", cancellationToken)
+                                    do!
+                                        billingFailures.RecordFailureAsync(
+                                            Some usageFact.UsageFactId,
+                                            Some usageFact.Scope.OwnerId,
+                                            Some usageFact.Scope.OrganizationId,
+                                            Some usageFact.Scope.RepositoryId,
+                                            Some(usageFact.ObservedAt.ToDateTimeUtc()),
+                                            string usageFact.CorrelationId,
+                                            "StorageValidation",
+                                            "Usage fact failed durable storage validation.",
+                                            cancellationToken
+                                        )
 
                                     logger.LogWarning(
                                         "Dead-lettering UsageFact rejected by operations storage validation. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
@@ -1885,8 +1951,17 @@ type OperationsUsageIngestionProcessor
                                     let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
                                     ()
                                 | Ok result ->
-                                    // Existing Closed/Corrected owner-month periods win over current assignment state.
-                                    do! billingPeriods.RecordAcceptedLateFactAsync(usageFact.Scope.OwnerId, usageFact.Scope.OrganizationId, usageFact.Scope.RepositoryId, usageFact.ObservedAt.ToDateTimeUtc(), usageFact.UsageFactId, cancellationToken)
+                                    if result.Status = UsageFactPersistenceStatus.Accepted then
+                                        // Existing Closed/Corrected owner-month periods win over current assignment state.
+                                        do!
+                                            billingPeriods.RecordAcceptedLateFactAsync(
+                                                usageFact.Scope.OwnerId,
+                                                usageFact.Scope.OrganizationId,
+                                                usageFact.Scope.RepositoryId,
+                                                usageFact.ObservedAt.ToDateTimeUtc(),
+                                                usageFact.UsageFactId,
+                                                cancellationToken
+                                            )
 
                                     logger.LogInformation(
                                         "Processed operational UsageFact. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Status: {Status}; BucketStart: {BucketStart}.",

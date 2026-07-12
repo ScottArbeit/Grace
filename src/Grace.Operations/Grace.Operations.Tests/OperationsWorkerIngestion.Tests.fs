@@ -237,6 +237,47 @@ type private FailingOperationsUsageTransactionScope() =
         member _.ExecuteAsync<'T>(_operation, _cancellationToken) =
             Task.FromException<'T>(InvalidOperationException("Invalid usage facts must be rejected before opening a storage transaction."))
 
+/// Records bounded billing failure evidence forwarded by an ingestion processor test.
+type private RecordingBillingIngestionFailureRecorder() =
+    let calls = ResizeArray<Guid option * Guid option * Guid option * Guid option * DateTime option * string * string>()
+
+    /// Returns every failure-evidence tuple forwarded by the processor.
+    member _.Calls = calls |> Seq.toList
+
+    interface IBillingIngestionFailureRecorder with
+        member _.RecordFailureAsync
+            (
+                usageFactId,
+                ownerId,
+                organizationId,
+                repositoryId,
+                observedAtUtc,
+                correlationId,
+                failureCode,
+                _detail,
+                _cancellationToken
+            ) =
+            calls.Add(usageFactId, ownerId, organizationId, repositoryId, observedAtUtc, correlationId, failureCode)
+            Task.CompletedTask
+
+        member _.ResolveFailureAsync(_usageFactId, _resolutionDetail, _cancellationToken) = Task.CompletedTask
+
+/// Records late-fact routes forwarded only for newly accepted durable facts.
+type private RecordingBillingPeriodService() =
+    let lateFacts = ResizeArray<Guid * Guid * Guid * DateTime * Guid>()
+
+    /// Returns every accepted late-fact route forwarded by the processor.
+    member _.LateFacts = lateFacts |> Seq.toList
+
+    interface IBillingPeriodService with
+        member _.RunAsync(_nowUtc, _cancellationToken) = Task.CompletedTask
+        member _.RetryCloseAsync(_scope, _nowUtc, _provenance, _cancellationToken) = Task.FromResult(BillingCloseOutcome.NotEligible)
+        member _.ApplyManualCorrectionAsync(_correction, _provenance, _cancellationToken) = Task.CompletedTask
+
+        member _.RecordAcceptedLateFactAsync(ownerId, organizationId, repositoryId, observedAtUtc, usageFactId, _cancellationToken) =
+            lateFacts.Add(ownerId, organizationId, repositoryId, observedAtUtc, usageFactId)
+            Task.CompletedTask
+
 /// Covers the Grace operations worker usage fact ingestion loop.
 [<TestFixture>]
 type OperationsWorkerIngestionTests() =
@@ -275,6 +316,31 @@ type OperationsWorkerIngestionTests() =
     let createProcessorRaw storeAsync =
         let processor, store, actions, events, _readiness = createProcessorWithReadinessRaw storeAsync
         processor, store, actions, events
+
+    /// Creates a processor with inspectable billing evidence and late-fact dependencies.
+    let createProcessorWithBilling storeAsync =
+        let events = List<string>()
+        let store = StubUsageFactStore(storeAsync, events)
+        let readiness = OperationsUsageReadinessState()
+        let failures = RecordingBillingIngestionFailureRecorder()
+        let billingPeriods = RecordingBillingPeriodService()
+
+        let logger =
+            NullLogger<OperationsUsageIngestionProcessor>
+                .Instance
+
+        OperationsUsageIngestionProcessor(
+            store,
+            logger,
+            readiness :> IOperationsUsageReadinessRecorder,
+            failures :> IBillingIngestionFailureRecorder,
+            billingPeriods :> IBillingPeriodService
+        ),
+        store,
+        RecordingMessageActions(events),
+        events,
+        failures,
+        billingPeriods
 
     /// Creates a processor backed by the real data-layer validation path.
     let createProcessorWithRealStore () =
@@ -716,6 +782,55 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies a duplicate durable result cannot enqueue a second late-fact correction after the original billing close.
+    [<Test>]
+    member _.AlreadyProcessedMessageDoesNotRouteLateBillingCorrection() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc"))
+
+            let processor, _store, actions, events, _failures, billingPeriods =
+                createProcessorWithBilling (fun storedFact _rawPayload _ -> Task.FromResult(Ok(alreadyProcessed storedFact)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(billingPeriods.LateFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
+    /// Verifies only a newly accepted durable fact routes the existing terminal billing period for correction work.
+    [<Test>]
+    member _.AcceptedMessageRoutesLateBillingCorrectionOnce() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd"))
+
+            let processor, _store, actions, _events, _failures, billingPeriods =
+                createProcessorWithBilling (fun storedFact _rawPayload _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+            let _, _, _, _, routedUsageFactId = billingPeriods.LateFacts[0]
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(billingPeriods.LateFacts |> List.length, Is.EqualTo(1))
+                    Assert.That(routedUsageFactId, Is.EqualTo(fact.UsageFactId))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
     /// Verifies unsupported Service Bus envelopes dead-letter before the worker reads the body.
     [<Test>]
     member _.UnsupportedEnvelopeIsDeadLetteredWithoutStorage() =
@@ -878,6 +993,60 @@ type OperationsWorkerIngestionTests() =
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
+            )
+        }
+
+    /// Verifies a null v1 scope records bounded scope-free billing evidence and still dead-letters as invalid input.
+    [<Test>]
+    member _.MissingUsageFactScopeRecordsBoundedEvidenceAndDeadLetters() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("16161616-1616-4616-8616-161616161616"))
+
+            let nullScopeJson =
+                sprintf
+                    """
+{
+  "Class": "UsageFact",
+  "SchemaVersion": 1,
+  "UsageFactId": "%O",
+  "CorrelationId": "corr-null-scope",
+  "FactKind": "repositoryStorageBytesMinute",
+  "Scope": null,
+  "Resource": { "StoragePoolId": "storage-pool-main" },
+  "Source": "Grace.Server",
+  "Confidence": "observed",
+  "Quantity": 4096,
+  "ObservedAt": "2026-07-04T12:34:00Z"
+}
+"""
+                    fact.UsageFactId
+
+            let processor, store, actions, events, failures, billingPeriods =
+                createProcessorWithBilling (fun storedFact _rawPayload _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let message =
+                nullScopeJson
+                |> Encoding.UTF8.GetBytes
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.That(failures.Calls |> List.length, Is.EqualTo(1))
+
+            let usageFactId, ownerId, organizationId, repositoryId, observedAtUtc, _correlationId, failureCode = failures.Calls |> List.exactlyOne
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(billingPeriods.LateFacts, Is.Empty)
+                    Assert.That(usageFactId, Is.EqualTo(Some fact.UsageFactId))
+                    Assert.That(ownerId, Is.EqualTo(None))
+                    Assert.That(organizationId, Is.EqualTo(None))
+                    Assert.That(repositoryId, Is.EqualTo(None))
+                    Assert.That(observedAtUtc, Is.EqualTo(Some(fact.ObservedAt.ToDateTimeUtc())))
+                    Assert.That(failureCode, Is.EqualTo("InvalidUsageFact"))
                     Assert.That(eventText events, Is.EqualTo("dead-letter"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
             )

@@ -136,10 +136,10 @@ CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(C
         |> Array.filter (fun statement -> not (String.IsNullOrWhiteSpace(statement)))
         |> Array.iter (fun statement -> migrationBuilder.Sql(statement) |> ignore)
 
-    /// Removes only the billing schema created by this non-production current-model migration.
+    /// Removes billing protection triggers before their referenced billing tables and then removes this migration's schema.
     override _.Down(migrationBuilder: MigrationBuilder) =
         migrationBuilder.Sql(
-            "DROP TABLE IF EXISTS ops.BillingCorrectionWork; DROP TABLE IF EXISTS ops.BillingIngestionFailure; DROP TABLE IF EXISTS ops.ChargeLedgerEntry; DROP TABLE IF EXISTS ops.ChargePreviewFreshness; DROP TABLE IF EXISTS ops.BillingPeriod;"
+            "DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingAssignment_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable; DROP TABLE IF EXISTS ops.BillingCorrectionWork; DROP TABLE IF EXISTS ops.BillingIngestionFailure; DROP TABLE IF EXISTS ops.ChargeLedgerEntry; DROP TABLE IF EXISTS ops.ChargePreviewFreshness; DROP TABLE IF EXISTS ops.BillingPeriod;"
         )
         |> ignore
 
