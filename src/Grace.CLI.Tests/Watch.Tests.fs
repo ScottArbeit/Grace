@@ -959,30 +959,38 @@ module WatchTests =
             let updateMarkerFile = Services.updateInProgressFileName ()
             let completedUtc = DateTime.UtcNow
 
-            Watch.setSignalRBranchSubscriptionForWatchTests branchId parentBranchId
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
 
-            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
-            |> ignore
+            try
+                Watch.setSignalRBranchSubscriptionForWatchTests branchId parentBranchId
 
-            File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
-            File.SetLastWriteTimeUtc(updateMarkerFile, completedUtc.AddSeconds(-1.0))
+                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                |> ignore
 
-            if observeCreation then
-                Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+                File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, completedUtc.AddSeconds(-1.0))
 
-            File.WriteAllText(
-                updateMarkerFile + ".completed",
-                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
-            )
+                if observeCreation then
+                    Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
 
-            File.Delete(updateMarkerFile)
-            Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+                File.WriteAllText(
+                    updateMarkerFile + ".completed",
+                    Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+                )
 
-            let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
-            subscription.BranchId |> should equal branchId
+                File.Delete(updateMarkerFile)
+                Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
-            subscription.ParentBranchId
-            |> should equal parentBranchId)
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal (Some 1L)
+
+                let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+                subscription.BranchId |> should equal branchId
+
+                subscription.ParentBranchId
+                |> should equal parentBranchId
+            finally
+                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
     /// Verifies absent, legacy, unknown, and malformed purpose evidence cannot authorize branch-transition completion.
     [<TestCase("2026-07-10T12:00:00.0000000Z")>]
@@ -14946,6 +14954,127 @@ module WatchTests =
             payload.ReferenceType
             |> should equal latestNotification.ReferenceType)
 
+    /// Verifies that a completed same-branch materialization marker wakes a fresh BranchDto catch-up after bounded retries stopped.
+    [<Test; Category("CurrentBranchCatchUp")>]
+    let ``reference materialization marker deletion routes fresh BranchDto reference after bounded catch-up exhaustion`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+            let startedUtc = DateTime.UtcNow
+
+            let blockedReference =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Commit
+                    (Guid.NewGuid())
+                    (Sha256Hash "blocked-catch-up-root")
+                    (Blake3Hash "blocked-catch-up-root-blake3")
+
+            let blockedBranchDto = branchDtoWithLatestCurrentBranchReference blockedReference
+            let blockedCoordinatorCalls = ResizeArray<CurrentBranchReferenceNotification>()
+
+            let getBlockedBranch () = Task.FromResult(Ok(GraceReturnValue.Create blockedBranchDto "blocked-catch-up-source-test"))
+
+            let processBlockedReference (payload: CurrentBranchReferenceNotification) : Task<Watch.CurrentBranchMaterializationCoordinatorOutcome> =
+                task {
+                    blockedCoordinatorCalls.Add(payload)
+
+                    return
+                        {
+                            ReferenceId = payload.ReferenceId
+                            Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                            Decision = None
+                        }
+                }
+
+            scheduler.Request() |> should equal 1L
+
+            for nowUtc in
+                [|
+                    startedUtc
+                    startedUtc.AddSeconds(2.0)
+                    startedUtc.AddSeconds(6.0)
+                |] do
+                (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsAtForWatchTests scheduler nowUtc getBlockedBranch processBlockedReference)
+                    .GetAwaiter()
+                    .GetResult()
+
+            blockedCoordinatorCalls.ToArray()
+            |> should haveLength 3
+
+            scheduler.PendingGeneration |> should equal None
+
+            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsAtForWatchTests
+                scheduler
+                (startedUtc.AddMinutes(1.0))
+                getBlockedBranch
+                processBlockedReference)
+                .GetAwaiter()
+                .GetResult()
+
+            blockedCoordinatorCalls.ToArray()
+            |> should haveLength 3
+
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
+
+            try
+                let updateMarkerFile = Services.updateInProgressFileName ()
+                let completedUtc = DateTime.UtcNow
+
+                let freshReference =
+                    validCurrentBranchReferenceNotification
+                        currentRepositoryId
+                        currentBranchId
+                        ReferenceType.Commit
+                        (Guid.NewGuid())
+                        (Sha256Hash "fresh-marker-catch-up-root")
+                        (Blake3Hash "fresh-marker-catch-up-root-blake3")
+
+                let freshBranchDto = branchDtoWithLatestCurrentBranchReference freshReference
+                let observedPayloads = ResizeArray<CurrentBranchReferenceNotification>()
+
+                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                |> ignore
+
+                File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
+                Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+
+                File.WriteAllText(
+                    updateMarkerFile + ".completed",
+                    Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+                )
+
+                File.Delete(updateMarkerFile)
+                Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal (Some 1L)
+
+                let getFreshBranch () = Task.FromResult(Ok(GraceReturnValue.Create freshBranchDto "fresh-marker-catch-up-source-test"))
+
+                let processFreshReference (payload: CurrentBranchReferenceNotification) : Task<Watch.CurrentBranchMaterializationCoordinatorOutcome> =
+                    task {
+                        observedPayloads.Add(payload)
+
+                        return
+                            { ReferenceId = payload.ReferenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }
+                    }
+
+                (Watch.runCurrentBranchReferenceCatchUpIfDueForWatchTests getFreshBranch processFreshReference)
+                    .GetAwaiter()
+                    .GetResult()
+
+                observedPayloads.ToArray() |> should haveLength 1
+
+                observedPayloads[0].ReferenceId
+                |> should equal freshReference.ReferenceId
+
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal None
+            finally
+                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
+
     /// Verifies that a BranchDto without a concrete latest Reference never invents deferred catch-up work.
     [<Test; Category("CurrentBranchCatchUp")>]
     let ``current branch catch-up treats missing latest reference as a no-op`` () =
@@ -15038,6 +15167,173 @@ module WatchTests =
             |> should equal Watch.CurrentBranchReferenceCatchUpResult.RefreshFailed
 
             outcome |> should equal None)
+
+    /// Verifies that a newer lifecycle request survives while an older request is still reading a BranchDto that has no Reference.
+    [<Test; Category("CurrentBranchCatchUp")>]
+    let ``current branch catch-up preserves newer generation after older BranchDto no-reference completion`` () =
+        let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+        let readStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        let olderBranchRead =
+            TaskCompletionSource<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        let getOlderBranch () =
+            readStarted.TrySetResult(()) |> ignore
+
+            olderBranchRead.Task
+
+        let processReference _ =
+            Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
+                InvalidOperationException("A BranchDto with no Reference must not enter the coordinator.")
+            )
+
+        scheduler.Request() |> should equal 1L
+
+        let olderRun = Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests scheduler getOlderBranch processReference
+
+        readStarted.Task.GetAwaiter().GetResult()
+
+        scheduler.Request() |> should equal 2L
+
+        olderBranchRead.SetResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "older-no-reference"))
+        olderRun.GetAwaiter().GetResult()
+
+        scheduler.PendingGeneration
+        |> should equal (Some 2L)
+
+        (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+            scheduler
+            (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-no-reference")))
+            processReference)
+            .GetAwaiter()
+            .GetResult()
+
+        scheduler.PendingGeneration |> should equal None
+
+    /// Verifies that a newer lifecycle request survives an older same-root coordinator result.
+    [<Test; Category("CurrentBranchCatchUp")>]
+    let ``current branch catch-up preserves newer generation after older same-root completion`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+
+            let latestReference =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Commit
+                    (Guid.NewGuid())
+                    (Sha256Hash "same-root-catch-up")
+                    (Blake3Hash "same-root-catch-up-blake3")
+
+            let processStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let olderCompletion = TaskCompletionSource<Watch.CurrentBranchMaterializationCoordinatorOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let processOlderReference _ =
+                processStarted.TrySetResult(()) |> ignore
+
+                olderCompletion.Task
+
+            scheduler.Request() |> should equal 1L
+
+            let olderRun =
+                Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+                    scheduler
+                    (fun () -> Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference latestReference) "older-same-root")))
+                    processOlderReference
+
+            processStarted.Task.GetAwaiter().GetResult()
+
+            scheduler.Request() |> should equal 2L
+
+            olderCompletion.SetResult(
+                {
+                    ReferenceId = latestReference.ReferenceId
+                    Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+                    Decision =
+                        Some
+                            {
+                                NeedsMaterialization = false
+                                Reason = Services.LatestCurrentBranchReferenceDecisionReason.SameRoot
+                                Reference = Some latestReference
+                            }
+                }
+            )
+
+            olderRun.GetAwaiter().GetResult()
+
+            scheduler.PendingGeneration
+            |> should equal (Some 2L)
+
+            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+                scheduler
+                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-same-root")))
+                (fun _ ->
+                    Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
+                        InvalidOperationException("The newer no-reference BranchDto must not enter the coordinator.")
+                    )))
+                .GetAwaiter()
+                .GetResult()
+
+            scheduler.PendingGeneration |> should equal None)
+
+    /// Verifies that a newer lifecycle request survives an older serialized materialization-lane completion.
+    [<Test; Category("CurrentBranchCatchUp")>]
+    let ``current branch catch-up preserves newer generation after older serialized apply completion`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+
+            let latestReference =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Commit
+                    (Guid.NewGuid())
+                    (Sha256Hash "serialized-apply-catch-up")
+                    (Blake3Hash "serialized-apply-catch-up-blake3")
+
+            let laneEntered = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let olderCompletion = TaskCompletionSource<Watch.CurrentBranchMaterializationCoordinatorOutcome>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let processOlderReference payload =
+                laneEntered.TrySetResult(()) |> ignore
+
+                olderCompletion.Task
+
+            scheduler.Request() |> should equal 1L
+
+            let olderRun =
+                Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+                    scheduler
+                    (fun () ->
+                        Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference latestReference) "older-serialized-apply")))
+                    processOlderReference
+
+            laneEntered.Task.GetAwaiter().GetResult()
+
+            scheduler.Request() |> should equal 2L
+
+            olderCompletion.SetResult(
+                { ReferenceId = latestReference.ReferenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }
+            )
+
+            olderRun.GetAwaiter().GetResult()
+
+            scheduler.PendingGeneration
+            |> should equal (Some 2L)
+
+            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+                scheduler
+                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-after-serialized-apply")))
+                (fun _ ->
+                    Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
+                        InvalidOperationException("The newer no-reference BranchDto must not enter the coordinator.")
+                    )))
+                .GetAwaiter()
+                .GetResult()
+
+            scheduler.PendingGeneration |> should equal None)
 
     /// Verifies that protocol-invalid current-branch notifications are rejected before BranchDto latest authority.
     [<Test>]

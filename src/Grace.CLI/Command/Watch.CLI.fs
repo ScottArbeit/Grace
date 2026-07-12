@@ -5437,53 +5437,140 @@ module Watch =
     let internal catchUpCurrentBranchReferenceWithClientsForWatchTests getCurrentBranch processReference =
         catchUpCurrentBranchReferenceWithClients getCurrentBranch processReference
 
-    /// Limits lifecycle catch-up retries until a later local-drain, resync, startup, or reconnect request obtains fresh evidence.
+    /// Identifies the one lifecycle request generation that a catch-up run may settle.
+    type internal CurrentBranchReferenceCatchUpClaim = { Generation: int64 }
+
+    /// Describes whether a terminal catch-up result settled its own request or left a newer one pending.
+    type internal CurrentBranchReferenceCatchUpCompletion =
+        /// The claimed lifecycle request completed and no later request remains.
+        | ClaimCompleted
+        /// A later lifecycle request arrived while the claim awaited BranchDto or the materialization lane.
+        | NewerRequestPending
+        /// The completion came from an obsolete or already-settled claim.
+        | ClaimNotCurrent
+
+    /// Describes the bounded retry outcome for the lifecycle request generation that requested it.
+    type internal CurrentBranchReferenceCatchUpRetry =
+        /// The claimed request remains pending until the reported bounded backoff elapses.
+        | RetryAfter of delaySeconds: int
+        /// The claimed request exhausted its bounded attempts and awaits fresh lifecycle evidence.
+        | RetryExhausted
+        /// A newer lifecycle request arrived before this claim could schedule another retry.
+        | RetrySupersededByNewerRequest
+        /// The retry came from an obsolete or already-settled claim.
+        | RetryClaimNotCurrent
+
+    /// Serializes lifecycle catch-up request generations so an older asynchronous run cannot consume newer evidence.
+    type internal CurrentBranchReferenceCatchUpScheduler(maximumAttempts: int) =
+        let schedulerLock = obj ()
+        let mutable nextGeneration = 0L
+        let mutable pendingGeneration: int64 option = None
+        let mutable claimedGeneration: int64 option = None
+        let mutable retryAttempts = 0
+        let mutable retryNotBeforeUtc = DateTime.MinValue
+
+        /// Records fresh lifecycle evidence without retaining a Reference payload as retry state.
+        member _.Request() =
+            lock schedulerLock (fun () ->
+                nextGeneration <- nextGeneration + 1L
+                pendingGeneration <- Some nextGeneration
+                retryAttempts <- 0
+                retryNotBeforeUtc <- DateTime.MinValue
+                nextGeneration)
+
+        /// Claims the due pending generation only when no earlier run is still awaiting external work.
+        member _.TryClaimDue(nowUtc: DateTime) =
+            lock schedulerLock (fun () ->
+                match claimedGeneration, pendingGeneration with
+                | None, Some generation when retryNotBeforeUtc <= nowUtc ->
+                    claimedGeneration <- Some generation
+                    Some { Generation = generation }
+                | _ -> None)
+
+        /// Settles only the pending generation held by the supplied claim.
+        member _.Complete(claim: CurrentBranchReferenceCatchUpClaim) =
+            lock schedulerLock (fun () ->
+                match claimedGeneration with
+                | Some generation when generation = claim.Generation ->
+                    claimedGeneration <- None
+
+                    match pendingGeneration with
+                    | Some pending when pending = claim.Generation ->
+                        pendingGeneration <- None
+                        retryAttempts <- 0
+                        retryNotBeforeUtc <- DateTime.MinValue
+                        ClaimCompleted
+                    | _ -> NewerRequestPending
+                | _ -> ClaimNotCurrent)
+
+        /// Retries only the pending generation held by the supplied claim and preserves newer lifecycle evidence.
+        member _.Retry(claim: CurrentBranchReferenceCatchUpClaim, nowUtc: DateTime) =
+            lock schedulerLock (fun () ->
+                match claimedGeneration with
+                | Some generation when generation = claim.Generation ->
+                    claimedGeneration <- None
+
+                    match pendingGeneration with
+                    | Some pending when pending = claim.Generation ->
+                        retryAttempts <- retryAttempts + 1
+
+                        if retryAttempts >= maximumAttempts then
+                            pendingGeneration <- None
+                            retryAttempts <- 0
+                            retryNotBeforeUtc <- DateTime.MinValue
+                            RetryExhausted
+                        else
+                            let delaySeconds = pown 2 retryAttempts
+                            retryNotBeforeUtc <- nowUtc.AddSeconds(float delaySeconds)
+                            RetryAfter delaySeconds
+                    | _ -> RetrySupersededByNewerRequest
+                | _ -> RetryClaimNotCurrent)
+
+        /// Clears all private scheduler state for isolated Watch tests.
+        member _.Reset() =
+            lock schedulerLock (fun () ->
+                nextGeneration <- 0L
+                pendingGeneration <- None
+                claimedGeneration <- None
+                retryAttempts <- 0
+                retryNotBeforeUtc <- DateTime.MinValue)
+
+        /// Reports the pending generation for false-positive-resistant lifecycle tests.
+        member _.PendingGeneration = lock schedulerLock (fun () -> pendingGeneration)
+
+    /// Limits lifecycle catch-up retries until a later local-drain, resync, startup, reconnect, or marker-deletion request obtains fresh evidence.
     let private currentBranchReferenceCatchUpMaximumAttempts = 3
-    let private currentBranchReferenceCatchUpRetryLock = obj ()
-    let mutable private currentBranchReferenceCatchUpRetryPending = false
-    let mutable private currentBranchReferenceCatchUpRetryAttempts = 0
-    let mutable private currentBranchReferenceCatchUpRetryNotBeforeUtc = DateTime.MinValue
+    let private currentBranchReferenceCatchUpScheduler = CurrentBranchReferenceCatchUpScheduler(currentBranchReferenceCatchUpMaximumAttempts)
 
     /// Requests a new BranchDto-derived catch-up without retaining a notification or Reference outside the coordinator.
     let private requestCurrentBranchReferenceCatchUp reason =
-        lock currentBranchReferenceCatchUpRetryLock (fun () ->
-            currentBranchReferenceCatchUpRetryPending <- true
-            currentBranchReferenceCatchUpRetryAttempts <- 0
-            currentBranchReferenceCatchUpRetryNotBeforeUtc <- DateTime.MinValue)
+        currentBranchReferenceCatchUpScheduler.Request()
+        |> ignore
 
         logToAnsiConsole Colors.Verbose $"Current-branch Watch catch-up requested after {reason}."
 
-    /// Clears a completed lifecycle catch-up request after BranchDto or the coordinator reached a terminal result.
-    let private completeCurrentBranchReferenceCatchUp () =
-        lock currentBranchReferenceCatchUpRetryLock (fun () ->
-            currentBranchReferenceCatchUpRetryPending <- false
-            currentBranchReferenceCatchUpRetryAttempts <- 0
-            currentBranchReferenceCatchUpRetryNotBeforeUtc <- DateTime.MinValue)
+    /// Completes a claimed lifecycle request and deliberately leaves later requests pending.
+    let private completeCurrentBranchReferenceCatchUp (scheduler: CurrentBranchReferenceCatchUpScheduler) (claim: CurrentBranchReferenceCatchUpClaim) =
+        scheduler.Complete(claim) |> ignore
 
-    /// Schedules the next bounded BranchDto refresh without retaining the blocked Reference as retry truth.
-    let private retryCurrentBranchReferenceCatchUp reason =
-        let retryDelay =
-            lock currentBranchReferenceCatchUpRetryLock (fun () ->
-                currentBranchReferenceCatchUpRetryAttempts <- currentBranchReferenceCatchUpRetryAttempts + 1
-
-                if currentBranchReferenceCatchUpRetryAttempts
-                   >= currentBranchReferenceCatchUpMaximumAttempts then
-                    currentBranchReferenceCatchUpRetryPending <- false
-                    None
-                else
-                    let delaySeconds = pown 2 currentBranchReferenceCatchUpRetryAttempts
-                    currentBranchReferenceCatchUpRetryNotBeforeUtc <- DateTime.UtcNow.AddSeconds(float delaySeconds)
-                    Some delaySeconds)
-
-        match retryDelay with
-        | Some delaySeconds ->
+    /// Schedules a bounded retry only when the same claimed lifecycle request remains current.
+    let private retryCurrentBranchReferenceCatchUp
+        (scheduler: CurrentBranchReferenceCatchUpScheduler)
+        (nowUtc: DateTime)
+        (claim: CurrentBranchReferenceCatchUpClaim)
+        reason
+        =
+        match scheduler.Retry(claim, nowUtc) with
+        | RetryAfter delaySeconds ->
             logToAnsiConsole
                 Colors.Important
                 $"Current-branch Watch catch-up remains blocked: {reason}. It will refresh BranchDto again in {delaySeconds} seconds."
-        | None ->
+        | RetryExhausted ->
             logToAnsiConsole
                 Colors.Important
-                $"Current-branch Watch catch-up remains blocked after {currentBranchReferenceCatchUpMaximumAttempts} attempts: {reason}. It will retry when local work drains, resync completes, or SignalR reconnects."
+                $"Current-branch Watch catch-up remains blocked after {currentBranchReferenceCatchUpMaximumAttempts} attempts: {reason}. It will retry when local work drains, resync completes, SignalR reconnects, or a materialization marker is deleted."
+        | RetrySupersededByNewerRequest
+        | RetryClaimNotCurrent -> ()
 
     /// Uses one coordinator attempt per lifecycle retry so catch-up backoff is cancellable between fresh BranchDto reads.
     let private processCurrentBranchReferenceCatchUp payload =
@@ -5501,50 +5588,81 @@ module Watch =
             }
             payload
 
-    /// Runs a due lifecycle request only from a healthy local boundary and never after Watch cancellation begins.
-    let private runCurrentBranchReferenceCatchUpIfDue (cancellationToken: CancellationToken) =
+    /// Runs one due claimed lifecycle request without permitting it to clear a newer request that arrives while it awaits.
+    let private runCurrentBranchReferenceCatchUpIfDueWithClientsAt
+        (scheduler: CurrentBranchReferenceCatchUpScheduler)
+        (nowUtc: DateTime)
+        getCurrentBranch
+        processReference
+        =
         task {
-            let isDue =
-                lock currentBranchReferenceCatchUpRetryLock (fun () ->
-                    currentBranchReferenceCatchUpRetryPending
-                    && currentBranchReferenceCatchUpRetryNotBeforeUtc
-                       <= DateTime.UtcNow)
-
-            if
-                isDue
-                && not cancellationToken.IsCancellationRequested
-                && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
-                && not (isGraceWatchResyncPending ())
-                && not (hasPendingWatchWork ())
-            then
+            match scheduler.TryClaimDue(nowUtc) with
+            | Some claim ->
                 try
-                    let! result, outcome =
-                        catchUpCurrentBranchReferenceWithClients
-                            (fun () -> getCurrentBranchForCurrentBranchReferenceNotification CurrentBranchReferenceNotification.Default)
-                            processCurrentBranchReferenceCatchUp
+                    let! result, outcome = catchUpCurrentBranchReferenceWithClients getCurrentBranch processReference
 
                     match result, outcome with
-                    | CurrentBranchReferenceCatchUpResult.NoReference, _ -> completeCurrentBranchReferenceCatchUp ()
-                    | CurrentBranchReferenceCatchUpResult.RefreshFailed, _ -> retryCurrentBranchReferenceCatchUp "BranchDto refresh failed"
+                    | CurrentBranchReferenceCatchUpResult.NoReference, _ -> completeCurrentBranchReferenceCatchUp scheduler claim
+                    | CurrentBranchReferenceCatchUpResult.RefreshFailed, _ ->
+                        retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "BranchDto refresh failed"
                     | CurrentBranchReferenceCatchUpResult.Processed, Some coordinatorOutcome ->
                         match coordinatorOutcome.Reason, coordinatorOutcome.Decision with
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint, _ ->
-                            retryCurrentBranchReferenceCatchUp "local Watch work is still pending"
+                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch work is still pending"
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync, _ ->
-                            retryCurrentBranchReferenceCatchUp "local Watch state requires resync"
+                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch state requires resync"
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected, Some decision when
                             decision.Reason = LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
                             ->
-                            retryCurrentBranchReferenceCatchUp "BranchDto advanced while catch-up waited for the serialized lane"
-                        | _ -> completeCurrentBranchReferenceCatchUp ()
-                    | CurrentBranchReferenceCatchUpResult.Processed, None -> completeCurrentBranchReferenceCatchUp ()
-                    | _ -> completeCurrentBranchReferenceCatchUp ()
+                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "BranchDto advanced while catch-up waited for the serialized lane"
+                        | _ -> completeCurrentBranchReferenceCatchUp scheduler claim
+                    | CurrentBranchReferenceCatchUpResult.Processed, None -> completeCurrentBranchReferenceCatchUp scheduler claim
+                    | _ -> completeCurrentBranchReferenceCatchUp scheduler claim
                 with
                 | ex ->
                     logToAnsiConsole Colors.Error $"Current-branch Watch catch-up failed before a terminal coordinator result: {Markup.Escape(ex.Message)}."
 
-                    retryCurrentBranchReferenceCatchUp "catch-up processing failed"
+                    retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "catch-up processing failed"
+            | None -> ()
         }
+
+    /// Runs one due lifecycle request using the current instant for production Watch callbacks.
+    let private runCurrentBranchReferenceCatchUpIfDueWithClients scheduler getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClientsAt scheduler DateTime.UtcNow getCurrentBranch processReference
+
+    /// Runs a due lifecycle request only from a healthy local boundary and never after Watch cancellation begins.
+    let private runCurrentBranchReferenceCatchUpIfDue (cancellationToken: CancellationToken) =
+        task {
+            if
+                not cancellationToken.IsCancellationRequested
+                && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                && not (isGraceWatchResyncPending ())
+                && not (hasPendingWatchWork ())
+            then
+                do!
+                    runCurrentBranchReferenceCatchUpIfDueWithClients
+                        currentBranchReferenceCatchUpScheduler
+                        (fun () -> getCurrentBranchForCurrentBranchReferenceNotification CurrentBranchReferenceNotification.Default)
+                        processCurrentBranchReferenceCatchUp
+        }
+
+    /// Resets the private lifecycle scheduler before a focused Watch test creates fresh request generations.
+    let internal resetCurrentBranchReferenceCatchUpSchedulerForWatchTests () = currentBranchReferenceCatchUpScheduler.Reset()
+
+    /// Reports the private pending lifecycle generation for focused marker-deletion and interleaving proofs.
+    let internal currentBranchReferenceCatchUpPendingGenerationForWatchTests () = currentBranchReferenceCatchUpScheduler.PendingGeneration
+
+    /// Runs one claimed lifecycle request against injectable BranchDto and coordinator clients for deterministic interleaving tests.
+    let internal runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests scheduler getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClients scheduler getCurrentBranch processReference
+
+    /// Runs one lifecycle request at a deterministic instant so Watch tests can prove bounded retry timing without sleeping.
+    let internal runCurrentBranchReferenceCatchUpIfDueWithClientsAtForWatchTests scheduler nowUtc getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClientsAt scheduler nowUtc getCurrentBranch processReference
+
+    /// Runs the production lifecycle scheduler against injected clients after a real Watch callback queues fresh evidence.
+    let internal runCurrentBranchReferenceCatchUpIfDueForWatchTests getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClients currentBranchReferenceCatchUpScheduler getCurrentBranch processReference
 
     /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
     let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
@@ -5952,6 +6070,7 @@ module Watch =
                 | Some (GraceUpdateMarkerPurpose.ReferenceMaterialization, completedUtc) ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
                     recordGraceUpdateMarkerCompletedUtc completedUtc
+                    requestCurrentBranchReferenceCatchUp "current-branch reference materialization marker deletion"
                     logToAnsiConsole Colors.Important $"Reference materialization update has finished."
                 | None ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
