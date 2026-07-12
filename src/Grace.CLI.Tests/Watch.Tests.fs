@@ -18362,6 +18362,86 @@ module WatchTests =
 
                 inspection.IsUsable |> should equal true)
 
+    /// Verifies a status advancement that drains its queues before the final probe cannot accept an older clean IPC identity.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``current branch materialization final clean publication rejects advanced durable status after queues drain`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let publishedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let advancedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable statusReadCount = 0
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () ->
+                statusReadCount <- statusReadCount + 1
+
+                Task.FromResult(if statusReadCount = 1 then publishedStatus else advancedStatus))
+
+            Watch.tryPublishCurrentBranchMaterializationCleanStatusForWatchTests ()
+            |> should equal false
+
+            statusReadCount |> should equal 2
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            match inspection.Status with
+            | Some status ->
+                status.RootDirectoryId
+                |> should equal publishedStatus.RootDirectoryId
+
+                status.RootDirectoryId
+                |> should not' (equal advancedStatus.RootDirectoryId)
+            | None -> Assert.Fail("Expected the older clean IPC snapshot to remain observable but rejected as stale."))
+
+    /// Verifies unchanged durable status keeps a fresh clean IPC publication eligible for materialization success.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``current branch materialization final clean publication accepts unchanged durable status`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let expectedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable statusReadCount = 0
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () ->
+                statusReadCount <- statusReadCount + 1
+                Task.FromResult(expectedStatus))
+
+            Watch.tryPublishCurrentBranchMaterializationCleanStatusForWatchTests ()
+            |> should equal true
+
+            statusReadCount |> should equal 2)
+
+    /// Verifies final proof compares only the current durable identity, so a legitimate return to an older root remains clean.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``current branch materialization final clean publication accepts durable status returned to exact older root`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let originalStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let newerStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable statusReadCount = 0
+            let mutable observedNewerStatus = None
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () ->
+                statusReadCount <- statusReadCount + 1
+
+                if statusReadCount = 1 then
+                    Task.FromResult(originalStatus)
+                else
+                    observedNewerStatus <- Some newerStatus
+                    Task.FromResult(originalStatus))
+
+            Watch.tryPublishCurrentBranchMaterializationCleanStatusForWatchTests ()
+            |> should equal true
+
+            observedNewerStatus
+            |> should equal (Some newerStatus)
+
+            newerStatus.RootDirectoryId
+            |> should not' (equal originalStatus.RootDirectoryId)
+
+            statusReadCount |> should equal 2)
+
     /// Verifies an unverified dirty replacement leaves materialization fail-closed on the existing degraded-resync path.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationPublication")>]
     let ``current branch materialization coordinator fails closed when dirty replacement is unproven`` () =

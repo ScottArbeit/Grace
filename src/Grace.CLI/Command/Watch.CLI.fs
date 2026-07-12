@@ -2286,6 +2286,17 @@ module Watch =
         && not (isNull status.DirectoryIds)
         && status.DirectoryIds.SetEquals(expectedDirectoryIds)
 
+    /// Verifies the current durable GraceStatus still has the exact identity represented by a clean IPC publication.
+    let private graceStatusMatchesExpectedPendingWorkPublication
+        (expectedStatus: GraceStatus)
+        (expectedDirectoryIds: HashSet<DirectoryVersionId>)
+        (currentStatus: GraceStatus)
+        =
+        currentStatus.RootDirectoryId = expectedStatus.RootDirectoryId
+        && currentStatus.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
+        && expectedRootDirectoryBlake3Hash currentStatus = expectedRootDirectoryBlake3Hash expectedStatus
+        && expectedDirectoryIds.SetEquals(currentStatus.Index.Keys)
+
     /// Verifies the on-disk Watch IPC snapshot is the snapshot this publication attempt wrote.
     let private statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt (status: GraceWatchStatus) =
         status.UpdatedAt >= publicationStartedAt
@@ -2572,7 +2583,7 @@ module Watch =
     let private tryVerifyCurrentBranchMaterializationCleanPublication expectedStatus expectedDirectoryIds =
         tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds
 
-    /// Publishes a final clean materialization snapshot only while both pre- and post-publication pending-work probes are empty.
+    /// Publishes a final clean materialization snapshot only while pending work is empty and durable status identity remains current.
     let private tryPublishCurrentBranchMaterializationCleanStatus () =
         lock watchStatusPublishLock (fun () ->
             if (readPendingWatchWorkEvidence ()).HasPendingWork then
@@ -2607,8 +2618,24 @@ module Watch =
 
                             usableCleanPublication
 
-                    cleanPublicationVerified
-                    && not (readPendingWatchWorkEvidence ()).HasPendingWork
+                    let finalPendingWorkIsEmpty = not (readPendingWatchWorkEvidence ()).HasPendingWork
+
+                    let finalCleanPublicationVerified =
+                        if cleanPublicationVerified
+                           && finalPendingWorkIsEmpty then
+                            let currentStatus =
+                                readGraceStatusFileForPendingWorkTransition()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            graceStatusMatchesExpectedPendingWorkPublication status directoryIds currentStatus
+                        else
+                            false
+
+                    if not finalCleanPublicationVerified then
+                        lastPublishedHasPendingWatchWork <- None
+
+                    finalCleanPublicationVerified
                 with
                 | ex ->
                     lastPublishedHasPendingWatchWork <- None
