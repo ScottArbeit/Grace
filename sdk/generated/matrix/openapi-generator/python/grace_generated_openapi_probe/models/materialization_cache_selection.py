@@ -19,7 +19,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List
 from grace_generated_openapi_probe.models.materialization_cache_selection_kind import MaterializationCacheSelectionKind
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,8 +31,7 @@ class MaterializationCacheSelection(BaseModel):
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
     selection_kind: MaterializationCacheSelectionKind = Field(alias="SelectionKind")
-    cache_scope: Optional[StrictStr] = Field(default=None, alias="CacheScope")
-    __properties: ClassVar[List[str]] = ["Class", "SelectionKind", "CacheScope"]
+    __properties: ClassVar[List[str]] = ["Class", "SelectionKind"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -86,8 +85,7 @@ class MaterializationCacheSelection(BaseModel):
 
         _obj = cls.model_validate({
             "Class": obj.get("Class"),
-            "SelectionKind": obj.get("SelectionKind"),
-            "CacheScope": obj.get("CacheScope")
+            "SelectionKind": obj.get("SelectionKind")
         })
         return _obj
 

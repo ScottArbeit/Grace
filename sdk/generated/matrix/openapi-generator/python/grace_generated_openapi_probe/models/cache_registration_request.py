@@ -31,7 +31,7 @@ class CacheRegistrationRequest(BaseModel):
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
     endpoint: StrictStr = Field(alias="Endpoint")
-    requested_scopes: List[StrictStr] = Field(alias="RequestedScopes")
+    requested_scopes: List[StrictStr] = Field(description="Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.", alias="RequestedScopes")
     requested_capabilities: List[StrictStr] = Field(alias="RequestedCapabilities")
     requested_execution_modes: List[MaterializationExecutionMode] = Field(alias="RequestedExecutionModes")
     __properties: ClassVar[List[str]] = ["Class", "Endpoint", "RequestedScopes", "RequestedCapabilities", "RequestedExecutionModes"]

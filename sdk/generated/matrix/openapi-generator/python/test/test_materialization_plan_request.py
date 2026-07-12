@@ -48,11 +48,16 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                 execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
-                    selection_kind = 'bypassCache', 
-                    cache_scope = '', ),
+                    selection_kind = 'bypassCache', ),
                 requested_artifact_kinds = [
                     'directoryVersionZip'
-                    ]
+                    ],
+                holder_public_key = grace_generated_openapi_probe.models.artifact_grant_holder_public_key.ArtifactGrantHolderPublicKey(
+                    class = 'ArtifactGrantHolderPublicKey', 
+                    algorithm = 'ES256', 
+                    curve = 'P-256', 
+                    public_key_x = '', 
+                    public_key_y = '', )
             )
         else:
             return MaterializationPlanRequest(
@@ -68,8 +73,7 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                 execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
-                    selection_kind = 'bypassCache', 
-                    cache_scope = '', ),
+                    selection_kind = 'bypassCache', ),
                 requested_artifact_kinds = [
                     'directoryVersionZip'
                     ],

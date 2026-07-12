@@ -2,6 +2,7 @@ namespace Grace.Types
 
 open Grace.Shared
 open Grace.Types.Common
+open Grace.Types.ArtifactGrant
 open Grace.Types.Reference
 open Orleans
 open System
@@ -12,11 +13,8 @@ open System.Text.RegularExpressions
 /// Contains Materialization Plan request, response, artifact, and cache-selection contracts.
 module MaterializationPlan =
 
-    /// Identifies how Grace may satisfy a Materialization Plan request.
-    type MaterializationExecutionMode =
-        | Direct = 1
-        | CachePreferred = 2
-        | CacheRequired = 3
+    /// Preserves the established public Materialization Plan namespace for the shared execution enum.
+    type MaterializationExecutionMode = Grace.Types.MaterializationExecutionMode
 
     /// Identifies the public target selector shape supplied before Grace resolves the immutable target root.
     type MaterializationTargetSelectorKind =
@@ -163,20 +161,16 @@ module MaterializationPlan =
         {
             Class: string
             SelectionKind: MaterializationCacheSelectionKind
-            CacheScope: string option
         }
 
         /// Requests direct materialization without consulting cache entries.
-        static member Bypass =
-            { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.BypassCache; CacheScope = None }
+        static member Bypass = { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.BypassCache }
 
         /// Allows Grace to prefer cache entries while still permitting direct artifact sources.
-        static member Preferred =
-            { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.PreferCache; CacheScope = None }
+        static member Preferred = { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.PreferCache }
 
         /// Requires Grace to satisfy planned artifacts from cache sources only.
-        static member Required =
-            { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.RequireCache; CacheScope = None }
+        static member Required = { Class = nameof MaterializationCacheSelection; SelectionKind = MaterializationCacheSelectionKind.RequireCache }
 
     /// Describes a fetchable or deferred location for one planned artifact.
     [<CLIMutable; GenerateSerializer>]
@@ -186,11 +180,22 @@ module MaterializationPlan =
             SourceKind: MaterializationArtifactSourceKind
             DirectUri: string option
             CacheKey: string option
+            CacheEndpoint: string option
+            CacheServicePrincipalId: string option
+            DirectFallbackUri: string option
         }
 
         /// Points to a direct source URI produced by a materialization-capable server path.
         static member Direct(uri: string) =
-            { Class = nameof MaterializationArtifactSource; SourceKind = MaterializationArtifactSourceKind.DirectUri; DirectUri = Some uri; CacheKey = None }
+            {
+                Class = nameof MaterializationArtifactSource
+                SourceKind = MaterializationArtifactSourceKind.DirectUri
+                DirectUri = Some uri
+                CacheKey = None
+                CacheEndpoint = None
+                CacheServicePrincipalId = None
+                DirectFallbackUri = None
+            }
 
         /// Points to a cache entry without requiring Grace to expose a direct source URI.
         static member CacheOnly(cacheKey: string) =
@@ -199,11 +204,34 @@ module MaterializationPlan =
                 SourceKind = MaterializationArtifactSourceKind.CacheEntry
                 DirectUri = None
                 CacheKey = Some cacheKey
+                CacheEndpoint = None
+                CacheServicePrincipalId = None
+                DirectFallbackUri = None
+            }
+
+        /// Points to a selected Cache endpoint and optionally retains the explicit Preferred-mode Direct fallback.
+        static member Cache(cacheKey: string, endpoint: string, cacheServicePrincipalId: string, directFallbackUri: string option) =
+            {
+                Class = nameof MaterializationArtifactSource
+                SourceKind = MaterializationArtifactSourceKind.CacheEntry
+                DirectUri = None
+                CacheKey = Some cacheKey
+                CacheEndpoint = Some endpoint
+                CacheServicePrincipalId = Some cacheServicePrincipalId
+                DirectFallbackUri = directFallbackUri
             }
 
         /// Records that a later slice will resolve the artifact source during execution.
         static member Deferred =
-            { Class = nameof MaterializationArtifactSource; SourceKind = MaterializationArtifactSourceKind.Deferred; DirectUri = None; CacheKey = None }
+            {
+                Class = nameof MaterializationArtifactSource
+                SourceKind = MaterializationArtifactSourceKind.Deferred
+                DirectUri = None
+                CacheKey = None
+                CacheEndpoint = None
+                CacheServicePrincipalId = None
+                DirectFallbackUri = None
+            }
 
     /// Describes one stable artifact identity required to materialize a resolved target root.
     [<CLIMutable; GenerateSerializer>]
@@ -356,6 +384,7 @@ module MaterializationPlan =
             ExecutionMode: MaterializationExecutionMode
             CacheSelection: MaterializationCacheSelection
             RequestedArtifactKinds: List<MaterializationArtifactKind>
+            HolderPublicKey: ArtifactGrantHolderPublicKey option
         }
 
         /// Builds a request with a defensive copy of the requested artifact kind list.
@@ -372,7 +401,11 @@ module MaterializationPlan =
                 ExecutionMode = executionMode
                 CacheSelection = cacheSelection
                 RequestedArtifactKinds = List<MaterializationArtifactKind>(requestedArtifactKinds)
+                HolderPublicKey = None
             }
+
+        /// Adds the ephemeral holder public key required by cache-capable plan issuance.
+        member this.WithHolderPublicKey(holderPublicKey: ArtifactGrantHolderPublicKey) = { this with HolderPublicKey = Some holderPublicKey }
 
     /// Responds with the resolved immutable target root and the artifacts required to materialize it.
     [<CLIMutable; GenerateSerializer>]
@@ -383,6 +416,7 @@ module MaterializationPlan =
             ExecutionMode: MaterializationExecutionMode
             CacheSelection: MaterializationCacheSelection
             RequiredArtifacts: List<MaterializationArtifactDescriptor>
+            ArtifactGrant: SignedArtifactGrant option
         }
 
         /// Builds a response with a defensive copy of the required artifact descriptor list.
@@ -399,7 +433,11 @@ module MaterializationPlan =
                 ExecutionMode = executionMode
                 CacheSelection = cacheSelection
                 RequiredArtifacts = List<MaterializationArtifactDescriptor>(requiredArtifacts)
+                ArtifactGrant = None
             }
+
+        /// Attaches the selected Cache grant only after the complete cache plan has been assembled.
+        member this.WithArtifactGrant(grant: SignedArtifactGrant) = { this with ArtifactGrant = Some grant }
 
     /// Contains validation helpers for Materialization Plan contract invariants.
     module Validation =
@@ -596,10 +634,6 @@ module MaterializationPlan =
                 if not (isSupportedCacheSelectionKind cacheSelection.SelectionKind) then
                     errors.Add($"CacheSelection.SelectionKind '{int cacheSelection.SelectionKind}' is not supported.")
 
-                match cacheSelection.CacheScope with
-                | Some cacheScope when String.IsNullOrWhiteSpace cacheScope -> errors.Add("CacheSelection.CacheScope must not be blank when specified.")
-                | _ -> ()
-
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
 
         /// Validates that a source shape is explicit and does not invent direct URLs for cache-only artifacts.
@@ -625,6 +659,11 @@ module MaterializationPlan =
 
                         if source.CacheKey.IsSome then
                             errors.Add("Artifact CacheKey must be empty for DirectUri sources.")
+
+                        if source.CacheEndpoint.IsSome
+                           || source.CacheServicePrincipalId.IsSome
+                           || source.DirectFallbackUri.IsSome then
+                            errors.Add("DirectUri sources must not contain Cache endpoint, principal, or fallback fields.")
                     | MaterializationArtifactSourceKind.CacheEntry ->
                         match source.CacheKey with
                         | Some cacheKey when not (String.IsNullOrWhiteSpace cacheKey) -> ()
@@ -632,12 +671,30 @@ module MaterializationPlan =
 
                         if source.DirectUri.IsSome then
                             errors.Add("Artifact DirectUri must be empty for CacheEntry sources.")
+
+                        match source.CacheEndpoint, source.CacheServicePrincipalId with
+                        | None, None -> ()
+                        | Some endpoint, Some principal when
+                            isAllowedDirectUri endpoint
+                            && not (String.IsNullOrWhiteSpace principal)
+                            ->
+                            ()
+                        | _ -> errors.Add("CacheEntry source endpoint and service principal must be valid and specified together.")
+
+                        match source.DirectFallbackUri with
+                        | Some uri when not (isAllowedDirectUri uri) -> errors.Add("Artifact DirectFallbackUri must be an absolute http or https URI.")
+                        | _ -> ()
                     | MaterializationArtifactSourceKind.Deferred ->
                         if source.DirectUri.IsSome then
                             errors.Add("Artifact DirectUri must be empty for Deferred sources.")
 
                         if source.CacheKey.IsSome then
                             errors.Add("Artifact CacheKey must be empty for Deferred sources.")
+
+                        if source.CacheEndpoint.IsSome
+                           || source.CacheServicePrincipalId.IsSome
+                           || source.DirectFallbackUri.IsSome then
+                            errors.Add("Deferred sources must not contain Cache endpoint, principal, or fallback fields.")
                     | _ -> errors.Add($"Artifact SourceKind '{int source.SourceKind}' is not supported.")
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
@@ -933,7 +990,8 @@ module MaterializationPlan =
                                     not (isNull (box source))
                                     && source.SourceKind = MaterializationArtifactSourceKind.CacheEntry
                                     ->
-                                    ()
+                                    if source.DirectFallbackUri.IsSome then
+                                        errors.Add("CacheRequired plans must not contain Direct fallback retrieval details.")
                                 | Some source when
                                     not (isNull (box source))
                                     && source.SourceKind = MaterializationArtifactSourceKind.DirectUri
@@ -996,5 +1054,40 @@ module MaterializationPlan =
                         errors.Add("RequiredArtifacts must include RecursiveDirectoryMetadata for the target root.")
                     elif recursiveMetadataCount > 1 then
                         errors.Add("RequiredArtifacts must include exactly one RecursiveDirectoryMetadata for the target root.")
+
+                    match plan.ArtifactGrant with
+                    | None -> ()
+                    | Some grant when isNull (box grant) || isNull (box grant.Payload) -> errors.Add("ArtifactGrant must contain a signed payload.")
+                    | Some grant ->
+                        let payload = grant.Payload
+
+                        let plannedIdentities =
+                            plan.RequiredArtifacts
+                            |> Seq.choose (fun artifact -> artifact.CanonicalArtifactIdentity)
+                            |> Set.ofSeq
+
+                        let grantedIdentities =
+                            if isNull (box payload.ArtifactIdentities) then
+                                Set.empty
+                            else
+                                payload.ArtifactIdentities |> Set.ofSeq
+
+                        if payload.TargetRootDirectoryVersionId
+                           <> plan.TargetRootDirectoryVersionId then
+                            errors.Add("ArtifactGrant target root must match the Materialization Plan target root.")
+
+                        if payload.ExecutionMode <> plan.ExecutionMode then
+                            errors.Add("ArtifactGrant execution mode must match the Materialization Plan execution mode.")
+
+                        if grantedIdentities <> plannedIdentities then
+                            errors.Add("ArtifactGrant artifact identities must exactly match the Materialization Plan artifacts.")
+
+                        for artifact in plan.RequiredArtifacts do
+                            match artifact.Source with
+                            | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                                match source.CacheServicePrincipalId with
+                                | Some principal when principal = payload.CacheServicePrincipalId -> ()
+                                | _ -> errors.Add("ArtifactGrant Cache service principal must match every Cache source.")
+                            | _ -> ()
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)

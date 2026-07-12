@@ -1703,7 +1703,6 @@ paths:
                     CacheSelection:
                       Class: MaterializationCacheSelection
                       SelectionKind: bypassCache
-                      CacheScope: null
                     RequestedArtifactKinds:
                       - directoryVersionZip
                       - recursiveDirectoryMetadata
@@ -3963,9 +3962,6 @@ components:
           example: MaterializationCacheSelection
         SelectionKind:
           $ref: '#/components/schemas/MaterializationCacheSelectionKind'
-        CacheScope:
-          type: string
-          nullable: true
       required:
         - Class
         - SelectionKind
@@ -3986,6 +3982,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MaterializationArtifactKind'
+        HolderPublicKey:
+          $ref: '#/components/schemas/ArtifactGrantHolderPublicKey'
+          nullable: true
       required:
         - Class
         - TargetSelector
@@ -4006,7 +4005,6 @@ components:
         CacheSelection:
           Class: MaterializationCacheSelection
           SelectionKind: bypassCache
-          CacheScope: null
         RequestedArtifactKinds:
           - directoryVersionZip
           - recursiveDirectoryMetadata
@@ -4055,7 +4053,6 @@ components:
           CacheSelection:
             Class: MaterializationCacheSelection
             SelectionKind: bypassCache
-            CacheScope: null
           RequestedArtifactKinds:
             - directoryVersionZip
             - recursiveDirectoryMetadata
@@ -4074,6 +4071,17 @@ components:
           nullable: true
         CacheKey:
           type: string
+          nullable: true
+        CacheEndpoint:
+          type: string
+          format: uri
+          nullable: true
+        CacheServicePrincipalId:
+          type: string
+          nullable: true
+        DirectFallbackUri:
+          type: string
+          format: uri
           nullable: true
       required:
         - Class
@@ -4141,6 +4149,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MaterializationArtifactDescriptor'
+        ArtifactGrant:
+          $ref: '#/components/schemas/SignedArtifactGrant'
+          nullable: true
       required:
         - Class
         - TargetRootDirectoryVersionId
@@ -4179,10 +4190,11 @@ components:
           example: https://cache.example.net/grace
         RequestedScopes:
           type: array
+          description: Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.
           items:
             type: string
           example:
-            - repository:owner/org/repo
+            - repository:<OwnerId>/<OrganizationId>/<RepositoryId>
         RequestedCapabilities:
           type: array
           items:

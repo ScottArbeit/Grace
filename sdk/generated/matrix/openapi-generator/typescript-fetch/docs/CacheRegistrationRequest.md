@@ -22,7 +22,7 @@ import type { CacheRegistrationRequest } from '@grace-vcs/generated-openapi-prob
 const example = {
   "_class": CacheRegistrationRequest,
   "endpoint": https://cache.example.net/grace,
-  "requestedScopes": [repository:owner/org/repo],
+  "requestedScopes": [repository:<OwnerId>/<OrganizationId>/<RepositoryId>],
   "requestedCapabilities": [read-through, prefetch],
   "requestedExecutionModes": [cachePreferred, cacheRequired],
 } satisfies CacheRegistrationRequest

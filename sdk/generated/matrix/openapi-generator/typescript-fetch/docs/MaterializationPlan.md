@@ -12,6 +12,7 @@ Name | Type
 `executionMode` | [MaterializationExecutionMode](MaterializationExecutionMode.md)
 `cacheSelection` | [MaterializationCacheSelection](MaterializationCacheSelection.md)
 `requiredArtifacts` | [Array&lt;MaterializationArtifactDescriptor&gt;](MaterializationArtifactDescriptor.md)
+`artifactGrant` | [SignedArtifactGrant](SignedArtifactGrant.md)
 
 ## Example
 
@@ -25,6 +26,7 @@ const example = {
   "executionMode": null,
   "cacheSelection": null,
   "requiredArtifacts": null,
+  "artifactGrant": null,
 } satisfies MaterializationPlan
 
 console.log(example)

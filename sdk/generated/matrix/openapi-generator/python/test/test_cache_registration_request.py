@@ -38,7 +38,7 @@ class TestCacheRegistrationRequest(unittest.TestCase):
             return CacheRegistrationRequest(
                 var_class = 'CacheRegistrationRequest',
                 endpoint = 'https://cache.example.net/grace',
-                requested_scopes = [repository:owner/org/repo],
+                requested_scopes = [repository:<OwnerId>/<OrganizationId>/<RepositoryId>],
                 requested_capabilities = [read-through, prefetch],
                 requested_execution_modes = [cachePreferred, cacheRequired]
             )
@@ -46,7 +46,7 @@ class TestCacheRegistrationRequest(unittest.TestCase):
             return CacheRegistrationRequest(
                 var_class = 'CacheRegistrationRequest',
                 endpoint = 'https://cache.example.net/grace',
-                requested_scopes = [repository:owner/org/repo],
+                requested_scopes = [repository:<OwnerId>/<OrganizationId>/<RepositoryId>],
                 requested_capabilities = [read-through, prefetch],
                 requested_execution_modes = [cachePreferred, cacheRequired],
         )

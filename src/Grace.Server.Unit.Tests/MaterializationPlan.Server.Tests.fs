@@ -5,15 +5,19 @@ open Grace.Server
 open Grace.Shared
 open Grace.Shared.Parameters.Materialization
 open Grace.Types.Branch
+open Grace.Types.ArtifactGrant
+open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open Grace.Types.DirectoryVersion
 open Grace.Types.MaterializationPlan
 open Grace.Types.Reference
 open Grace.Types.Repository
 open NUnit.Framework
+open NodaTime
 open System
 open System.Collections.Generic
 open System.Reflection
+open System.Security.Cryptography
 open System.Text.Json
 open System.Threading.Tasks
 
@@ -31,6 +35,68 @@ type MaterializationPlanRouteTests() =
     let defaultBranchName = BranchName Constants.InitialBranchName
     let explicitBranchName = BranchName "feature"
     let correlationId = "corr-materialization-plan"
+
+    let holderPublicKey () =
+        use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        ArtifactGrant.exportHolderPublicKey key
+
+    let cacheRegistration mode =
+        CacheRegistration.Create(
+            "cache-service",
+            "https://cache.example.test",
+            Seq.empty,
+            [ Capability.ReadThrough ],
+            [ mode ],
+            Instant.FromUtc(2026, 7, 11, 20, 0),
+            Duration.FromHours 2,
+            Duration.FromHours 1
+        )
+
+    /// Builds a current read-through registration with exactly the supplied approved repository scopes.
+    let scopedCacheRegistration servicePrincipalId mode scopes =
+        CacheRegistration.Create(
+            servicePrincipalId,
+            "https://cache.example.test",
+            scopes,
+            [ Capability.ReadThrough ],
+            [ mode ],
+            Instant.FromUtc(2026, 7, 11, 20, 0),
+            Duration.FromHours 2,
+            Duration.FromHours 1
+        )
+
+    let signedGrant mode identities =
+        let issuedAt = Instant.FromUtc(2026, 7, 11, 20, 0)
+
+        let payload =
+            ArtifactGrantPayload.Create(
+                "authenticated-user",
+                "holder-thumbprint",
+                "cache-service",
+                targetRootDirectoryVersionId,
+                mode,
+                identities,
+                issuedAt,
+                Duration.FromMinutes 5L
+            )
+
+        SignedArtifactGrant.Create(ArtifactGrantHeader.Create "key-1", payload, "signature")
+
+    /// Builds a grant whose lifetime starts at the injected selection and issuance instant.
+    let signedGrantAt mode issuedAt identities =
+        let payload =
+            ArtifactGrantPayload.Create(
+                "authenticated-user",
+                "holder-thumbprint",
+                "cache-service",
+                targetRootDirectoryVersionId,
+                mode,
+                identities,
+                issuedAt,
+                Duration.FromMinutes 5L
+            )
+
+        SignedArtifactGrant.Create(ArtifactGrantHeader.Create "key-1", payload, "signature")
 
     /// Builds a Direct/Bypass request for a resolved immutable root.
     let directRootRequest () =
@@ -93,6 +159,10 @@ type MaterializationPlanRouteTests() =
     /// Builds a repository DTO with a current default branch name.
     let repository defaultBranchName =
         { RepositoryDto.Default with RepositoryId = repositoryId; OwnerId = ownerId; OrganizationId = organizationId; DefaultBranchName = defaultBranchName }
+
+    /// Builds the fully resolved stable target identity supplied to cache-plan selection.
+    let resolvedTarget: Materialization.ResolvedMaterializationTarget =
+        { OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetRootDirectoryVersionId = targetRootDirectoryVersionId }
 
     /// Builds a reference DTO that points at one root directory version.
     let reference referenceId branchId directoryVersionId =
@@ -863,31 +933,37 @@ type MaterializationPlanRouteTests() =
     [<Test>]
     member _.PathScopedArtifactRequestIsRejectedBeforeProjectionArtifactsRun() =
         task {
-            let mutable projectionCalled = false
+            for artifactKind in
+                [
+                    MaterializationArtifactKind.WholeFileContent
+                    MaterializationArtifactKind.FileManifest
+                    MaterializationArtifactKind.ContentBlock
+                ] do
+                let mutable projectionCalled = false
 
-            let request =
-                MaterializationPlanRequest.Create(
-                    MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
-                    MaterializationExecutionMode.Direct,
-                    MaterializationCacheSelection.Bypass,
-                    [
-                        MaterializationArtifactKind.DirectoryVersionZip
-                        MaterializationArtifactKind.RecursiveDirectoryMetadata
-                        MaterializationArtifactKind.WholeFileContent
-                    ]
-                )
+                let request =
+                    MaterializationPlanRequest.Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.Direct,
+                        MaterializationCacheSelection.Bypass,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                            artifactKind
+                        ]
+                    )
 
-            let! result =
-                Materialization.createDirectPlanForResolvedRoot
-                    request
-                    targetRootDirectoryVersionId
-                    (fun _ ->
-                        projectionCalled <- true
-                        Task.FromResult(Ok(rootArtifacts ())))
-                    correlationId
+                let! result =
+                    Materialization.createDirectPlanForResolvedRoot
+                        request
+                        targetRootDirectoryVersionId
+                        (fun _ ->
+                            projectionCalled <- true
+                            Task.FromResult(Ok(rootArtifacts ())))
+                        correlationId
 
-            assertErrorContains "path-scoped artifact kinds are not supported" result
-            Assert.That(projectionCalled, Is.False)
+                assertErrorContains "path-scoped artifact kinds are not supported" result
+                Assert.That(projectionCalled, Is.False)
         }
 
     /// Verifies cache-backed modes stay explicitly unsupported until cache selection is implemented.
@@ -1047,3 +1123,450 @@ type MaterializationPlanRouteTests() =
         let parameters = methodInfo.GetParameters()
         Assert.That(parameters, Has.Length.EqualTo(1))
         Assert.That(parameters[0].ParameterType, Is.EqualTo(parameterType))
+
+    /// Verifies CacheRequired ordinary absence is a retryable plan failure instead of a Direct downgrade.
+    [<Test>]
+    member _.CacheRequiredEmptySelectionDoesNotDowngrade() =
+        task {
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    (MaterializationPlanRequest
+                        .Create(
+                            MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                            MaterializationExecutionMode.CacheRequired,
+                            MaterializationCacheSelection.Required,
+                            [
+                                MaterializationArtifactKind.DirectoryVersionZip
+                                MaterializationArtifactKind.RecursiveDirectoryMetadata
+                            ]
+                        )
+                        .WithHolderPublicKey(holderPublicKey ()))
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun _ _ -> Task.FromResult(Array.empty))
+                    (fun _ _ _ -> Task.FromResult(Ok(Unchecked.defaultof<_>)))
+                    ignore
+                    correlationId
+
+            assertErrorContains "No eligible Cache registration" result
+        }
+
+    /// Verifies a selected CacheRequired registration shapes every source and binds one exact grant.
+    [<Test>]
+    member _.CacheRequiredSelectedRegistrationProducesCacheOnlyPlan() =
+        task {
+            let mode = MaterializationExecutionMode.CacheRequired
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        mode,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun _ _ -> Task.FromResult([| cacheRegistration mode |]))
+                    (fun _ _ identities -> Task.FromResult(Ok(signedGrant mode identities)))
+                    ignore
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok plan ->
+                Assert.That(plan.ArtifactGrant.IsSome, Is.True)
+
+                for artifact in plan.RequiredArtifacts do
+                    Assert.That(artifact.Source.Value.SourceKind, Is.EqualTo(MaterializationArtifactSourceKind.CacheEntry))
+                    Assert.That(artifact.Source.Value.DirectUri.IsNone, Is.True)
+                    Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
+        }
+
+    /// Verifies that cache-mode selection requests one stable-ID repository scope instead of accepting caller scope input.
+    [<Test>]
+    member _.CachePlanSelectionUsesStableRepositoryScope() =
+        task {
+            let mutable selectedScope = None
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.CacheRequired,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun query _ ->
+                        selectedScope <- query.Scope
+                        Task.FromResult(Array.empty))
+                    (fun _ _ _ -> Task.FromResult(Ok(Unchecked.defaultof<_>)))
+                    ignore
+                    correlationId
+
+            assertErrorContains "No eligible Cache registration" result
+
+            let expected = $"repository:{ownerId:D}/{organizationId:D}/{repositoryId:D}"
+            Assert.That(selectedScope, Is.EqualTo(Some expected))
+        }
+
+    /// Verifies cache eligibility accepts only an exact stable repository scope, including explicitly listed multi-repository registrations.
+    [<Test>]
+    member _.RepositoryScopeEligibilityRejectsLookalikesAndStoragePoolScopes() =
+        let expectedScope = Materialization.repositoryCacheScope resolvedTarget
+        let reroutedRoot = { resolvedTarget with TargetRootDirectoryVersionId = DirectoryVersionId.Parse "88888888-8888-8888-8888-888888888888" }
+        let otherRepositoryScope = $"repository:{ownerId:D}/{organizationId:D}/99999999-9999-9999-9999-999999999999"
+
+        let registrations =
+            [|
+                scopedCacheRegistration "cache-missing" MaterializationExecutionMode.CacheRequired Seq.empty
+                scopedCacheRegistration "cache-unrelated" MaterializationExecutionMode.CacheRequired [ otherRepositoryScope ]
+                scopedCacheRegistration
+                    "cache-malformed"
+                    MaterializationExecutionMode.CacheRequired
+                    [
+                        $"repository:{ownerId:D}/{organizationId:D}/not-a-guid"
+                    ]
+                scopedCacheRegistration
+                    "cache-name-lookalike"
+                    MaterializationExecutionMode.CacheRequired
+                    [
+                        "repository:owner-name/organization-name/repository-name"
+                    ]
+                scopedCacheRegistration "cache-wrong-case" MaterializationExecutionMode.CacheRequired [ expectedScope.ToUpperInvariant() ]
+                scopedCacheRegistration "cache-storage-pool" MaterializationExecutionMode.CacheRequired [ "storage-pool:rerouted-pool" ]
+                scopedCacheRegistration
+                    "cache-multi-unrelated"
+                    MaterializationExecutionMode.CacheRequired
+                    [
+                        otherRepositoryScope
+                        "repository:other-owner/other-organization/other-repository"
+                    ]
+                scopedCacheRegistration "cache-exact" MaterializationExecutionMode.CacheRequired [ expectedScope ]
+                scopedCacheRegistration "cache-multi-explicit" MaterializationExecutionMode.CacheRequired [ otherRepositoryScope; expectedScope ]
+            |]
+
+        let query =
+            CacheRegistrationSelectionQuery.Create(Some expectedScope, [ Capability.ReadThrough ], Some MaterializationExecutionMode.CacheRequired, true, false)
+
+        let eligible =
+            Grace.Types.CacheRegistration.Lifecycle.selectEligible
+                { Class = nameof CacheRegistrationState; Registrations = registrations }
+                query
+                (Instant.FromUtc(2026, 7, 11, 20, 30))
+
+        Assert.That(Materialization.repositoryCacheScope reroutedRoot, Is.EqualTo(expectedScope))
+
+        let expectedServicePrincipalIds: string array =
+            [|
+                "cache-exact"
+                "cache-multi-explicit"
+            |]
+
+        Assert.That(
+            eligible
+            |> Array.map (fun registration -> registration.ServicePrincipalId),
+            Is.EqualTo(expectedServicePrincipalIds :> obj)
+        )
+
+    /// Verifies every unsupported path-scoped kind fails before cache projection, selection, or grant work in both cache modes.
+    [<Test>]
+    member _.CacheModesRejectUnsupportedPathScopedArtifactsBeforeAnyWork() =
+        task {
+            for mode, selection in
+                [
+                    MaterializationExecutionMode.CachePreferred, MaterializationCacheSelection.Preferred
+                    MaterializationExecutionMode.CacheRequired, MaterializationCacheSelection.Required
+                ] do
+                for artifactKind in
+                    [
+                        MaterializationArtifactKind.WholeFileContent
+                        MaterializationArtifactKind.FileManifest
+                        MaterializationArtifactKind.ContentBlock
+                    ] do
+                    let mutable projectionCalled = false
+                    let mutable selectionCalled = false
+                    let mutable grantCalled = false
+
+                    let request =
+                        MaterializationPlanRequest
+                            .Create(
+                                MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                                mode,
+                                selection,
+                                [
+                                    MaterializationArtifactKind.DirectoryVersionZip
+                                    MaterializationArtifactKind.RecursiveDirectoryMetadata
+                                    artifactKind
+                                ]
+                            )
+                            .WithHolderPublicKey(holderPublicKey ())
+
+                    let! result =
+                        Materialization.createCachePlanForResolvedRoot
+                            request
+                            resolvedTarget
+                            (fun _ ->
+                                projectionCalled <- true
+                                Task.FromResult(Ok(rootArtifacts ())))
+                            (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                            (fun _ _ ->
+                                selectionCalled <- true
+                                Task.FromResult([| cacheRegistration mode |]))
+                            (fun _ _ identities ->
+                                grantCalled <- true
+                                Task.FromResult(Ok(signedGrant mode identities)))
+                            ignore
+                            correlationId
+
+                    assertErrorContains "Requested path-scoped artifact kinds are not supported" result
+                    Assert.That(projectionCalled, Is.False)
+                    Assert.That(selectionCalled, Is.False)
+                    Assert.That(grantCalled, Is.False)
+        }
+
+    /// Verifies a registration-query failure atomically returns the already-built Direct plan for CachePreferred.
+    [<Test>]
+    member _.CachePreferredSelectionFailureReturnsFullyDirectPlan() =
+        task {
+            let mutable grantCalled = false
+            let mutable recordedFailure = None
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.CachePreferred,
+                        MaterializationCacheSelection.Preferred,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun _ _ -> Task.FromException<CacheRegistration array>(InvalidOperationException "cache selection failed"))
+                    (fun _ _ _ ->
+                        grantCalled <- true
+                        Task.FromResult(Ok(Unchecked.defaultof<_>)))
+                    (fun error -> recordedFailure <- Some error)
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok plan ->
+                Assert.That(grantCalled, Is.False)
+                Assert.That(recordedFailure.IsSome, Is.True)
+                Assert.That(plan.ArtifactGrant.IsNone, Is.True)
+
+                for artifact in plan.RequiredArtifacts do
+                    Assert.That(artifact.Source.Value.SourceKind, Is.EqualTo(MaterializationArtifactSourceKind.DirectUri))
+                    Assert.That(artifact.Source.Value.DirectUri.IsSome, Is.True)
+                    Assert.That(artifact.Source.Value.CacheKey.IsNone, Is.True)
+                    Assert.That(artifact.Source.Value.CacheEndpoint.IsNone, Is.True)
+                    Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
+        }
+
+    /// Verifies a selected-cache grant failure atomically returns the already-built Direct plan for CachePreferred.
+    [<Test>]
+    member _.CachePreferredGrantFailureReturnsFullyDirectPlan() =
+        task {
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.CachePreferred,
+                        MaterializationCacheSelection.Preferred,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun _ _ ->
+                        Task.FromResult(
+                            [|
+                                cacheRegistration MaterializationExecutionMode.CachePreferred
+                            |]
+                        ))
+                    (fun _ _ _ -> Task.FromResult(Error(GraceError.Create "cache grant failed" correlationId)))
+                    ignore
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok plan ->
+                Assert.That(plan.ArtifactGrant.IsNone, Is.True)
+
+                for artifact in plan.RequiredArtifacts do
+                    Assert.That(artifact.Source.Value.SourceKind, Is.EqualTo(MaterializationArtifactSourceKind.DirectUri))
+                    Assert.That(artifact.Source.Value.DirectUri.IsSome, Is.True)
+                    Assert.That(artifact.Source.Value.CacheKey.IsNone, Is.True)
+                    Assert.That(artifact.Source.Value.CacheEndpoint.IsNone, Is.True)
+                    Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
+        }
+
+    /// Verifies incomplete root-artifact requests remain route-level client validation in every execution mode.
+    [<Test>]
+    member _.IncompleteRootArtifactKindsArePlanParameterClientValidationInEveryMode() =
+        [
+            MaterializationExecutionMode.Direct, MaterializationCacheSelection.Bypass
+            MaterializationExecutionMode.CachePreferred, MaterializationCacheSelection.Preferred
+            MaterializationExecutionMode.CacheRequired, MaterializationCacheSelection.Required
+        ]
+        |> List.iter (fun (mode, selection) ->
+            let request =
+                MaterializationPlanRequest.Create(
+                    MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                    mode,
+                    selection,
+                    [
+                        MaterializationArtifactKind.DirectoryVersionZip
+                    ]
+                )
+
+            let parameters = PlanParameters()
+
+            parameters.Request <-
+                if mode = MaterializationExecutionMode.Direct then
+                    request
+                else
+                    request.WithHolderPublicKey(holderPublicKey ())
+
+            let result = Materialization.validatePlanParameters repositoryId parameters correlationId
+            assertErrorContains "must include DirectoryVersionZip and RecursiveDirectoryMetadata" result)
+
+    /// Verifies operational cache failures remain fail-closed for CacheRequired after Direct artifacts are available.
+    [<Test>]
+    member _.CacheRequiredOperationalFailuresRemainErrors() =
+        task {
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.CacheRequired,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! selectionFailure =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun _ _ -> Task.FromException<CacheRegistration array>(InvalidOperationException "cache selection failed"))
+                    (fun _ _ _ -> Task.FromResult(Ok(Unchecked.defaultof<_>)))
+                    ignore
+                    correlationId
+
+            assertErrorContains "Cache Materialization Plan issuance failed" selectionFailure
+
+            let! grantFailure =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun _ _ ->
+                        Task.FromResult(
+                            [|
+                                cacheRegistration MaterializationExecutionMode.CacheRequired
+                            |]
+                        ))
+                    (fun _ _ _ -> Task.FromResult(Error(GraceError.Create "cache grant failed" correlationId)))
+                    ignore
+                    correlationId
+
+            assertErrorContains "cache grant failed" grantFailure
+        }
+
+    /// Verifies cache selection and grant issuance share one fresh instant captured only after Direct artifacts are available.
+    [<Test>]
+    member _.CacheSelectionAndGrantUseOnePostGenerationInstant() =
+        task {
+            let beforeGeneration = Instant.FromUtc(2026, 7, 11, 20, 0)
+            let afterGeneration = beforeGeneration.Plus(Duration.FromMinutes 6L)
+            let mutable artifactsGenerated = false
+            let mutable selectionInstant = None
+            let mutable grantInstant = None
+            let mode = MaterializationExecutionMode.CacheRequired
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        mode,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ ->
+                        artifactsGenerated <- true
+                        Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () ->
+                        Assert.That(artifactsGenerated, Is.True)
+                        afterGeneration)
+                    (fun _ now ->
+                        selectionInstant <- Some now
+                        Task.FromResult([| cacheRegistration mode |]))
+                    (fun now _ identities ->
+                        grantInstant <- Some now
+                        Task.FromResult(Ok(signedGrantAt mode now identities)))
+                    ignore
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok plan ->
+                Assert.That(selectionInstant, Is.EqualTo(Some afterGeneration))
+                Assert.That(grantInstant, Is.EqualTo(Some afterGeneration))
+                Assert.That(plan.ArtifactGrant.Value.Payload.IssuedAt, Is.EqualTo(afterGeneration))
+                Assert.That(plan.ArtifactGrant.Value.Payload.ExpiresAt, Is.EqualTo(afterGeneration.Plus(Duration.FromMinutes 5L)))
+        }

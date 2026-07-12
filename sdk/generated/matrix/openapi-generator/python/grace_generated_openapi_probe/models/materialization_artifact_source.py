@@ -33,7 +33,10 @@ class MaterializationArtifactSource(BaseModel):
     source_kind: MaterializationArtifactSourceKind = Field(alias="SourceKind")
     direct_uri: Optional[StrictStr] = Field(default=None, alias="DirectUri")
     cache_key: Optional[StrictStr] = Field(default=None, alias="CacheKey")
-    __properties: ClassVar[List[str]] = ["Class", "SourceKind", "DirectUri", "CacheKey"]
+    cache_endpoint: Optional[StrictStr] = Field(default=None, alias="CacheEndpoint")
+    cache_service_principal_id: Optional[StrictStr] = Field(default=None, alias="CacheServicePrincipalId")
+    direct_fallback_uri: Optional[StrictStr] = Field(default=None, alias="DirectFallbackUri")
+    __properties: ClassVar[List[str]] = ["Class", "SourceKind", "DirectUri", "CacheKey", "CacheEndpoint", "CacheServicePrincipalId", "DirectFallbackUri"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -89,7 +92,10 @@ class MaterializationArtifactSource(BaseModel):
             "Class": obj.get("Class"),
             "SourceKind": obj.get("SourceKind"),
             "DirectUri": obj.get("DirectUri"),
-            "CacheKey": obj.get("CacheKey")
+            "CacheKey": obj.get("CacheKey"),
+            "CacheEndpoint": obj.get("CacheEndpoint"),
+            "CacheServicePrincipalId": obj.get("CacheServicePrincipalId"),
+            "DirectFallbackUri": obj.get("DirectFallbackUri")
         })
         return _obj
 

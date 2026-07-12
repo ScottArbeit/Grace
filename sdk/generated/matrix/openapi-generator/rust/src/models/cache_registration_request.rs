@@ -18,6 +18,7 @@ pub struct CacheRegistrationRequest {
     pub class: String,
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
+    /// Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.
     #[serde(rename = "RequestedScopes")]
     pub requested_scopes: Vec<String>,
     #[serde(rename = "RequestedCapabilities")]

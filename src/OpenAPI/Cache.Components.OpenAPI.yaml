@@ -11,9 +11,10 @@ CacheRegistrationRequest:
       example: https://cache.example.net/grace
     RequestedScopes:
       type: array
+      description: Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.
       items:
         type: string
-      example: [repository:owner/org/repo]
+      example: ["repository:<OwnerId>/<OrganizationId>/<RepositoryId>"]
     RequestedCapabilities:
       type: array
       items:

@@ -62,9 +62,6 @@
           example: MaterializationCacheSelection
         SelectionKind:
           $ref: '#/MaterializationCacheSelectionKind'
-        CacheScope:
-          type: string
-          nullable: true
       required: [Class, SelectionKind]
     MaterializationPlanRequest:
       description: Request contract for server-side Materialization Plan creation.
@@ -83,6 +80,9 @@
           type: array
           items:
             $ref: '#/MaterializationArtifactKind'
+        HolderPublicKey:
+          $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantHolderPublicKey'
+          nullable: true
       required: [Class, TargetSelector, ExecutionMode, CacheSelection, RequestedArtifactKinds]
       example: &materializationPlanRequestExample
         Class: MaterializationPlanRequest
@@ -98,7 +98,6 @@
         CacheSelection:
           Class: MaterializationCacheSelection
           SelectionKind: bypassCache
-          CacheScope: null
         RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]
     PlanParameters:
       description: Parameters for the /materialization/plan endpoint. Repository authority accepts the same ID-or-name pairs resolved by ValidateIdsMiddleware; provide either OwnerId or OwnerName, either OrganizationId or OrganizationName, and either RepositoryId or RepositoryName.
@@ -146,6 +145,17 @@
           nullable: true
         CacheKey:
           type: string
+          nullable: true
+        CacheEndpoint:
+          type: string
+          format: uri
+          nullable: true
+        CacheServicePrincipalId:
+          type: string
+          nullable: true
+        DirectFallbackUri:
+          type: string
+          format: uri
           nullable: true
       required: [Class, SourceKind]
     MaterializationArtifactDescriptor:
@@ -208,6 +218,9 @@
           type: array
           items:
             $ref: '#/MaterializationArtifactDescriptor'
+        ArtifactGrant:
+          $ref: 'Cache.Components.OpenAPI.yaml#/SignedArtifactGrant'
+          nullable: true
       required: [Class, TargetRootDirectoryVersionId, ExecutionMode, CacheSelection, RequiredArtifacts]
     MaterializationPlanReturnValue:
       description: Grace response envelope whose ReturnValue contains a Materialization Plan.

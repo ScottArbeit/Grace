@@ -8,7 +8,6 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **var_class** | **str** |  | 
 **selection_kind** | [**MaterializationCacheSelectionKind**](MaterializationCacheSelectionKind.md) |  | 
-**cache_scope** | **str** |  | [optional] 
 
 ## Example
 

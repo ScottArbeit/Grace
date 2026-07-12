@@ -11,6 +11,9 @@ Name | Type
 `sourceKind` | [MaterializationArtifactSourceKind](MaterializationArtifactSourceKind.md)
 `directUri` | string
 `cacheKey` | string
+`cacheEndpoint` | string
+`cacheServicePrincipalId` | string
+`directFallbackUri` | string
 
 ## Example
 
@@ -23,6 +26,9 @@ const example = {
   "sourceKind": null,
   "directUri": null,
   "cacheKey": null,
+  "cacheEndpoint": null,
+  "cacheServicePrincipalId": null,
+  "directFallbackUri": null,
 } satisfies MaterializationArtifactSource
 
 console.log(example)

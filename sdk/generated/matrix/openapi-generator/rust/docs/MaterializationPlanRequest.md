@@ -9,6 +9,7 @@ Name | Type | Description | Notes
 **execution_mode** | [**models::MaterializationExecutionMode**](MaterializationExecutionMode.md) |  | 
 **cache_selection** | [**models::MaterializationCacheSelection**](MaterializationCacheSelection.md) |  | 
 **requested_artifact_kinds** | [**Vec<models::MaterializationArtifactKind>**](MaterializationArtifactKind.md) |  | 
+**holder_public_key** | Option<[**models::ArtifactGrantHolderPublicKey**](ArtifactGrantHolderPublicKey.md)> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 
