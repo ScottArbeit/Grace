@@ -12922,6 +12922,8 @@ module WatchTests =
             let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
             let applyIncremental _ _ _ = Task.FromResult(())
 
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+
             let updateIpc _ _ =
                 publicationLatchStates.Add(Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ())
                 publicationResyncStates.Add(Watch.isGraceWatchResyncPendingForWatchTests ())
@@ -12956,6 +12958,71 @@ module WatchTests =
             Watch.tryPublishCurrentBranchMaterializationCleanStatusForWatchTests ()
             |> should equal true)
 
+    /// Verifies recovery leaves IPC dirty and keeps retry state when final durable identity is advanced, missing, or unreadable after queues drain.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``materialization resync recovery rejects mismatched or unreadable durable identity after clean publication`` () =
+        /// Runs one deterministic clean-recovery attempt against a final durable-status result that must remain fail-closed.
+        let verifyFailClosed durableStatusRead =
+            try
+                withTempRepo (fun _ ->
+                    Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+                    Watch.requestGraceWatchExplicitResyncForWatchTests "materialization clean proof failed"
+
+                    let expectedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+                    let mutable finalDurableStatusReadCount = 0
+                    let readStatus () = Task.FromResult(expectedStatus)
+                    let upload _ _ = Task.FromResult(())
+                    let updateGraceStatus _ _ = Task.FromResult(Some expectedStatus)
+                    let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+                    let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
+                    let applyIncremental _ _ _ = Task.FromResult(())
+
+                    Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () ->
+                        finalDurableStatusReadCount <- finalDurableStatusReadCount + 1
+                        durableStatusRead ())
+
+                    (Watch.processChangedFilesWithClients
+                        readStatus
+                        readStatus
+                        upload
+                        updateGraceStatus
+                        scanForDifferences
+                        updateGraceStatusFromDifferences
+                        applyIncremental
+                        Services.updateGraceWatchInterprocessFile)
+                        .GetAwaiter()
+                        .GetResult()
+
+                    finalDurableStatusReadCount |> should equal 1
+
+                    Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+                    |> should equal true
+
+                    Watch.isGraceWatchResyncPendingForWatchTests ()
+                    |> should equal true
+
+                    Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                    |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                    let inspection = Services.inspectGraceWatchStatus().Result
+
+                    match inspection.Status with
+                    | Some publishedStatus ->
+                        publishedStatus.HasPendingWatchWork
+                        |> should equal true
+
+                        publishedStatus.IsWorkingTreeClean
+                        |> should equal false
+                    | None -> Assert.Fail("Expected dirty Watch IPC when clean recovery durable identity is unproven."))
+            finally
+                Watch.clearPendingWatchWorkForTests ()
+
+        let advancedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+
+        verifyFailClosed (fun () -> Task.FromResult(advancedStatus))
+        verifyFailClosed (fun () -> Task.FromException<GraceStatus>(FileNotFoundException("Grace Status is missing")))
+        verifyFailClosed (fun () -> Task.FromException<GraceStatus>(IOException("Grace Status is unreadable")))
+
     /// Verifies a newer resync that wins after clean verification is retired only after fresh dirty IPC replaces the provisional clean snapshot.
     [<Test; Category("CurrentBranchMaterializationPublication")>]
     let ``newer resync after clean recovery verification republishes dirty ipc before stale attempt returns`` () =
@@ -12971,6 +13038,9 @@ module WatchTests =
             let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
             let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
             let applyIncremental _ _ _ = Task.FromResult(())
+            let mutable retirementProbeCalls = 0
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
 
             let updateIpc currentStatus directoryIds =
                 clientPublications.Add(
@@ -12983,6 +13053,7 @@ module WatchTests =
                 Services.updateGraceWatchInterprocessFile currentStatus directoryIds
 
             Watch.setBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests (fun () ->
+                retirementProbeCalls <- retirementProbeCalls + 1
                 Watch.requestGraceWatchExplicitResyncForWatchTests "newer resync arrived after clean verification")
 
             try
@@ -13002,6 +13073,8 @@ module WatchTests =
 
             clientPublications.ToArray()
             |> should equal [| "clean"; "dirty" |]
+
+            retirementProbeCalls |> should equal 1
 
             Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
             |> should equal true
@@ -13024,7 +13097,9 @@ module WatchTests =
 
                 inspection.EffectiveMode
                 |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing)
-            | None -> Assert.Fail("Expected verified dirty Watch IPC after newer resync won recovery retirement."))
+            | None -> Assert.Fail("Expected verified dirty Watch IPC after newer resync won recovery retirement.")
+
+            Watch.clearPendingWatchWorkForTests ())
 
     /// Verifies an unproven dirty reassertion after a lost recovery retirement still retains fail-closed local retry evidence.
     [<Test; Category("CurrentBranchMaterializationPublication")>]
@@ -13041,6 +13116,9 @@ module WatchTests =
             let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
             let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
             let applyIncremental _ _ _ = Task.FromResult(())
+            let mutable retirementProbeCalls = 0
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
 
             let updateIpc currentStatus directoryIds =
                 clientPublicationCalls <- clientPublicationCalls + 1
@@ -13051,6 +13129,7 @@ module WatchTests =
                     Task.FromException<unit>(InvalidOperationException("dirty reassertion write failed"))
 
             Watch.setBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests (fun () ->
+                retirementProbeCalls <- retirementProbeCalls + 1
                 Watch.requestGraceWatchExplicitResyncForWatchTests "newer resync arrived after clean verification")
 
             try
@@ -13070,6 +13149,8 @@ module WatchTests =
 
             clientPublicationCalls |> should equal 2
 
+            retirementProbeCalls |> should equal 1
+
             Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
             |> should equal true
 
@@ -13088,7 +13169,9 @@ module WatchTests =
 
                 publishedStatus.IsWorkingTreeClean
                 |> should equal false
-            | None -> Assert.Fail("Expected existing dirty Watch IPC to remain fail-closed after dirty reassertion failed."))
+            | None -> Assert.Fail("Expected existing dirty Watch IPC to remain fail-closed after dirty reassertion failed.")
+
+            Watch.clearPendingWatchWorkForTests ())
 
     /// Verifies a swallowed clean recovery write retains the materialization latch and active resync retry.
     [<Test; Category("CurrentBranchMaterializationPublication")>]

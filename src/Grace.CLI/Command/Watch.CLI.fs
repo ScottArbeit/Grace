@@ -2297,6 +2297,16 @@ module Watch =
         && expectedRootDirectoryBlake3Hash currentStatus = expectedRootDirectoryBlake3Hash expectedStatus
         && expectedDirectoryIds.SetEquals(currentStatus.Index.Keys)
 
+    /// Re-reads durable GraceStatus for a clean publication return boundary and fails closed when its identity is unavailable or changed.
+    let private tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds =
+        try
+            readGraceStatusFileForPendingWorkTransition()
+                .GetAwaiter()
+                .GetResult()
+            |> graceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds
+        with
+        | _ -> false
+
     /// Verifies the on-disk Watch IPC snapshot is the snapshot this publication attempt wrote.
     let private statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt (status: GraceWatchStatus) =
         status.UpdatedAt >= publicationStartedAt
@@ -2456,8 +2466,10 @@ module Watch =
 
                     if finalPendingEvidence.HasPendingWork then
                         UnverifiedRecoveryPublication
-                    else
+                    elif tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds then
                         VerifiedCleanRecoveryPublication
+                    else
+                        UnverifiedRecoveryPublication
                 else
                     UnverifiedRecoveryPublication
             | UnverifiedPendingWorkPublication -> UnverifiedRecoveryPublication
@@ -2623,12 +2635,7 @@ module Watch =
                     let finalCleanPublicationVerified =
                         if cleanPublicationVerified
                            && finalPendingWorkIsEmpty then
-                            let currentStatus =
-                                readGraceStatusFileForPendingWorkTransition()
-                                    .GetAwaiter()
-                                    .GetResult()
-
-                            graceStatusMatchesExpectedPendingWorkPublication status directoryIds currentStatus
+                            tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication status directoryIds
                         else
                             false
 
