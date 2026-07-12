@@ -607,7 +607,15 @@ module Watch =
         | GraceStatusArtifact
 
     /// Captures one coalesced local filesystem observation and the generation that owns its due work.
-    type internal WatchObservationCandidate = { FullPath: string; Kind: WatchObservationKind; Generation: int64; LastSeenAt: DateTime; DueAt: DateTime }
+    type internal WatchObservationCandidate =
+        {
+            FullPath: string
+            Kind: WatchObservationKind
+            RequiresRemovalProof: bool
+            Generation: int64
+            LastSeenAt: DateTime
+            DueAt: DateTime
+        }
 
     /// Coalesces local filesystem observations until their deterministic quiet window has elapsed.
     type internal WatchObservationCandidateScheduler(quietWindow: TimeSpan, pathComparison: StringComparison) =
@@ -653,14 +661,28 @@ module Watch =
                 else
                     pathComparer.Compare(left.FullPath, right.FullPath)
 
-        /// Records one local observation, replacing any older generation for the same normalized path.
+        /// Records one local observation, replacing any older generation while retaining same-path delete proof for a final replacement.
         member _.Observe(origin: WatchObservationOrigin, kind: WatchObservationKind, fullPath: string, seenAt: DateTime) =
             lock gate (fun () ->
                 match origin, disposed, tryNormalizeCandidatePath fullPath with
                 | LocalFileSystem, false, Some normalizedPath ->
                     let generation = Interlocked.Increment(&nextGeneration)
 
-                    let candidate = { FullPath = normalizedPath; Kind = kind; Generation = generation; LastSeenAt = seenAt; DueAt = seenAt + quietWindow }
+                    let requiresRemovalProof =
+                        kind = Deleted
+                        || match candidates.TryGetValue(normalizedPath) with
+                           | true, existing -> existing.RequiresRemovalProof
+                           | false, _ -> false
+
+                    let candidate =
+                        {
+                            FullPath = normalizedPath
+                            Kind = kind
+                            RequiresRemovalProof = requiresRemovalProof
+                            Generation = generation
+                            LastSeenAt = seenAt
+                            DueAt = seenAt + quietWindow
+                        }
 
                     candidates[normalizedPath] <- candidate
                     Some candidate
@@ -745,6 +767,9 @@ module Watch =
     /// Records a raw local event without reading content, enumerating paths, or scheduling remote Reference work.
     let private recordLocalObservationCandidate kind fullPath seenAt =
         lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Observe(LocalFileSystem, kind, fullPath, seenAt))
+
+    /// Records a timestamped local candidate for deterministic Watch scheduler tests.
+    let internal recordLocalObservationCandidateForWatchTests kind fullPath seenAt = recordLocalObservationCandidate kind fullPath seenAt
 
     /// Reads the active scheduler snapshot after a test has installed a deterministic clock or direct candidate sequence.
     let internal localObservationCandidateSnapshotForWatchTests () =
@@ -1242,9 +1267,10 @@ module Watch =
             | _ -> false
 
     /// Identifies delayed callbacks for writes that completed while a Grace update marker was still present.
-    let private isDelayedGraceOwnedFileObservation fullPath =
+    let private isDelayedGraceOwnedFileObservation fullPath observedAt =
         match tryRecentGraceUpdateMarkerCompletedUtc () with
         | None -> false
+        | Some markerCompletedUtc when observedAt < markerCompletedUtc -> false
         | Some markerCompletedUtc when
             not (File.Exists fullPath)
             && not (Directory.Exists fullPath)
@@ -2638,6 +2664,7 @@ module Watch =
             HasProcessablePendingWork =
                 not recoveryStillOwnsPublication
                 || graceStatusHasChanged
+                || hasPendingLocalObservationCandidates ()
                 || not (
                     filesToProcess.IsEmpty
                     && directoriesToProcess.IsEmpty
@@ -2937,7 +2964,7 @@ module Watch =
         publishPendingWatchWorkTransitionIfNeeded ()
 
     /// Applies a due create or change candidate after its quiet window has separated raw callbacks from filesystem work.
-    let private applyCreatedOrChangedLocalObservationCandidate fullPath =
+    let private applyCreatedOrChangedLocalObservationCandidate fullPath observedAt =
         if updateNotInProgress ()
            && isGraceStatusArtifact fullPath then
             markGraceStatusChangedAndPublishPendingWorkTransition ()
@@ -2945,7 +2972,7 @@ module Watch =
         elif not (updateNotInProgress ()) then
             logObservationSuppressed fullPath
             false
-        elif isDelayedGraceOwnedFileObservation fullPath then
+        elif isDelayedGraceOwnedFileObservation fullPath observedAt then
             logObservationSuppressed fullPath
             false
         elif Directory.Exists(fullPath) then
@@ -2969,7 +2996,7 @@ module Watch =
             false
 
     /// Applies a due delete candidate after the current marker and final filesystem state can be examined safely.
-    let private applyDeletedLocalObservationCandidate fullPath =
+    let private applyDeletedLocalObservationCandidate fullPath observedAt =
         if updateNotInProgress ()
            && isGraceStatusArtifact fullPath then
             markGraceStatusChangedAndPublishPendingWorkTransition ()
@@ -2980,7 +3007,7 @@ module Watch =
         else
             let canceledFileUpload = cancelPendingUploadsForDeletedPath fullPath
 
-            if isDelayedGraceOwnedFileObservation fullPath
+            if isDelayedGraceOwnedFileObservation fullPath observedAt
                && not canceledFileUpload then
                 logObservationSuppressed fullPath
                 false
@@ -3017,8 +3044,17 @@ module Watch =
             | Some candidate ->
                 let candidateQueuedWork =
                     match candidate.Kind with
-                    | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate candidate.FullPath
-                    | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath
+                    | CreatedOrChanged ->
+                        let removalQueuedWork =
+                            if candidate.RequiresRemovalProof then
+                                applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                            else
+                                false
+
+                        let finalQueuedWork = applyCreatedOrChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                        removalQueuedWork || finalQueuedWork
+                    | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
                     | GraceStatusArtifact ->
                         if updateNotInProgress () then
                             markGraceStatusChangedAndPublishPendingWorkTransition ()
@@ -3032,12 +3068,17 @@ module Watch =
 
         if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
 
+    /// Drains due local candidates at a caller-supplied instant for deterministic Watch tests.
+    let internal processDueLocalObservationCandidatesForWatchTests now = processDueLocalObservationCandidates now
+
     /// Applies an observation immediately only for direct callback harnesses that did not start the Watch lifetime.
     let private processLocalObservationImmediately kind fullPath =
+        let observedAt = DateTime.UtcNow
+
         let queuedPendingWork =
             match kind with
-            | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath
-            | Deleted -> applyDeletedLocalObservationCandidate fullPath
+            | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
+            | Deleted -> applyDeletedLocalObservationCandidate fullPath observedAt
             | GraceStatusArtifact ->
                 if updateNotInProgress () then
                     markGraceStatusChangedAndPublishPendingWorkTransition ()
@@ -6187,7 +6228,7 @@ module Watch =
                  && kind = GraceStatusArtifact then
                 processLocalObservationImmediately kind args.FullPath
             elif useImmediateLocalObservationProcessingForWatchTests ()
-                 && isDelayedGraceOwnedFileObservation args.FullPath then
+                 && isDelayedGraceOwnedFileObservation args.FullPath DateTime.UtcNow then
                 logObservationSuppressed args.FullPath
             elif
                 useImmediateLocalObservationProcessingForWatchTests ()

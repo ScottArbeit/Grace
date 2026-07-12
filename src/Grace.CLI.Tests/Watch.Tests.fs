@@ -428,6 +428,13 @@ module WatchTests =
                 with
                 | _ -> ()
 
+    /// Clears default empty ignore entries so replacement tests exercise eligible repository paths.
+    let private clearWatchIgnoreEntries () =
+        let configuration = Current()
+        configuration.GraceFileIgnoreEntries <- Array.empty
+        configuration.GraceDirectoryIgnoreEntries <- Array.empty
+        Services.clearShouldIgnoreCache ()
+
     /// Builds deleted event test data used to exercise CLI watch behavior.
     let private deletedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
 
@@ -816,6 +823,149 @@ module WatchTests =
         pendingCandidate.DueAt
         |> should equal (latestSeenAt.Add(quietWindow))
 
+        pendingCandidate.RequiresRemovalProof
+        |> should equal false
+
+    /// Verifies same-path delete/create/change coalescing retains bounded removal proof and only final work generation.
+    [<Test>]
+    let ``local observation candidates retain delete proof through repeated replacements`` () =
+        let quietWindow = TimeSpan.FromSeconds(1.0)
+        let scheduler = new Watch.WatchObservationCandidateScheduler(quietWindow, StringComparison.Ordinal)
+        let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "replacement.txt")
+        let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+
+        scheduler.Observe(Watch.LocalFileSystem, Watch.Deleted, fullPath, firstSeenAt)
+        |> Option.isSome
+        |> should equal true
+
+        let createdCandidate =
+            scheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, firstSeenAt.AddMilliseconds(100.0))
+            |> Option.get
+
+        let finalCandidate =
+            scheduler.Observe(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, firstSeenAt.AddMilliseconds(200.0))
+            |> Option.get
+
+        let candidates = scheduler.Snapshot()
+
+        candidates.Length |> should equal 1
+
+        candidates[0].Generation
+        |> should equal finalCandidate.Generation
+
+        candidates[0].Generation
+        |> should be (greaterThan createdCandidate.Generation)
+
+        candidates[0].Kind
+        |> should equal Watch.CreatedOrChanged
+
+        candidates[0].RequiresRemovalProof
+        |> should equal true
+
+        candidates[0].DueAt
+        |> should
+            equal
+            (firstSeenAt
+                .AddMilliseconds(200.0)
+                .Add(quietWindow))
+
+    /// Verifies a same-path file replacement queues both removal proof and final file upload work.
+    [<Test>]
+    let ``local observation candidate delete then file create preserves removal and upload work`` () =
+        withTempRepo (fun root ->
+            let relativePath = "replacement.txt"
+            let fullPath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            clearWatchIgnoreEntries ()
+            File.WriteAllText(fullPath, "old file")
+            File.Delete(fullPath)
+            Watch.OnDeleted(deletedEvent fullPath)
+
+            File.WriteAllText(fullPath, "replacement file")
+
+            Watch.OnCreated(createdEvent fullPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| relativePath |]
+
+            pending.FilesToProcess
+            |> should equal [| fullPath |]
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>)
+
+    /// Verifies same-path file and directory replacements retain removal evidence without directory subtree expansion.
+    [<Test>]
+    let ``local observation candidate replacements retain old kind removal and final kind work`` () =
+        let verifyFileToDirectory () =
+            withTempRepo (fun root ->
+                let relativePath = "replacement"
+                let fullPath = Path.Combine(root, relativePath)
+                let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+                Watch.setGraceStatusForWatchTests status
+                Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+                Watch.setLocalObservationCandidateSchedulingForWatchTests true
+                clearWatchIgnoreEntries ()
+                File.WriteAllText(fullPath, "old file")
+                File.Delete(fullPath)
+                Watch.OnDeleted(deletedEvent fullPath)
+
+                Directory.CreateDirectory(fullPath) |> ignore
+
+                Watch.OnCreated(createdEvent fullPath)
+
+                let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+                pending.StatusUpdateTriggers
+                |> should equal [| relativePath |]
+
+                Directory.Exists(fullPath) |> should equal true
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> should equal Array.empty<Watch.WatchObservationCandidate>)
+
+        let verifyDirectoryToFile () =
+            withTempRepo (fun root ->
+                let relativePath = "replacement"
+                let fullPath = Path.Combine(root, relativePath)
+                let status = graceStatusTracking Array.empty<string> [| relativePath |]
+                let seenAt = DateTime.UtcNow
+
+                Watch.setGraceStatusForWatchTests status
+                Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+                Watch.setLocalObservationCandidateSchedulingForWatchTests true
+                clearWatchIgnoreEntries ()
+                Directory.CreateDirectory(fullPath) |> ignore
+                Directory.Delete(fullPath)
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.Deleted fullPath seenAt
+                |> ignore
+
+                File.WriteAllText(fullPath, "replacement file")
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged fullPath (seenAt.AddMilliseconds(1.0))
+                |> ignore
+
+                Watch.processDueLocalObservationCandidatesForWatchTests (seenAt.AddMilliseconds(1.0))
+
+                let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+                pending.StatusUpdateTriggers
+                |> should equal [| relativePath |]
+
+                pending.FilesToProcess
+                |> should equal [| fullPath |])
+
+        verifyFileToDirectory ()
+        verifyDirectoryToFile ()
+
     /// Verifies that a candidate becomes eligible exactly at its quiet-window boundary and never before it.
     [<Test>]
     let ``local observation candidate is eligible exactly at quiet boundary`` () =
@@ -972,6 +1122,60 @@ module WatchTests =
 
             Watch.localObservationCandidateSnapshotForWatchTests ()
             |> should equal Array.empty<Watch.WatchObservationCandidate>)
+
+    /// Verifies candidate observation time keeps pre-marker user work distinct from delayed Grace-owned marker effects.
+    [<Test>]
+    let ``candidate marker suppression respects observation time at deterministic boundary`` () =
+        withTempRepo (fun root ->
+            let preMarkerPath = Path.Combine(root, "pre-marker-user-write.txt")
+            let markerWindowPath = Path.Combine(root, "marker-window-grace-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            File.WriteAllText(preMarkerPath, "user write observed before marker")
+            File.WriteAllText(markerWindowPath, "Grace-owned write observed after marker")
+            File.SetLastWriteTimeUtc(preMarkerPath, markerCompletedUtc.AddSeconds(-1.0))
+            File.SetLastWriteTimeUtc(markerWindowPath, markerCompletedUtc.AddSeconds(-1.0))
+
+            Watch.setGraceStatusForWatchTests (
+                graceStatusTracking
+                    [|
+                        "pre-marker-user-write.txt"
+                        "marker-window-grace-write.txt"
+                    |]
+                    Array.empty<string>
+            )
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () ->
+                Task.FromResult(
+                    graceStatusTracking
+                        [|
+                            "pre-marker-user-write.txt"
+                            "marker-window-grace-write.txt"
+                        |]
+                        Array.empty<string>
+                ))
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged preMarkerPath (markerCompletedUtc.AddTicks(-1L))
+            |> ignore
+
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged markerWindowPath markerCompletedUtc
+            |> ignore
+
+            Watch.processDueLocalObservationCandidatesForWatchTests markerCompletedUtc
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| preMarkerPath |]
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
 
     /// Verifies that Grace-owned writes under the update marker do not enqueue Save-producing Watch work.
     [<Test>]
@@ -13705,6 +13909,103 @@ module WatchTests =
                 publishedStatus.IsWorkingTreeClean
                 |> should equal false
             | None -> Assert.Fail("Expected dirty Watch IPC after pending work arrived during clean recovery publication."))
+
+    /// Verifies candidate-only work blocks resync clean publication until the candidate has drained and its final work completes.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``candidate-only work during resync recovery retains latch until candidate drain`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+            Watch.requestGraceWatchExplicitResyncForWatchTests "materialization clean proof failed"
+
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let candidatePath = Path.Combine(root, "candidate-arrived-during-resync.txt")
+            let candidateSeenAt = DateTime.UtcNow.AddMinutes(1.0)
+            let clientPublications = ResizeArray<string>()
+            let readStatus () = Task.FromResult(status)
+
+            let upload _ filePath =
+                let fullPath = $"{filePath}"
+
+                if File.Exists(fullPath) then recordUploadedFileVersion fullPath
+
+                Task.FromResult(())
+
+            let updateGraceStatus _ _ = Task.FromResult(Some status)
+            let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+            let updateGraceStatusFromDifferences _ _ _ = Task.FromResult(Some status)
+            let applyIncremental _ _ _ = Task.FromResult(())
+
+            let updateIpc currentStatus directoryIds =
+                clientPublications.Add(
+                    if currentStatus.RootDirectoryId = status.RootDirectoryId then
+                        "clean"
+                    else
+                        "dirty"
+                )
+
+                Services.updateGraceWatchInterprocessFile currentStatus directoryIds
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+
+            Watch.setAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests (fun () ->
+                File.WriteAllText(candidatePath, "candidate captured after provisional clean")
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged candidatePath candidateSeenAt
+                |> ignore)
+
+            try
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+            finally
+                Watch.resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests ()
+
+            clientPublications.ToArray()
+            |> should equal [| "clean"; "dirty" |]
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.length
+            |> should equal 1
+
+            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.processDueLocalObservationCandidatesForWatchTests candidateSeenAt
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            clientPublications.ToArray()
+            |> should equal [| "clean"; "dirty"; "clean" |]
+
+            Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+            |> should equal false
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
 
     /// Verifies process-local work that turns a recovery publication dirty cannot be mistaken for verified clean recovery.
     [<Test; Category("CurrentBranchMaterializationPublication")>]
