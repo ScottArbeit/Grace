@@ -792,6 +792,20 @@ module Watch =
     /// Exposes SignalR reconnect refresh behavior to Watch tests without opening a HubConnection.
     let internal refreshSignalRSubscriptionsForActiveConnectionForWatchTests refresh = refreshSignalRSubscriptionsForActiveConnection refresh
 
+    /// Runs lifecycle catch-up only after SignalR subscription recovery succeeds for the active connection.
+    let private completeSignalRReconnectWithCatchUp refreshSignalRSubscriptions catchUpCurrentBranchReference =
+        task {
+            if refreshSignalRSubscriptions () then
+                do! catchUpCurrentBranchReference ()
+                return true
+            else
+                return false
+        }
+
+    /// Exposes SignalR reconnect ordering to Watch tests without opening a HubConnection.
+    let internal completeSignalRReconnectWithCatchUpForWatchTests refreshSignalRSubscriptions catchUpCurrentBranchReference =
+        completeSignalRReconnectWithCatchUp refreshSignalRSubscriptions catchUpCurrentBranchReference
+
     /// Installs the SignalR parent-branch refresh operation used by transition-completion tests.
     let internal setSignalRSubscriptionRefreshForWatchTests refresh =
         lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- refresh)
@@ -5356,11 +5370,180 @@ module Watch =
                         ApplyReference = applyCurrentBranchReferenceMaterialization
                         PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
                         ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
-                        MaxAttempts = None
+                        MaxAttempts = Some 3
                     }
                     payload
 
             return ()
+        }
+
+    /// Names the result of deriving and processing one lifecycle catch-up request from the current BranchDto.
+    type internal CurrentBranchReferenceCatchUpResult =
+        /// The BranchDto did not name a concrete current-branch Reference eligible for materialization.
+        | NoReference = 0
+        /// The BranchDto refresh did not complete, so a bounded lifecycle retry may re-read it later.
+        | RefreshFailed = 1
+        /// The existing serialized coordinator processed the exact Reference derived from BranchDto.
+        | Processed = 2
+
+    /// Builds the coordinator input from the server's current BranchDto rather than any prior SignalR payload.
+    let private tryCreateCurrentBranchReferenceCatchUpNotification (branchDto: Grace.Types.Branch.BranchDto) correlationId =
+        let current = Current()
+        let latestReference = branchDto.LatestReference
+
+        if branchDto.RepositoryId <> current.RepositoryId
+           || branchDto.BranchId <> current.BranchId
+           || latestReference.ReferenceId = ReferenceId.Empty then
+            None
+        elif not (CurrentBranchReferenceNotification.IsEligibleReferenceType latestReference.ReferenceType) then
+            None
+        else
+            Some
+                { CurrentBranchReferenceNotification.Default with
+                    ReferenceId = latestReference.ReferenceId
+                    OwnerId = latestReference.OwnerId
+                    OrganizationId = latestReference.OrganizationId
+                    RepositoryId = latestReference.RepositoryId
+                    BranchId = latestReference.BranchId
+                    BranchName = branchDto.BranchName
+                    DirectoryId = latestReference.DirectoryId
+                    Sha256Hash = latestReference.Sha256Hash
+                    Blake3Hash = latestReference.Blake3Hash
+                    ReferenceType = latestReference.ReferenceType
+                    ReferenceText = latestReference.ReferenceText
+                    CorrelationId = correlationId
+                }
+
+    /// Re-reads BranchDto and sends its exact latest Reference through the existing serialized materialization lane.
+    let private catchUpCurrentBranchReferenceWithClients
+        (getCurrentBranch: unit -> Task<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>)
+        (processReference: CurrentBranchReferenceNotification -> Task<CurrentBranchMaterializationCoordinatorOutcome>)
+        =
+        task {
+            match! getCurrentBranch () with
+            | Error error ->
+                logToAnsiConsole Colors.Error $"Failed to refresh BranchDto for current-branch Watch catch-up: {Markup.Escape(error.ToString())}."
+
+                return CurrentBranchReferenceCatchUpResult.RefreshFailed, None
+            | Ok branchReturnValue ->
+                match tryCreateCurrentBranchReferenceCatchUpNotification branchReturnValue.ReturnValue (generateCorrelationId ()) with
+                | None -> return CurrentBranchReferenceCatchUpResult.NoReference, None
+                | Some payload ->
+                    let! outcome = processReference payload
+                    return CurrentBranchReferenceCatchUpResult.Processed, Some outcome
+        }
+
+    /// Exposes BranchDto-derived catch-up routing for deterministic Watch lifecycle tests.
+    let internal catchUpCurrentBranchReferenceWithClientsForWatchTests getCurrentBranch processReference =
+        catchUpCurrentBranchReferenceWithClients getCurrentBranch processReference
+
+    /// Limits lifecycle catch-up retries until a later local-drain, resync, startup, or reconnect request obtains fresh evidence.
+    let private currentBranchReferenceCatchUpMaximumAttempts = 3
+    let private currentBranchReferenceCatchUpRetryLock = obj ()
+    let mutable private currentBranchReferenceCatchUpRetryPending = false
+    let mutable private currentBranchReferenceCatchUpRetryAttempts = 0
+    let mutable private currentBranchReferenceCatchUpRetryNotBeforeUtc = DateTime.MinValue
+
+    /// Requests a new BranchDto-derived catch-up without retaining a notification or Reference outside the coordinator.
+    let private requestCurrentBranchReferenceCatchUp reason =
+        lock currentBranchReferenceCatchUpRetryLock (fun () ->
+            currentBranchReferenceCatchUpRetryPending <- true
+            currentBranchReferenceCatchUpRetryAttempts <- 0
+            currentBranchReferenceCatchUpRetryNotBeforeUtc <- DateTime.MinValue)
+
+        logToAnsiConsole Colors.Verbose $"Current-branch Watch catch-up requested after {reason}."
+
+    /// Clears a completed lifecycle catch-up request after BranchDto or the coordinator reached a terminal result.
+    let private completeCurrentBranchReferenceCatchUp () =
+        lock currentBranchReferenceCatchUpRetryLock (fun () ->
+            currentBranchReferenceCatchUpRetryPending <- false
+            currentBranchReferenceCatchUpRetryAttempts <- 0
+            currentBranchReferenceCatchUpRetryNotBeforeUtc <- DateTime.MinValue)
+
+    /// Schedules the next bounded BranchDto refresh without retaining the blocked Reference as retry truth.
+    let private retryCurrentBranchReferenceCatchUp reason =
+        let retryDelay =
+            lock currentBranchReferenceCatchUpRetryLock (fun () ->
+                currentBranchReferenceCatchUpRetryAttempts <- currentBranchReferenceCatchUpRetryAttempts + 1
+
+                if currentBranchReferenceCatchUpRetryAttempts
+                   >= currentBranchReferenceCatchUpMaximumAttempts then
+                    currentBranchReferenceCatchUpRetryPending <- false
+                    None
+                else
+                    let delaySeconds = pown 2 currentBranchReferenceCatchUpRetryAttempts
+                    currentBranchReferenceCatchUpRetryNotBeforeUtc <- DateTime.UtcNow.AddSeconds(float delaySeconds)
+                    Some delaySeconds)
+
+        match retryDelay with
+        | Some delaySeconds ->
+            logToAnsiConsole
+                Colors.Important
+                $"Current-branch Watch catch-up remains blocked: {reason}. It will refresh BranchDto again in {delaySeconds} seconds."
+        | None ->
+            logToAnsiConsole
+                Colors.Important
+                $"Current-branch Watch catch-up remains blocked after {currentBranchReferenceCatchUpMaximumAttempts} attempts: {reason}. It will retry when local work drains, resync completes, or SignalR reconnects."
+
+    /// Uses one coordinator attempt per lifecycle retry so catch-up backoff is cancellable between fresh BranchDto reads.
+    let private processCurrentBranchReferenceCatchUp payload =
+        runCurrentBranchMaterializationCoordinator
+            {
+                GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                InspectLocalStatus = inspectGraceWatchStatus
+                RequestDegradedResync = requestGraceWatchExplicitResync
+                WaitForSafePoint = fun _ _ -> Task.FromResult(())
+                ReestablishIpc = fun _ _ -> Task.FromResult(())
+                ApplyReference = applyCurrentBranchReferenceMaterialization
+                PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
+                ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
+                MaxAttempts = Some 1
+            }
+            payload
+
+    /// Runs a due lifecycle request only from a healthy local boundary and never after Watch cancellation begins.
+    let private runCurrentBranchReferenceCatchUpIfDue (cancellationToken: CancellationToken) =
+        task {
+            let isDue =
+                lock currentBranchReferenceCatchUpRetryLock (fun () ->
+                    currentBranchReferenceCatchUpRetryPending
+                    && currentBranchReferenceCatchUpRetryNotBeforeUtc
+                       <= DateTime.UtcNow)
+
+            if
+                isDue
+                && not cancellationToken.IsCancellationRequested
+                && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                && not (isGraceWatchResyncPending ())
+                && not (hasPendingWatchWork ())
+            then
+                try
+                    let! result, outcome =
+                        catchUpCurrentBranchReferenceWithClients
+                            (fun () -> getCurrentBranchForCurrentBranchReferenceNotification CurrentBranchReferenceNotification.Default)
+                            processCurrentBranchReferenceCatchUp
+
+                    match result, outcome with
+                    | CurrentBranchReferenceCatchUpResult.NoReference, _ -> completeCurrentBranchReferenceCatchUp ()
+                    | CurrentBranchReferenceCatchUpResult.RefreshFailed, _ -> retryCurrentBranchReferenceCatchUp "BranchDto refresh failed"
+                    | CurrentBranchReferenceCatchUpResult.Processed, Some coordinatorOutcome ->
+                        match coordinatorOutcome.Reason, coordinatorOutcome.Decision with
+                        | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint, _ ->
+                            retryCurrentBranchReferenceCatchUp "local Watch work is still pending"
+                        | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync, _ ->
+                            retryCurrentBranchReferenceCatchUp "local Watch state requires resync"
+                        | CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected, Some decision when
+                            decision.Reason = LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
+                            ->
+                            retryCurrentBranchReferenceCatchUp "BranchDto advanced while catch-up waited for the serialized lane"
+                        | _ -> completeCurrentBranchReferenceCatchUp ()
+                    | CurrentBranchReferenceCatchUpResult.Processed, None -> completeCurrentBranchReferenceCatchUp ()
+                    | _ -> completeCurrentBranchReferenceCatchUp ()
+                with
+                | ex ->
+                    logToAnsiConsole Colors.Error $"Current-branch Watch catch-up failed before a terminal coordinator result: {Markup.Escape(ex.Message)}."
+
+                    retryCurrentBranchReferenceCatchUp "catch-up processing failed"
         }
 
     /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
@@ -7087,8 +7270,13 @@ module Watch =
     /// Exposes startup journal recovery to tests without starting the foreground watcher loop.
     let internal recoverStartupWatchJournalAfterReconciliationForWatchTests status = recoverStartupWatchJournalAfterReconciliation status
 
-    /// Re-enters startup replay and promotion after delayed startup work drains on a later timer pass.
-    let private completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient =
+    /// Re-enters startup replay, publishes a verified clean local boundary, and then starts lifecycle catch-up.
+    let private completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+        readGraceStatusFileClient
+        updateGraceWatchInterprocessFileClient
+        processChangedFilesClient
+        catchUpCurrentBranchReference
+        =
         task {
             let mutable attemptedStartupCompletion = false
 
@@ -7128,8 +7316,19 @@ module Watch =
                         updateGraceWatchInterprocessFileClient
                         "startup catch-up"
 
-                if not cleanStartupStatusPublished then setGraceWatchPendingWorkStatusFlag true
+                if cleanStartupStatusPublished then
+                    do! catchUpCurrentBranchReference ()
+                else
+                    setGraceWatchPendingWorkStatusFlag true
         }
+
+    /// Re-enters startup replay and promotion after delayed startup work drains on a later timer pass.
+    let private completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient =
+        completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+            readGraceStatusFileClient
+            updateGraceWatchInterprocessFileClient
+            processChangedFilesClient
+            (fun () -> Task.FromResult(()))
 
     /// Exposes delayed startup replay completion to tests without starting the foreground watcher loop.
     let internal completeStartupRecoveryIfPendingWorkDrainedForWatchTests
@@ -7138,6 +7337,19 @@ module Watch =
         processChangedFilesClient
         =
         completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient
+
+    /// Exposes the verified-startup-publication ordering before lifecycle catch-up for focused Watch tests.
+    let internal completeStartupRecoveryIfPendingWorkDrainedWithCatchUpForWatchTests
+        readGraceStatusFileClient
+        updateGraceWatchInterprocessFileClient
+        processChangedFilesClient
+        catchUpCurrentBranchReference
+        =
+        completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+            readGraceStatusFileClient
+            updateGraceWatchInterprocessFileClient
+            processChangedFilesClient
+            catchUpCurrentBranchReference
 
     /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
@@ -7350,8 +7562,18 @@ module Watch =
                         task {
                             logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}."
 
-                            refreshSignalRSubscriptionsForActiveConnection (fun () -> registerCurrentSignalRParentBranch signalRConnection cancellationToken)
-                            |> ignore
+                            let! _ =
+                                completeSignalRReconnectWithCatchUp
+                                    (fun () ->
+                                        refreshSignalRSubscriptionsForActiveConnection (fun () ->
+                                            registerCurrentSignalRParentBranch signalRConnection cancellationToken))
+                                    (fun () ->
+                                        task {
+                                            requestCurrentBranchReferenceCatchUp "SignalR subscription recovery"
+                                            do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
+                                        })
+
+                            ()
                         })
 
                     do! signalRConnection.StartAsync(cancellationToken)
@@ -7396,7 +7618,17 @@ module Watch =
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
-                    do! completeStartupRecoveryIfPendingWorkDrained readGraceStatusFile updateGraceWatchInterprocessFile processChangedFiles
+
+                    do!
+                        completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+                            readGraceStatusFile
+                            updateGraceWatchInterprocessFile
+                            processChangedFiles
+                            (fun () ->
+                                task {
+                                    requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
+                                    do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
+                                })
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -7414,8 +7646,29 @@ module Watch =
                             let! updatedGraceStatus = readGraceStatusFile ()
                             do! publishGraceStatusRefreshSnapshot refreshGeneration updatedGraceStatus updateGraceWatchInterprocessFile
 
+                        let localWorkWasPending = hasPendingWatchWork ()
+                        let resyncWasPending = isGraceWatchResyncPending ()
+
                         do! processChangedFiles ()
-                        do! completeStartupRecoveryIfPendingWorkDrained readGraceStatusFile updateGraceWatchInterprocessFile processChangedFiles
+
+                        do!
+                            completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+                                readGraceStatusFile
+                                updateGraceWatchInterprocessFile
+                                processChangedFiles
+                                (fun () ->
+                                    task {
+                                        requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
+                                        do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
+                                    })
+
+                        if (localWorkWasPending
+                            && not (hasPendingWatchWork ()))
+                           || (resyncWasPending
+                               && not (isGraceWatchResyncPending ())) then
+                            requestCurrentBranchReferenceCatchUp "local Watch recovery"
+
+                        do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 
