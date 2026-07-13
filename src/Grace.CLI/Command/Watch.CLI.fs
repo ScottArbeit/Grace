@@ -3641,10 +3641,11 @@ module Watch =
             else
                 false
 
-    /// Claims every candidate due at the supplied instant and performs the existing expensive Watch work after the claim boundary.
+    /// Claims every due candidate, then reconciles IPC from the complete post-claim pending state even when no local work was queued.
     let private processDueLocalObservationCandidates now =
         let scheduler, dueCandidates = dueLocalObservationCandidates now
         let mutable queuedPendingWork = false
+        let mutable claimedCandidate = false
 
         for dueCandidate in dueCandidates do
             match tryGetActiveGraceUpdateMarkerObservationBoundary () with
@@ -3652,6 +3653,8 @@ module Watch =
             | markerBoundary ->
                 match tryClaimLocalObservationCandidate scheduler dueCandidate now with
                 | Some candidate ->
+                    claimedCandidate <- true
+
                     let candidateQueuedWork =
                         match markerBoundary with
                         | AmbiguousMarkerBoundary reason ->
@@ -3698,7 +3701,8 @@ module Watch =
                     queuedPendingWork <- queuedPendingWork || candidateQueuedWork
                 | None -> ()
 
-        if queuedPendingWork
+        if claimedCandidate
+           || queuedPendingWork
            || hasPendingLocalObservationCandidates () then
             publishPendingWatchWorkTransitionIfNeeded ()
 

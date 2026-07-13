@@ -1298,6 +1298,182 @@ module WatchTests =
             |> Array.length
             |> should equal 1)
 
+    /// Verifies that a final directory metadata callback can clear candidate-derived dirty IPC without creating local work.
+    [<Test>]
+    let ``claimed metadata-only directory candidate reconciles dirty IPC to clean`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let metadataOnlyDirectory = Path.Combine(root, "metadata-only-directory")
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Directory.CreateDirectory(metadataOnlyDirectory)
+            |> ignore
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent metadataOnlyDirectory)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true)
+
+    /// Verifies that a delayed Grace-owned callback clears candidate-derived dirty IPC without entering local Save work.
+    [<Test>]
+    let ``claimed delayed Grace-owned candidate reconciles dirty IPC without local work`` () =
+        withTempRepo (fun root ->
+            let relativePath = "delayed-grace-owned-candidate.txt"
+            let changedPath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            File.WriteAllText(changedPath, "Grace-owned payload")
+            File.SetLastWriteTimeUtc(changedPath, markerCompletedUtc.AddSeconds(-1.0))
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) markerCompletedUtc
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent changedPath)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true)
+
+    /// Verifies that claiming a metadata-only candidate cannot clear dirty IPC while another candidate remains pending.
+    [<Test>]
+    let ``claimed metadata-only candidate retains dirty IPC for another candidate`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let metadataOnlyDirectory = Path.Combine(root, "metadata-only-directory")
+            let laterCandidatePath = Path.Combine(root, "later-candidate.txt")
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Directory.CreateDirectory(metadataOnlyDirectory)
+            |> ignore
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent metadataOnlyDirectory)
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged laterCandidatePath (DateTime.UtcNow.AddMinutes(1.0))
+            |> Option.isSome
+            |> should equal true
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.map (fun candidate -> candidate.FullPath)
+            |> should equal [| laterCandidatePath |]
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false)
+
+    /// Verifies that claiming a metadata-only candidate cannot clear dirty IPC while queued file work remains.
+    [<Test>]
+    let ``claimed metadata-only candidate retains dirty IPC for queued file work`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let queuedFilePath = Path.Combine(root, "queued-file.txt")
+            let metadataOnlyDirectory = Path.Combine(root, "metadata-only-directory")
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            File.WriteAllText(queuedFilePath, "queued local work")
+            Watch.setLocalObservationCandidateSchedulingForWatchTests false
+            Watch.OnChanged(changedEvent queuedFilePath)
+
+            Directory.CreateDirectory(metadataOnlyDirectory)
+            |> ignore
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent metadataOnlyDirectory)
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| queuedFilePath |]
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false)
+
     /// Verifies a failed immediate dirty publication retains the accepted candidate until the normal timer retry can drain it.
     [<Test>]
     let ``raw candidate dirty publication failure retains candidate for timer retry`` () =
