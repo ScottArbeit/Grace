@@ -159,21 +159,25 @@ module Watch =
     /// Reports whether Watch retains a previously valid ignore snapshot after a failed reload attempt.
     let internal hasActiveWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot.IsSome
 
+    /// Returns working-tree differences or the scan failure while retaining the copied Watch-lifetime ignore inputs.
+    let private tryScanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
+        let snapshot = currentWatchIgnoreSnapshot ()
+
+        let scanInput: WorkingTreeScanInput =
+            {
+                RootDirectory = snapshot.RootDirectory
+                GraceDirectory = snapshot.GraceDirectory
+                GraceStatusFile = snapshot.GraceStatusFile
+                DirectoryIgnoreEntries = snapshot.DirectoryEntries
+                FileIgnoreEntries = snapshot.FileEntries
+            }
+
+        scanWorkingTreeForDifferencesReadOnly scanInput previousGraceStatus
+
     /// Scans the working tree with the copied Watch-lifetime ignore inputs instead of live configuration values.
     let private scanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
         task {
-            let snapshot = currentWatchIgnoreSnapshot ()
-
-            let scanInput: WorkingTreeScanInput =
-                {
-                    RootDirectory = snapshot.RootDirectory
-                    GraceDirectory = snapshot.GraceDirectory
-                    GraceStatusFile = snapshot.GraceStatusFile
-                    DirectoryIgnoreEntries = snapshot.DirectoryEntries
-                    FileIgnoreEntries = snapshot.FileEntries
-                }
-
-            match! scanWorkingTreeForDifferencesReadOnly scanInput previousGraceStatus with
+            match! tryScanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus with
             | Ok differences ->
                 setLastScanForDifferencesSuccessfulForWatchTests true
                 return differences
@@ -182,6 +186,10 @@ module Watch =
                 logToAnsiConsole Colors.Error $"Grace Watch could not scan the working tree with its active ignore snapshot: {error}"
                 return List<FileSystemDifference>()
         }
+
+    /// Exposes frozen-snapshot scan failures for deterministic Watch startup regression tests.
+    let internal tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests previousGraceStatus =
+        tryScanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus
 
     /// Exposes frozen-snapshot scans for deterministic Watch startup and resync regression tests.
     let internal scanForDifferencesWithWatchIgnoreSnapshotForWatchTests previousGraceStatus = scanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus
@@ -4033,14 +4041,21 @@ module Watch =
             match pendingTransitionConfigurationReloadReason with
             | None -> true
             | Some reason ->
+                let wasSuspended = currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Suspended
+
                 try
                     reloadConfigurationForTransitionCompletion ()
                     rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                    // Current now identifies the target branch. Publish its existing non-incremental contract before recovery can block.
+                    publishGraceWatchResyncRequired ()
                     pendingTransitionConfigurationReloadReason <- None
                     true
                 with
                 | ex ->
-                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+                    if wasSuspended then
+                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+                    else
+                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
                     logToAnsiConsole
                         Colors.Important
@@ -8028,7 +8043,12 @@ module Watch =
         =
         task {
             configureWatchPathComparisonForCurrentRepository ()
-            processDueLocalObservationCandidates DateTime.UtcNow
+
+            // A target branch must install its own snapshot before Watch can classify due filesystem candidates.
+            let targetConfigurationActive = tryReloadPendingTransitionConfiguration ()
+
+            if targetConfigurationActive then
+                processDueLocalObservationCandidates DateTime.UtcNow
 
             match takeLocalObservationConfidenceLoss () with
             | Some reason ->
@@ -8036,8 +8056,7 @@ module Watch =
                 requestGraceWatchExplicitResync reason
             | None -> ()
 
-            // A target branch must reload its own snapshot before a resync can scan or retire the pending recovery.
-            if not (tryReloadPendingTransitionConfiguration ()) then
+            if not targetConfigurationActive then
                 ()
             elif isGraceWatchResyncPending () then
                 let resyncAttempt = currentGraceWatchResyncAttempt ()
@@ -9222,21 +9241,31 @@ module Watch =
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
 
-                    let! differences =
+                    let! startupScan =
                         if isGraceWatchScanLegal (currentGraceWatchRuntimeMode ()) then
-                            scanForDifferencesWithWatchIgnoreSnapshot graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
+                            tryScanForDifferencesWithWatchIgnoreSnapshot graceStatus
                         else
                             logToAnsiConsole Colors.Verbose $"Grace Watch skipped startup scan while runtime mode is {currentGraceWatchRuntimeMode ()}."
 
-                            Task.FromResult(List<FileSystemDifference>())
+                            Task.FromResult(Error "startup working-tree scan is not legal in the current Watch runtime mode")
 
-                    if differences |> Seq.isEmpty then
-                        logToAnsiConsole Colors.Verbose $"Already up-to-date."
-                    else
-                        logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
+                    match startupScan with
+                    | Ok differences ->
+                        setLastScanForDifferencesSuccessfulForWatchTests true
 
-                    for difference in differences do
-                        queueStartupDifferenceForWatch difference
+                        if differences |> Seq.isEmpty then
+                            logToAnsiConsole Colors.Verbose $"Already up-to-date."
+                        else
+                            logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
+
+                        for difference in differences do
+                            queueStartupDifferenceForWatch difference
+                    | Error error ->
+                        setLastScanForDifferencesSuccessfulForWatchTests false
+                        requestGraceWatchExplicitResync "startup working-tree scan did not complete with the active Watch ignore snapshot"
+
+                        logToAnsiConsole Colors.Error "Grace Watch kept startup non-incremental because the working-tree scan did not complete successfully."
+                        logToAnsiConsole Colors.Error $"Grace Watch startup scan failure: {error}"
 
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default

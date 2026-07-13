@@ -3904,6 +3904,25 @@ module WatchTests =
                 && string difference.RelativePath = relativePath)
             |> should equal false)
 
+    /// Verifies startup receives an explicit frozen-snapshot scan failure instead of an empty clean difference list.
+    [<Test>]
+    let ``frozen snapshot startup scan preserves locked-file failure`` () =
+        withTempRepo (fun root ->
+            let relativePath = "locked-startup-scan.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            File.WriteAllText(filePath, "locked startup scan payload")
+            activateWatchIgnoreSnapshot ()
+
+            use lockedFile = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None)
+
+            (Watch.tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests status)
+                .GetAwaiter()
+                .GetResult()
+            |> Result.isError
+            |> should equal true)
+
     /// Verifies a transient target-branch ignore read failure retries target activation before any resync scan can complete.
     [<Test>]
     let ``transient transition ignore read failure reloads target snapshot before resync scan`` () =
@@ -3935,6 +3954,12 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true
 
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged targetIgnoredPath (DateTime.UtcNow.AddSeconds(-1.0))
+            |> Option.isSome
+            |> should equal true
+
             let scanForDifferences _ =
                 scanCalls <- scanCalls + 1
                 Task.FromResult(List<FileSystemDifference>())
@@ -3955,6 +3980,11 @@ module WatchTests =
             processRecovery ()
             scanCalls |> should equal 0
 
+            Watch
+                .pendingWatchWorkSnapshotWithoutCandidateDrainForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
             lockedIgnore.Dispose()
             processRecovery ()
 
@@ -3965,8 +3995,66 @@ module WatchTests =
             Watch.shouldIgnoreFileForWatchTests targetIgnoredPath
             |> should equal true
 
+            Watch
+                .pendingWatchWorkSnapshotWithoutCandidateDrainForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false)
+
+    /// Verifies a deferred target reload cannot weaken durable replay suspension before the retry reaches a clean recovery boundary.
+    [<Test>]
+    let ``suspended Watch remains suspended when deferred target ignore reload fails`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "suspended-transient-ignore-retry-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable scanCalls = 0
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+
+            File.WriteAllText(graceIgnorePath, "target-only.tmp")
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+            recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow
+
+            // Model durable startup-replay quarantine that has not recovered; retry must not reopen observation capture.
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.Suspended
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(status))
+                (fun () -> Task.FromResult(status))
+                (fun _ _ -> Task.FromResult(()))
+                (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                scanForDifferences
+                (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                (fun _ _ _ -> Task.FromResult(()))
+                (fun _ _ -> Task.FromResult(())))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Suspended
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            scanCalls |> should equal 0)
 
     /// Verifies that current transition completion authority wins over stale sidecars in the target branch directory.
     [<Test>]
@@ -18447,7 +18535,7 @@ module WatchTests =
             Watch.currentGraceWatchRuntimeModeForWatchTests ()
             |> should equal Services.GraceWatchRuntimeMode.Suspended)
 
-    /// Verifies that startup tail logic preserves a failed resync recovery instead of resuming healthy mode.
+    /// Verifies an empty scan result marked failed during startup cannot resume healthy incremental mode.
     [<Test>]
     let ``startup completion preserves suspended recovery state`` () =
         withTempRepo (fun _ ->
@@ -18463,8 +18551,10 @@ module WatchTests =
             /// Builds scan-oriented update test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ = Task.FromResult(Some status)
 
-            /// Fails the startup resync scan before the durable status boundary.
-            let scanForDifferences _ = Task.FromException<List<FileSystemDifference>>(InvalidOperationException("startup scan failed"))
+            /// Models a failed startup scan whose legacy list-shaped caller receives no differences.
+            let scanForDifferences _ =
+                Services.setLastScanForDifferencesSuccessfulForWatchTests false
+                Task.FromResult(List<FileSystemDifference>())
 
             /// Builds apply-from-differences test data used to exercise CLI watch behavior.
             let updateGraceStatusFromDifferences status _ _ = Task.FromResult(Some status)
