@@ -65,6 +65,92 @@ module Watch =
     /// Reads Grace Watch runtime mode for tests that exercise confidence-loss transitions.
     let internal currentGraceWatchRuntimeModeForWatchTests () = currentGraceWatchRuntimeMode ()
 
+    /// Holds the copied ignore inputs that govern every Watch eligibility decision for one Watch lifetime.
+    type private WatchIgnoreSnapshot = { GraceDirectory: string; GraceStatusFile: string; FileEntries: string array; DirectoryEntries: string array }
+
+    let mutable private activeWatchIgnoreSnapshot: WatchIgnoreSnapshot option = None
+
+    /// Reads a complete ignore snapshot without accepting an unreadable configured `.graceignore` as an empty set.
+    let private tryReadWatchIgnoreSnapshot () =
+        match tryInspectCurrentDirectoryConfiguration () with
+        | Error configurationError -> Error $"Grace Watch could not inspect the repository configuration: {configurationError}"
+        | Ok inspection ->
+            match inspection.Ignore.ErrorMessage with
+            | Some ignoreError -> Error $"Grace Watch could not read {inspection.Ignore.Path}: {ignoreError}"
+            | None ->
+                Ok
+                    {
+                        GraceDirectory = Path.GetFullPath(inspection.Configuration.GraceDirectory)
+                        GraceStatusFile = Path.GetFullPath(inspection.Configuration.GraceStatusFile)
+                        FileEntries = Array.copy inspection.Configuration.GraceFileIgnoreEntries
+                        DirectoryEntries = Array.copy inspection.Configuration.GraceDirectoryIgnoreEntries
+                    }
+
+    /// Replaces Watch's ignore snapshot only after the repository configuration and `.graceignore` read together successfully.
+    let private tryActivateWatchIgnoreSnapshot () =
+        match tryReadWatchIgnoreSnapshot () with
+        | Ok snapshot ->
+            activeWatchIgnoreSnapshot <- Some snapshot
+            Ok()
+        | Error error ->
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            Error error
+
+    /// Gets the active ignore snapshot, loading it once for focused Watch tests that invoke callbacks without foreground startup.
+    let private currentWatchIgnoreSnapshot () =
+        match activeWatchIgnoreSnapshot with
+        | Some snapshot -> snapshot
+        | None ->
+            match tryActivateWatchIgnoreSnapshot () with
+            | Ok () ->
+                match activeWatchIgnoreSnapshot with
+                | Some snapshot -> snapshot
+                | None -> invalidOp "Grace Watch did not retain the ignore snapshot it just loaded."
+            | Error error -> invalidOp error
+
+    /// Clears the active snapshot between deterministic Watch tests without changing production Watch lifecycle behavior.
+    let internal resetWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot <- None
+
+    /// Loads the current repository snapshot for focused Watch tests that prove restart and invalid-file behavior.
+    let internal tryActivateWatchIgnoreSnapshotForWatchTests () = tryActivateWatchIgnoreSnapshot ()
+
+    /// Checks a file path against the copied Watch-lifetime ignore snapshot.
+    let private shouldIgnoreFileForWatch fullPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let fileInfo = FileInfo(fullPath)
+
+        fullPath.StartsWith(snapshot.GraceDirectory, StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.EndsWith(".gracetmp", StringComparison.OrdinalIgnoreCase)
+        || Directory.Exists(fullPath)
+        || (not (isNull fileInfo.Directory)
+            && snapshot.DirectoryEntries
+               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine))
+        || snapshot.DirectoryEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+        || snapshot.FileEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+
+    /// Checks a directory path against the copied Watch-lifetime ignore snapshot.
+    let private shouldIgnoreDirectoryForWatch directoryPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let directoryInfo = DirectoryInfo(directoryPath)
+
+        directoryInfo.FullName.StartsWith(snapshot.GraceDirectory, StringComparison.InvariantCultureIgnoreCase)
+        || snapshot.DirectoryEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+
+    /// Checks whether a directory remains eligible under the copied Watch-lifetime ignore snapshot.
+    let private shouldNotIgnoreDirectoryForWatch directoryPath = not <| shouldIgnoreDirectoryForWatch directoryPath
+
+    /// Exposes Watch-lifetime file eligibility for deterministic ignore lifecycle tests.
+    let internal shouldIgnoreFileForWatchTests fullPath = shouldIgnoreFileForWatch fullPath
+
+    /// Reports whether Watch retains a previously valid ignore snapshot after a failed reload attempt.
+    let internal hasActiveWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot.IsSome
+
     /// Checks whether the current runtime mode can record filesystem observations.
     let private canCaptureFilesystemObservation () = isGraceWatchObservationCaptureLegal (currentGraceWatchRuntimeMode ())
 
@@ -1288,10 +1374,16 @@ module Watch =
 
     /// Reloads repository configuration after another Grace process changes the current branch.
     let private reloadConfigurationForTransitionCompletion () =
-        resetConfiguration ()
-        clearShouldIgnoreCache ()
-        Current() |> ignore
-        configureWatchPathComparisonForCurrentRepository ()
+        match tryReadWatchIgnoreSnapshot () with
+        | Error error ->
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            invalidOp error
+        | Ok snapshot ->
+            resetConfiguration ()
+            Current() |> ignore
+            clearShouldIgnoreCache ()
+            activeWatchIgnoreSnapshot <- Some snapshot
+            configureWatchPathComparisonForCurrentRepository ()
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
@@ -1319,7 +1411,7 @@ module Watch =
         while eligible
               && not (isNull currentDirectory)
               && not (currentDirectory.FullName.Equals(rootDirectory, watchPathComparison)) do
-            if shouldNotIgnoreDirectory currentDirectory.FullName then
+            if shouldNotIgnoreDirectoryForWatch currentDirectory.FullName then
                 currentDirectory <- currentDirectory.Parent
             else
                 eligible <- false
@@ -1797,7 +1889,7 @@ module Watch =
                 addDirectoryDifference directoryPath
 
                 for childDirectoryPath in enumerateDirectoriesForDirectoryStatusAdd directoryPath do
-                    if shouldNotIgnoreDirectory childDirectoryPath then
+                    if shouldNotIgnoreDirectoryForWatch childDirectoryPath then
                         addDirectoryDifference childDirectoryPath
 
                 differences, true
@@ -2046,9 +2138,9 @@ module Watch =
 
     /// Coordinates should ignore deleted path behavior for this CLI command path.
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
-        let configuration = Current()
+        let snapshot = currentWatchIgnoreSnapshot ()
         let normalizedFullPath = Path.GetFullPath(fullPath)
-        let graceDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.GraceDirectory))
+        let graceDirectory = Path.TrimEndingDirectorySeparator(snapshot.GraceDirectory)
         let fileInfo = FileInfo(fullPath)
         let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
 
@@ -2061,10 +2153,10 @@ module Watch =
             )
 
         let isGraceStatusArtifact =
-            normalizedFullPath.Equals(configuration.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+            normalizedFullPath.Equals(snapshot.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
 
         if isInGraceDirectory || isGraceStatusArtifact then
             true
@@ -2081,16 +2173,16 @@ module Watch =
             (pathKind <> DeletedDirectory
              && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists directoryIgnoreMatches)
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
             || (pathKind <> DeletedDirectory
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceFileIgnoreEntries
+                && snapshot.FileEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
 
     /// Coordinates enqueue status update trigger behavior for this CLI command path.
@@ -2277,7 +2369,7 @@ module Watch =
 
     /// Reads enqueue file upload data needed by the command workflow without changing remote state.
     let private enqueueFileUpload fullPath =
-        let shouldIgnore = shouldIgnoreFile fullPath
+        let shouldIgnore = shouldIgnoreFileForWatch fullPath
 
         if not shouldIgnore then
             let generation = Interlocked.Increment(&fileUploadWorkGeneration)
@@ -2319,7 +2411,7 @@ module Watch =
     let private enqueueDirectoryUploadRetry directoryPath =
         if
             Directory.Exists(directoryPath)
-            && shouldNotIgnoreDirectory directoryPath
+            && shouldNotIgnoreDirectoryForWatch directoryPath
         then
             let generation = Interlocked.Increment(&directoryWorkGeneration)
 
@@ -2352,7 +2444,7 @@ module Watch =
     let private tryEnqueueDirectoryContentsForUpload directoryPath =
         if
             Directory.Exists(directoryPath)
-            && shouldNotIgnoreDirectory directoryPath
+            && shouldNotIgnoreDirectoryForWatch directoryPath
         then
             try
                 for filePath in enumerateFilesForDirectoryUpload directoryPath do
@@ -8525,7 +8617,7 @@ module Watch =
           (DifferenceType.Add
           | DifferenceType.Change),
           FinalPathFile ->
-            if shouldIgnoreFile fullPath then
+            if shouldIgnoreFileForWatch fullPath then
                 Some "current startup replay file content ignored before status application"
             elif row.DifferenceType = DifferenceType.Add
                  && isTrackedFile status row.RelativePath then
@@ -8549,7 +8641,7 @@ module Watch =
             else
                 Some "startup replay file delete is not tracked"
         | FileSystemEntryType.Directory, DifferenceType.Add, FinalPathDirectory ->
-            if shouldIgnoreDirectory fullPath then
+            if shouldIgnoreDirectoryForWatch fullPath then
                 Some "current startup replay directory ignored before status application"
             elif isTrackedDirectory status row.RelativePath then
                 Some "startup replay directory add already tracked"
@@ -8822,6 +8914,11 @@ module Watch =
                         raise (WatchCommandExit -1)
 
                     setGraceWatchRuntimeMode GraceWatchRuntimeMode.StartingUp
+
+                    match tryActivateWatchIgnoreSnapshot () with
+                    | Ok () -> ()
+                    | Error error -> raise (InvalidOperationException(error))
+
                     configureWatchPathComparisonForCurrentRepository ()
 
                     // A live watcher waits one timer interval after the most recent raw callback before it reads filesystem state.

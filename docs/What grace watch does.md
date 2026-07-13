@@ -63,6 +63,14 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
 - `grace watch` gates incremental reconciliation through an explicit runtime mode. Healthy mode can apply filesystem
   observations to local status and branch history. Startup and resync mode may scan, rebuild trusted state, and queue
   observations, but they do not apply normal event-derived saves until the trusted status boundary is restored.
+- Watch reads `.graceignore` into one immutable eligibility snapshot when it starts. Ordinary `.graceignore` edits take
+  effect after Watch restarts; an existing Grace-owned branch transition reloads a new valid snapshot for its target
+  branch.
+- If Watch cannot read a configured `.graceignore` during startup or branch-transition reload, it does not substitute an
+  empty ignore set. A running Watch retains its last valid snapshot and resynchronizes; startup without a valid snapshot
+  does not advertise incremental safety.
+- Ignore rules are project-specific and belong in `.graceignore`. Grace does not provide a generic catalog for editor,
+  IDE, operating-system, build-output, or generated-file names.
 - If the filesystem watcher reports confidence loss, `grace watch` quarantines queued observations, switches to
   resynchronizing mode, and performs an explicit scan-derived reconciliation before incremental observations resume.
   If that recovery cannot reach the durable local-status boundary, Watch suspends incremental capture instead of

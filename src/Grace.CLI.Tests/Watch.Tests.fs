@@ -409,12 +409,14 @@ module WatchTests =
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             Services.clearShouldIgnoreCache ()
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
             deleteWatchStatusFileIfExists ()
             Watch.clearPendingWatchWorkForTests ()
             Watch.setLocalObservationCandidateSchedulingForWatchTests false
             action tempDir
         finally
             Watch.clearPendingWatchWorkForTests ()
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
             Services.clearShouldIgnoreCache ()
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
@@ -435,6 +437,12 @@ module WatchTests =
         configuration.GraceFileIgnoreEntries <- Array.empty
         configuration.GraceDirectoryIgnoreEntries <- Array.empty
         Services.clearShouldIgnoreCache ()
+
+    /// Requires a valid active Watch ignore snapshot and exposes the loader error when a test setup is incomplete.
+    let private activateWatchIgnoreSnapshot () =
+        match Watch.tryActivateWatchIgnoreSnapshotForWatchTests () with
+        | Ok () -> ()
+        | Error error -> Assert.Fail(error)
 
     /// Records one production Watch callback delivered by the operating-system filesystem watcher.
     type private RealFilesystemWatchCallback = { Source: string; FullPath: string }
@@ -1133,7 +1141,11 @@ module WatchTests =
         |> should equal (firstSeenAt.AddMilliseconds(200.0))
 
         currentCandidate.DueAt
-        |> should equal (firstSeenAt.AddMilliseconds(200.0).Add(quietWindow))
+        |> should
+            equal
+            (firstSeenAt
+                .AddMilliseconds(200.0)
+                .Add(quietWindow))
 
     /// Verifies an old-scope create cannot turn a new-scope metadata-only directory change into directory add work.
     [<Test>]
@@ -3617,6 +3629,11 @@ module WatchTests =
             Services.shouldIgnoreFile filePath
             |> should equal false
 
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests filePath
+            |> should equal false
+
             File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), fileName)
 
             writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
@@ -3629,7 +3646,180 @@ module WatchTests =
             recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
 
             Services.shouldIgnoreFile filePath
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests filePath
             |> should equal true)
+
+    /// Verifies that ordinary ignore-file edits wait for a new Watch lifetime while configured project noise applies after restart.
+    [<Test>]
+    let ``watch lifetime ignore snapshot defers ordinary edits until restart`` () =
+        withTempRepo (fun root ->
+            let editorFilePath = Path.Combine(root, "scratch.swp")
+
+            File.WriteAllText(editorFilePath, "unconfigured editor noise")
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests editorFilePath
+            |> should equal false
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "scratch.swp")
+
+            Watch.shouldIgnoreFileForWatchTests editorFilePath
+            |> should equal false
+
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
+            resetConfiguration ()
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests editorFilePath
+            |> should equal true)
+
+    /// Verifies that a changed ignore file cannot purge a candidate admitted under the active Watch snapshot.
+    [<Test>]
+    let ``watch lifetime ignore snapshot retains admitted candidate after ordinary edit`` () =
+        withTempRepo (fun root ->
+            let candidatePath = Path.Combine(root, "queued-before-ignore.txt")
+
+            File.WriteAllText(candidatePath, "candidate payload")
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.OnChanged(changedEvent candidatePath)
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| candidatePath |]
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "queued-before-ignore.txt")
+
+            Watch.shouldIgnoreFileForWatchTests candidatePath
+            |> should equal false
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| candidatePath |])
+
+    /// Verifies that durable pending rows keep their admission snapshot until restart recovery reads a new valid snapshot.
+    [<Test>]
+    let ``watch journal recovery keeps active snapshot then applies restart snapshot`` () =
+        withTempRepo (fun root ->
+            let relativePath = "journal-before-ignore.txt"
+            let fullPath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
+            File.WriteAllText(fullPath, "durable pending payload")
+
+            (LocalStateDb.appendWatchJournalObservations
+                dbPath
+                [|
+                    { Scope = scope; DifferenceType = DifferenceType.Add; EntryType = FileSystemEntryType.File; RelativePath = RelativePath relativePath }
+                |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            activateWatchIgnoreSnapshot ()
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), relativePath)
+
+            (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            Watch.tryPeekStartupReplaySequenceForWatchTests (
+                FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.File (RelativePath relativePath)
+            )
+            |> should equal (Some 1L)
+
+            Watch.clearPendingWatchWorkForTests ()
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
+            resetConfiguration ()
+
+            activateWatchIgnoreSnapshot ()
+
+            (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            Watch.tryPeekStartupReplaySequenceForWatchTests (
+                FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.File (RelativePath relativePath)
+            )
+            |> should equal None
+
+            let quarantinedSnapshot =
+                (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                    .GetAwaiter()
+                    .GetResult()
+
+            quarantinedSnapshot.Rows
+            |> Array.map (fun row -> row.QuarantineReason)
+            |> should
+                equal
+                [|
+                    Some "current startup replay file content ignored before status application"
+                |])
+
+    /// Verifies unreadable ignore reload retains a prior snapshot while startup without one remains non-incremental.
+    [<Test>]
+    let ``unreadable graceignore retains prior snapshot and blocks incremental startup safety`` () =
+        withTempRepo (fun root ->
+            let ignoredFilePath = Path.Combine(root, "preserved.tmp")
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+
+            File.WriteAllText(ignoredFilePath, "configured payload")
+            File.WriteAllText(graceIgnorePath, "preserved.tmp")
+            resetConfiguration ()
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests ignoredFilePath
+            |> should equal true
+
+            use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch.tryActivateWatchIgnoreSnapshotForWatchTests ()
+            |> Result.isError
+            |> should equal true
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests ignoredFilePath
+            |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch.tryActivateWatchIgnoreSnapshotForWatchTests ()
+            |> Result.isError
+            |> should equal true
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
 
     /// Verifies that current transition completion authority wins over stale sidecars in the target branch directory.
     [<Test>]
@@ -7115,9 +7305,9 @@ module WatchTests =
             updateCalls |> should equal 1
             uploadCalls |> should equal 0)
 
-    /// Verifies that ignored delete uses filesystem casing when cancelling pending upload work.
+    /// Verifies that an ordinary ignore-file edit cannot suppress a later delete callback before Watch restarts.
     [<Test>]
-    let ``ignored delete uses filesystem casing when cancelling pending upload work`` () =
+    let ``ordinary ignore edit does not suppress later delete callback before restart`` () =
         withTempRepo (fun root ->
             Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
 
@@ -7140,7 +7330,7 @@ module WatchTests =
             |> should equal [| queuedFilePath |]
 
             pending.StatusUpdateTriggers
-            |> should equal Array.empty<string>)
+            |> should equal [| "src/foo" |])
 
     /// Verifies that status only triggers remain pending when status update returns none.
     [<Test>]
@@ -25060,6 +25250,24 @@ module WatchTests =
 
             use document = parseJsonOutput standardOut
             let root = document.RootElement
+
+            root.GetProperty("ReturnValue").EnumerateObject()
+            |> Seq.map (fun property -> property.Name)
+            |> Set.ofSeq
+            |> should
+                equal
+                (Set.ofList [ "IsRunning"
+                              "CanUseIncrementalStatus"
+                              "Mode"
+                              "Reason"
+                              "Message"
+                              "SafetyFlags"
+                              "IsFresh"
+                              "HasUsableRootSnapshot"
+                              "HasDirectoryIndexSnapshot"
+                              "IsStartupClaim"
+                              "UpdatedAt"
+                              "RootDirectoryId" ])
 
             root
                 .GetProperty("ReturnValue")
