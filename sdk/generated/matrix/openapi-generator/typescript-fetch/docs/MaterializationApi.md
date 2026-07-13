@@ -14,7 +14,7 @@ All URIs are relative to *http://localhost:5000*
 
 Create a Materialization Plan.
 
-Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with &#x60;Properties.Code &#x3D; cacheRequiredUnavailable&#x60; when no eligible Cache or grant capacity is available, and never falls back to Direct.
 
 ### Example
 
@@ -77,6 +77,7 @@ example().catch(console.error);
 | **200** | OK |  -  |
 | **400** | Bad Request |  -  |
 | **500** | Internal Server Error |  -  |
+| **503** | Service Unavailable |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 

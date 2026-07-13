@@ -1349,7 +1349,8 @@ module Application =
                 subRoute
                     "/cache"
                     [
-                        GET [ route "/validation-keys" CacheRegistration.GetValidationKeys ]
+                        GET [ route "/validation-keys" CacheRegistration.GetValidationKeys
+                              |> addMetadata (AllowAnonymousAttribute()) ]
 
                         POST [ route "/enroll" CacheRegistration.Enroll
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheEnrollmentRequest>

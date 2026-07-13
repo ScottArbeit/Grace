@@ -44,6 +44,17 @@ module Materialization =
     /// Builds a GraceError for Materialization Plan route validation failures.
     let private planError correlationId message = GraceError.Create message correlationId
 
+    /// Builds the stable retryable error envelope for CacheRequired availability or grant-capacity outcomes.
+    let private cacheRequiredUnavailableError correlationId message =
+        GraceError.Create message correlationId
+        |> fun error -> error.enhance ("Code", CacheRequiredAvailability.ErrorCode)
+
+    /// Returns true only for the explicit CacheRequired availability envelope that maps to HTTP 503.
+    let private isCacheRequiredUnavailable (error: GraceError) =
+        match error.Properties.TryGetValue "Code" with
+        | true, (:? string as code) -> code = CacheRequiredAvailability.ErrorCode
+        | _ -> false
+
     /// Rejects artifact kinds that require path or content-address projection before a root-plan request can begin side effects.
     let private validateRootArtifactKinds (request: MaterializationPlanRequest) correlationId =
         let requestedKinds = set request.RequestedArtifactKinds
@@ -260,7 +271,13 @@ module Materialization =
                                             let! registrations = selectEligible query now
 
                                             match registrations |> Array.tryHead with
-                                            | None -> return Error(planError correlationId "No eligible Cache registration is currently available.")
+                                            | None ->
+                                                let message = "No eligible Cache registration is currently available."
+
+                                                if request.ExecutionMode = MaterializationExecutionMode.CacheRequired then
+                                                    return Error(cacheRequiredUnavailableError correlationId message)
+                                                else
+                                                    return Error(planError correlationId message)
                                             | Some registration ->
                                                 let identities =
                                                     artifacts
@@ -810,12 +827,12 @@ module Materialization =
                                                                     with
                                                                 | Ok grant -> return Ok grant
                                                                 | Error issueError ->
-                                                                    return
-                                                                        Error(
-                                                                            planError
-                                                                                correlationId
-                                                                                (Grace.Types.ArtifactGrant.ArtifactGrantIssueError.toMessage issueError)
-                                                                        )
+                                                                    let message = Grace.Types.ArtifactGrant.ArtifactGrantIssueError.toMessage issueError
+
+                                                                    if request.ExecutionMode = MaterializationExecutionMode.CacheRequired then
+                                                                        return Error(cacheRequiredUnavailableError correlationId message)
+                                                                    else
+                                                                        return Error(planError correlationId message)
                                                             })
                                                         (fun error ->
                                                             logger.LogWarning(
@@ -831,6 +848,10 @@ module Materialization =
 
                                 match planResult with
                                 | Error (error, true) -> return! context |> result400BadRequest error
+                                | Error (error, false) when isCacheRequiredUnavailable error ->
+                                    return!
+                                        context
+                                        |> returnResult StatusCodes.Status503ServiceUnavailable error
                                 | Error (error, false) -> return! context |> result500ServerError error
                                 | Ok plan ->
                                     let graceReturnValue = GraceReturnValue.Create plan correlationId

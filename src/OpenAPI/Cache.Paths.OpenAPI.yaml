@@ -101,11 +101,12 @@
       tags:
         - Cache
       summary: Publish artifact grant validation keys.
+      description: Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
       operationId: GetArtifactGrantValidationKeys
+      security: []
       responses:
         '200': { $ref: './Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKeySetResponse' }
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
-        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'

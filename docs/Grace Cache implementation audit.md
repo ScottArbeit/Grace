@@ -123,10 +123,15 @@ docs-only classification with current evidence for the behavior they own.
   `WholeFileContent`, `FileManifest`, and `ContentBlock` requests before projection, registration
   selection, grant issuance, or partial plan publication.
 - Proof seam: tests proving no Direct source is used when CacheRequired cannot satisfy the request,
-  including cache miss, stale grant, malformed grant, and unavailable cache cases.
+  including cache miss, stale grant, malformed grant, and unavailable cache cases. Expected cache or grant-capacity
+  unavailability returns HTTP `503` in Grace's error envelope with `Properties.Code = cacheRequiredUnavailable` and a
+  correlation ID; projection, persistence, and signing faults remain 5xx.
 - Status classification: `implemented and proven` for server-side plan selection and source shape.
 - Issue or PR evidence: #620 proves selected-cache plans and retryable failure on ordinary absence,
   selection failure, or post-selection grant failure without Direct retrieval details.
+- Generated-client surface: regenerated TypeScript, Python, and Rust raw-client materialization methods now include
+  the `503` response alongside the existing generic `GraceError` model; generated SDK metadata is refreshed against
+  the final OpenAPI projection.
 - Residual risk or rationale: CacheRequired is a high-risk trust contract because a silent Direct
   fallback would violate the mode name and caller expectations.
 
@@ -193,6 +198,12 @@ docs-only classification with current evidence for the behavior they own.
   and rotation prove possession of the current private key but never store it. Refresh updates only
   operational facts and liveness. Dedicated administrator routes replace assignments or revoke; key
   rotation accepts the new public key before retiring the old key.
+- Lifecycle seam: selection is the eligibility cutoff for a materialization request. A registration revoked or
+  de-assigned after selection prevents later plans, but the in-flight request keeps its selected snapshot and may
+  complete with its short-lived grant. A signed `Unhealthy` refresh is persisted immediately without extending other
+  operational facts; healthy recovery remains throttled. Administrators of the stored Owner or Organization can revoke
+  or replace assignments even when a historical assignment was deleted, while every replacement repository must still
+  resolve live and pass the current boundary checks.
 - Proof seam: `CacheRegistrationLifecycleTests` covers immutable enrollment facts, restricted refresh,
   revocation, exact healthy repository selection, malformed/duplicate boundaries, and canonical proof
   verification. The Orleans partition-key test proves the singleton `CacheRegistration` Cosmos mapping,

@@ -1153,6 +1153,10 @@ type MaterializationPlanRouteTests() =
                     correlationId
 
             assertErrorContains "No eligible Cache registration" result
+
+            match result with
+            | Ok _ -> Assert.Fail("CacheRequired absence must not produce a plan.")
+            | Error error -> Assert.That(error.Properties["Code"], Is.EqualTo(CacheRequiredAvailability.ErrorCode))
         }
 
     /// Verifies a selected CacheRequired registration shapes every source and binds one exact grant.
@@ -1194,6 +1198,59 @@ type MaterializationPlanRouteTests() =
                     Assert.That(artifact.Source.Value.SourceKind, Is.EqualTo(MaterializationArtifactSourceKind.CacheEntry))
                     Assert.That(artifact.Source.Value.DirectUri.IsNone, Is.True)
                     Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
+        }
+
+    /// Verifies the selected registration is the single eligibility cutoff: a later revocation blocks later selection but not the in-flight grant.
+    [<Test>]
+    member _.CacheRequiredSelectedBeforeRevocationMayFinishWhileLaterSelectionFails() =
+        task {
+            let selected = cacheRegistration MaterializationExecutionMode.CacheRequired
+
+            let initialState = { Class = nameof CacheRegistrationState; Registrations = [| selected |] }
+
+            let mutable laterState = initialState
+            let mutable selectionCalls = 0
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                        MaterializationExecutionMode.CacheRequired,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(holderPublicKey ())
+
+            let! result =
+                Materialization.createCachePlanForResolvedRoot
+                    request
+                    resolvedTarget
+                    (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
+                    (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
+                    (fun _ _ ->
+                        selectionCalls <- selectionCalls + 1
+                        let revoked, _ = Lifecycle.revoke initialState selected.CacheId (Instant.FromUtc(2026, 7, 11, 20, 0))
+                        laterState <- revoked
+                        Task.FromResult([| selected |]))
+                    (fun _ registration identities ->
+                        Assert.That(registration.CacheId, Is.EqualTo selected.CacheId)
+                        Task.FromResult(Ok(signedGrant MaterializationExecutionMode.CacheRequired identities)))
+                    ignore
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok plan -> Assert.That(plan.ArtifactGrant.IsSome, Is.True)
+
+            Assert.That(selectionCalls, Is.EqualTo 1)
+
+            let laterEligible =
+                Lifecycle.selectEligible laterState (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) (Instant.FromUtc(2026, 7, 11, 20, 1))
+
+            Assert.That(laterEligible, Is.Empty)
         }
 
     /// Verifies that cache-mode selection requests one exact stable repository id instead of accepting caller scope input.

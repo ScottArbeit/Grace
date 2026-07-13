@@ -74,6 +74,8 @@ Name | Type | Description  | Required | Notes
 > models::ArtifactGrantValidationKeySet get_artifact_grant_validation_keys()
 Publish artifact grant validation keys.
 
+Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -84,12 +86,12 @@ This endpoint does not need any parameter.
 
 ### Authorization
 
-[bearerAuth](../README.md#bearerAuth)
+No authorization required
 
 ### HTTP request headers
 
 - **Content-Type**: Not defined
-- **Accept**: application/json, text/plain
+- **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

@@ -95,6 +95,90 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.PublicKey, Is.EqualTo state.Registrations[0].PublicKey)
         Assert.That(registration.EnrolledBy, Is.EqualTo "admin-user")
 
+    /// Verifies an early unhealthy report immediately removes a Cache from selection without extending any other operational fact.
+    [<Test>]
+    member _.``early unhealthy refresh persists only the health downgrade and excludes later selection``() =
+        let state, _ = enrolled ()
+
+        let earlyUnhealthy =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://ignored-by-early-downgrade.example.test"
+                Health = CacheHealthStatus.Unhealthy
+                SoftwareVersion = "ignored"
+                ProtocolVersion = "ignored"
+                PrefetchSupported = false
+                ObservedAt = now.Plus(Duration.FromMinutes 1L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let afterDowngrade, downgradeResult = Lifecycle.refresh state earlyUnhealthy (now.Plus(Duration.FromMinutes 1L))
+        let downgraded = afterDowngrade.Registrations[0]
+
+        Assert.That(downgradeResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(downgraded.Health, Is.EqualTo CacheHealthStatus.Unhealthy)
+        Assert.That(downgraded.Endpoint, Is.EqualTo state.Registrations[0].Endpoint)
+        Assert.That(downgraded.SoftwareVersion, Is.EqualTo state.Registrations[0].SoftwareVersion)
+        Assert.That(downgraded.ProtocolVersion, Is.EqualTo state.Registrations[0].ProtocolVersion)
+        Assert.That(downgraded.PrefetchSupported, Is.EqualTo state.Registrations[0].PrefetchSupported)
+        Assert.That(downgraded.LastRefreshedAt, Is.EqualTo state.Registrations[0].LastRefreshedAt)
+        Assert.That(downgraded.RefreshAfter, Is.EqualTo state.Registrations[0].RefreshAfter)
+        Assert.That(downgraded.ExpiresAt, Is.EqualTo state.Registrations[0].ExpiresAt)
+
+        let eligible =
+            Lifecycle.selectEligible afterDowngrade (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) (now.Plus(Duration.FromMinutes 2L))
+
+        Assert.That(eligible, Is.Empty)
+
+    /// Verifies early healthy recovery remains throttled after an immediate unhealthy downgrade.
+    [<Test>]
+    member _.``early healthy refresh remains throttled after an unhealthy downgrade``() =
+        let state, _ = enrolled ()
+
+        let unhealthy =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                Health = CacheHealthStatus.Unhealthy
+                SoftwareVersion = "1.0.0"
+                ProtocolVersion = "v1"
+                PrefetchSupported = true
+                ObservedAt = now.Plus(Duration.FromMinutes 1L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let unhealthyState, _ = Lifecycle.refresh state unhealthy (now.Plus(Duration.FromMinutes 1L))
+
+        let earlyHealthy =
+            { unhealthy with
+                Health = CacheHealthStatus.Healthy
+                Endpoint = "https://ignored-by-throttle.example.test"
+                ObservedAt = now.Plus(Duration.FromMinutes 2L)
+            }
+
+        let throttledState, throttledResult = Lifecycle.refresh unhealthyState earlyHealthy (now.Plus(Duration.FromMinutes 2L))
+
+        Assert.That(throttledResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(throttledState, Is.EqualTo unhealthyState)
+
+    /// Verifies malformed replacement scopes leave the durable lifecycle state unchanged.
+    [<Test>]
+    member _.``malformed repository replacement is rejected without lifecycle mutation``() =
+        let state, _ = enrolled ()
+
+        let duplicateScopes =
+            [|
+                CacheRepositoryScope.Create(organizationId, repositoryId)
+                CacheRepositoryScope.Create(organizationId, repositoryId)
+            |]
+
+        let next, result = Lifecycle.updateAssignments state cacheId duplicateScopes
+
+        Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.NotFound)
+        Assert.That(next, Is.EqualTo state)
+
     [<Test>]
     member _.``revoked and expired registrations are never selected or refreshed``() =
         let state, _ = enrolled ()

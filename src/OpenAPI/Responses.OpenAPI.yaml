@@ -61,6 +61,21 @@
                 EventTime: '2026-06-04T18:15:00Z'
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties: {}
+    '503':
+      description: Service Unavailable
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+          examples:
+            cacheRequiredUnavailable:
+              summary: CacheRequired has no eligible cache or grant capacity
+              value:
+                Error: No eligible Cache registration is currently available.
+                EventTime: '2026-07-13T18:15:00Z'
+                CorrelationId: cli-20260713T181500Z-0001
+                Properties:
+                  Code: cacheRequiredUnavailable
     'OK':
       description: OK
       content:

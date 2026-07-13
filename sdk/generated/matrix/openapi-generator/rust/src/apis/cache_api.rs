@@ -42,7 +42,6 @@ pub enum EnrollCacheError {
 #[serde(untagged)]
 pub enum GetArtifactGrantValidationKeysError {
     Status400(models::GraceError),
-    Status401(String),
     Status500(models::GraceError),
     UnknownValue(serde_json::Value),
 }
@@ -159,6 +158,7 @@ pub async fn enroll_cache(configuration: &configuration::Configuration, cache_en
     }
 }
 
+/// Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
 pub async fn get_artifact_grant_validation_keys(configuration: &configuration::Configuration, ) -> Result<models::ArtifactGrantValidationKeySet, Error<GetArtifactGrantValidationKeysError>> {
 
     let uri_str = format!("{}/cache/validation-keys", configuration.base_path);
@@ -167,9 +167,6 @@ pub async fn get_artifact_grant_validation_keys(configuration: &configuration::C
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    if let Some(ref token) = configuration.bearer_access_token {
-        req_builder = req_builder.bearer_auth(token.to_owned());
-    };
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;

@@ -165,6 +165,8 @@ example().catch(console.error);
 
 Publish artifact grant validation keys.
 
+Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
+
 ### Example
 
 ```ts
@@ -176,11 +178,7 @@ import type { GetArtifactGrantValidationKeysRequest } from '@grace-vcs/generated
 
 async function example() {
   console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
-  const config = new Configuration({ 
-    // Configure HTTP bearer authorization: bearerAuth
-    accessToken: "YOUR BEARER TOKEN",
-  });
-  const api = new CacheApi(config);
+  const api = new CacheApi();
 
   try {
     const data = await api.getArtifactGrantValidationKeys();
@@ -204,12 +202,12 @@ This endpoint does not need any parameter.
 
 ### Authorization
 
-[bearerAuth](../README.md#bearerAuth)
+No authorization required
 
 ### HTTP request headers
 
 - **Content-Type**: Not defined
-- **Accept**: `application/json`, `text/plain`
+- **Accept**: `application/json`
 
 
 ### HTTP response details
@@ -217,7 +215,6 @@ This endpoint does not need any parameter.
 |-------------|-------------|------------------|
 | **200** | OK |  -  |
 | **400** | Bad Request |  -  |
-| **401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
 | **500** | Internal Server Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)

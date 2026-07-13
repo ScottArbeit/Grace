@@ -76,7 +76,7 @@ export class MaterializationApi extends runtime.BaseAPI {
     }
 
     /**
-     * Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+     * Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
      * Create a Materialization Plan.
      */
     async createMaterializationPlanRaw(requestParameters: CreateMaterializationPlanRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<MaterializationPlanReturnValue>> {
@@ -87,7 +87,7 @@ export class MaterializationApi extends runtime.BaseAPI {
     }
 
     /**
-     * Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+     * Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
      * Create a Materialization Plan.
      */
     async createMaterializationPlan(requestParameters: CreateMaterializationPlanRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<MaterializationPlanReturnValue> {

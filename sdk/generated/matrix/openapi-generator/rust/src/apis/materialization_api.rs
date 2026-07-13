@@ -21,11 +21,12 @@ use super::{Error, configuration, ContentType};
 pub enum CreateMaterializationPlanError {
     Status400(models::GraceError),
     Status500(models::GraceError),
+    Status503(models::GraceError),
     UnknownValue(serde_json::Value),
 }
 
 
-/// Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+/// Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
 pub async fn create_materialization_plan(configuration: &configuration::Configuration, plan_parameters: models::PlanParameters) -> Result<models::MaterializationPlanReturnValue, Error<CreateMaterializationPlanError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_plan_parameters = plan_parameters;

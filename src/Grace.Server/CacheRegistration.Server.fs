@@ -50,8 +50,8 @@ module CacheRegistration =
                     | Denied _ -> false
         }
 
-    /// Validates every explicit repository scope against authoritative repository records and current administrative permission.
-    let private authorizeBoundaryAndRepositories context boundaryKind ownerId organizationId repositoryScopes correlationId =
+    /// Validates current administrator permission for a Cache registration's stored Owner or Organization boundary.
+    let private authorizeBoundary context boundaryKind ownerId organizationId correlationId =
         task {
             let boundaryResource =
                 match boundaryKind, organizationId with
@@ -71,61 +71,64 @@ module CacheRegistration =
                 if not boundaryAllowed then
                     return Error(cacheError correlationId "Current Grace administrator permission is required for the Cache boundary.")
                 else
-                    let scopes =
-                        if isNull repositoryScopes then
-                            Seq.empty
-                        else
-                            repositoryScopes :> seq<CacheRepositoryScope>
-
-                    let! checks =
-                        scopes
-                        |> Seq.map (fun scope ->
-                            task {
-                                if isNull (box scope) then
-                                    return false
-                                else
-                                    let repository = ActorProxy.Repository.CreateActorProxy scope.OrganizationId scope.RepositoryId correlationId
-                                    let! stored = repository.Get correlationId
-
-                                    let boundaryMatches =
-                                        stored.RepositoryId = scope.RepositoryId
-                                        && stored.OwnerId = ownerId
-                                        && stored.OrganizationId = scope.OrganizationId
-                                        && stored.DeletedAt.IsNone
-                                        && (match organizationId with
-                                            | None -> true
-                                            | Some organization -> stored.OrganizationId = organization)
-
-                                    let! repositoryAllowed =
-                                        hasPermission
-                                            context
-                                            Operation.RepositoryAdmin
-                                            (Resource.Repository(stored.OwnerId, stored.OrganizationId, stored.RepositoryId))
-
-                                    return boundaryMatches && repositoryAllowed
-                            })
-                        |> Task.WhenAll
-
-                    if checks.Length = 0 || checks |> Array.exists not then
-                        return
-                            Error(
-                                cacheError
-                                    correlationId
-                                    "Every selected Cache repository must exist inside the boundary and be currently administered by the caller."
-                            )
-                    else
-                        return Ok()
+                    return Ok()
         }
 
-    /// Revalidates the stored boundary and all stored repositories before administrator mutation.
+    /// Validates every replacement repository scope against authoritative live repository records and current administrative permission.
+    let private authorizeBoundaryAndRepositories context boundaryKind ownerId organizationId repositoryScopes correlationId =
+        task {
+            match! authorizeBoundary context boundaryKind ownerId organizationId correlationId with
+            | Error error -> return Error error
+            | Ok () ->
+                let scopes =
+                    if isNull repositoryScopes then
+                        Seq.empty
+                    else
+                        repositoryScopes :> seq<CacheRepositoryScope>
+
+                let! checks =
+                    scopes
+                    |> Seq.map (fun scope ->
+                        task {
+                            if isNull (box scope) then
+                                return false
+                            else
+                                let repository = ActorProxy.Repository.CreateActorProxy scope.OrganizationId scope.RepositoryId correlationId
+                                let! stored = repository.Get correlationId
+
+                                let boundaryMatches =
+                                    stored.RepositoryId = scope.RepositoryId
+                                    && stored.OwnerId = ownerId
+                                    && stored.OrganizationId = scope.OrganizationId
+                                    && stored.DeletedAt.IsNone
+                                    && (match organizationId with
+                                        | None -> true
+                                        | Some organization -> stored.OrganizationId = organization)
+
+                                let! repositoryAllowed =
+                                    hasPermission
+                                        context
+                                        Operation.RepositoryAdmin
+                                        (Resource.Repository(stored.OwnerId, stored.OrganizationId, stored.RepositoryId))
+
+                                return boundaryMatches && repositoryAllowed
+                        })
+                    |> Task.WhenAll
+
+                if checks.Length = 0 || checks |> Array.exists not then
+                    return
+                        Error(
+                            cacheError
+                                correlationId
+                                "Every selected Cache repository must exist inside the boundary and be currently administered by the caller."
+                        )
+                else
+                    return Ok()
+        }
+
+    /// Revalidates only the stored administrative boundary so deleted historical assignments remain revocable and replaceable.
     let private authorizeStoredRegistration context (registration: CacheRegistration) correlationId =
-        authorizeBoundaryAndRepositories
-            context
-            registration.BoundaryKind
-            registration.OwnerId
-            registration.OrganizationId
-            (Collections.Generic.List<CacheRepositoryScope>(registration.RepositoryScopes))
-            correlationId
+        authorizeBoundary context registration.BoundaryKind registration.OwnerId registration.OrganizationId correlationId
 
     /// Resolves the current durable registration for an administrator operation without treating missing state as success.
     let private getStoredRegistration context cacheId correlationId =
@@ -227,32 +230,42 @@ module CacheRegistration =
                         context
                         |> result400BadRequest (cacheError correlationId "Cache repository assignment request is invalid.")
                 | Ok request ->
-                    match! getStoredRegistration context request.CacheId correlationId with
-                    | Error error -> return! context |> result400BadRequest error
-                    | Ok (actor, registration) ->
-                        match! authorizeStoredRegistration context registration correlationId with
-                        | Error error ->
-                            return!
-                                context
-                                |> returnResult StatusCodes.Status403Forbidden error
-                        | Ok () ->
-                            match!
-                                authorizeBoundaryAndRepositories
-                                    context
-                                    registration.BoundaryKind
-                                    registration.OwnerId
-                                    registration.OrganizationId
-                                    request.RepositoryScopes
-                                    correlationId
-                                with
+                    match Lifecycle.validateRepositoryScopes request.RepositoryScopes with
+                    | Error error ->
+                        return!
+                            context
+                            |> result400BadRequest (cacheError correlationId error)
+                    | Ok () ->
+                        match! getStoredRegistration context request.CacheId correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok (actor, registration) ->
+                            match! authorizeStoredRegistration context registration correlationId with
                             | Error error ->
                                 return!
                                     context
                                     |> returnResult StatusCodes.Status403Forbidden error
                             | Ok () ->
-                                match! actor.UpdateAssignments(request, correlationId) with
-                                | Ok result -> return! context |> result200Ok result
-                                | Error error -> return! context |> result400BadRequest error
+                                match!
+                                    authorizeBoundaryAndRepositories
+                                        context
+                                        registration.BoundaryKind
+                                        registration.OwnerId
+                                        registration.OrganizationId
+                                        request.RepositoryScopes
+                                        correlationId
+                                    with
+                                | Error error ->
+                                    return!
+                                        context
+                                        |> returnResult StatusCodes.Status403Forbidden error
+                                | Ok () ->
+                                    match! actor.UpdateAssignments(request, correlationId) with
+                                    | Ok result when result.ReturnValue.Status = CacheRegistrationRefreshStatus.Updated -> return! context |> result200Ok result
+                                    | Ok result ->
+                                        return!
+                                            context
+                                            |> result400BadRequest (cacheError correlationId result.ReturnValue.Message)
+                                    | Error error -> return! context |> result400BadRequest error
             }
 
     /// Handles POST /cache/revoke after current administrator authorization against the stored Cache boundary.

@@ -197,14 +197,6 @@ export class CacheApi extends runtime.BaseAPI {
 
         const headerParameters: runtime.HTTPHeaders = {};
 
-        if (this.configuration && this.configuration.accessToken) {
-            const token = this.configuration.accessToken;
-            const tokenString = await token("bearerAuth", []);
-
-            if (tokenString) {
-                headerParameters["Authorization"] = `Bearer ${tokenString}`;
-            }
-        }
 
         let urlPath = `/cache/validation-keys`;
 
@@ -217,6 +209,7 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
+     * Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
      * Publish artifact grant validation keys.
      */
     async getArtifactGrantValidationKeysRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ArtifactGrantValidationKeySet>> {
@@ -227,6 +220,7 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
+     * Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
      * Publish artifact grant validation keys.
      */
     async getArtifactGrantValidationKeys(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ArtifactGrantValidationKeySet> {

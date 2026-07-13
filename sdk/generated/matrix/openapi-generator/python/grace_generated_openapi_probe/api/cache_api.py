@@ -628,6 +628,7 @@ class CacheApi:
     ) -> ArtifactGrantValidationKeySet:
         """Publish artifact grant validation keys.
 
+        Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -661,7 +662,6 @@ class CacheApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ArtifactGrantValidationKeySet",
             '400': "GraceError",
-            '401': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -693,6 +693,7 @@ class CacheApi:
     ) -> ApiResponse[ArtifactGrantValidationKeySet]:
         """Publish artifact grant validation keys.
 
+        Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -726,7 +727,6 @@ class CacheApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ArtifactGrantValidationKeySet",
             '400': "GraceError",
-            '401': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -758,6 +758,7 @@ class CacheApi:
     ) -> RESTResponseType:
         """Publish artifact grant validation keys.
 
+        Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -791,7 +792,6 @@ class CacheApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "ArtifactGrantValidationKeySet",
             '400': "GraceError",
-            '401': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -834,15 +834,13 @@ class CacheApi:
         if 'Accept' not in _header_params:
             _header_params['Accept'] = self.api_client.select_header_accept(
                 [
-                    'application/json', 
-                    'text/plain'
+                    'application/json'
                 ]
             )
 
 
         # authentication setting
         _auth_settings: List[str] = [
-            'bearerAuth'
         ]
 
         return self.api_client.param_serialize(

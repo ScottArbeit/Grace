@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Types.ArtifactGrant
 open NUnit.Framework
 open System.Net
+open System.Net.Http
 open System.Text.Json
 
 /// Resolves the shared Aspire host state needed to prove signing-key recovery after server restart.
@@ -32,19 +33,20 @@ module private ArtifactGrantKeysIntegrationHelpers =
 
         AspireTestHost.restartGraceServerAsync state
 
-/// Proves that the HTTP publication route uses the durable Orleans signing-key owner.
+/// Proves that anonymous HTTP publication returns only durable public validation-key material across server restart.
 type ArtifactGrantKeysIntegrationTests() =
 
     [<Test>]
     member _.``validation key publication recovers the same durable keys after server restart``() =
         task {
-            let! firstResponse = Services.Client.GetAsync("/cache/validation-keys")
+            use anonymousClient = new HttpClient(BaseAddress = Services.Client.BaseAddress)
+            let! firstResponse = anonymousClient.GetAsync("/cache/validation-keys")
             let! firstJson = firstResponse.Content.ReadAsStringAsync()
             Assert.That(firstResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstJson)
 
             do! ArtifactGrantKeysIntegrationHelpers.restartGraceServerAsync ()
 
-            let! secondResponse = Services.Client.GetAsync("/cache/validation-keys")
+            let! secondResponse = anonymousClient.GetAsync("/cache/validation-keys")
             let! secondJson = secondResponse.Content.ReadAsStringAsync()
             Assert.That(secondResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondJson)
 

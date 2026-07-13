@@ -1674,7 +1674,7 @@ paths:
       tags:
         - Materialization
       summary: Create a Materialization Plan.
-      description: Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+      description: Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
       operationId: CreateMaterializationPlan
       requestBody:
         required: true
@@ -1713,6 +1713,8 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+        '503':
+          $ref: '#/components/responses/503'
   /cache/enroll:
     post:
       tags:
@@ -1829,14 +1831,14 @@ paths:
       tags:
         - Cache
       summary: Publish artifact grant validation keys.
+      description: Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
       operationId: GetArtifactGrantValidationKeys
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ArtifactGrantValidationKeySetResponse'
         '400':
           $ref: '#/components/responses/400'
-        '401':
-          $ref: '#/components/responses/401'
         '500':
           $ref: '#/components/responses/500'
   /organization/create:
@@ -8097,6 +8099,21 @@ components:
                 EventTime: '2026-06-04T18:15:00Z'
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties: {}
+    '503':
+      description: Service Unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
+          examples:
+            cacheRequiredUnavailable:
+              summary: CacheRequired has no eligible cache or grant capacity
+              value:
+                Error: No eligible Cache registration is currently available.
+                EventTime: '2026-07-13T18:15:00Z'
+                CorrelationId: cli-20260713T181500Z-0001
+                Properties:
+                  Code: cacheRequiredUnavailable
     ApprovalPolicyResponse:
       description: OK
       content:

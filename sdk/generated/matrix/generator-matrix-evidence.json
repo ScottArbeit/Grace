@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "9d4a44caa05aa183b16367b53d40c3123b48cf9afc18ea4c8b16ce6631fa2c98",
+  "sourceProjectionSha256": "31945157ed3cb5c27aa3bb61f7dde7621799645df81db1c3b0c427daaa693d04",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.3",
@@ -53,7 +53,7 @@
         "OpenAPI warning: #/components/schemas/ScopedOutboundUrl/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UploadMetadata/properties/BlobUriWithSasToken - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UriString - The format uri is not supported by Kiota and the string type will be used.",
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
       ],
       "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
       "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
@@ -67,7 +67,7 @@
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
       "evidence": [
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved)))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)))"
       ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
@@ -81,7 +81,74 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 172502."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 172826."
+      ],
+      "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
+      "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
+    },
+    {
+      "generator": "Kiota",
+      "language": ".NET",
+      "command": "kiota generate -l CSharp",
+      "exitCode": 1,
+      "outcome": "Rejected",
+      "conclusion": "Full projection fails before generation on malformed schema references/null schema properties.",
+      "outputPath": "",
+      "evidence": [
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/DifferenceType/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/FileSystemEntryType/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/RelativePath/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/RelativePath/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/FileSha1/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/CreatedAt1/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/FileSha2/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/CreatedAt2/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/InlineDiff/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/SideBySideOld/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/SideBySideNew/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/DiffPiece/properties/SubPieces/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/DiffPiece/properties/Type/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/ - The schema UploadSessionEventType is a polymorphic type but does not define a discriminator. This will result in serialization errors.",
+        "OpenAPI warning: #/components/schemas/CreateApprovalPolicyParameters/allOf/1/properties/NotificationUrl - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/CreateWebhookRuleParameters/allOf/1/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/MaterializationArtifactSource/properties/DirectUri - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/MaterializationArtifactSource/properties/CacheEndpoint - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/MaterializationArtifactSource/properties/DirectFallbackUri - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/CacheEnrollmentRequest/properties/Endpoint - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/CacheRegistrationRefreshRequest/properties/Endpoint - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/CacheRegistration/properties/Endpoint - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/ScopedOutboundUrl/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/UploadMetadata/properties/BlobUriWithSasToken - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/UriString - The format uri is not supported by Kiota and the string type will be used.",
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved))"
+      ],
+      "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
+      "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
+    },
+    {
+      "generator": "Kiota",
+      "language": "TypeScript",
+      "command": "kiota generate -l TypeScript --disable-validation-rules All",
+      "exitCode": 1,
+      "outcome": "Rejected",
+      "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
+      "outputPath": "",
+      "evidence": [
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
+      ],
+      "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
+      "facadeFit": "Facade fit cannot be accepted until generation and import compile."
+    },
+    {
+      "generator": "NSwag",
+      "language": ".NET",
+      "command": "npx --yes nswag openapi2csclient",
+      "exitCode": -1,
+      "outcome": "Rejected",
+      "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
+      "outputPath": "",
+      "evidence": [
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 172826."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -185,15 +252,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "af06492b4b0140497b4cbb70d30a449882b74d25f4b3b38136766cb32263a197"
+      "manifestSha256": "aace5ddfb12a2d2961a867988446851d941bd67bbc746791860af4288fc57f23"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "d35ba84e62099a3fcca9df42f1326767fe99d9f60ab563378e1da8395de31cc4"
+      "manifestSha256": "74235c79db3e08195e3c230afba02a39954bd772314c69058d54798af65b197e"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "66e76bb2e28bb1c44ed692c638b64de5b99652909c8bcaca307cf81277325b69"
+      "manifestSha256": "ffde27b22c6882f1d38e1d98bacece8b2b6453907587d31934c74b70bb8d2811"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",

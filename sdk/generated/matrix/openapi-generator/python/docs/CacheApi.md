@@ -179,9 +179,10 @@ Name | Type | Description  | Notes
 
 Publish artifact grant validation keys.
 
+Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
+
 ### Example
 
-* Bearer (JWT) Authentication (bearerAuth):
 
 ```python
 import grace_generated_openapi_probe
@@ -195,15 +196,6 @@ configuration = grace_generated_openapi_probe.Configuration(
     host = "http://localhost:5000"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure Bearer authorization (JWT): bearerAuth
-configuration = grace_generated_openapi_probe.Configuration(
-    access_token = os.environ["BEARER_TOKEN"]
-)
 
 # Enter a context with an instance of the API client
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
@@ -231,12 +223,12 @@ This endpoint does not need any parameter.
 
 ### Authorization
 
-[bearerAuth](../README.md#bearerAuth)
+No authorization required
 
 ### HTTP request headers
 
  - **Content-Type**: Not defined
- - **Accept**: application/json, text/plain
+ - **Accept**: application/json
 
 ### HTTP response details
 
@@ -244,7 +236,6 @@ This endpoint does not need any parameter.
 |-------------|-------------|------------------|
 **200** | OK |  -  |
 **400** | Bad Request |  -  |
-**401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
 **500** | Internal Server Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

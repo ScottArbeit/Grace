@@ -13,6 +13,11 @@ open System.Text.RegularExpressions
 /// Contains Materialization Plan request, response, artifact, and cache-selection contracts.
 module MaterializationPlan =
 
+    /// Defines the stable Grace error code returned when CacheRequired cannot obtain a cache-backed plan from available capacity or configuration.
+    module CacheRequiredAvailability =
+        [<Literal>]
+        let ErrorCode = "cacheRequiredUnavailable"
+
     /// Preserves the established public Materialization Plan namespace for the shared execution enum.
     type MaterializationExecutionMode = Grace.Types.MaterializationExecutionMode
 

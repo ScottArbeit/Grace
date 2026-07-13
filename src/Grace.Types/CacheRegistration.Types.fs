@@ -223,6 +223,32 @@ module CacheRegistration =
             && registration.Health = CacheHealthStatus.Healthy
             && now < registration.ExpiresAt
 
+        /// Validates an exact, non-empty, canonical, and duplicate-free Cache repository assignment set before authorization or mutation.
+        let validateRepositoryScopes (repositoryScopes: CacheRepositoryScope seq) =
+            let scopes =
+                if isNull (box repositoryScopes) then
+                    Array.empty
+                else
+                    repositoryScopes |> Seq.toArray
+
+            if scopes.Length = 0 then
+                Error "RepositoryScopes must include at least one repository."
+            elif scopes
+                 |> Array.exists (fun scope ->
+                     isNull (box scope)
+                     || scope.Class <> nameof CacheRepositoryScope
+                     || scope.OrganizationId = Guid.Empty
+                     || scope.RepositoryId = Guid.Empty) then
+                Error "RepositoryScopes must contain canonical organization and repository ids."
+            elif scopes
+                 |> Array.map (fun scope -> scope.RepositoryId)
+                 |> Array.distinct
+                 |> Array.length
+                 <> scopes.Length then
+                Error "RepositoryScopes must not include duplicate repositories."
+            else
+                Ok()
+
         /// Validates exact enrollment input before caller authorization or actor mutation.
         let validateEnrollmentRequest (request: CacheEnrollmentRequest) =
             let errors = ResizeArray<string>()
@@ -244,22 +270,9 @@ module CacheRegistration =
                 | CacheBoundaryKind.Owner, Some _ -> errors.Add("Owner boundary must not include OrganizationId.")
                 | _ -> errors.Add("Organization boundary requires OrganizationId.")
 
-                if isNull request.RepositoryScopes
-                   || request.RepositoryScopes.Count = 0 then
-                    errors.Add("RepositoryScopes must include at least one repository.")
-                elif request.RepositoryScopes
-                     |> Seq.exists (fun scope ->
-                         isNull (box scope)
-                         || scope.Class <> nameof CacheRepositoryScope
-                         || scope.OrganizationId = Guid.Empty
-                         || scope.RepositoryId = Guid.Empty) then
-                    errors.Add("RepositoryScopes must contain canonical organization and repository ids.")
-                elif request.RepositoryScopes
-                     |> Seq.map (fun scope -> scope.RepositoryId)
-                     |> Seq.distinct
-                     |> Seq.length
-                     <> request.RepositoryScopes.Count then
-                    errors.Add("RepositoryScopes must not include duplicate repositories.")
+                match validateRepositoryScopes request.RepositoryScopes with
+                | Error error -> errors.Add error
+                | Ok () -> ()
 
                 if isNull (box request.PublicKey) then errors.Add("PublicKey is required.")
 
@@ -366,6 +379,27 @@ module CacheRegistration =
                     Some registration,
                     "Cache refresh is stale and must not update registration state."
                 )
+            | Some registration when
+                now < registration.RefreshAfter
+                && request.Health = CacheHealthStatus.Unhealthy
+                && registration.Health <> CacheHealthStatus.Unhealthy
+                ->
+                let unhealthy = { registration with Health = CacheHealthStatus.Unhealthy }
+
+                let next =
+                    {
+                        Class = nameof CacheRegistrationState
+                        Registrations =
+                            current.Registrations
+                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then unhealthy else existing)
+                    }
+
+                next,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.Refreshed,
+                    Some unhealthy,
+                    "Cache health was downgraded immediately without extending operational freshness."
+                )
             | Some registration when now < registration.RefreshAfter ->
                 current,
                 CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.RefreshNotDue, Some registration, "Cache registration refresh is not due yet.")
@@ -402,20 +436,8 @@ module CacheRegistration =
                 else
                     repositoryScopes |> Seq.toArray
 
-            let validScopes =
-                assignmentScopes.Length > 0
-                && (assignmentScopes
-                    |> Array.forall (fun scope ->
-                        not (isNull (box scope))
-                        && scope.Class = nameof CacheRepositoryScope
-                        && scope.OrganizationId <> Guid.Empty
-                        && scope.RepositoryId <> Guid.Empty))
-                && (assignmentScopes
-                    |> Array.map (fun scope -> scope.RepositoryId)
-                    |> Array.distinct
-                    |> Array.length = assignmentScopes.Length)
-
-            if not validScopes then
+            if validateRepositoryScopes assignmentScopes
+               |> Result.isError then
                 current,
                 CacheRegistrationResult.Create(
                     CacheRegistrationRefreshStatus.NotFound,

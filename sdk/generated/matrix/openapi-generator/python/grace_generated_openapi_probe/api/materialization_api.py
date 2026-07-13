@@ -56,7 +56,7 @@ class MaterializationApi:
     ) -> MaterializationPlanReturnValue:
         """Create a Materialization Plan.
 
-        Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+        Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
 
         :param plan_parameters: (required)
         :type plan_parameters: PlanParameters
@@ -94,6 +94,7 @@ class MaterializationApi:
             '200': "MaterializationPlanReturnValue",
             '400': "GraceError",
             '500': "GraceError",
+            '503': "GraceError",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -125,7 +126,7 @@ class MaterializationApi:
     ) -> ApiResponse[MaterializationPlanReturnValue]:
         """Create a Materialization Plan.
 
-        Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+        Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
 
         :param plan_parameters: (required)
         :type plan_parameters: PlanParameters
@@ -163,6 +164,7 @@ class MaterializationApi:
             '200': "MaterializationPlanReturnValue",
             '400': "GraceError",
             '500': "GraceError",
+            '503': "GraceError",
         }
         response_data = self.api_client.call_api(
             *_param,
@@ -194,7 +196,7 @@ class MaterializationApi:
     ) -> RESTResponseType:
         """Create a Materialization Plan.
 
-        Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+        Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
 
         :param plan_parameters: (required)
         :type plan_parameters: PlanParameters
@@ -232,6 +234,7 @@ class MaterializationApi:
             '200': "MaterializationPlanReturnValue",
             '400': "GraceError",
             '500': "GraceError",
+            '503': "GraceError",
         }
         response_data = self.api_client.call_api(
             *_param,
