@@ -18482,6 +18482,7 @@ module WatchTests =
                 |> ignore
 
                 File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, completedUtc.AddSeconds(-1.0))
                 Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
 
                 File.WriteAllText(
