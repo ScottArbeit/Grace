@@ -379,6 +379,23 @@ type EndpointAuthorizationManifestTests() =
     member _.MaterializationPlanRouteRequiresRepositoryRead() =
         assertRouteSecurity "POST" "/materialization/plan" (Authorized(Operation.RepositoryRead, ResourceKind.Repository))
 
+    /// Verifies that only Cache proof runtime routes bypass the Grace-user fallback policy.
+    [<Test>]
+    member _.CacheProofRoutesAllowAnonymousAndAdministrativeRoutesRequireAuthentication() =
+        [
+            "POST", "/cache/refresh"
+            "POST", "/cache/rotate-key"
+        ]
+        |> assertRoutesUseSecurity AllowAnonymous
+
+        [
+            "POST", "/cache/enroll"
+            "POST", "/cache/assign-repositories"
+            "POST", "/cache/revoke"
+            "GET", "/cache/validation-keys"
+        ]
+        |> assertRoutesUseSecurity Authenticated
+
     /// Verifies that scope creation routes require parent write or admin operations.
     [<Test>]
     member _.ScopeCreationRoutesRequireParentWriteOrAdminOperations() =

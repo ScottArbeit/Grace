@@ -299,6 +299,7 @@ module CacheRegistration =
                     || request.Class <> nameof CacheKeyRotationRequest
                     || request.CacheId = Guid.Empty
                     || isNull (box request.Proof)
+                    || not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey)
                     ->
                     return!
                         context

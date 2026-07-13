@@ -308,6 +308,25 @@ type MaterializationPlanContractTests() =
 
         assertValid (Validation.validatePlan plan)
 
+    /// Verifies that a null artifact descriptor is reported without breaking source or grant aggregation.
+    [<Test>]
+    member _.PlanRejectsNullArtifactDescriptorWithoutThrowing() =
+        let validPlan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+            |> MaterializationPlanTestData.withMatchingCacheGrant
+
+        let requiredArtifacts = List<MaterializationArtifactDescriptor>(validPlan.RequiredArtifacts)
+        requiredArtifacts.Add(Unchecked.defaultof<MaterializationArtifactDescriptor>)
+
+        let plan = { validPlan with RequiredArtifacts = requiredArtifacts }
+
+        assertInvalid "Artifact descriptor is required." (Validation.validatePlan plan)
+
     /// Verifies that a Cache plan rejects a grant whose artifact identity set differs from the exact plan identities.
     [<Test>]
     member _.CachePlanRejectsArtifactGrantIdentityMismatch() =

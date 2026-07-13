@@ -1355,7 +1355,8 @@ module Application =
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheEnrollmentRequest>
 
                                route "/refresh" CacheRegistration.Refresh
-                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRefreshRequest> ]
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRefreshRequest>
+                               |> addMetadata (AllowAnonymousAttribute()) ]
 
                         POST [ route "/assign-repositories" CacheRegistration.AssignRepositories
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRepositoryAssignmentRequest>
@@ -1364,7 +1365,8 @@ module Application =
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRevocationRequest>
 
                                route "/rotate-key" CacheRegistration.RotateKey
-                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationRequest> ]
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationRequest>
+                               |> addMetadata (AllowAnonymousAttribute()) ]
                     ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute

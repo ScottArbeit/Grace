@@ -69,7 +69,7 @@ type OrleansPartitionKeyProviderTests() =
     member _.CacheRegistrationUsesDeploymentPartitionAndDurableActorState() =
         let filePath = tryResolveSourcePath ()
         let sourceText = File.ReadAllText(filePath)
-        let actorSource = File.ReadAllText(tryResolveServerSourcePath "..\\Grace.Actors\\CacheRegistration.Actor.fs")
+        let actorSource = File.ReadAllText(tryResolveServerSourcePath (Path.Combine("..", "Grace.Actors", "CacheRegistration.Actor.fs")))
         let startupSource = File.ReadAllText(tryResolveServerSourcePath "Startup.Server.fs")
 
         Assert.That(sourceText, Does.Contain("| StateName.CacheRegistration -> StateName.CacheRegistration"))

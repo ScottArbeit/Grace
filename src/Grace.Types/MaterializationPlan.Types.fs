@@ -1058,20 +1058,28 @@ module MaterializationPlan =
                     let cacheBackedArtifacts =
                         plan.RequiredArtifacts
                         |> Seq.exists (fun artifact ->
-                            match artifact.Source with
-                            | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.CacheEntry
-                            | _ -> false)
+                            if isNull (box artifact) then
+                                false
+                            else
+                                match artifact.Source with
+                                | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.CacheEntry
+                                | _ -> false)
 
                     let allSourcesDirect =
                         plan.RequiredArtifacts
                         |> Seq.forall (fun artifact ->
-                            match artifact.Source with
-                            | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.DirectUri
-                            | _ -> false)
+                            if isNull (box artifact) then
+                                false
+                            else
+                                match artifact.Source with
+                                | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.DirectUri
+                                | _ -> false)
 
                     let allSourcesPresent =
                         plan.RequiredArtifacts
-                        |> Seq.forall (fun artifact -> artifact.Source.IsSome)
+                        |> Seq.forall (fun artifact ->
+                            not (isNull (box artifact))
+                            && artifact.Source.IsSome)
 
                     match plan.ArtifactGrant with
                     | None when
@@ -1089,7 +1097,7 @@ module MaterializationPlan =
 
                         let plannedIdentities =
                             plan.RequiredArtifacts
-                            |> Seq.choose (fun artifact -> artifact.CanonicalArtifactIdentity)
+                            |> Seq.choose (fun artifact -> if isNull (box artifact) then None else artifact.CanonicalArtifactIdentity)
                             |> Set.ofSeq
 
                         let grantedIdentities =
@@ -1109,11 +1117,12 @@ module MaterializationPlan =
                             errors.Add("ArtifactGrant artifact identities must exactly match the Materialization Plan artifacts.")
 
                         for artifact in plan.RequiredArtifacts do
-                            match artifact.Source with
-                            | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
-                                match source.CacheId with
-                                | Some principal when principal = payload.CacheId -> ()
-                                | _ -> errors.Add("ArtifactGrant CacheId must match every Cache source.")
-                            | _ -> ()
+                            if not (isNull (box artifact)) then
+                                match artifact.Source with
+                                | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                                    match source.CacheId with
+                                    | Some principal when principal = payload.CacheId -> ()
+                                    | _ -> errors.Add("ArtifactGrant CacheId must match every Cache source.")
+                                | _ -> ()
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
