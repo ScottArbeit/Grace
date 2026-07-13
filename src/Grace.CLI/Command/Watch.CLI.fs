@@ -791,13 +791,16 @@ module Watch =
                         | true, existing -> Some existing
                         | false, _ -> None
 
-                    let mergedKind = mergeObservationKind kind existingCandidate
+                    // Candidate state may cross the same path key only when its complete observation scope also matches.
+                    let existingCandidateInSameScope =
+                        existingCandidate
+                        |> Option.filter (fun existing -> existing.Scope = scope)
+
+                    let mergedKind = mergeObservationKind kind existingCandidateInSameScope
 
                     let carriesRemovalProofFromSameScope =
-                        existingCandidate
-                        |> Option.exists (fun existing ->
-                            existing.Scope = scope
-                            && existing.RequiresRemovalProof)
+                        existingCandidateInSameScope
+                        |> Option.exists (fun existing -> existing.RequiresRemovalProof)
 
                     let requiresRemovalProof = kind = Deleted || carriesRemovalProofFromSameScope
 

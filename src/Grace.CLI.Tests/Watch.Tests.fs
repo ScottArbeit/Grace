@@ -874,9 +874,9 @@ module WatchTests =
                 .AddMilliseconds(300.0)
                 .Add(quietWindow))
 
-    /// Verifies that delete proof survives same-scope replacement but cannot cross a repository scope change on the same path.
+    /// Verifies that a scope change starts a same-path candidate without inherited removal proof or semantic kind.
     [<Test>]
-    let ``local observation candidates drop inherited delete proof when their scope changes`` () =
+    let ``local observation candidates start fresh when their scope changes`` () =
         let quietWindow = TimeSpan.FromSeconds(1.0)
         let scheduler = new Watch.WatchObservationCandidateScheduler(quietWindow, StringComparison.Ordinal)
         let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "scope-replacement.txt")
@@ -917,8 +917,57 @@ module WatchTests =
         currentCandidate.Scope
         |> should equal (Some currentScope)
 
+        currentCandidate.Kind
+        |> should equal Watch.Changed
+
         currentCandidate.RequiresRemovalProof
         |> should equal false
+
+        currentCandidate.LastSeenAt
+        |> should equal (firstSeenAt.AddMilliseconds(200.0))
+
+        currentCandidate.DueAt
+        |> should equal (firstSeenAt.AddMilliseconds(200.0).Add(quietWindow))
+
+    /// Verifies an old-scope create cannot turn a new-scope metadata-only directory change into directory add work.
+    [<Test>]
+    let ``cross-scope created directory then changed metadata queues no directory work`` () =
+        withTempRepo (fun root ->
+            let status = GraceStatus.Default
+            let directoryPath = Path.Combine(root, "metadata-only-directory")
+            let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            clearWatchIgnoreEntries ()
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged directoryPath firstSeenAt
+            |> Option.isSome
+            |> should equal true
+
+            Current().BranchId <- Guid.NewGuid()
+
+            let changedCandidate =
+                Watch.recordLocalObservationCandidateForWatchTests Watch.Changed directoryPath (firstSeenAt.AddMilliseconds(1.0))
+                |> Option.get
+
+            changedCandidate.Kind
+            |> should equal Watch.Changed
+
+            Watch.processDueLocalObservationCandidatesForWatchTests (firstSeenAt.AddMilliseconds(1.0))
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
 
     /// Verifies a same-path file replacement queues both removal proof and final file upload work.
     [<Test>]
