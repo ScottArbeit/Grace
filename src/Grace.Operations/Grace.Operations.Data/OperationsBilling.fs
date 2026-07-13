@@ -169,6 +169,10 @@ module ManualBillingCorrectionValidation =
         if correction.EntryKind = ChargeLedgerEntryKind.Charge then
             invalidArg "EntryKind" "Manual corrections must be adjustments or reversals."
 
+        if correction.EntryKind = ChargeLedgerEntryKind.Reversal
+           && correction.PriorChargeLedgerEntryId.IsNone then
+            invalidArg "PriorChargeLedgerEntryId" "Manual reversals require an immutable predecessor."
+
         if correction.UnitQuantity <= 0L then
             invalidArg "UnitQuantity" "UnitQuantity must be positive."
 
@@ -737,6 +741,37 @@ BEGIN
     (
         SELECT 1
         FROM inserted e
+        WHERE e.EntryKind=2
+          AND
+          (
+              e.PriorChargeLedgerEntryId IS NULL
+              OR NOT EXISTS
+              (
+                  SELECT 1
+                  FROM ops.ChargeLedgerEntry p
+                  WHERE p.ChargeLedgerEntryId=e.PriorChargeLedgerEntryId
+                    AND p.BillingPeriodId=e.BillingPeriodId
+                    AND p.FactKind=e.FactKind
+                    AND p.BillableUsageKindMappingId=e.BillableUsageKindMappingId
+                    AND p.BillableUsageKind=e.BillableUsageKind
+                    AND p.PricingAssignmentId=e.PricingAssignmentId
+                    AND p.PricingPlanId=e.PricingPlanId
+                    AND p.PricingRateId=e.PricingRateId
+                    AND p.CurrencyCode=e.CurrencyCode
+                    AND p.UnitName=e.UnitName
+                    AND p.UnitQuantity=e.UnitQuantity
+                    AND p.UnitPriceMicros=e.UnitPriceMicros
+                    AND p.EffectiveFromUtc=e.EffectiveFromUtc
+                    AND p.EffectiveToUtc=e.EffectiveToUtc
+              )
+          )
+    )
+        THROW 51009, 'Reversal ledger entries require an existing prior charge ledger entry.', 1;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted e
         JOIN ops.BillingPeriod p ON p.BillingPeriodId=e.BillingPeriodId
         WHERE e.EntryKind=0 AND p.State IN (2,3,4)
     )
@@ -846,6 +881,20 @@ BEGIN
                                 SELECT 1
                                 FROM ops.ChargeLedgerEntry e
                                 WHERE e.BillingPeriodId=i.BillingPeriodId AND e.EntryKind=0 AND e.SourceChargePreviewLineId=l.ChargePreviewLineId
+                                  AND e.FactKind=l.FactKind
+                                  AND e.BillableUsageKindMappingId=l.BillableUsageKindMappingId
+                                  AND e.BillableUsageKind=l.BillableUsageKind
+                                  AND e.PricingAssignmentId=l.PricingAssignmentId
+                                  AND e.PricingPlanId=l.PricingPlanId
+                                  AND e.PricingRateId=l.PricingRateId
+                                  AND e.CurrencyCode=l.CurrencyCode
+                                  AND e.UnitName=l.UnitName
+                                  AND e.UnitQuantity=l.UnitQuantity
+                                  AND e.UnitPriceMicros=l.UnitPriceMicros
+                                  AND e.EffectiveFromUtc=l.EffectiveFromUtc
+                                  AND e.EffectiveToUtc=l.EffectiveToUtc
+                                  AND e.Quantity=l.TotalQuantity
+                                  AND e.ChargeMicros=l.ChargeMicros
                             )
                       )
                       OR EXISTS
@@ -860,6 +909,20 @@ BEGIN
                                 WHERE l.ChargePreviewLineId=e.SourceChargePreviewLineId
                                   AND l.OwnerId=i.OwnerId AND l.OrganizationId=i.OrganizationId AND l.RepositoryId=i.RepositoryId
                                   AND l.PeriodFromUtc=i.PeriodFromUtc AND l.PeriodToUtc=i.PeriodToUtc
+                                  AND l.FactKind=e.FactKind
+                                  AND l.BillableUsageKindMappingId=e.BillableUsageKindMappingId
+                                  AND l.BillableUsageKind=e.BillableUsageKind
+                                  AND l.PricingAssignmentId=e.PricingAssignmentId
+                                  AND l.PricingPlanId=e.PricingPlanId
+                                  AND l.PricingRateId=e.PricingRateId
+                                  AND l.CurrencyCode=e.CurrencyCode
+                                  AND l.UnitName=e.UnitName
+                                  AND l.UnitQuantity=e.UnitQuantity
+                                  AND l.UnitPriceMicros=e.UnitPriceMicros
+                                  AND l.EffectiveFromUtc=e.EffectiveFromUtc
+                                  AND l.EffectiveToUtc=e.EffectiveToUtc
+                                  AND l.TotalQuantity=e.Quantity
+                                  AND l.ChargeMicros=e.ChargeMicros
                             )
                       )
                   )

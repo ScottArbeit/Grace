@@ -1068,9 +1068,57 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
 
                             do! priceReader.CloseAsync()
 
+                            use prior = connection.CreateCommand()
+                            prior.Transaction <- transaction
+
+                            prior.CommandText <-
+                                """
+SELECT
+    (
+        SELECT TOP (1) priorEntry.ChargeLedgerEntryId
+        FROM ops.ChargeLedgerEntry priorEntry WITH(UPDLOCK,HOLDLOCK)
+        WHERE priorEntry.BillingPeriodId=@BillingPeriodId AND priorEntry.FactKind=@FactKind AND priorEntry.BillableUsageKindMappingId=@MappingId AND priorEntry.BillableUsageKind=@BillableKind AND priorEntry.PricingAssignmentId=@AssignmentId AND priorEntry.PricingPlanId=@PlanId AND priorEntry.PricingRateId=@RateId AND priorEntry.CurrencyCode=@Currency AND priorEntry.UnitName=@UnitName AND priorEntry.UnitQuantity=@UnitQuantity AND priorEntry.UnitPriceMicros=@UnitPrice AND priorEntry.EffectiveFromUtc=@EffectiveFrom AND priorEntry.EffectiveToUtc=@EffectiveTo AND (priorEntry.EntryKind=0 OR (priorEntry.EntryKind=1 AND priorEntry.ReasonCode=N'AutomaticLateUsage'))
+        ORDER BY CreatedAtUtc DESC,ChargeLedgerEntryId DESC
+    ),
+    COALESCE(SUM(CONVERT(decimal(38,0), ledgerEntry.Quantity)),CONVERT(decimal(38,0),0)),
+    COALESCE(SUM(CONVERT(decimal(38,0), ledgerEntry.ChargeMicros)),CONVERT(decimal(38,0),0))
+FROM ops.ChargeLedgerEntry ledgerEntry WITH(UPDLOCK,HOLDLOCK)
+WHERE ledgerEntry.BillingPeriodId=@BillingPeriodId AND ledgerEntry.FactKind=@FactKind AND ledgerEntry.BillableUsageKindMappingId=@MappingId AND ledgerEntry.BillableUsageKind=@BillableKind AND ledgerEntry.PricingAssignmentId=@AssignmentId AND ledgerEntry.PricingPlanId=@PlanId AND ledgerEntry.PricingRateId=@RateId AND ledgerEntry.CurrencyCode=@Currency AND ledgerEntry.UnitName=@UnitName AND ledgerEntry.UnitQuantity=@UnitQuantity AND ledgerEntry.UnitPriceMicros=@UnitPrice AND ledgerEntry.EffectiveFromUtc=@EffectiveFrom AND ledgerEntry.EffectiveToUtc=@EffectiveTo AND (ledgerEntry.EntryKind=0 OR (ledgerEntry.EntryKind=1 AND ledgerEntry.ReasonCode=N'AutomaticLateUsage'));
+"""
+
+                            add prior "@BillingPeriodId" SqlDbType.UniqueIdentifier periodId
+                            add prior "@FactKind" SqlDbType.Int factKind
+                            add prior "@MappingId" SqlDbType.UniqueIdentifier mappingId
+                            add prior "@BillableKind" SqlDbType.Int billableKind
+                            add prior "@AssignmentId" SqlDbType.UniqueIdentifier assignmentId
+                            add prior "@PlanId" SqlDbType.UniqueIdentifier planId
+                            add prior "@RateId" SqlDbType.UniqueIdentifier rateId
+                            prior.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- currency
+                            prior.Parameters.Add("@UnitName", SqlDbType.NVarChar, 64).Value <- unitName
+                            add prior "@UnitQuantity" SqlDbType.BigInt unitQuantity
+                            add prior "@UnitPrice" SqlDbType.BigInt unitPrice
+                            add prior "@EffectiveFrom" SqlDbType.DateTime2 effectiveFrom
+                            add prior "@EffectiveTo" SqlDbType.DateTime2 effectiveTo
+                            use! priorReader = prior.ExecuteReaderAsync(cancellationToken)
+                            let! foundPrior = priorReader.ReadAsync(cancellationToken)
+
+                            if not foundPrior then
+                                invalidOp "Automatic correction pricing-grain aggregate did not return a result."
+
+                            let priorId = if priorReader.IsDBNull(0) then None else Some(priorReader.GetGuid(0))
+
+                            let postedQuantity = priorReader.GetDecimal(1)
+                            let postedCharge = priorReader.GetDecimal(2)
+                            do! priorReader.CloseAsync()
+
                             let chargeOutcome =
                                 try
-                                    Ok(ChargePreviewCalculation.calculateChargeMicros quantity unitPrice unitQuantity)
+                                    let cumulativeQuantity = Checked.op_Addition (Convert.ToInt64 postedQuantity) quantity
+
+                                    let cumulativeCharge = ChargePreviewCalculation.calculateChargeMicros cumulativeQuantity unitPrice unitQuantity
+
+                                    let correctionCharge = Checked.op_Subtraction cumulativeCharge (Convert.ToInt64 postedCharge)
+                                    Ok correctionCharge
                                 with
                                 | :? OverflowException as ex -> Error ex
 
@@ -1079,28 +1127,6 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                                 do! writePermanentCorrectionCalculationFailure connection transaction workId ex.Message cancellationToken
                                 do! transaction.CommitAsync(cancellationToken)
                             | Ok charge ->
-                                use prior = connection.CreateCommand()
-                                prior.Transaction <- transaction
-
-                                prior.CommandText <-
-                                    "SELECT TOP (1) ChargeLedgerEntryId FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingPeriodId=@BillingPeriodId AND FactKind=@FactKind AND BillableUsageKindMappingId=@MappingId AND BillableUsageKind=@BillableKind AND PricingAssignmentId=@AssignmentId AND PricingPlanId=@PlanId AND PricingRateId=@RateId AND CurrencyCode=@Currency AND UnitName=@UnitName AND UnitQuantity=@UnitQuantity AND UnitPriceMicros=@UnitPrice AND EffectiveFromUtc=@EffectiveFrom AND EffectiveToUtc=@EffectiveTo AND (EntryKind=0 OR (EntryKind=1 AND ReasonCode=N'AutomaticLateUsage')) ORDER BY CreatedAtUtc DESC,ChargeLedgerEntryId DESC;"
-
-                                add prior "@BillingPeriodId" SqlDbType.UniqueIdentifier periodId
-                                add prior "@FactKind" SqlDbType.Int factKind
-                                add prior "@MappingId" SqlDbType.UniqueIdentifier mappingId
-                                add prior "@BillableKind" SqlDbType.Int billableKind
-                                add prior "@AssignmentId" SqlDbType.UniqueIdentifier assignmentId
-                                add prior "@PlanId" SqlDbType.UniqueIdentifier planId
-                                add prior "@RateId" SqlDbType.UniqueIdentifier rateId
-                                prior.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- currency
-                                prior.Parameters.Add("@UnitName", SqlDbType.NVarChar, 64).Value <- unitName
-                                add prior "@UnitQuantity" SqlDbType.BigInt unitQuantity
-                                add prior "@UnitPrice" SqlDbType.BigInt unitPrice
-                                add prior "@EffectiveFrom" SqlDbType.DateTime2 effectiveFrom
-                                add prior "@EffectiveTo" SqlDbType.DateTime2 effectiveTo
-                                let! priorValue = prior.ExecuteScalarAsync(cancellationToken)
-                                let priorId = if isNull priorValue then None else Some(priorValue :?> Guid)
-
                                 let entryId =
                                     BillingPeriodRules.deterministicId [ workId.ToString("D")
                                                                          "automatic-late-usage" ]

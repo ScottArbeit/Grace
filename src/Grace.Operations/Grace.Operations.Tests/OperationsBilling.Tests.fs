@@ -76,6 +76,71 @@ type OperationsBillingTests() =
         )
         |> ignore
 
+    /// Proves reversals retain immutable predecessor provenance while independent adjustments remain supported.
+    [<Test>]
+    member _.ReversalsRequirePredecessorButAdjustmentsDoNot() =
+        let correction: ManualBillingCorrection =
+            {
+                BillingPeriodId = Guid.NewGuid()
+                EntryKind = ChargeLedgerEntryKind.Adjustment
+                PriorChargeLedgerEntryId = None
+                FactKind = 1
+                BillableUsageKindMappingId = Guid.NewGuid()
+                BillableUsageKind = 1
+                PricingAssignmentId = Guid.NewGuid()
+                PricingPlanId = Guid.NewGuid()
+                PricingRateId = Guid.NewGuid()
+                CurrencyCode = "USD"
+                UnitName = "byte-minute"
+                UnitQuantity = 1L
+                UnitPriceMicros = 5L
+                EffectiveFromUtc = utc 2028 1 1 0
+                EffectiveToUtc = utc 2028 2 1 0
+                QuantityDelta = -1L
+                ChargeMicrosDelta = -5L
+            }
+
+        let reversalWithoutPrior = { correction with EntryKind = ChargeLedgerEntryKind.Reversal }
+
+        let reversalWithPrior = { reversalWithoutPrior with PriorChargeLedgerEntryId = Some(Guid.NewGuid()) }
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.DoesNotThrow(Action(fun () -> ManualBillingCorrectionValidation.validatePricingGrain correction))
+
+                Assert.Throws<ArgumentException>(Action(fun () -> ManualBillingCorrectionValidation.validatePricingGrain reversalWithoutPrior))
+                |> ignore
+
+                Assert.DoesNotThrow(Action(fun () -> ManualBillingCorrectionValidation.validatePricingGrain reversalWithPrior)))
+        )
+
+    /// Proves each late correction posts the once-rounded cumulative charge delta at its immutable pricing grain.
+    [<Test>]
+    member _.AutomaticLateCorrectionsUseCumulativeRoundedChargeDeltas() =
+        let unitQuantity = 3L
+        let unitPriceMicros = 5L
+        let initialCharge = ChargePreviewCalculation.calculateChargeMicros 1L unitPriceMicros unitQuantity
+        let afterFirstLateCharge = ChargePreviewCalculation.calculateChargeMicros 2L unitPriceMicros unitQuantity
+        let afterSecondLateCharge = ChargePreviewCalculation.calculateChargeMicros 3L unitPriceMicros unitQuantity
+        let firstLateDelta = afterFirstLateCharge - initialCharge
+        let secondLateDelta = afterSecondLateCharge - afterFirstLateCharge
+        let isolatedLateCharges = initialCharge + initialCharge + initialCharge
+        let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
+        let source = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(initialCharge, Is.EqualTo(2L))
+                Assert.That(firstLateDelta, Is.EqualTo(1L))
+                Assert.That(secondLateDelta, Is.EqualTo(2L))
+                Assert.That(initialCharge + firstLateDelta + secondLateDelta, Is.EqualTo(afterSecondLateCharge))
+                Assert.That(isolatedLateCharges, Is.Not.EqualTo(afterSecondLateCharge))
+                Assert.That(source, Does.Contain("SUM(CONVERT(decimal(38,0), ledgerEntry.Quantity))"))
+                Assert.That(source, Does.Contain("SUM(CONVERT(decimal(38,0), ledgerEntry.ChargeMicros))"))
+                Assert.That(source, Does.Contain("let cumulativeQuantity"))
+                Assert.That(source, Does.Contain("let correctionCharge")))
+        )
+
     /// Verifies manual replay identity is stable only for the exact immutable correction and correlation tuple.
     [<Test>]
     member _.ManualCorrectionIdentityDistinguishesConflictingCorrelationReplays() =
@@ -570,4 +635,48 @@ type OperationsBillingTests() =
                 )
 
                 Assert.That(migrationScript, Does.Contain("p.State IN (2,3,4)")))
+        )
+
+    /// Proves session-seven close evidence and reversal provenance guards reject direct SQL bypasses.
+    [<Test>]
+    member _.SessionSevenCloseEvidenceAndReversalProvenanceGuardsAreDurable() =
+        let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
+        let billingSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBilling.fs"))
+
+        let migrationSource =
+            File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260713130000_StabilizeBillingCorrectionWorkFailure.fs"))
+
+        use context =
+            OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingSessionSevenModel;Integrated Security=true;"
+
+        let migrationScript = (context.GetService<IMigrator>()).GenerateScript()
+
+        Assert.Multiple(
+            Action (fun () ->
+                // A preview-line identifier alone cannot close a Provisional period: the complete posted tuple must match.
+                Assert.That(billingSource, Does.Contain("e.FactKind=l.FactKind"))
+                Assert.That(billingSource, Does.Contain("e.BillableUsageKindMappingId=l.BillableUsageKindMappingId"))
+                Assert.That(billingSource, Does.Contain("e.BillableUsageKind=l.BillableUsageKind"))
+                Assert.That(billingSource, Does.Contain("e.PricingAssignmentId=l.PricingAssignmentId"))
+                Assert.That(billingSource, Does.Contain("e.PricingPlanId=l.PricingPlanId"))
+                Assert.That(billingSource, Does.Contain("e.PricingRateId=l.PricingRateId"))
+                Assert.That(billingSource, Does.Contain("e.CurrencyCode=l.CurrencyCode"))
+                Assert.That(billingSource, Does.Contain("e.UnitName=l.UnitName"))
+                Assert.That(billingSource, Does.Contain("e.UnitQuantity=l.UnitQuantity"))
+                Assert.That(billingSource, Does.Contain("e.UnitPriceMicros=l.UnitPriceMicros"))
+                Assert.That(billingSource, Does.Contain("e.EffectiveFromUtc=l.EffectiveFromUtc"))
+                Assert.That(billingSource, Does.Contain("e.EffectiveToUtc=l.EffectiveToUtc"))
+                Assert.That(billingSource, Does.Contain("e.Quantity=l.TotalQuantity"))
+                Assert.That(billingSource, Does.Contain("e.ChargeMicros=l.ChargeMicros"))
+
+                // A reversal needs a real, immutable predecessor; predecessor-free adjustments are not constrained.
+                Assert.That(billingSource, Does.Contain("e.EntryKind=2"))
+                Assert.That(billingSource, Does.Contain("e.PriorChargeLedgerEntryId IS NULL"))
+                Assert.That(billingSource, Does.Contain("p.ChargeLedgerEntryId=e.PriorChargeLedgerEntryId"))
+                Assert.That(billingSource, Does.Contain("p.BillingPeriodId=e.BillingPeriodId"))
+                Assert.That(billingSource, Does.Not.Contain("e.EntryKind=1 AND e.PriorChargeLedgerEntryId IS NULL"))
+                Assert.That(migrationSource, Does.Contain("migrationBuilder.Sql(OperationsBillingSql.CreateLedgerImmutabilityTrigger)"))
+                Assert.That(migrationScript, Does.Contain("e.FactKind=l.FactKind"))
+                Assert.That(migrationScript, Does.Contain("e.Quantity=l.TotalQuantity"))
+                Assert.That(migrationScript, Does.Contain("Reversal ledger entries require an existing prior charge ledger entry.")))
         )
