@@ -627,6 +627,7 @@ type OperationsUsageArchiveReplayProcessor
         archiveStore: IOperationsUsageArchiveStore,
         blobStore: IOperationsUsageArchiveBlobStore,
         replayStore: IOperationsUsageArchiveReplayStore,
+        billingPeriods: IBillingPeriodService,
         logger: ILogger<OperationsUsageArchiveReplayProcessor>
     ) =
 
@@ -642,6 +643,21 @@ type OperationsUsageArchiveReplayProcessor
                 let errorText = String.Join("; ", errors)
                 return invalidOp $"Archive replay rejected UsageFactId '{item.UsageFactId}': {errorText}"
             | Ok result ->
+                match result.Status with
+                | UsageFactPersistenceStatus.Accepted
+                | UsageFactPersistenceStatus.AlreadyProcessed ->
+                    // Match live ingestion: both a newly accepted fact and an idempotent post-store replay re-run terminal routing.
+                    do!
+                        billingPeriods.RecordAcceptedLateFactAsync(
+                            usageFact.Scope.OwnerId,
+                            usageFact.Scope.OrganizationId,
+                            usageFact.Scope.RepositoryId,
+                            usageFact.ObservedAt.ToDateTimeUtc(),
+                            usageFact.UsageFactId,
+                            cancellationToken
+                        )
+                | status -> invalidOp $"Archive replay returned unsupported persistence status '{status}'."
+
                 logger.LogInformation(
                     "Replayed archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; Status: {Status}.",
                     item.UsageFactId,
@@ -1899,19 +1915,28 @@ type OperationsUsageIngestionProcessor
                                 let scope = if isNull (box usageFact.Scope) then None else Some usageFact.Scope
                                 let failureUsageFactId = if usageFact.UsageFactId = Guid.Empty then None else Some usageFact.UsageFactId
 
-                                do!
-                                    billingFailures.RecordFailureAsync(
-                                        failureUsageFactId,
-                                        scope |> Option.map (fun value -> value.OwnerId),
-                                        scope
-                                        |> Option.map (fun value -> value.OrganizationId),
-                                        scope
-                                        |> Option.map (fun value -> value.RepositoryId),
-                                        Some(usageFact.ObservedAt.ToDateTimeUtc()),
-                                        string usageFact.CorrelationId,
-                                        "InvalidUsageFact",
-                                        "Usage fact failed contract validation.",
-                                        cancellationToken
+                                match failureUsageFactId with
+                                | Some usageFactId ->
+                                    do!
+                                        billingFailures.RecordFailureAsync(
+                                            Some usageFactId,
+                                            scope |> Option.map (fun value -> value.OwnerId),
+                                            scope
+                                            |> Option.map (fun value -> value.OrganizationId),
+                                            scope
+                                            |> Option.map (fun value -> value.RepositoryId),
+                                            Some(usageFact.ObservedAt.ToDateTimeUtc()),
+                                            string usageFact.CorrelationId,
+                                            "InvalidUsageFact",
+                                            "Usage fact failed contract validation.",
+                                            cancellationToken
+                                        )
+                                | None ->
+                                    logger.LogWarning(
+                                        "Dead-lettering invalid UsageFact with no UsageFactId without creating billing failure evidence. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}.",
+                                        message.MessageId,
+                                        message.CorrelationId,
+                                        message.DeliveryCount
                                     )
 
                                 logger.LogWarning(

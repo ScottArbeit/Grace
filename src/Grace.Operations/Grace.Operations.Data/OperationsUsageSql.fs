@@ -205,6 +205,9 @@ ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
     [<Literal>]
     let TryInsertReplayedArchivedRawUsageFact =
         """
+DECLARE @LockResult int;
+EXEC @LockResult = sys.sp_getapplock @Resource=@LockResource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=60000;
+IF @LockResult < 0 THROW 51000, 'Could not serialize accepted archive replay against billing close scope.', 1;
 INSERT INTO ops.RawUsageFact
 (
     UsageFactId,

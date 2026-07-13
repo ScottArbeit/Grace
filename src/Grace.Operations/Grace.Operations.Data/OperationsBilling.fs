@@ -749,9 +749,9 @@ BEGIN
         FROM deleted d
         LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId
         LEFT JOIN ops.BillingPeriod sourcePeriod ON sourcePeriod.OwnerId=d.OwnerId AND sourcePeriod.OrganizationId=d.OrganizationId AND sourcePeriod.RepositoryId=d.RepositoryId
-          AND d.ObservedAtUtc>=sourcePeriod.PeriodFromUtc AND d.ObservedAtUtc<sourcePeriod.PeriodToUtc AND sourcePeriod.State IN (2,3)
+          AND d.ObservedAtUtc>=sourcePeriod.PeriodFromUtc AND d.ObservedAtUtc<sourcePeriod.PeriodToUtc AND sourcePeriod.State IN (2,3,4)
         LEFT JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
-          AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3)
+          AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3,4)
         WHERE (sourcePeriod.BillingPeriodId IS NOT NULL OR destinationPeriod.BillingPeriodId IS NOT NULL)
           AND
           (

@@ -80,6 +80,21 @@ type OperationalFactsPublisherActorTests() =
             Is.EqualTo(correlationId)
         )
 
+    /// Verifies the supported publisher rejects malformed missing-identity facts before a Service Bus envelope can exist.
+    [<Test>]
+    member _.UsageFactMessageRejectsMissingUsageFactIdBeforePublication() =
+        let fact = { usageFact (Guid.Parse("abababab-abab-abab-abab-abababababab")) "corr-missing-identity" with UsageFactId = Guid.Empty }
+
+        let ex =
+            Assert.Throws<ArgumentException>(
+                Action (fun () ->
+                    OperationalFactsPublisher.createPublication Constants.GraceOperationalFactsTopic fact
+                    |> ignore)
+            )
+
+        Assert.That(ex.Message, Does.Contain("UsageFact failed validation"))
+        Assert.That(ex.Message, Does.Contain("UsageFactId"))
+
     /// Verifies recognized but unsupported pub-sub providers fail closed instead of silently dropping usage facts.
     [<Test>]
     member _.UnsupportedConfiguredProviderFailsOperationalFactPublication() =

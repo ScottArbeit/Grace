@@ -74,7 +74,7 @@ module AspireTestHost =
 
     let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(3.0))
 
-    let private latestOperationsMigrationId = "20260711140000_AddBillingPeriodCloseLedger"
+    let private latestOperationsMigrationId = "20260713130000_StabilizeBillingCorrectionWorkFailure"
 
     /// Defines log progress behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private logProgress (message: string) =

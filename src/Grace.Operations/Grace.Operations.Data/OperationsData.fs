@@ -576,6 +576,15 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
     /// Converts a NodaTime instant to the UTC SQL timestamp shape used by operations usage tables.
     let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
 
+    /// Adds the owner, organization, repository, and month lock shared by accepted ingestion, replay, preview replacement, and close.
+    let addBillingScopeLockParameter (command: SqlCommand) (rawFact: RawUsageFact) =
+        let periodFromUtc, periodToUtc = BillingPeriodRules.monthContaining (toUtcDateTime rawFact.ObservedAt)
+
+        let lockIdentity =
+            $"ops:charge-preview:{rawFact.OwnerId:D}:{rawFact.OrganizationId:D}:{rawFact.RepositoryId:D}:{periodFromUtc.Ticks}:{periodToUtc.Ticks}"
+
+        command.Parameters.Add("@LockResource", SqlDbType.NVarChar, 255).Value <- $"ops:charge-preview:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes lockIdentity))}"
+
     /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
     let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
         addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
@@ -588,13 +597,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
-
-        let periodFromUtc, periodToUtc = BillingPeriodRules.monthContaining (toUtcDateTime rawFact.ObservedAt)
-
-        let lockIdentity =
-            $"ops:charge-preview:{rawFact.OwnerId:D}:{rawFact.OrganizationId:D}:{rawFact.RepositoryId:D}:{periodFromUtc.Ticks}:{periodToUtc.Ticks}"
-
-        command.Parameters.Add("@LockResource", SqlDbType.NVarChar, 255).Value <- $"ops:charge-preview:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes lockIdentity))}"
+        addBillingScopeLockParameter command rawFact
 
     /// Adds raw fact parameters for archive replay inserts that intentionally omit hot payload bytes.
     let addReplayedRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
@@ -607,6 +610,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+        addBillingScopeLockParameter command rawFact
 
     /// Adds archive pointer parameters for replay inserts that keep hot payload bytes out of SQL.
     let addReplayedArchivePointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =

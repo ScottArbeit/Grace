@@ -977,7 +977,7 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
-    /// Verifies missing UsageFact identity is treated as impossible poison input.
+    /// Verifies missing-identity poison is dead-lettered without raw storage or scoped billing-blocking evidence.
     [<Test>]
     member _.MissingUsageFactIdIsDeadLetteredWithoutStorage() =
         task {
@@ -993,16 +993,11 @@ type OperationsWorkerIngestionTests() =
 
             do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
 
-            let failureUsageFactId =
-                failures.Calls
-                |> List.exactlyOne
-                |> fun (usageFactId, _, _, _, _, _, _) -> usageFactId
-
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(store.StoredFacts, Is.Empty)
 
-                    Assert.That(failureUsageFactId, Is.EqualTo(None))
+                    Assert.That(failures.Calls, Is.Empty)
 
                     Assert.That(eventText events, Is.EqualTo("dead-letter"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))

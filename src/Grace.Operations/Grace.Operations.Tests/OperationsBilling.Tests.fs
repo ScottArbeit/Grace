@@ -245,7 +245,7 @@ type OperationsBillingTests() =
                 Assert.That(migrationSource, Does.Contain("AcceptedAtUtc datetime2(7) NOT NULL"))
                 Assert.That(migrationSource, Does.Contain("IsAutomaticRetryEligible bit NOT NULL"))
                 Assert.That(docs, Does.Contain("Grace never inserts or mutates historical pricing"))
-                Assert.That(testHost, Does.Contain("20260711140000_AddBillingPeriodCloseLedger")))
+                Assert.That(testHost, Does.Contain("20260713130000_StabilizeBillingCorrectionWorkFailure")))
         )
 
     /// Verifies canonical failure handling and owner-period repair validation are not bypassed by conflicting retries or no-prior manual writes.
@@ -438,6 +438,8 @@ type OperationsBillingTests() =
                 Assert.That(billingSource, Does.Contain("sourcePeriod.OwnerId=d.OwnerId"))
                 Assert.That(billingSource, Does.Contain("destinationPeriod.OwnerId=i.OwnerId"))
                 Assert.That(billingSource, Does.Contain("sourcePeriod.BillingPeriodId IS NOT NULL OR destinationPeriod.BillingPeriodId IS NOT NULL"))
+                Assert.That(billingSource, Does.Contain("sourcePeriod.State IN (2,3,4)"))
+                Assert.That(billingSource, Does.Contain("destinationPeriod.State IN (2,3,4)"))
                 Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
                 Assert.That(billingSource, Does.Contain("d.State IN (2,3,4)"))
                 Assert.That(billingSource, Does.Contain("d.State IN (2,3)"))
@@ -471,5 +473,6 @@ type OperationsBillingTests() =
                 Assert.That((migrationWorkShape = snapshotWorkShape), Is.True)
                 Assert.That((snapshotWorkShape = runtimeWorkShape), Is.True)
 
-                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("CK_ops_BillingCorrectionWork_PermanentFailure")))
+                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("CK_ops_BillingCorrectionWork_PermanentFailure"))
+                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("sourcePeriod.State IN (2,3,4)")))
         )
