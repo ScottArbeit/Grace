@@ -675,6 +675,58 @@ module Watch =
             Scope: WatchObservationScope option
         }
 
+    let mutable private lastPublishedWatchObservationScope: WatchObservationScope option = None
+
+    /// Captures the current configuration and the supplied status identity for callback admission or publication tracking.
+    let private watchObservationScopeForStatus (status: GraceStatus) =
+        let current = Current()
+
+        {
+            RepositoryId = current.RepositoryId
+            RepositoryName = current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = current.BranchName
+            RootDirectory =
+                Path.GetFullPath(current.RootDirectory)
+                |> Path.TrimEndingDirectorySeparator
+            PathComparison = watchPathComparison
+            RootDirectoryId = status.RootDirectoryId
+            RootDirectorySha256Hash = status.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+        }
+
+    /// Identifies whether a status snapshot carries a root identity that can safely represent a published Watch scope.
+    let private hasWatchObservationRootIdentity (status: GraceStatus) =
+        status.RootDirectoryId
+        <> GraceStatus.Default.RootDirectoryId
+        || status.RootDirectorySha256Hash
+           <> GraceStatus.Default.RootDirectorySha256Hash
+        || status.RootDirectoryBlake3Hash
+           <> GraceStatus.Default.RootDirectoryBlake3Hash
+
+    /// Retains the exact status identity that was verified in the latest IPC publication for the active Watch configuration.
+    let private rememberPublishedWatchObservationScope (status: GraceStatus) =
+        if hasWatchObservationRootIdentity status then
+            lastPublishedWatchObservationScope <- Some(watchObservationScopeForStatus status)
+
+    /// Discards a published identity when its Watch lifetime ends so it cannot bridge a later configuration.
+    let private clearPublishedWatchObservationScope () = lastPublishedWatchObservationScope <- None
+
+    /// Checks whether a retained publication belongs to the configuration that currently owns callback admission.
+    let private publishedWatchObservationScopeMatchesCurrentConfiguration (scope: WatchObservationScope) =
+        let current = Current()
+
+        let rootDirectory =
+            Path.GetFullPath(current.RootDirectory)
+            |> Path.TrimEndingDirectorySeparator
+
+        scope.RepositoryId = current.RepositoryId
+        && String.Equals(scope.RepositoryName, current.RepositoryName, StringComparison.Ordinal)
+        && scope.BranchId = current.BranchId
+        && String.Equals(scope.BranchName, current.BranchName, StringComparison.Ordinal)
+        && String.Equals(scope.RootDirectory, rootDirectory, scope.PathComparison)
+        && scope.PathComparison = watchPathComparison
+
     /// Coalesces local filesystem observations until their deterministic quiet window has elapsed.
     type internal WatchObservationCandidateScheduler(quietWindow: TimeSpan, pathComparison: StringComparison) =
         let gate = obj ()
@@ -725,7 +777,7 @@ module Watch =
             | Changed, Some existing when existing.Kind = CreatedOrChanged -> CreatedOrChanged
             | _ -> incomingKind
 
-        /// Records one local observation, replacing any older generation while retaining same-path delete proof for a final replacement.
+        /// Records one local observation, replacing any older generation while retaining delete proof only within the same observation scope.
         member _.ObserveScoped
             (
                 origin: WatchObservationOrigin,
@@ -746,10 +798,13 @@ module Watch =
 
                     let mergedKind = mergeObservationKind kind existingCandidate
 
-                    let requiresRemovalProof =
-                        kind = Deleted
-                        || existingCandidate
-                           |> Option.exists (fun existing -> existing.RequiresRemovalProof)
+                    let carriesRemovalProofFromSameScope =
+                        existingCandidate
+                        |> Option.exists (fun existing ->
+                            existing.Scope = scope
+                            && existing.RequiresRemovalProof)
+
+                    let requiresRemovalProof = kind = Deleted || carriesRemovalProofFromSameScope
 
                     let candidate =
                         {
@@ -863,21 +918,12 @@ module Watch =
 
     /// Captures the current repository and exact root identity before a raw callback can be coalesced.
     let private currentWatchObservationScope () =
-        let current = Current()
-
-        {
-            RepositoryId = current.RepositoryId
-            RepositoryName = current.RepositoryName
-            BranchId = current.BranchId
-            BranchName = current.BranchName
-            RootDirectory =
-                Path.GetFullPath(current.RootDirectory)
-                |> Path.TrimEndingDirectorySeparator
-            PathComparison = watchPathComparison
-            RootDirectoryId = graceStatus.RootDirectoryId
-            RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
-            RootDirectoryBlake3Hash = graceStatus.RootDirectoryBlake3Hash
-        }
+        if hasWatchObservationRootIdentity graceStatus then
+            watchObservationScopeForStatus graceStatus
+        else
+            match lastPublishedWatchObservationScope with
+            | Some scope when publishedWatchObservationScopeMatchesCurrentConfiguration scope -> scope
+            | _ -> watchObservationScopeForStatus graceStatus
 
     /// Checks that a due raw candidate still belongs to its admission repository, branch, root, and exact root content.
     let private watchObservationScopeMatchesCurrent (scope: WatchObservationScope) =
@@ -1458,7 +1504,12 @@ module Watch =
                 | :? UnauthorizedAccessException -> false)
 
     /// Coordinates set grace status for watch tests behavior for this CLI command path.
-    let internal setGraceStatusForWatchTests status = graceStatus <- status
+    let internal setGraceStatusForWatchTests status =
+        graceStatus <- status
+
+        if not (hasWatchObservationRootIdentity status) then
+            clearPublishedWatchObservationScope ()
+
     /// Replaces Watch's cached directory identity set after a trusted GraceStatus reload.
     let internal updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
     /// Reads the in-memory Grace Status snapshot so transition-publication tests can prove state isolation.
@@ -3188,7 +3239,11 @@ module Watch =
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
-        tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWatchWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+        let published = tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWatchWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+
+        if published then rememberPublishedWatchObservationScope expectedStatus
+
+        published
 
     /// Reads new pending work while excluding only the current recovery attempt and its materialization latch.
     let private readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt =
@@ -4146,6 +4201,7 @@ module Watch =
         stableFileIdentityNowForWatch <- fun () -> DateTime.UtcNow
 
         graceStatus <- GraceStatus.Default
+        clearPublishedWatchObservationScope ()
         graceStatusHasChanged <- false
 
         lock watchStatusPublishLock (fun () ->

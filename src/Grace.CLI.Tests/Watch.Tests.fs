@@ -874,6 +874,52 @@ module WatchTests =
                 .AddMilliseconds(300.0)
                 .Add(quietWindow))
 
+    /// Verifies that delete proof survives same-scope replacement but cannot cross a repository scope change on the same path.
+    [<Test>]
+    let ``local observation candidates drop inherited delete proof when their scope changes`` () =
+        let quietWindow = TimeSpan.FromSeconds(1.0)
+        let scheduler = new Watch.WatchObservationCandidateScheduler(quietWindow, StringComparison.Ordinal)
+        let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "scope-replacement.txt")
+        let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+        let current = Current()
+
+        let scope rootDirectoryId (rootSha256Hash: string) (rootBlake3Hash: string) : Watch.WatchObservationScope =
+            {
+                RepositoryId = current.RepositoryId
+                RepositoryName = current.RepositoryName
+                BranchId = current.BranchId
+                BranchName = current.BranchName
+                RootDirectory = current.RootDirectory
+                PathComparison = StringComparison.Ordinal
+                RootDirectoryId = rootDirectoryId
+                RootDirectorySha256Hash = Sha256Hash rootSha256Hash
+                RootDirectoryBlake3Hash = Blake3Hash rootBlake3Hash
+            }
+
+        let oldScope = scope (DirectoryVersionId "11111111-1111-1111-1111-111111111111") "old-root-sha256" "old-root-blake3"
+
+        let currentScope = scope (DirectoryVersionId "22222222-2222-2222-2222-222222222222") "current-root-sha256" "current-root-blake3"
+
+        scheduler.ObserveScoped(Watch.LocalFileSystem, Watch.Deleted, fullPath, firstSeenAt, Some oldScope)
+        |> Option.isSome
+        |> should equal true
+
+        scheduler.ObserveScoped(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, firstSeenAt.AddMilliseconds(100.0), Some oldScope)
+        |> Option.get
+        |> fun candidate ->
+            candidate.RequiresRemovalProof
+            |> should equal true
+
+        let currentCandidate =
+            scheduler.ObserveScoped(Watch.LocalFileSystem, Watch.Changed, fullPath, firstSeenAt.AddMilliseconds(200.0), Some currentScope)
+            |> Option.get
+
+        currentCandidate.Scope
+        |> should equal (Some currentScope)
+
+        currentCandidate.RequiresRemovalProof
+        |> should equal false
+
     /// Verifies a same-path file replacement queues both removal proof and final file upload work.
     [<Test>]
     let ``local observation candidate delete then file create preserves removal and upload work`` () =
@@ -1699,6 +1745,69 @@ module WatchTests =
 
             Watch.currentGraceWatchRuntimeModeForWatchTests ()
             |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental)
+
+    /// Verifies an ordinary callback can use the verified published root identity after transient in-flight status reset.
+    [<Test>]
+    let ``raw local candidate uses published status identity after transient cache reset`` () =
+        withTempRepo (fun root ->
+            let changedPath = Path.Combine(root, "published-identity.txt")
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "published-root-sha256"
+                    RootDirectoryBlake3Hash = Blake3Hash "published-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+
+            File.WriteAllText(changedPath, "ordinary user edit")
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            Watch.setGraceStatusForWatchTests status
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            (Watch.publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests status directoryIds Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            (Watch.storeGraceStatusInMemoryStream ())
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.graceStatusForWatchTests().RootDirectoryId
+            |> should equal GraceStatus.Default.RootDirectoryId
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged changedPath DateTime.UtcNow
+            |> Option.isSome
+            |> should equal true
+
+            try
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ ->
+                        uploadCalls <- uploadCalls + 1
+                        Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    (fun _ ->
+                        scanCalls <- scanCalls + 1
+                        Task.FromResult(List<FileSystemDifference>()))
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+                uploadCalls |> should equal 1
+                scanCalls |> should equal 0
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal false
+            finally
+                (Watch.retrieveGraceStatusFromMemoryStream ())
+                    .GetAwaiter()
+                    .GetResult())
 
     /// Verifies same-branch completion never executes branch-transition subscription effects, including restart recovery.
     [<TestCase(true)>]
