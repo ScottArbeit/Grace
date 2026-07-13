@@ -6948,6 +6948,12 @@ module Watch =
     let internal publishStartupCatchUpPendingStatusForWatchTests trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
         publishStartupCatchUpPendingStatus trustedStatus directoryIds updateGraceWatchInterprocessFileClient
 
+    /// Keeps the batch status snapshot bounded to the same resync confidence that admitted its file uploads.
+    let private pendingFileBatchStatusApplicationStillTrusted resyncAttempt =
+        match resyncAttempt with
+        | Some attempt -> isGraceWatchResyncAttemptActive attempt
+        | None -> not (isGraceWatchResyncPending ())
+
     /// Uploads pending file content while preserving the confidence boundary for the current Watch mode.
     let private uploadPendingWatchFilesForStatusRetry
         readGraceStatusMetaClient
@@ -6977,6 +6983,7 @@ module Watch =
             for pendingFile in
                 filesToProcess
                     .ToArray()
+                    .OrderBy(fun entry -> entry.Key, StringComparer.Ordinal)
                     .Take(50)
                     .Select(fun entry -> entry.Value) do
                 let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile)
@@ -7061,7 +7068,8 @@ module Watch =
                             | Some _ -> raise ex
                             | None -> ()
 
-            if processedAnyFile then
+            if processedAnyFile
+               && pendingFileBatchStatusApplicationStillTrusted resyncAttempt then
                 graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
                 do! applyGraceStatusIncrementalClient graceStatus Seq.empty Seq.empty
 

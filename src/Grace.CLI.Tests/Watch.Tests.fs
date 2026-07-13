@@ -3255,12 +3255,11 @@ module WatchTests =
         | Some localFileVersion -> Watch.recordUploadedFileVersionForWatchTests localFileVersion.ToFileVersion
         | None -> Assert.Fail($"Expected a local file version for {fullPath}.")
 
-    /// Runs one healthy incremental Watch pass with a caller-controlled stable-content upload seam.
-    let private processPendingWatchWorkWithUploadForTest upload =
+    /// Runs one healthy incremental Watch pass with caller-controlled upload and status-application seams.
+    let private processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental =
         let readStatus () = Task.FromResult(GraceStatus.Default)
         let updateGraceStatus status _ = Task.FromResult(Some status)
         let updateGraceStatusFromDifferences status _ _ = Task.FromResult(Some status)
-        let applyIncremental _ _ _ = Task.FromResult(())
         let updateIpc _ _ = Task.FromResult(())
 
         (Watch.processChangedFilesWithClients
@@ -3274,6 +3273,10 @@ module WatchTests =
             updateIpc)
             .GetAwaiter()
             .GetResult()
+
+    /// Runs one healthy incremental Watch pass with a caller-controlled stable-content upload seam.
+    let private processPendingWatchWorkWithUploadForTest upload =
+        processPendingWatchWorkWithUploadAndIncrementalForTest upload (fun _ _ _ -> Task.FromResult(()))
 
     /// Verifies that an unstable first identity attempt waits for its deterministic retry boundary and uploads only final bytes.
     [<Test>]
@@ -3894,6 +3897,124 @@ module WatchTests =
 
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |])
+
+    /// Verifies successful object-cache work cannot commit an incremental status snapshot after a later file exhausts the batch retry budget.
+    [<Test>]
+    let ``watch stable identity suppresses mixed batch incremental status after later exhaustion`` () =
+        withTempRepo (fun root ->
+            let successfulFilePath = Path.Combine(root, "a-successful-file.txt")
+            let exhaustedFilePath = Path.Combine(root, "z-exhausted-file.txt")
+            let mutable successfulUploadCalls = 0
+            let mutable exhaustedUploadCalls = 0
+            let appliedStatuses = ResizeArray<GraceStatus>()
+            let uploadedObjectCachePaths = ResizeArray<string>()
+
+            File.WriteAllText(exhaustedFilePath, "unreadable content")
+            Watch.OnChanged(changedEvent exhaustedFilePath)
+
+            let upload _ pendingFilePath =
+                let fullPath = $"{pendingFilePath}"
+
+                if String.Equals(fullPath, exhaustedFilePath, StringComparison.Ordinal) then
+                    exhaustedUploadCalls <- exhaustedUploadCalls + 1
+                    Task.FromException<unit>(IOException("file remains locked"))
+                else
+                    successfulUploadCalls <- successfulUploadCalls + 1
+                    recordUploadedFileVersion fullPath
+                    uploadedObjectCachePaths.Add(fullPath)
+                    Task.FromResult(())
+
+            let applyIncremental status _ _ =
+                appliedStatuses.Add(status)
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+
+            File.WriteAllText(successfulFilePath, "stable content")
+            Watch.OnChanged(changedEvent successfulFilePath)
+
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+
+            successfulUploadCalls |> should equal 1
+            exhaustedUploadCalls |> should equal 3
+
+            uploadedObjectCachePaths.ToArray()
+            |> should equal [| successfulFilePath |]
+
+            appliedStatuses.Count |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
+
+    /// Verifies a fully stabilized batch commits exactly one incremental status snapshot.
+    [<Test>]
+    let ``watch stable identity applies one incremental status snapshot for successful batch`` () =
+        withTempRepo (fun root ->
+            let firstFilePath = Path.Combine(root, "a-first-success.txt")
+            let secondFilePath = Path.Combine(root, "b-second-success.txt")
+            let mutable uploadCalls = 0
+            let appliedStatuses = ResizeArray<GraceStatus>()
+
+            File.WriteAllText(firstFilePath, "first stable content")
+            File.WriteAllText(secondFilePath, "second stable content")
+            Watch.OnChanged(changedEvent firstFilePath)
+            Watch.OnChanged(changedEvent secondFilePath)
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            let applyIncremental status _ _ =
+                appliedStatuses.Add(status)
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+
+            uploadCalls |> should equal 2
+            appliedStatuses.Count |> should equal 1
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
+    /// Verifies marker-deferred file work never commits an incremental status snapshot.
+    [<Test>]
+    let ``watch stable identity deferred batch does not apply incremental status`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "deferred-by-marker.txt")
+            let markerFile = Services.updateInProgressFileName ()
+            let mutable uploadCalls = 0
+            let appliedStatuses = ResizeArray<GraceStatus>()
+
+            File.WriteAllText(filePath, "deferred stable content")
+            Watch.OnChanged(changedEvent filePath)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(markerFile))
+            |> ignore
+
+            File.WriteAllText(markerFile, "`grace switch` is in progress.")
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            let applyIncremental status _ _ =
+                appliedStatuses.Add(status)
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+
+            uploadCalls |> should equal 0
+            appliedStatuses.Count |> should equal 0
 
             Watch
                 .pendingWatchWorkSnapshotForTests()
