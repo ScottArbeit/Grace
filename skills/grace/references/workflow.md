@@ -1,3 +1,4 @@
+
 # Grace Workflow
 
 Load this reference for non-trivial planning, issue orchestration, implementation, review, PR, or cleanup work.
@@ -186,3 +187,16 @@ When the user says a PR is merged:
 1. Run `git fetch --prune`.
 1. Run `git pull --ff-only` in the main repo.
 1. Update the task record with final status and follow-ups.
+
+## Plan Quality Before Assignment
+
+Before assigning a product-derived issue, check that the issue records:
+
+- product decisions accepted, recommended, deferred, and waived
+- supported, rejected, and informational inputs
+- contract propagation across DTOs, routes, CLI, SDK, OpenAPI/generated artifacts, projections, docs, and tests
+- stale-authority/revalidation points for runtime, storage, materialization, Watch, auth, and eventing work
+- negative proof for hidden, missing, malformed, stale, duplicate, cross-scope, and partial-failure cases
+
+When a similar recent PR required three or more review cycles, mine that PR and convert its root-cause lanes into issue
+acceptance criteria before assignment.

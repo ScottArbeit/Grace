@@ -1,3 +1,4 @@
+
 # Security And Auth
 
 Load this reference for authentication, authorization, route protection, RBAC, PATs, OIDC, path permissions, secrets,
@@ -66,3 +67,15 @@ Add or update tests for:
 - stored-object authorization after load
 - list filtering
 - redaction in logs or diagnostics
+
+## No-Oracle And Materialization Authorization
+
+IDs, hashes, object addresses, cache keys, event ids, and caller-supplied DTO bodies are identifiers, not authorization.
+For security-sensitive routes:
+
+- load the stored object and authorize against the authoritative scope
+- filter lists before counts, pagination, latest-item selection, and ambiguity decisions
+- return hidden resources as NotFound-equivalent where the product requires non-observability
+- authorize before materialization, SAS issuance, webhook delivery, search projection, or notification
+- prove unauthorized callers cannot distinguish hidden from missing through counts, errors, hash ambiguity, events, or
+  generated plans

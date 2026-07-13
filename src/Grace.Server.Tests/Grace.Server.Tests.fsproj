@@ -16,7 +16,9 @@
   <ItemGroup>
     <Compile Include="AspireTestHost.fs" />
     <Compile Include="AspireTestHost.Diagnostics.Tests.fs" />
+    <Compile Include="OperationalFactsPublisher.AppHost.Tests.fs" />
     <Compile Include="General.Server.Tests.fs" />
+    <Compile Include="OperationsTracerBullet.Server.Tests.fs" />
     <Compile Include="Smoke.Server.Tests.fs" />
     <Compile Include="Slop.Server.Tests.fs" />
     <Compile Include="Owner.Server.Tests.fs" />
@@ -51,6 +53,7 @@
     <PackageReference Include="FsCheck" Version="3.3.3" />
     <PackageReference Include="FsCheck.NUnit" Version="3.3.3" />
     <PackageReference Include="FsUnit" Version="7.1.1" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.3" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.9" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
@@ -67,6 +70,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
     <ProjectReference Include="..\Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj" />
     <ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
     <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />

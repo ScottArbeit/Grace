@@ -43,6 +43,14 @@ open Microsoft.AspNetCore.SignalR
 /// Contains Grace Server application context behavior and supporting helpers.
 module ApplicationContext =
 
+    /// Environment variable that acknowledges the durable operational facts processor subscription exists.
+    [<Literal>]
+    let private AzureServiceBusOperationalFactsProcessorSubscription = "grace__azure_service_bus__operational_facts_processor_subscription"
+
+    /// Fixed Service Bus subscription that consumes immutable operational usage facts.
+    [<Literal>]
+    let private OperationalFactsProcessorSubscriptionName = "operational-facts-processor"
+
     let mutable private configuration: IConfiguration = null
     let Configuration () : IConfiguration = configuration
     let mutable private log: ILogger = null
@@ -186,6 +194,55 @@ module ApplicationContext =
         | Some value -> value
         | None -> invalidOp $"Configuration value '{getConfigKey name}' must be set."
 
+    /// Extracts a named segment from an Azure-style connection string.
+    let private tryGetConnectionStringSegment segmentName (connectionString: string) =
+        if String.IsNullOrWhiteSpace(connectionString) then
+            None
+        else
+            connectionString.Split([| ';' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.tryPick (fun segment ->
+                let idx = segment.IndexOf('=')
+
+                if idx <= 0 then
+                    None
+                else
+                    let key = segment.Substring(0, idx).Trim()
+                    let value = segment.Substring(idx + 1).Trim()
+
+                    if
+                        key.Equals(segmentName, StringComparison.OrdinalIgnoreCase)
+                        && not (String.IsNullOrWhiteSpace(value))
+                    then
+                        Some value
+                    else
+                        None)
+
+    /// Normalizes a Service Bus namespace value for managed-identity clients and diagnostics.
+    let private normalizeServiceBusNamespace (value: string) =
+        let trimmed = value.Trim()
+
+        let withoutScheme =
+            if trimmed.StartsWith("sb://", StringComparison.OrdinalIgnoreCase) then
+                trimmed.Substring(5)
+            else
+                trimmed
+
+        let normalizedNamespace = withoutScheme.Trim().TrimEnd('/')
+
+        if normalizedNamespace.Contains(".") then
+            normalizedNamespace
+        else
+            $"{normalizedNamespace}.servicebus.windows.net"
+
+    /// Resolves the Service Bus namespace from the explicit namespace setting or connection string endpoint.
+    let private resolveServiceBusFullyQualifiedNamespace (serviceBusConnectionString: string) =
+        match Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusNamespace with
+        | value when not (String.IsNullOrWhiteSpace(value)) -> Some(normalizeServiceBusNamespace value)
+        | _ ->
+            serviceBusConnectionString
+            |> tryGetConnectionStringSegment "Endpoint"
+            |> Option.map normalizeServiceBusNamespace
+
     /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
     let configurePubSubSettings () =
         let rawSystem = Environment.GetEnvironmentVariable EnvironmentVariables.GracePubSubSystem
@@ -207,23 +264,30 @@ module ApplicationContext =
             if system = GracePubSubSystem.AzureServiceBus then
                 let serviceBusConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusConnectionString
 
-                if not
-                   <| AzureEnvironment.useManagedIdentityForServiceBus then
-                    if String.IsNullOrWhiteSpace(serviceBusConnectionString) then
-                        invalidOp
-                            $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus} and you're not using a managed identity."
-
-                let sb_namespace = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusNamespace
-
-                if String.IsNullOrWhiteSpace(sb_namespace) then
-                    invalidOp
-                        $"Environment variable '{EnvironmentVariables.AzureServiceBusNamespace}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
-
                 let topic = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusTopic
 
                 if String.IsNullOrWhiteSpace(topic) then
                     invalidOp
                         $"Environment variable '{EnvironmentVariables.AzureServiceBusTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+
+                let operationalFactsTopic = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+
+                if String.IsNullOrWhiteSpace(operationalFactsTopic) then
+                    invalidOp
+                        $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+
+                if String.Equals(topic.Trim(), operationalFactsTopic.Trim(), StringComparison.OrdinalIgnoreCase) then
+                    invalidOp
+                        $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path."
+
+                let operationalFactsProcessorSubscription =
+                    match Environment.GetEnvironmentVariable AzureServiceBusOperationalFactsProcessorSubscription with
+                    | null -> String.Empty
+                    | value -> value.Trim()
+
+                if not (String.Equals(operationalFactsProcessorSubscription, OperationalFactsProcessorSubscriptionName, StringComparison.Ordinal)) then
+                    invalidOp
+                        $"Environment variable '{AzureServiceBusOperationalFactsProcessorSubscription}' must be set to '{OperationalFactsProcessorSubscriptionName}' when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}, after confirming topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' has that durable subscription."
 
                 let subscription = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusSubscription
 
@@ -231,13 +295,20 @@ module ApplicationContext =
                     invalidOp
                         $"Environment variable '{EnvironmentVariables.AzureServiceBusSubscription}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
+                let useManagedIdentity = AzureEnvironment.useManagedIdentityForServiceBus
+
+                if
+                    not useManagedIdentity
+                    && String.IsNullOrWhiteSpace(serviceBusConnectionString)
+                then
+                    invalidOp
+                        $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus} and you're not using a managed identity."
+
                 let fullyQualifiedNamespace =
-                    AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
+                    resolveServiceBusFullyQualifiedNamespace serviceBusConnectionString
                     |> Option.defaultWith (fun () ->
                         invalidOp
-                            $"Environment variable '{EnvironmentVariables.AzureServiceBusNamespace}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}.")
-
-                let useManagedIdentity = AzureEnvironment.useManagedIdentityForServiceBus
+                            $"Environment variable '{EnvironmentVariables.AzureServiceBusNamespace}' or an Endpoint segment in '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}.")
 
                 Some
                     {

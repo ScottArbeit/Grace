@@ -1,3 +1,4 @@
+
 name: Agent Task
 description: Coordinate a Grace implementation task for a human or AI agent.
 labels:
@@ -17,6 +18,29 @@ body:
       description: Include relevant logs, files, symptoms, prior PRs, or decisions. Do not paste secrets.
     validations:
       required: true
+  - type: textarea
+    id: decision-closure
+    attributes:
+      label: Decision closure and contract propagation
+      description: Required for product, contract, durable, public, or cross-project work. Use N/A only with a reason.
+      placeholder: |
+        - Product decisions accepted or assumed:
+          - ...
+        - Product decisions deferred or waived:
+          - ...
+        - Supported inputs / rejected inputs / informational inputs:
+          - ...
+        - Contract propagation map:
+          - shared DTOs/parameters/events/persisted state:
+          - HTTP route/authorization/error shape:
+          - CLI JSON/stdout/stderr/help:
+          - SDK/facade client:
+          - OpenAPI/generated clients:
+          - events/webhooks/SignalR/watch/search/projections:
+          - docs/ADRs/agent guidance:
+    validations:
+      required: true
+
   - type: textarea
     id: owned-paths
     attributes:
@@ -91,6 +115,7 @@ body:
           - async/runtime:
           - algorithm:
           - history/traversal:
+          - stale-authority / revalidation:
           - final audit/docs:
         - Explicit N/A waivers with reasons:
           - ...

@@ -1,3 +1,4 @@
+
 ---
 name: code-review-stabilizer
 description: >-
@@ -284,3 +285,29 @@ When this skill is invoked, produce one or more of:
 
 Be candid. If the process failure is issue underspecification, say that. If the reviewer is finding unrelated work, say
 that and recommend scope control.
+
+## Historical Mining Mode
+
+Use this mode when asked to improve future specifications, implementation plans, templates, or agent guidance.
+
+1. Select the PR population. For repo-wide process work, inspect the 200 newest PRs.
+2. Identify PRs with at least three substantive review cycles using review submissions, PR-body `Review Status`, explicit
+   `substantive cycle count`, stabilization ledger links, or issue addenda.
+3. Fetch the originating issue and enough review findings to understand the repeated invariant family.
+4. Summarize root conceptual causes into lanes:
+   - product-decision gap
+   - contract-propagation gap
+   - authority-source gap
+   - stale-snapshot / interleaving gap
+   - lifecycle / retry gap
+   - authorization / materialization ordering gap
+   - negative-proof gap
+   - validation freshness gap
+   - slice-boundary gap
+   - ordinary implementation mistake
+5. Convert lanes into concrete changes: issue text, sibling issue addenda, PR template prompts, process docs, skill
+   guidance, or future spec checklist items.
+
+Do not treat all repeated review findings as implementation mistakes. PR #436/#426-style failures are often requirement
+discovery happening inside review; PR #552-style failures are often incomplete stale-authority and lifecycle models. The
+output should say what future issue text would have had to state for the first implementation worker to avoid the loop.

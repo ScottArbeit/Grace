@@ -27,6 +27,8 @@ module private WebhookTestHelpers =
                     ServiceBusTopic = serviceBusTopic
                     ServiceBusServerSubscription = serviceBusServerSubscription
                     ServiceBusTestSubscription = serviceBusTestSubscription
+                    OperationalFactsTopic = operationalFactsTopic
+                    OperationsSqlConnectionString = operationsSqlConnectionString
                 }
             | None ->
                 Assert.Fail("Aspire test host was not started by the shared setup fixture.")

@@ -1,31 +1,103 @@
-# Grace Code Review instructions
 
-This file is intended to be the guidance for GitHub Copilot to perform automated code reviews in Grace PR's.
+# Grace Code Review Instructions
 
-## Code Review instructions
+This file guides automated and human code review for Grace pull requests. Repository-local `AGENTS.md`, nested guidance,
+issue text, and PR body evidence remain authoritative for the specific change.
 
-_note: for now, these instructions are in no particular order, I'm just capturing ideas._
+## Review priority
 
-### F# Standards
+Review should favor correctness, contract alignment, and proof quality over style nits. Do not comment on formatting that
+Fantomas, MarkdownLint, compiler warnings, or existing validation tooling will catch unless the relevant tool is not part
+of the PR validation path.
 
-Rules in this section deal with our use of F# in the codebase, and specify stylistic and syntactical choices we mnight make.
+## F# standards
 
-#### Always use `task { }`; never use `async { }` for asynchronous code.
+### Use `task { }`; do not introduce `async { }`
 
-Older versions of F# used the `async { }` computation expression to write asynchonous code. In fact, the C# `async/await` syntax, which has since been adopted by TypeScript and JavaScript, was inspired by `async { }` in F#.
+Grace code should use the F# `task { }` computation expression for asynchronous code. New `async { }` code should be
+considered an error unless a local file-level instruction explicitly requires it.
 
-The `task { }` computation expression for asynchonous code was added in F# 6.0. `task { }` uses the same stuff from `System.Threading.Tasks` that C# does for `async/await` code, allowing it to take advantage of all of the performance improvements in Tasks that each version of .NET delivers.
+### Preserve correlation IDs for actor calls
 
-Any use of `async { }` in Grace should be considered an error and should be rewritten using `task { }`.
+Actor calls should preserve `CorrelationId` through `RequestContext.Set`. Prefer the ActorProxy extension helpers such as
+`Branch.CreateActorProxy` and `Repository.CreateActorProxy`; inspect direct `IGrainFactory.GetGrain<'T>` usage carefully.
 
-### Internal consistency
+## Spec and issue alignment
 
-Rules in this section are intended to enforce consistent use of utilities and constructs provided by Grace.
+For every PR, compare the diff with the linked issue or spec:
 
-#### All grain references must have the CorrelationId set using RequestContext.Set().
+- required behavior implemented
+- non-goals and forbidden implementation shapes respected
+- owned paths respected or path expansion recorded
+- public behavior under test actually proven
+- residual risk stated honestly
 
-The actors expect to be able to call `RequestContext.Get(Constants.CorrelationId)` to get the CorrelationId when they need it, and so the grain client is responsible for setting the CorrelationId on it by calling `RequestContext.Set(Constants.CorrelationId, <some correlationId>)`.
+Flag accepted inputs, flags, DTO fields, events, or parameters that are accepted but not implemented, not rejected, and
+not explicitly classified as informational.
 
-The easiest way to do this is to use the ActorProxy extensions in ActorProxy.Extensions.Actor.fs. Each of those helper methods - `Branch.CreateActorProxy`, `Repository.CreateActorProxy`, etc. - takes `correlationId` as a parameter. They each set the CorrelationId for you in the RequestContext.
+## Contract propagation
 
-If any grain references are created by calling `IGrainFactory.GetGrain<'TGrainInterface>(key)` without using the ActorProxy extensions, they should be closely inspected to ensure that `RequestContext.Set(Constants.CorrelationId, <some correlationId>)` is called before any use of the grain reference to call a grain interface method. The recommendation is to rewrite the code to use the ActorProxy extensions to eliminate any possibility of an error.
+When any public or durable contract changes, verify all applicable surfaces are updated or waived:
+
+- `Grace.Types` DTOs, commands, events, discriminated unions, serializers, and defaults
+- `Grace.Shared` parameters and helpers
+- server route parsing, validation, authorization, error shape, and route metadata
+- CLI parser, JSON output, stdout/stderr, help, schema, and examples
+- SDK or facade client
+- static OpenAPI and generated clients
+- events, webhooks, SignalR, watch, search, and projections
+- tests, docs, ADRs, and agent guidance
+
+Stale generated artifacts or stale client contracts are review findings even when runtime tests pass.
+
+## Authority, lifecycle, and ordering
+
+Give extra attention to Grace's repeated high-risk surfaces:
+
+- current request body versus durable stored authority
+- current configuration versus recorded placement/route evidence
+- stale status/cache snapshots versus re-read state at mutation time
+- terminal lifecycle states versus retained retry evidence
+- idempotent replay after cleanup, partial success, or process restart
+- authorization before materialization, SAS issuance, publication, search projection, or webhook delivery
+- cleanup/rollback safety when a side effect succeeds but an actor or durable write rejects
+- hidden or unauthorized resources as no-oracle behavior
+
+If a PR makes a decision before a mutation/materialization/publication window, look for a revalidation point immediately
+before the side effect.
+
+## Testing and proof
+
+Prefer findings that identify missing false-positive-resistant proof:
+
+- positive, negative, regression, boundary, replay/retry, and stale-authority coverage
+- tests that would fail if the old unsafe behavior returned
+- authorization and non-observability tests for hidden, missing, or cross-scope resources
+- deterministic runtime tests instead of arbitrary sleeps
+- generated-contract and docs freshness checks when public surfaces change
+- final validation evidence on the current head
+
+## Repeated review cycles
+
+If a PR reaches three substantive review cycles, or two cycles in the same invariant family, recommend stabilization
+rather than another one-off patch. Ask for a review timeline, invariant family, stabilization ledger, focused proof, and
+updates to the linked issue or future sibling issues.
+
+Use these root-cause lanes in review comments or PR evidence:
+
+- product-decision gap
+- contract-propagation gap
+- authority-source gap
+- stale-snapshot / interleaving gap
+- lifecycle / retry gap
+- authorization / materialization ordering gap
+- negative-proof gap
+- validation freshness gap
+- slice-boundary gap
+- ordinary implementation mistake
+
+## Tone
+
+Be specific and actionable. Name the path, the invariant, why it matters, and the smallest proof or code change that
+would close the finding. Avoid speculative rewrites when the issue can be fixed by clarifying the invariant or adding a
+focused guard.

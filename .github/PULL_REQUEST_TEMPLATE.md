@@ -1,3 +1,4 @@
+
 # Pull Request
 
 ## Linked issue
@@ -23,7 +24,10 @@ Closes #
 
 ## Minimum detail gate evidence
 
+- Product decisions accepted/assumed, deferred, or waived:
 - Invariant tuple proved or docs-only waiver:
+- Contract propagation map updated or waived:
+- Stale-authority/revalidation proof or N/A:
 - Forbidden implementation shapes avoided:
 - Positive / negative / regression / boundary tests or waivers:
 - High-risk adversarial examples covered or waived:
@@ -94,13 +98,21 @@ For each Codex Code Review Bot or GitHub review finding fixed in this PR, includ
 
 Root-cause classes:
 
+- product-decision gap
 - acceptance-criteria / negative-proof gap
 - contract-propagation gap
+- authority-source gap
+- stale-snapshot / interleaving gap
+- lifecycle / retry gap
 - CLI mode / side-effect interaction
 - auth / materialization / traversal ordering gap
 - algorithm adversarial-case gap
 - validation / stale-evidence gap
+- slice-boundary gap
 - ordinary implementation mistake
+
+If this PR reaches three substantive review cycles, or two cycles in the same invariant family, post a stabilization
+ledger and update the linked issue or sibling issues before requesting another ordinary review.
 
 ## Rollback or recovery notes
 

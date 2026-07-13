@@ -35,6 +35,7 @@
     <Compile Include="StoragePoolRouting.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />
     <Compile Include="Eventing.Server.Tests.fs" />
+    <Compile Include="OperationalFactsPublisher.Actor.Tests.fs" />
     <Compile Include="Notification.Server.Tests.fs" />
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />
     <Compile Include="PromotionSet.DirectoryHash.Tests.fs" />
