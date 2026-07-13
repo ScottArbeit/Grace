@@ -1744,6 +1744,7 @@ paths:
         - Cache
       summary: Refresh Cache operational facts with a current identity-key proof.
       operationId: RefreshCache
+      security: []
       requestBody:
         required: true
         content:
@@ -1811,6 +1812,7 @@ paths:
         - Cache
       summary: Rotate a Cache identity key after proof by the currently accepted key.
       operationId: RotateCacheKey
+      security: []
       requestBody:
         required: true
         content:

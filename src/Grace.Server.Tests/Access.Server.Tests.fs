@@ -1186,6 +1186,7 @@ open System
 open System.Net
 open System.Net.Http
 open System.Net.Http.Json
+open System.Text
 
 /// Covers endpoint authorization scenarios.
 [<Parallelizable(ParallelScope.All)>]
@@ -1208,6 +1209,20 @@ type EndpointAuthorizationTests() =
     let invalidCacheProof cacheId operation requestDigest =
         CacheRequestProofPayload.Create(cacheId, operation, requestDigest, getCurrentInstant ())
         |> fun payload -> SignedCacheRequestProof.Create(payload, "invalid-signature")
+
+    /// Builds a valid serialized refresh body whose health field is replaced with an undefined numeric value for route-boundary validation.
+    let numericHealthRefreshContent request health =
+        task {
+            use typedContent = createJsonContent request
+            let! typedBody = typedContent.ReadAsStringAsync()
+
+            let numericBody = System.Text.RegularExpressions.Regex.Replace(typedBody, "\\\"Health\\\"\\s*:\\s*\\\"[^\\\"]+\\\"", $"\"Health\":{health}")
+
+            if typedBody = numericBody then
+                invalidOp "Typed Cache refresh JSON did not include a Health field to replace."
+
+            return new StringContent(numericBody, Encoding.UTF8, "application/json")
+        }
 
     /// Grants role needed by authorization-sensitive tests.
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
@@ -1460,6 +1475,19 @@ type EndpointAuthorizationTests() =
 
             let! refreshResponse = unauthenticatedClient.PostAsync("/cache/refresh", createJsonContent refreshRequest)
             Assert.That(refreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! unhealthyRefreshResponse =
+                unauthenticatedClient.PostAsync("/cache/refresh", createJsonContent { refreshRequest with Health = CacheHealthStatus.Unhealthy })
+
+            Assert.That(unhealthyRefreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            for unsupportedHealth in [ 0; 999 ] do
+                let! unsupportedHealthContent = numericHealthRefreshContent refreshRequest unsupportedHealth
+                let! unsupportedHealthResponse = unauthenticatedClient.PostAsync("/cache/refresh", unsupportedHealthContent)
+
+                let! unsupportedHealthBody = unsupportedHealthResponse.Content.ReadAsStringAsync()
+                Assert.That(unsupportedHealthResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+                Assert.That(unsupportedHealthBody, Does.Contain "Health must be Healthy or Unhealthy.")
 
             let invalidKey = { Class = nameof CacheIdentityPublicKey; Algorithm = "ES256"; Curve = "P-256"; PublicKeyX = "invalid"; PublicKeyY = "invalid" }
 

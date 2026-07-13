@@ -249,6 +249,13 @@ module CacheRegistration =
             else
                 Ok()
 
+        /// Returns true only when a Cache health value has a named public and durable meaning.
+        let isDefinedHealth =
+            function
+            | CacheHealthStatus.Healthy
+            | CacheHealthStatus.Unhealthy -> true
+            | _ -> false
+
         /// Validates exact enrollment input before caller authorization or actor mutation.
         let validateEnrollmentRequest (request: CacheEnrollmentRequest) =
             let errors = ResizeArray<string>()
@@ -258,6 +265,9 @@ module CacheRegistration =
             else
                 if request.Class <> nameof CacheEnrollmentRequest then
                     errors.Add("Class must be CacheEnrollmentRequest.")
+
+                if not (isDefinedHealth request.Health) then
+                    errors.Add("Health must be Healthy or Unhealthy.")
 
                 if String.IsNullOrWhiteSpace request.DisplayName then
                     errors.Add("DisplayName is required.")
@@ -301,6 +311,9 @@ module CacheRegistration =
                 if request.Class
                    <> nameof CacheRegistrationRefreshRequest then
                     errors.Add("Class must be CacheRegistrationRefreshRequest.")
+
+                if not (isDefinedHealth request.Health) then
+                    errors.Add("Health must be Healthy or Unhealthy.")
 
                 if request.CacheId = Guid.Empty then errors.Add("CacheId is required.")
                 if isNull (box request.Proof) then errors.Add("Proof is required.")

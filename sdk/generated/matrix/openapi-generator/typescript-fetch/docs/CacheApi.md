@@ -237,11 +237,7 @@ import type { RefreshCacheRequest } from '@grace-vcs/generated-openapi-probe';
 
 async function example() {
   console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
-  const config = new Configuration({ 
-    // Configure HTTP bearer authorization: bearerAuth
-    accessToken: "YOUR BEARER TOKEN",
-  });
-  const api = new CacheApi(config);
+  const api = new CacheApi();
 
   const body = {
     // CacheRegistrationRefreshRequest
@@ -273,7 +269,7 @@ example().catch(console.error);
 
 ### Authorization
 
-[bearerAuth](../README.md#bearerAuth)
+No authorization required
 
 ### HTTP request headers
 
@@ -382,11 +378,7 @@ import type { RotateCacheKeyRequest } from '@grace-vcs/generated-openapi-probe';
 
 async function example() {
   console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
-  const config = new Configuration({ 
-    // Configure HTTP bearer authorization: bearerAuth
-    accessToken: "YOUR BEARER TOKEN",
-  });
-  const api = new CacheApi(config);
+  const api = new CacheApi();
 
   const body = {
     // CacheKeyRotationRequest
@@ -418,7 +410,7 @@ example().catch(console.error);
 
 ### Authorization
 
-[bearerAuth](../README.md#bearerAuth)
+No authorization required
 
 ### HTTP request headers
 

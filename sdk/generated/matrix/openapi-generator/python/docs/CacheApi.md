@@ -247,7 +247,6 @@ Refresh Cache operational facts with a current identity-key proof.
 
 ### Example
 
-* Bearer (JWT) Authentication (bearerAuth):
 
 ```python
 import grace_generated_openapi_probe
@@ -262,15 +261,6 @@ configuration = grace_generated_openapi_probe.Configuration(
     host = "http://localhost:5000"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure Bearer authorization (JWT): bearerAuth
-configuration = grace_generated_openapi_probe.Configuration(
-    access_token = os.environ["BEARER_TOKEN"]
-)
 
 # Enter a context with an instance of the API client
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
@@ -302,7 +292,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[bearerAuth](../README.md#bearerAuth)
+No authorization required
 
 ### HTTP request headers
 
@@ -408,7 +398,6 @@ Rotate a Cache identity key after proof by the currently accepted key.
 
 ### Example
 
-* Bearer (JWT) Authentication (bearerAuth):
 
 ```python
 import grace_generated_openapi_probe
@@ -423,15 +412,6 @@ configuration = grace_generated_openapi_probe.Configuration(
     host = "http://localhost:5000"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure Bearer authorization (JWT): bearerAuth
-configuration = grace_generated_openapi_probe.Configuration(
-    access_token = os.environ["BEARER_TOKEN"]
-)
 
 # Enter a context with an instance of the API client
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
@@ -463,7 +443,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[bearerAuth](../README.md#bearerAuth)
+No authorization required
 
 ### HTTP request headers
 

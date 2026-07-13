@@ -20,6 +20,7 @@ type ClassificationGroup = { Classification: string; Reason: string; TraceIds: s
 type OpenApiRouteCoverageTests() =
 
     let openApiMainPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Main.OpenAPI.yaml"))
+    let cachePathsSourcePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Cache.Paths.OpenAPI.yaml"))
     let openApiBundlePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Grace.OpenAPI.yaml"))
     let openApiProjectionPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Grace.OpenAPI.3.1.2.yaml"))
     let routeClassificationRegistryPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "RouteClassification.json"))
@@ -54,6 +55,17 @@ type OpenApiRouteCoverageTests() =
             let matchItem = openApiVersionRegex.Match(line)
 
             if matchItem.Success then Some matchItem.Groups["version"].Value else None)
+
+    /// Gets one top-level OpenAPI path block from canonical or generated contract text.
+    let getOpenApiPathBlock artifactPath path =
+        let text = File.ReadAllText artifactPath
+        let pathPattern = Regex.Escape path
+        let pathBlock = Regex.Match(text, $"(?ms)^  {pathPattern}:\\s*\\r?\\n(?<block>.*?)(?=^  /|\\z)")
+
+        if not pathBlock.Success then
+            Assert.Fail($"{Path.GetFileName artifactPath} is missing the {path} path block.")
+
+        pathBlock.Groups["block"].Value
 
     /// Exercises OpenAPI paths coverage for the authorization OpenAPI route coverage contract.
     let openApiPaths () =
@@ -239,6 +251,43 @@ type OpenApiRouteCoverageTests() =
             ] do
             assertBundledSchemaIsUnique artifactPath "GetReferencesParameters"
             assertBundledSchemaIsUnique artifactPath "AnnotateParameters"
+
+    /// Verifies proof-only Cache operations override global bearer security in canonical and generated OpenAPI contracts.
+    [<Test>]
+    member _.CacheProofOperationsOverrideBearerSecurityWhileAdministratorOperationsRemainProtected() =
+        let proofOnlyPaths =
+            [
+                "/cache/validation-keys"
+                "/cache/refresh"
+                "/cache/rotate-key"
+            ]
+
+        let administratorPaths =
+            [
+                "/cache/enroll"
+                "/cache/assign-repositories"
+                "/cache/revoke"
+            ]
+
+        for artifactPath in
+            [
+                cachePathsSourcePath
+                openApiBundlePath
+                openApiProjectionPath
+            ] do
+            for path in proofOnlyPaths do
+                Assert.That(
+                    getOpenApiPathBlock artifactPath path,
+                    Does.Contain "      security: []",
+                    $"{Path.GetFileName artifactPath} must publish {path} without inherited bearer authentication."
+                )
+
+            for path in administratorPaths do
+                Assert.That(
+                    getOpenApiPathBlock artifactPath path,
+                    Does.Not.Contain "      security: []",
+                    $"{Path.GetFileName artifactPath} must retain the global bearer requirement for {path}."
+                )
 
     /// Verifies that OpenAPI info version matches current api contract version.
     [<Test>]

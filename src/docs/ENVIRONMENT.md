@@ -250,17 +250,13 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 
 ### Grace Cache Registration
 
-- `grace__cache__registration__enabled`: enables server-side cache registration configuration validation. Default:
-  disabled.
-- `grace__cache__registration__service_principal_ids`: semicolon-delimited OIDC service principal IDs that may register
-  cache services. Do not store client secrets here.
-- `grace__cache__registration__allowed_scopes`: semicolon-delimited server-approved cache registration scopes.
-- `grace__cache__registration__allowed_capabilities`: semicolon-delimited server-approved cache registration
-  capabilities.
+Grace Cache enrollment has no installation-wide service-principal, scope, or capability allowlist settings. A currently
+authorized Grace administrator enrolls each cache for exactly one Owner or Organization and supplies one or more
+explicit repositories within that boundary. The cache creates and retains its private identity key locally; Grace Server
+stores only the corresponding public key for proof-validated runtime refresh and key rotation.
 
 Registered Grace Cache services use a server-owned active lifetime of 2 hours and a refresh-after interval of 1 hour.
-Cache services may request scopes and capabilities during registration, but only server-approved values from the
-configuration above are persisted on the registration record.
+Administrators, not runtime cache refresh, manage repository assignments and other cache administration.
 
 ### Authorization (Bootstrap)
 

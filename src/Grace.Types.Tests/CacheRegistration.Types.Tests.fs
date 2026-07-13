@@ -228,6 +228,56 @@ type CacheRegistrationLifecycleTests() =
             Assert.That(errors, Does.Contain "Owner boundary must not include OrganizationId.")
             Assert.That(errors, Does.Contain "RepositoryScopes must not include duplicate repositories.")
 
+    /// Verifies only the named durable Cache health cases can pass enrollment and refresh validation.
+    [<Test>]
+    member _.``enrollment and refresh accept named health values and reject undefined numeric values``() =
+        let refresh health =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                Health = health
+                SoftwareVersion = "1.0.0"
+                ProtocolVersion = "v1"
+                PrefetchSupported = true
+                ObservedAt = now.Plus(Duration.FromHours 1)
+                Proof =
+                    SignedCacheRequestProof.Create(
+                        CacheRequestProofPayload.Create(cacheId, CacheRegistrationProof.RefreshOperation, "validation-fixture", now),
+                        "validation-fixture"
+                    )
+            }
+
+        for health in
+            [
+                CacheHealthStatus.Healthy
+                CacheHealthStatus.Unhealthy
+            ] do
+            Assert.That(
+                Lifecycle.validateEnrollmentRequest { enrollment [ repositoryId ] with Health = health }
+                |> Result.isOk,
+                Is.True
+            )
+
+            Assert.That(
+                Lifecycle.validateRefreshRequest (refresh health)
+                |> Result.isOk,
+                Is.True
+            )
+
+        for health in
+            [
+                enum<CacheHealthStatus> 0
+                enum<CacheHealthStatus> 999
+            ] do
+            match Lifecycle.validateEnrollmentRequest { enrollment [ repositoryId ] with Health = health } with
+            | Ok () -> Assert.Fail($"Undefined enrollment health value {int health} was accepted.")
+            | Error errors -> Assert.That(errors, Does.Contain "Health must be Healthy or Unhealthy.")
+
+            match Lifecycle.validateRefreshRequest (refresh health) with
+            | Ok () -> Assert.Fail($"Undefined refresh health value {int health} was accepted.")
+            | Error errors -> Assert.That(errors, Does.Contain "Health must be Healthy or Unhealthy.")
+
     [<Test>]
     member _.``cache proof binds CacheId operation request digest timestamp and current P-256 key``() =
         use privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
