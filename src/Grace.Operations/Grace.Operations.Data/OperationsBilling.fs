@@ -727,12 +727,22 @@ module OperationsBillingSql =
     /// Uses the same owner/month lock semantics as preview replacement.
     let AcquireScopeLock = OperationsChargePreviewSql.AcquireScopeLock
 
-    /// Rejects update or delete attempts against append-only ledger rows.
+    /// Rejects mutation of posted entries and initial charge inserts after a period has reached a terminal state.
     let CreateLedgerImmutabilityTrigger =
         """
 CREATE TRIGGER ops.TR_ops_ChargeLedgerEntry_Immutable ON ops.ChargeLedgerEntry
-AFTER UPDATE, DELETE AS
+AFTER INSERT, UPDATE, DELETE AS
 BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted e
+        JOIN ops.BillingPeriod p ON p.BillingPeriodId=e.BillingPeriodId
+        WHERE e.EntryKind=0 AND p.State IN (2,3,4)
+    )
+        THROW 51008, 'Initial charge entries cannot be appended after a billing period is terminal.', 1;
+
+    IF EXISTS (SELECT 1 FROM deleted)
     THROW 51000, 'Charge ledger entries are immutable.', 1;
 END;
 """
@@ -743,30 +753,46 @@ END;
 CREATE TRIGGER ops.TR_ops_RawUsageFact_TerminalBillingProtection ON ops.RawUsageFact
 AFTER UPDATE, DELETE AS
 BEGIN
+    -- UPDATE(column) closes the multi-row swap bypass that set comparison alone cannot distinguish.
+    IF (UPDATE(UsageFactId) OR UPDATE(OwnerId) OR UPDATE(OrganizationId) OR UPDATE(RepositoryId) OR UPDATE(ObservedAtUtc))
+       AND EXISTS
+       (
+           SELECT 1
+           FROM inserted i
+           JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
+             AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3,4)
+       )
+        THROW 51005, 'Terminal billing raw fact source and evidence fields are immutable.', 1;
+
     IF EXISTS
     (
         SELECT 1
         FROM deleted d
-        LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId
-        LEFT JOIN ops.BillingPeriod sourcePeriod ON sourcePeriod.OwnerId=d.OwnerId AND sourcePeriod.OrganizationId=d.OrganizationId AND sourcePeriod.RepositoryId=d.RepositoryId
+        JOIN ops.BillingPeriod sourcePeriod ON sourcePeriod.OwnerId=d.OwnerId AND sourcePeriod.OrganizationId=d.OrganizationId AND sourcePeriod.RepositoryId=d.RepositoryId
           AND d.ObservedAtUtc>=sourcePeriod.PeriodFromUtc AND d.ObservedAtUtc<sourcePeriod.PeriodToUtc AND sourcePeriod.State IN (2,3,4)
-        LEFT JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
+        WHERE EXISTS
+        (
+            SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId,d.StoragePoolId,d.Quantity,d.ObservedAtUtc,d.AcceptedAtUtc,d.CreatedAtUtc
+            EXCEPT
+            SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId,i.StoragePoolId,i.Quantity,i.ObservedAtUtc,i.AcceptedAtUtc,i.CreatedAtUtc
+            FROM inserted i
+        )
+    )
+        THROW 51005, 'Terminal billing raw fact source and evidence fields are immutable.', 1;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted i
+        JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
           AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3,4)
-        WHERE (sourcePeriod.BillingPeriodId IS NOT NULL OR destinationPeriod.BillingPeriodId IS NOT NULL)
-          AND
-          (
-              i.UsageFactId IS NULL
-              OR i.CorrelationId<>d.CorrelationId
-              OR i.FactKind<>d.FactKind
-              OR i.OwnerId<>d.OwnerId
-              OR i.OrganizationId<>d.OrganizationId
-              OR i.RepositoryId<>d.RepositoryId
-              OR i.StoragePoolId<>d.StoragePoolId
-              OR i.Quantity<>d.Quantity
-              OR i.ObservedAtUtc<>d.ObservedAtUtc
-              OR i.AcceptedAtUtc<>d.AcceptedAtUtc
-              OR i.CreatedAtUtc<>d.CreatedAtUtc
-          )
+        WHERE EXISTS
+        (
+            SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId,i.StoragePoolId,i.Quantity,i.ObservedAtUtc,i.AcceptedAtUtc,i.CreatedAtUtc
+            EXCEPT
+            SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId,d.StoragePoolId,d.Quantity,d.ObservedAtUtc,d.AcceptedAtUtc,d.CreatedAtUtc
+            FROM deleted d
+        )
     )
         THROW 51005, 'Terminal billing raw fact source and evidence fields are immutable.', 1;
 END;
@@ -778,6 +804,92 @@ END;
 CREATE TRIGGER ops.TR_ops_BillingPeriod_PermanentFailureProtection ON ops.BillingPeriod
 AFTER UPDATE, DELETE AS
 BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM deleted d
+        JOIN inserted i ON i.BillingPeriodId=d.BillingPeriodId
+        WHERE d.State IN (0,1) AND i.State IN (2,3,4)
+          AND
+          (
+              d.State<>1
+              OR i.State=3
+              OR
+              (
+                  i.State=2
+                  AND
+                  (
+                      i.ClosedAtUtc IS NULL
+                      OR i.CloseInitiatedByPrincipalId IS NULL
+                      OR i.CloseReasonCode IS NULL
+                      OR i.CloseReasonText IS NULL
+                      OR i.CloseCorrelationId IS NULL
+                      OR i.CloseBlockedCode IS NOT NULL
+                      OR i.CloseBlockedDetail IS NOT NULL
+                      OR i.LastCloseAttemptAtUtc IS NULL
+                      OR i.PermanentFailureCode IS NOT NULL
+                      OR i.PermanentFailureDetail IS NOT NULL
+                      OR i.PermanentlyFailedAtUtc IS NOT NULL
+                      OR i.PermanentFailureInitiatedByPrincipalId IS NOT NULL
+                      OR i.PermanentFailureReasonCode IS NOT NULL
+                      OR i.PermanentFailureReasonText IS NOT NULL
+                      OR i.PermanentFailureCorrelationId IS NOT NULL
+                      OR NOT EXISTS(SELECT 1 FROM ops.ChargePreviewFreshness f WHERE f.BillingPeriodId=i.BillingPeriodId)
+                      OR EXISTS
+                      (
+                          SELECT 1
+                          FROM ops.ChargePreviewLine l
+                          WHERE l.OwnerId=i.OwnerId AND l.OrganizationId=i.OrganizationId AND l.RepositoryId=i.RepositoryId
+                            AND l.PeriodFromUtc=i.PeriodFromUtc AND l.PeriodToUtc=i.PeriodToUtc
+                            AND NOT EXISTS
+                            (
+                                SELECT 1
+                                FROM ops.ChargeLedgerEntry e
+                                WHERE e.BillingPeriodId=i.BillingPeriodId AND e.EntryKind=0 AND e.SourceChargePreviewLineId=l.ChargePreviewLineId
+                            )
+                      )
+                      OR EXISTS
+                      (
+                          SELECT 1
+                          FROM ops.ChargeLedgerEntry e
+                          WHERE e.BillingPeriodId=i.BillingPeriodId AND e.EntryKind=0
+                            AND NOT EXISTS
+                            (
+                                SELECT 1
+                                FROM ops.ChargePreviewLine l
+                                WHERE l.ChargePreviewLineId=e.SourceChargePreviewLineId
+                                  AND l.OwnerId=i.OwnerId AND l.OrganizationId=i.OrganizationId AND l.RepositoryId=i.RepositoryId
+                                  AND l.PeriodFromUtc=i.PeriodFromUtc AND l.PeriodToUtc=i.PeriodToUtc
+                            )
+                      )
+                  )
+              )
+              OR
+              (
+                  i.State=4
+                  AND
+                  (
+                      i.ClosedAtUtc IS NOT NULL
+                      OR i.CloseInitiatedByPrincipalId IS NOT NULL
+                      OR i.CloseReasonCode IS NOT NULL
+                      OR i.CloseReasonText IS NOT NULL
+                      OR i.CloseCorrelationId IS NOT NULL
+                      OR i.CloseBlockedCode IS NOT NULL
+                      OR i.CloseBlockedDetail IS NOT NULL
+                      OR i.LastCloseAttemptAtUtc IS NULL
+                      OR i.PermanentFailureCode<>N'CalculationOverflow'
+                      OR i.PermanentFailureDetail IS NULL
+                      OR i.PermanentlyFailedAtUtc IS NULL
+                      OR i.PermanentFailureInitiatedByPrincipalId IS NULL
+                      OR i.PermanentFailureReasonCode IS NULL
+                      OR i.PermanentFailureReasonText IS NULL
+                      OR i.PermanentFailureCorrelationId IS NULL
+                  )
+              )
+          )
+    )
+        THROW 51007, 'Terminal billing transitions require complete immutable close, correction, or permanent-failure evidence.', 1;
+
     IF EXISTS
     (
         SELECT 1
@@ -862,7 +974,7 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM (SELECT OwnerId,OrganizationId,RepositoryId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT OwnerId,OrganizationId,RepositoryId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d
         JOIN ops.BillingPeriod p ON p.OwnerId=d.OwnerId AND p.OrganizationId=d.OrganizationId AND p.RepositoryId=d.RepositoryId
-          AND p.State IN (2,3) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc))
+          AND p.State IN (2,3,4) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc))
         THROW 51001, 'Pricing assignment overlaps immutable billing history.', 1;
 END;
 GO
@@ -873,7 +985,7 @@ BEGIN
         FROM (SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d
         JOIN ops.PricingAssignment a ON a.PricingPlanId=d.PricingPlanId
         JOIN ops.BillingPeriod p ON p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId
-          AND p.State IN (2,3) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)
+          AND p.State IN (2,3,4) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)
         WHERE a.EffectiveFromUtc < p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc > p.PeriodFromUtc))
         THROW 51002, 'Pricing plan overlaps immutable billing history.', 1;
 END;
@@ -885,7 +997,7 @@ BEGIN
         FROM (SELECT FactKind,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT FactKind,EffectiveFromUtc,EffectiveToUtc FROM deleted) d
         JOIN ops.RawUsageFact f ON f.FactKind=d.FactKind
         JOIN ops.BillingPeriod p ON p.OwnerId=f.OwnerId AND p.OrganizationId=f.OrganizationId AND p.RepositoryId=f.RepositoryId
-          AND p.State IN (2,3) AND f.ObservedAtUtc>=p.PeriodFromUtc AND f.ObservedAtUtc<p.PeriodToUtc
+          AND p.State IN (2,3,4) AND f.ObservedAtUtc>=p.PeriodFromUtc AND f.ObservedAtUtc<p.PeriodToUtc
         WHERE d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc))
         THROW 51003, 'Billable usage-kind mapping overlaps immutable billing history.', 1;
 END;
@@ -896,7 +1008,7 @@ BEGIN
         SELECT 1 FROM (SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d
         JOIN ops.PricingAssignment a ON a.PricingPlanId=d.PricingPlanId
         JOIN ops.BillingPeriod p ON p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId
-          AND p.State IN (2,3) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)
+          AND p.State IN (2,3,4) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)
         WHERE a.EffectiveFromUtc < p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc > p.PeriodFromUtc))
         THROW 51004, 'Pricing rate overlaps immutable billing history.', 1;
 END;

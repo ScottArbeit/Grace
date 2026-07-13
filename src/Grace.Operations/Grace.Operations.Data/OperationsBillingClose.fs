@@ -1183,11 +1183,42 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
 
                 use connection = new SqlConnection(connectionString)
                 do! connection.OpenAsync(cancellationToken)
+                // The preliminary read is intentionally outside the serializable transaction, so routing holds no RawUsageFact lock before the shared scope lock.
+                use preliminaryScope = connection.CreateCommand()
+
+                preliminaryScope.CommandText <-
+                    "SELECT OwnerId,OrganizationId,RepositoryId,ObservedAtUtc FROM ops.RawUsageFact WITH(READUNCOMMITTED) WHERE UsageFactId=@UsageFactId;"
+
+                add preliminaryScope "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
+                use! preliminaryScopeReader = preliminaryScope.ExecuteReaderAsync(cancellationToken)
+                let! foundStoredFact = preliminaryScopeReader.ReadAsync(cancellationToken)
+
+                if not foundStoredFact then
+                    invalidOp "Accepted late-fact routing requires the persisted raw usage fact."
+
+                let preliminaryOwnerId = preliminaryScopeReader.GetGuid(0)
+                let preliminaryOrganizationId = preliminaryScopeReader.GetGuid(1)
+                let preliminaryRepositoryId = preliminaryScopeReader.GetGuid(2)
+                let preliminaryObservedAtUtc = utcFromSql (preliminaryScopeReader.GetDateTime(3))
+                do! preliminaryScopeReader.CloseAsync()
+                let preliminaryFromUtc, preliminaryToUtc = BillingPeriodRules.monthContaining preliminaryObservedAtUtc
+
+                let scope: BillingPeriodScope =
+                    {
+                        OwnerId = preliminaryOwnerId
+                        OrganizationId = preliminaryOrganizationId
+                        RepositoryId = preliminaryRepositoryId
+                        PeriodFromUtc = preliminaryFromUtc
+                        PeriodToUtc = preliminaryToUtc
+                    }
+
                 use! rawTransaction = connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
                 use transaction = rawTransaction :?> SqlTransaction
 
                 try
-                    // The persisted fact wins on replay so a conflicting delivery cannot target another period or poison correction work.
+                    do! lockScope connection transaction scope cancellationToken
+
+                    // The locking reread proves the persisted fact stayed in the scope whose application lock this transaction owns.
                     use storedFact = connection.CreateCommand()
                     storedFact.Transaction <- transaction
 
@@ -1196,9 +1227,9 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
 
                     add storedFact "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
                     use! storedFactReader = storedFact.ExecuteReaderAsync(cancellationToken)
-                    let! foundStoredFact = storedFactReader.ReadAsync(cancellationToken)
+                    let! foundLockedStoredFact = storedFactReader.ReadAsync(cancellationToken)
 
-                    if not foundStoredFact then
+                    if not foundLockedStoredFact then
                         invalidOp "Accepted late-fact routing requires the persisted raw usage fact."
 
                     let storedOwnerId = storedFactReader.GetGuid(0)
@@ -1207,6 +1238,13 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                     let storedObservedAtUtc = utcFromSql (storedFactReader.GetDateTime(3))
                     do! storedFactReader.CloseAsync()
                     let fromUtc, toUtc = BillingPeriodRules.monthContaining storedObservedAtUtc
+
+                    if storedOwnerId <> scope.OwnerId
+                       || storedOrganizationId <> scope.OrganizationId
+                       || storedRepositoryId <> scope.RepositoryId
+                       || fromUtc <> scope.PeriodFromUtc
+                       || toUtc <> scope.PeriodToUtc then
+                        invalidOp "Accepted late-fact scope changed before its owner/month lock was acquired; retry routing from the persisted fact."
 
                     if ownerId <> storedOwnerId
                        || organizationId <> storedOrganizationId
@@ -1217,16 +1255,6 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                             $"Accepted late-fact replay scope conflicted with persisted UsageFactId {usageFactId:D}; persisted owner and observed month were used."
                         )
 
-                    let scope: BillingPeriodScope =
-                        {
-                            OwnerId = storedOwnerId
-                            OrganizationId = storedOrganizationId
-                            RepositoryId = storedRepositoryId
-                            PeriodFromUtc = fromUtc
-                            PeriodToUtc = toUtc
-                        }
-
-                    do! lockScope connection transaction scope cancellationToken
                     // Existing period routing is assignment-independent, so deleted or stale assignments cannot drop late facts.
                     use enqueue = connection.CreateCommand()
                     enqueue.Transaction <- transaction

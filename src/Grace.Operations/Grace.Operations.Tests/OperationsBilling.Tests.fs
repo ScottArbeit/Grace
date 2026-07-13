@@ -357,8 +357,8 @@ type OperationsBillingTests() =
             Action (fun () ->
                 Assert.That(billingSource, Does.Contain("TR_ops_RawUsageFact_TerminalBillingProtection"))
                 Assert.That(billingSource, Does.Contain("AFTER UPDATE, DELETE"))
-                Assert.That(billingSource, Does.Contain("i.CorrelationId<>d.CorrelationId"))
-                Assert.That(billingSource, Does.Contain("i.AcceptedAtUtc<>d.AcceptedAtUtc"))
+                Assert.That(billingSource, Does.Contain("SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId"))
+                Assert.That(billingSource, Does.Contain("SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId"))
                 Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
                 Assert.That(billingSource, Does.Contain("TR_ops_BillingPeriod_PermanentFailureProtection"))
                 Assert.That(closeSource, Does.Contain("SAVE TRANSACTION BillingCloseFinalPreview"))
@@ -422,6 +422,7 @@ type OperationsBillingTests() =
         let migrationWorkShape = propertyShape migration (typeof<BillingCorrectionWorkEntity>)
         let snapshotWorkShape = propertyShape snapshot (typeof<BillingCorrectionWorkEntity>)
         let runtimeWorkShape = propertyShape runtime (typeof<BillingCorrectionWorkEntity>)
+        let migrationScript = (context.GetService<IMigrator>()).GenerateScript()
 
         Assert.Multiple(
             Action (fun () ->
@@ -437,7 +438,7 @@ type OperationsBillingTests() =
                 // SQL-bypass: both the original and destination scopes participate, while raw-payload lifecycle changes remain permitted.
                 Assert.That(billingSource, Does.Contain("sourcePeriod.OwnerId=d.OwnerId"))
                 Assert.That(billingSource, Does.Contain("destinationPeriod.OwnerId=i.OwnerId"))
-                Assert.That(billingSource, Does.Contain("sourcePeriod.BillingPeriodId IS NOT NULL OR destinationPeriod.BillingPeriodId IS NOT NULL"))
+                Assert.That(billingSource, Does.Contain("SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId"))
                 Assert.That(billingSource, Does.Contain("sourcePeriod.State IN (2,3,4)"))
                 Assert.That(billingSource, Does.Contain("destinationPeriod.State IN (2,3,4)"))
                 Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
@@ -473,6 +474,100 @@ type OperationsBillingTests() =
                 Assert.That((migrationWorkShape = snapshotWorkShape), Is.True)
                 Assert.That((snapshotWorkShape = runtimeWorkShape), Is.True)
 
-                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("CK_ops_BillingCorrectionWork_PermanentFailure"))
-                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("sourcePeriod.State IN (2,3,4)")))
+                Assert.That(migrationScript, Does.Contain("CK_ops_BillingCorrectionWork_PermanentFailure"))
+                Assert.That(migrationScript, Does.Contain("sourcePeriod.State IN (2,3,4)")))
+        )
+
+    /// Proves the session-six routine stabilization preserves one raw-fact lock order and closes the remaining SQL-bypass paths.
+    [<Test>]
+    member _.SessionSixRoutineStabilizationGuardsAreDurable() =
+        let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
+        let billingSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBilling.fs"))
+        let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+
+        let migrationSource =
+            File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260713130000_StabilizeBillingCorrectionWorkFailure.fs"))
+
+        let snapshotSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "OperationsDbContextModelSnapshot.fs"))
+        let docs = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "MIGRATIONS.md"))
+
+        use context =
+            OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingSessionSixModel;Integrated Security=true;"
+
+        let migrationScript = (context.GetService<IMigrator>()).GenerateScript()
+
+        let routingStart = closeSource.IndexOf("member _.RecordAcceptedLateFactAsync", StringComparison.Ordinal)
+
+        let preliminaryReadIndex = closeSource.IndexOf("WITH(READUNCOMMITTED) WHERE UsageFactId=@UsageFactId", routingStart, StringComparison.Ordinal)
+
+        let scopeLockIndex = closeSource.IndexOf("do! lockScope connection transaction scope cancellationToken", routingStart, StringComparison.Ordinal)
+
+        let rawFactUpdateLockIndex = closeSource.IndexOf("WITH(UPDLOCK,HOLDLOCK) WHERE UsageFactId=@UsageFactId", routingStart, StringComparison.Ordinal)
+
+        Assert.Multiple(
+            Action (fun () ->
+                // Interleaving: a lock-free preliminary read is revalidated only after the shared owner/month app lock.
+                Assert.That(routingStart, Is.GreaterThanOrEqualTo(0))
+                Assert.That(preliminaryReadIndex, Is.GreaterThan(routingStart))
+                Assert.That(scopeLockIndex, Is.GreaterThan(preliminaryReadIndex))
+                Assert.That(rawFactUpdateLockIndex, Is.GreaterThan(scopeLockIndex))
+                Assert.That(closeSource, Does.Contain("scope changed before its owner/month lock was acquired; retry routing from the persisted fact"))
+                Assert.That(closeSource, Does.Contain("WHERE NOT EXISTS(SELECT 1 FROM ops.BillingCorrectionWork WITH(UPDLOCK,HOLDLOCK)"))
+
+                // SQL bypass: a terminal destination must have an unchanged source tuple, including its usage-fact identifier.
+                Assert.That(billingSource, Does.Contain("SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId"))
+
+                Assert.That(
+                    billingSource,
+                    Does.Contain("EXCEPT\n            SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId")
+                )
+
+                Assert.That(
+                    billingSource,
+                    Does.Contain("UPDATE(UsageFactId) OR UPDATE(OwnerId) OR UPDATE(OrganizationId) OR UPDATE(RepositoryId) OR UPDATE(ObservedAtUtc)")
+                )
+
+                Assert.That(billingSource, Does.Not.Contain("LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId"))
+                Assert.That(billingSource, Does.Contain("destinationPeriod.State IN (2,3,4)"))
+                Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
+
+                // Direct Open/Provisional terminal transitions require the service's final-preview, ledger, or permanent-failure evidence.
+                Assert.That(billingSource, Does.Contain("d.State IN (0,1) AND i.State IN (2,3,4)"))
+                Assert.That(billingSource, Does.Contain("FROM ops.ChargePreviewFreshness f WHERE f.BillingPeriodId=i.BillingPeriodId"))
+                Assert.That(billingSource, Does.Contain("e.EntryKind=0 AND e.SourceChargePreviewLineId=l.ChargePreviewLineId"))
+                Assert.That(billingSource, Does.Contain("i.PermanentFailureCode<>N'CalculationOverflow'"))
+
+                Assert.That(
+                    billingSource,
+                    Does.Contain("Terminal billing transitions require complete immutable close, correction, or permanent-failure evidence.")
+                )
+
+                // Pricing evidence remains frozen for all terminal states, but non-overlapping future maintenance remains outside every trigger predicate.
+                Assert.That(billingSource, Does.Contain("p.State IN (2,3,4)"))
+
+                Assert.That(
+                    billingSource,
+                    Does.Contain("d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)")
+                )
+
+                // Initial posting remains legal before terminal transition, while post-terminal initial charges fail and correction entries remain append-only.
+                Assert.That(billingSource, Does.Contain("AFTER INSERT, UPDATE, DELETE AS"))
+                Assert.That(billingSource, Does.Contain("WHERE e.EntryKind=0 AND p.State IN (2,3,4)"))
+                Assert.That(billingSource, Does.Contain("IF EXISTS (SELECT 1 FROM deleted)"))
+
+                // Upgrade migration refreshes every changed trigger while the unchanged literal model snapshot remains the reviewed schema shape.
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable"))
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection"))
+                Assert.That(migrationSource, Does.Contain("migrationBuilder.Sql(OperationsBillingSql.CreateLedgerImmutabilityTrigger)"))
+                Assert.That(migrationSource, Does.Contain("OperationsBillingSql.CreateHistoricalPricingProtectionTriggers.Split"))
+                Assert.That(snapshotSource, Does.Contain("PermanentlyFailedAtUtc"))
+                Assert.That(docs, Does.Contain("Key-changing direct SQL cannot move a fact into terminal history"))
+                Assert.That(migrationScript, Does.Contain("Initial charge entries cannot be appended after a billing period is terminal."))
+
+                Assert.That(
+                    migrationScript,
+                    Does.Contain("Terminal billing transitions require complete immutable close, correction, or permanent-failure evidence.")
+                )
+
+                Assert.That(migrationScript, Does.Contain("p.State IN (2,3,4)")))
         )

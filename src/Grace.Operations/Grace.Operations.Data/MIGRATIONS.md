@@ -30,9 +30,10 @@ The ingestion hot path still uses reviewed raw SQL for the durable insert and ag
 - `ChargeLedgerEntry` is append-only. Corrections append signed adjustments or reversals with complete assignment, plan,
   mapping, rate, unit, effective-window, correlation, and prior-entry provenance. Automatic late-fact work is uniquely
   identified by period and `UsageFactId`, so repeated delivery is isolated and idempotent.
-- The schema blocks direct `UPDATE` or `DELETE` of ledger entries. Historical pricing plan, usage-kind mapping,
-  assignment, and rate inserts, updates, and deletes are blocked when their half-open effective windows intersect a
-  `Closed` or `Corrected` owner-scoped period, including a zero-usage period. Future-effective pricing remains allowed.
+- The schema blocks direct `UPDATE` or `DELETE` of ledger entries and rejects new initial-charge entries after a period
+  is terminal. Historical pricing plan, usage-kind mapping, assignment, and rate inserts, updates, and deletes are
+  blocked when their half-open effective windows intersect a `Closed`, `Corrected`, or `PermanentlyFailed` owner-scoped
+  period, including a zero-usage period. Future-effective pricing remains allowed.
 - Active rejected usage evidence is bounded and scoped by owner/org/repository/month when available. The first active
   non-empty `UsageFactId` failure is canonical; later conflicting rejects settle without replacing its scope. Acceptance
   or explicit repair resolves that bounded conflict evidence.
@@ -44,11 +45,13 @@ The ingestion hot path still uses reviewed raw SQL for the durable insert and ag
   Grace never inserts or mutates historical pricing to settle it. Manual adjustments and reversals validate their complete
   owner-scoped pricing grain and any requested predecessor before appending immutable history.
 - `20260713120000_StabilizeBillingPeriodCloseLedger` protects the raw billing source and evidence fields of every
-  `Closed` or `Corrected` period at the SQL boundary. `RawPayload` and archive, retention, rehydration, and
-  archive-failure metadata remain operable so the existing hot/cold archive lifecycle can complete. The migration also
-  adds `PermanentlyFailed` (`State = 4`) for deterministic calculation overflow. It records bounded code, detail,
-  timestamp, and provenance, cannot return to ordinary close or correction processing, and has no replacement or
-  settlement behavior in this leaf; that separately tracked outcome belongs to #715.
+  terminal period at the SQL boundary. Key-changing direct SQL cannot move a fact into terminal history, and direct
+  terminal state changes require the same immutable close, correction, or permanent-failure evidence as the service.
+  `RawPayload` and archive, retention, rehydration, and archive-failure metadata remain operable so the existing
+  hot/cold archive lifecycle can complete. The migration also adds `PermanentlyFailed` (`State = 4`) for deterministic
+  calculation overflow. It records bounded code, detail, timestamp, and provenance, cannot return to ordinary close or
+  correction processing, and has no replacement or settlement behavior in this leaf; that separately tracked outcome
+  belongs to #715.
 - Routine billing materialization reads only the current UTC calendar month and two preceding UTC months for pricing
   assignments and accepted raw facts. Existing nonterminal periods, unfinished explicit correction work, and active
   scoped ingestion-failure evidence are independently selected, including scopes older than the rolling window. Older

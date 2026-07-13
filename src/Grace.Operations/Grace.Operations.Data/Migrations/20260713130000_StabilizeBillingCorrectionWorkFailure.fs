@@ -11,7 +11,7 @@ open System
 type StabilizeBillingCorrectionWorkFailure() =
     inherit Migration()
 
-    /// Adds permanent correction-work evidence and recreates terminal guards for upgraded Operations databases.
+    /// Adds permanent correction-work evidence and refreshes every billing guard affected by the terminal invariant matrix.
     override _.Up(migrationBuilder: MigrationBuilder) =
         migrationBuilder.Sql(
             """
@@ -29,9 +29,22 @@ ALTER TABLE ops.BillingCorrectionWork ADD PermanentlyFailedAtUtc datetime2(7) NU
     );
 DROP TRIGGER IF EXISTS ops.TR_ops_BillingPeriod_PermanentFailureProtection;
 DROP TRIGGER IF EXISTS ops.TR_ops_RawUsageFact_TerminalBillingProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable;
+DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_PricingAssignment_HistoricalProtection;
 """
         )
         |> ignore
+
+        migrationBuilder.Sql(OperationsBillingSql.CreateLedgerImmutabilityTrigger)
+        |> ignore
+
+        OperationsBillingSql.CreateHistoricalPricingProtectionTriggers.Split([| "GO" |], StringSplitOptions.RemoveEmptyEntries)
+        |> Array.map (fun statement -> statement.Trim())
+        |> Array.filter (fun statement -> not (String.IsNullOrWhiteSpace(statement)))
+        |> Array.iter (fun statement -> migrationBuilder.Sql(statement) |> ignore)
 
         migrationBuilder.Sql(OperationsBillingSql.CreateTerminalRawUsageFactProtectionTrigger)
         |> ignore
@@ -45,11 +58,24 @@ DROP TRIGGER IF EXISTS ops.TR_ops_RawUsageFact_TerminalBillingProtection;
             """
 DROP TRIGGER IF EXISTS ops.TR_ops_BillingPeriod_PermanentFailureProtection;
 DROP TRIGGER IF EXISTS ops.TR_ops_RawUsageFact_TerminalBillingProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable;
+DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection;
+DROP TRIGGER IF EXISTS ops.TR_ops_PricingAssignment_HistoricalProtection;
 ALTER TABLE ops.BillingCorrectionWork DROP CONSTRAINT CK_ops_BillingCorrectionWork_PermanentFailure;
 ALTER TABLE ops.BillingCorrectionWork DROP COLUMN PermanentlyFailedAtUtc;
 """
         )
         |> ignore
+
+        migrationBuilder.Sql(OperationsBillingSql.CreateLedgerImmutabilityTrigger)
+        |> ignore
+
+        OperationsBillingSql.CreateHistoricalPricingProtectionTriggers.Split([| "GO" |], StringSplitOptions.RemoveEmptyEntries)
+        |> Array.map (fun statement -> statement.Trim())
+        |> Array.filter (fun statement -> not (String.IsNullOrWhiteSpace(statement)))
+        |> Array.iter (fun statement -> migrationBuilder.Sql(statement) |> ignore)
 
         migrationBuilder.Sql(OperationsBillingSql.CreateTerminalRawUsageFactProtectionTrigger)
         |> ignore
