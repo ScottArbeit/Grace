@@ -900,7 +900,7 @@ module WatchTests =
             Watch.localObservationCandidateSnapshotForWatchTests ()
             |> should equal Array.empty<Watch.WatchObservationCandidate>)
 
-    /// Verifies same-path file and directory replacements retain removal evidence without directory subtree expansion.
+    /// Verifies same-path file and directory replacements transfer stale file work into final directory subtree work.
     [<Test>]
     let ``local observation candidate replacements retain old kind removal and final kind work`` () =
         let verifyFileToDirectory () =
@@ -914,10 +914,18 @@ module WatchTests =
                 Watch.setLocalObservationCandidateSchedulingForWatchTests true
                 clearWatchIgnoreEntries ()
                 File.WriteAllText(fullPath, "old file")
+                Watch.OnChanged(changedEvent fullPath)
+
+                (Watch.pendingWatchWorkSnapshotForTests ())
+                    .FilesToProcess
+                |> should equal [| fullPath |]
+
                 File.Delete(fullPath)
                 Watch.OnDeleted(deletedEvent fullPath)
 
                 Directory.CreateDirectory(fullPath) |> ignore
+                let retainedFile = Path.Combine(fullPath, "retained.txt")
+                File.WriteAllText(retainedFile, "retained after replacement")
 
                 Watch.OnCreated(createdEvent fullPath)
 
@@ -926,10 +934,76 @@ module WatchTests =
                 pending.StatusUpdateTriggers
                 |> should equal [| relativePath |]
 
+                pending.FilesToProcess
+                |> should equal [| retainedFile |]
+
+                Watch.pendingFileStabilizationAttemptsForWatchTests fullPath
+                |> should equal None
+
                 Directory.Exists(fullPath) |> should equal true
 
                 Watch.localObservationCandidateSnapshotForWatchTests ()
-                |> should equal Array.empty<Watch.WatchObservationCandidate>)
+                |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+                /// Tracks the retained nested file upload so the final directory outcome cannot depend on a second callback.
+                let mutable uploadCalls = 0
+                /// Tracks the normalized status differences so replacement ownership proves the complete final state exactly once.
+                let mutable observedDifferences = List<FileSystemDifference>()
+
+                /// Reads status needed by the test scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Records the stable retained-file identity that the storage seam would make available to status application.
+                let recordRetainedUpload filePath =
+                    match (Services.createLocalFileVersion (FileInfo(filePath))).GetAwaiter().GetResult() with
+                    | Some localFileVersion -> Watch.recordUploadedFileVersionForWatchTests localFileVersion.ToFileVersion
+                    | None -> Assert.Fail($"Expected a local file version for {filePath}.")
+                /// Builds upload test data used to exercise CLI watch behavior.
+                let upload _ filePath =
+                    uploadCalls <- uploadCalls + 1
+                    recordRetainedUpload filePath
+                    Task.FromResult(())
+                /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+                let updateGraceStatus status _ = Task.FromResult(Some status)
+                /// Fails the test if healthy directory processing attempts a repository scan instead of its bounded observation seam.
+                let scanForDifferences _ : Task<List<FileSystemDifference>> =
+                    raise (InvalidOperationException("Healthy directory processing must not scan for differences."))
+                /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+                let updateGraceStatusFromDifferences status differences _ =
+                    observedDifferences <- differences
+                    Task.FromResult(Some status)
+                /// Builds apply incremental test data used to exercise CLI watch behavior.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Builds update ipc test data used to exercise CLI watch behavior.
+                let updateIpc _ _ = Task.FromResult(())
+
+                let processPendingWork () =
+                    (Watch.processChangedFilesWithClients
+                        readStatus
+                        readStatus
+                        upload
+                        updateGraceStatus
+                        scanForDifferences
+                        updateGraceStatusFromDifferences
+                        applyIncremental
+                        updateIpc)
+                        .GetAwaiter()
+                        .GetResult()
+
+                processPendingWork ()
+                processPendingWork ()
+
+                uploadCalls |> should equal 1
+
+                observedDifferences
+                |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+                |> Seq.toArray
+                |> should
+                    equivalent
+                    [|
+                        DifferenceType.Delete, FileSystemEntryType.File, relativePath
+                        DifferenceType.Add, FileSystemEntryType.Directory, relativePath
+                        DifferenceType.Add, FileSystemEntryType.File, $"{relativePath}/retained.txt"
+                    |])
 
         let verifyDirectoryToFile () =
             withTempRepo (fun root ->
@@ -11530,6 +11604,7 @@ module WatchTests =
 
             Directory.CreateDirectory(directoryPath) |> ignore
             Directory.SetLastWriteTimeUtc(directoryPath, DateTime.UtcNow.AddMinutes(1.0))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
             Watch.OnChanged(changedEvent directoryPath)
 
             /// Reads status needed by the test scenario.
@@ -11694,9 +11769,9 @@ module WatchTests =
                     DifferenceType.Add, FileSystemEntryType.Directory, newRelativePath
                 |])
 
-    /// Verifies that a renamed directory enumerates only its subtree and keeps empty child directories.
+    /// Verifies that a parent-only renamed-directory candidate enumerates only its subtree and keeps empty child directories.
     [<Test>]
-    let ``renamed subtree preserves empty child directory adds without root scan`` () =
+    let ``parent-only renamed directory candidate preserves nested files and empty child directory adds without root scan`` () =
         withTempRepo (fun root ->
             let oldRelativePath = "old-assets"
             let newRelativePath = "new-assets"
@@ -11726,6 +11801,7 @@ module WatchTests =
 
             File.WriteAllText(filePath, "renamed subtree content")
             Watch.setGraceStatusForWatchTests status
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
             Watch.OnRenamed(renamedEvent oldPath newPath)
 
             /// Reads status needed by the test scenario.
