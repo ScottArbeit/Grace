@@ -264,16 +264,30 @@ module Watch =
     /// Evaluates is check requested against parsed options and command state.
     let isCheckRequested (parseResult: ParseResult) = parseResult.GetValue(Options.check)
 
-    /// Defines structured data exchanged by CLI helpers.
-    type private PendingFileWorkSnapshot = { FullPath: string; Generation: int64 }
+    /// Holds one file-content candidate together with the Watch identity and bounded stabilization state that owns it.
+    type private PendingFileWorkSnapshot =
+        {
+            FullPath: string
+            Generation: int64
+            BranchId: BranchId
+            RootDirectory: string
+            StabilizationAttempts: int
+            RetryNotBeforeUtc: DateTime
+        }
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
     /// The generation lets a same-path change observed during an upload remain queued after the upload removes only
     /// the snapshot it processed.
-    let private filesToProcess = ConcurrentDictionary<string, int64>()
+    let private filesToProcess = ConcurrentDictionary<string, PendingFileWorkSnapshot>()
 
     let mutable private fileUploadWorkGeneration = 0L
+
+    /// Bounds local file identity attempts so an unreadable or changing path cannot keep healthy incremental mode alive indefinitely.
+    let private stableFileIdentityMaximumAttempts = 3
+
+    /// Supplies deterministic time to file stabilization so tests can advance retry eligibility without sleeping.
+    let mutable private stableFileIdentityNowForWatch = fun () -> DateTime.UtcNow
 
     /// Holds a list of the created or changed directories that we need to process, as determined by the FileSystemWatcher.
     ///
@@ -1903,7 +1917,19 @@ module Watch =
         if not shouldIgnore then
             let generation = Interlocked.Increment(&fileUploadWorkGeneration)
 
-            filesToProcess.AddOrUpdate(fullPath, generation, (fun _ _ -> generation))
+            let pendingFileWork =
+                {
+                    FullPath = fullPath
+                    Generation = generation
+                    BranchId = Current().BranchId
+                    RootDirectory =
+                        Path.GetFullPath(Current().RootDirectory)
+                        |> Path.TrimEndingDirectorySeparator
+                    StabilizationAttempts = 0
+                    RetryNotBeforeUtc = stableFileIdentityNowForWatch ()
+                }
+
+            filesToProcess.AddOrUpdate(fullPath, pendingFileWork, (fun _ _ -> pendingFileWork))
             |> ignore
 
             true
@@ -2008,9 +2034,9 @@ module Watch =
 
     /// Reads remove pending file upload data needed by the command workflow without changing remote state.
     let private removePendingFileUpload filePath =
-        let mutable generation = 0L
+        let mutable pendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
 
-        filesToProcess.TryRemove(filePath, &generation)
+        filesToProcess.TryRemove(filePath, &pendingFile)
 
     /// Cancels pending upload work covered by a delete or rename-old path before status observes the disappearance.
     let private cancelPendingUploadsForDeletedPath fullPath =
@@ -2218,12 +2244,12 @@ module Watch =
     /// Moves currently queued watch observations out of the trusted incremental path after confidence is lost.
     let private quarantinePendingWatchWork reason =
         let mutable quarantinedCount = 0
-        let mutable fileGeneration = 0L
+        let mutable removedPendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
         let mutable triggerGeneration = 0L
         let mutable unitValue = ()
 
         for pendingFile in filesToProcess.ToArray() do
-            if filesToProcess.TryRemove(pendingFile.Key, &fileGeneration) then
+            if filesToProcess.TryRemove(pendingFile.Key, &removedPendingFile) then
                 quarantineWatchObservation reason "file" pendingFile.Key
                 quarantinedCount <- quarantinedCount + 1
 
@@ -3199,6 +3225,44 @@ module Watch =
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
 
+    /// Tests whether a queued file still belongs to the branch and root that accepted its due local observation.
+    let private pendingFileWorkMatchesCurrentScope (pendingFile: PendingFileWorkSnapshot) =
+        let currentRootDirectory =
+            Current().RootDirectory
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        pendingFile.BranchId = Current().BranchId
+        && String.Equals(pendingFile.RootDirectory, currentRootDirectory, watchPathComparison)
+
+    /// Schedules the next timer-driven identity attempt or leaves incremental mode when a path cannot stabilize within the fixed budget.
+    let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
+        let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile)
+        let attemptsAfterFailure = pendingFile.StabilizationAttempts + 1
+
+        if attemptsAfterFailure
+           >= stableFileIdentityMaximumAttempts then
+            if (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                .Contains(pendingPair) then
+                requestGraceWatchExplicitResync
+                    $"Watch could not compute stable final identity for {pendingFile.FullPath} after {stableFileIdentityMaximumAttempts} attempts: {reason}"
+        else
+            let retryNotBeforeUtc =
+                if isLocalObservationCandidateSchedulingActive () then
+                    now.AddSeconds(float attemptsAfterFailure)
+                else
+                    now
+
+            let updatedPendingFile = { pendingFile with StabilizationAttempts = attemptsAfterFailure; RetryNotBeforeUtc = retryNotBeforeUtc }
+
+            if filesToProcess.TryUpdate(pendingFile.FullPath, updatedPendingFile, pendingFile) then
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch deferred stable identity attempt {attemptsAfterFailure + 1} for {pendingFile.FullPath}: {reason}"
+
+    /// Replaces the stabilization clock for deterministic Watch retry tests.
+    let internal setStableFileIdentityNowForWatchTests (now: unit -> DateTime) = stableFileIdentityNowForWatch <- now
+
     /// Counts quarantined observations for tests that verify confidence loss does not replay stale work.
     let internal quarantinedWatchObservationCountForWatchTests () = Volatile.Read(&quarantinedWatchObservationCount)
 
@@ -3492,6 +3556,8 @@ module Watch =
 
         Interlocked.Exchange(&graceStatusRefreshGeneration, 0L)
         |> ignore
+
+        stableFileIdentityNowForWatch <- fun () -> DateTime.UtcNow
 
         graceStatus <- GraceStatus.Default
         graceStatusHasChanged <- false
@@ -6855,46 +6921,88 @@ module Watch =
                 filesToProcess
                     .ToArray()
                     .Take(50)
-                    .Select(fun entry -> { FullPath = entry.Key; Generation = entry.Value }) do
-                let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile.Generation)
+                    .Select(fun entry -> entry.Value) do
+                let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile)
+                let now = stableFileIdentityNowForWatch ()
 
-                if (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
-                    .Contains(pendingPair) then
-                    logToAnsiConsole Colors.Verbose $"Processing {pendingFile.FullPath}. filesToProcess.Count: {filesToProcess.Count}."
-                    do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath pendingFile.FullPath)
+                let mayStabilizePendingFile =
+                    match resyncAttempt with
+                    | Some _ -> true
+                    | None -> not (isGraceWatchResyncPending ())
 
-                    let currentMode = currentGraceWatchRuntimeMode ()
-
-                    let uploadResultStillTrusted =
-                        match resyncAttempt with
-                        | Some attempt -> isGraceWatchResyncAttemptActive attempt
-                        | None ->
-                            recordProcessedPaths
-                            && not (isGraceWatchResyncPending ())
-                            && (isGraceWatchObservationApplicationLegal currentMode
-                                || currentMode = GraceWatchRuntimeMode.StartingUp
-                                || currentMode = GraceWatchRuntimeMode.Stopping)
-
-                    if
-                        uploadResultStillTrusted
-                        && (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
-                            .Contains(pendingPair)
-                    then
-                        (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
+                if
+                    mayStabilizePendingFile
+                    && (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                        .Contains(pendingPair)
+                then
+                    if pendingFile.RetryNotBeforeUtc > now then
+                        ()
+                    elif not (pendingFileWorkMatchesCurrentScope pendingFile) then
+                        requestGraceWatchExplicitResync $"Watch file identity scope changed before stabilization for {pendingFile.FullPath}."
+                    elif updateInProgress () then
+                        // A pre-marker local candidate remains pending until the marker ends; do not inspect bytes during Grace-owned mutation.
+                        ()
+                    elif Directory.Exists(pendingFile.FullPath) then
+                        (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
                             .Remove(pendingPair)
                         |> ignore
 
-                        if recordProcessedPaths then
-                            match repositoryRelativePath pendingFile.FullPath with
-                            | Some relativePath -> addProcessedFileRelativePathPendingStatus (RelativePath relativePath)
-                            | None -> ()
-
-                        processedAnyFile <- true
-                        lastFileUploadInstant <- getCurrentInstant ()
+                        enqueueStatusUpdateTrigger pendingFile.FullPath
+                        |> ignore
+                    elif
+                        Path.IsPathRooted(pendingFile.FullPath)
+                        && not (File.Exists(pendingFile.FullPath))
+                    then
+                        retryPendingFileStabilization pendingFile now "the final path was absent"
                     else
-                        logToAnsiConsole
-                            Colors.Important
-                            $"Grace Watch discarded upload completion for {pendingFile.FullPath} because runtime mode is {currentMode} and resync pending is {isGraceWatchResyncPending ()}."
+                        try
+                            logToAnsiConsole Colors.Verbose $"Stabilizing {pendingFile.FullPath}. filesToProcess.Count: {filesToProcess.Count}."
+                            do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath pendingFile.FullPath)
+
+                            let scopeStillCurrent = pendingFileWorkMatchesCurrentScope pendingFile
+                            let currentMode = currentGraceWatchRuntimeMode ()
+
+                            let uploadResultStillTrusted =
+                                scopeStillCurrent
+                                && (match resyncAttempt with
+                                    | Some attempt -> isGraceWatchResyncAttemptActive attempt
+                                    | None ->
+                                        recordProcessedPaths
+                                        && not (isGraceWatchResyncPending ())
+                                        && (isGraceWatchObservationApplicationLegal currentMode
+                                            || currentMode = GraceWatchRuntimeMode.StartingUp
+                                            || currentMode = GraceWatchRuntimeMode.Stopping))
+
+                            if not scopeStillCurrent then
+                                requestGraceWatchExplicitResync $"Watch file identity scope changed during stabilization for {pendingFile.FullPath}."
+                            elif
+                                uploadResultStillTrusted
+                                && (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                                    .Contains(pendingPair)
+                            then
+                                (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                                    .Remove(pendingPair)
+                                |> ignore
+
+                                if recordProcessedPaths then
+                                    match repositoryRelativePath pendingFile.FullPath with
+                                    | Some relativePath -> addProcessedFileRelativePathPendingStatus (RelativePath relativePath)
+                                    | None -> ()
+
+                                processedAnyFile <- true
+                                lastFileUploadInstant <- getCurrentInstant ()
+                            else
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch discarded upload completion for {pendingFile.FullPath} because runtime mode is {currentMode} and resync pending is {isGraceWatchResyncPending ()}."
+                        with
+                        | :? OperationCanceledException -> ()
+                        | ex ->
+                            retryPendingFileStabilization pendingFile now ex.Message
+
+                            match resyncAttempt with
+                            | Some _ -> raise ex
+                            | None -> ()
 
             if processedAnyFile then
                 graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
@@ -7222,7 +7330,8 @@ module Watch =
 
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
-                    if filesToProcess.IsEmpty
+                    if not (isGraceWatchResyncPending ())
+                       && filesToProcess.IsEmpty
                        && directoriesToProcess.IsEmpty then
                         let directorySnapshot, statusTriggerSnapshot = statusOnlyTriggerSnapshot ()
                         let fileWorkGenerationBeforeStatusUpdate = Volatile.Read(&fileUploadWorkGeneration)

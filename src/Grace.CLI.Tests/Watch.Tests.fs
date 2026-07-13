@@ -3255,6 +3255,293 @@ module WatchTests =
         | Some localFileVersion -> Watch.recordUploadedFileVersionForWatchTests localFileVersion.ToFileVersion
         | None -> Assert.Fail($"Expected a local file version for {fullPath}.")
 
+    /// Runs one healthy incremental Watch pass with a caller-controlled stable-content upload seam.
+    let private processPendingWatchWorkWithUploadForTest upload =
+        let readStatus () = Task.FromResult(GraceStatus.Default)
+        let updateGraceStatus status _ = Task.FromResult(Some status)
+        let updateGraceStatusFromDifferences status _ _ = Task.FromResult(Some status)
+        let applyIncremental _ _ _ = Task.FromResult(())
+        let updateIpc _ _ = Task.FromResult(())
+
+        (Watch.processChangedFilesWithClients
+            readStatus
+            readStatus
+            upload
+            updateGraceStatus
+            scannerHostileDifferenceDiscovery
+            updateGraceStatusFromDifferences
+            applyIncremental
+            updateIpc)
+            .GetAwaiter()
+            .GetResult()
+
+    /// Verifies that an unstable first identity attempt waits for its deterministic retry boundary and uploads only final bytes.
+    [<Test>]
+    let ``watch stable identity retries locked content then uploads final bytes once`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "stable-final-content.txt")
+            let mutable now = DateTime(2026, 7, 12, 2, 0, 0, DateTimeKind.Utc)
+            let mutable uploadCalls = 0
+            let mutable uploadedContents = Array.empty<string>
+
+            Watch.setStableFileIdentityNowForWatchTests (fun () -> now)
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(filePath, "partial bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+
+                if uploadCalls = 1 then
+                    File.WriteAllText($"{pendingFilePath}", "final bytes")
+                    Task.FromException<unit>(IOException("file is locked"))
+                else
+                    uploadedContents <-
+                        Array.append
+                            uploadedContents
+                            [|
+                                File.ReadAllText($"{pendingFilePath}")
+                            |]
+
+                    recordUploadedFileVersion $"{pendingFilePath}"
+                    Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 1
+
+            let afterFirstFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFirstFailure.FilesToProcess
+            |> should equal [| filePath |]
+
+            now <- now.AddMilliseconds(999.0)
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 1
+
+            now <- now.AddMilliseconds(1.0)
+            processPendingWatchWorkWithUploadForTest upload
+            processPendingWatchWorkWithUploadForTest upload
+
+            uploadCalls |> should equal 2
+
+            uploadedContents
+            |> should equal [| "final bytes" |]
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
+    /// Verifies that a missing final path does not invoke file-content work and can stabilize after the path returns.
+    [<Test>]
+    let ``watch stable identity defers missing path until it reappears`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "reappearing.txt")
+            let mutable now = DateTime(2026, 7, 12, 2, 10, 0, DateTimeKind.Utc)
+            let mutable uploadCalls = 0
+
+            Watch.setStableFileIdentityNowForWatchTests (fun () -> now)
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(filePath, "first version")
+            Watch.OnChanged(changedEvent filePath)
+            File.Delete(filePath)
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 0
+
+            now <- now.AddSeconds(1.0)
+            File.WriteAllText(filePath, "returned final version")
+            processPendingWatchWorkWithUploadForTest upload
+
+            uploadCalls |> should equal 1
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
+    /// Verifies that a final directory never enters the file-content upload seam.
+    [<Test>]
+    let ``watch stable identity excludes final directory path from file upload`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "replaced-by-directory")
+            let mutable uploadCalls = 0
+
+            File.WriteAllText(filePath, "file before replacement")
+            Watch.OnChanged(changedEvent filePath)
+            File.Delete(filePath)
+            Directory.CreateDirectory(filePath) |> ignore
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 0
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
+    /// Verifies that marker start defers a pre-marker candidate without discarding it or inspecting file content.
+    [<Test>]
+    let ``watch stable identity defers pre-marker candidate until marker clears`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "pre-marker.txt")
+            let markerFile = Services.updateInProgressFileName ()
+            let mutable uploadCalls = 0
+
+            File.WriteAllText(filePath, "user content before marker")
+            Watch.OnChanged(changedEvent filePath)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(markerFile))
+            |> ignore
+
+            File.WriteAllText(markerFile, "`grace switch` is in progress.")
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 0
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |]
+
+            File.Delete(markerFile)
+            processPendingWatchWorkWithUploadForTest upload
+
+            uploadCalls |> should equal 1
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
+    /// Verifies that stale branch scope cannot start stable-content I/O.
+    [<Test>]
+    let ``watch stable identity rejects stale scope before upload`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "stale-scope.txt")
+            let mutable uploadCalls = 0
+
+            File.WriteAllText(filePath, "scope-bound content")
+            Watch.OnChanged(changedEvent filePath)
+            Current().BranchId <- Guid.NewGuid()
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true)
+
+    /// Verifies that a root change after observation blocks stable-content I/O before it can use the old repository path.
+    [<Test>]
+    let ``watch stable identity rejects stale root before upload`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "stale-root.txt")
+            let mutable uploadCalls = 0
+            let replacementRoot = Path.Combine(root, "replacement-root")
+
+            Directory.CreateDirectory(Path.Combine(replacementRoot, Constants.GraceConfigDirectory))
+            |> ignore
+
+            File.WriteAllText(filePath, "root-bound content")
+            Watch.OnChanged(changedEvent filePath)
+            let configuration = Current()
+
+            writeRepositoryConfiguration replacementRoot configuration.RepositoryId configuration.RepositoryName configuration.BranchId configuration.BranchName
+
+            Environment.CurrentDirectory <- replacementRoot
+            resetConfiguration ()
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true)
+
+    /// Verifies that a branch change while stable bytes are being captured cannot accept the completed upload into Watch state.
+    [<Test>]
+    let ``watch stable identity rejects scope lost during upload`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "scope-lost-during-upload.txt")
+            let mutable uploadCalls = 0
+
+            File.WriteAllText(filePath, "captured-before-branch-switch")
+            Watch.OnChanged(changedEvent filePath)
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Current().BranchId <- Guid.NewGuid()
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 1
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.processedFileRelativePathsPendingStatusForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
+    /// Verifies that exactly three failed identity attempts leave healthy incremental mode and no partial file upload is recorded.
+    [<Test>]
+    let ``watch stable identity exhaustion requests explicit resync after fixed budget`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "always-locked.txt")
+            let mutable now = DateTime(2026, 7, 12, 2, 20, 0, DateTimeKind.Utc)
+            let mutable uploadCalls = 0
+
+            Watch.setStableFileIdentityNowForWatchTests (fun () -> now)
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(filePath, "never stable")
+            Watch.OnChanged(changedEvent filePath)
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromException<unit>(IOException("file remains locked"))
+
+            processPendingWatchWorkWithUploadForTest upload
+            now <- now.AddSeconds(1.0)
+            processPendingWatchWorkWithUploadForTest upload
+            now <- now.AddSeconds(2.0)
+            processPendingWatchWorkWithUploadForTest upload
+
+            uploadCalls |> should equal 3
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Builds process pending watch work for test test data used to exercise CLI watch behavior.
     let private processPendingWatchWorkForTest () =
         let status = GraceStatus.Default
