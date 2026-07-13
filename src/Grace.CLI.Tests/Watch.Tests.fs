@@ -458,6 +458,13 @@ module WatchTests =
             callbacks.Enqueue({ Source = source; FullPath = fullPath })
             callbackSignal.Release() |> ignore
 
+        /// Fails the current wait as soon as a production Watch callback has thrown.
+        let raiseCallbackFailureIfPresent description =
+            let mutable callbackFailure = Unchecked.defaultof<Exception>
+
+            if callbackFailures.TryDequeue(&callbackFailure) then
+                Assert.Fail($"Real filesystem Watch callback failed while waiting for {description}: {callbackFailure}")
+
         /// Checks whether a marker callback addresses the current repository-scoped update marker.
         let isCurrentMarker fullPath = String.Equals(fullPath, markerFileName, StringComparison.OrdinalIgnoreCase)
 
@@ -482,18 +489,22 @@ module WatchTests =
         /// Waits for a callback-derived condition without relying on a fixed delay or callback-count assertion.
         member private _.WaitFor(description: string, condition: unit -> bool) =
             use cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10.0))
-            let mutable completed = condition ()
+
+            let evaluateCondition () =
+                raiseCallbackFailureIfPresent description
+                let conditionSatisfied = condition ()
+                raiseCallbackFailureIfPresent description
+                conditionSatisfied
+
+            let mutable completed = evaluateCondition ()
 
             while not completed do
-                let mutable callbackFailure = Unchecked.defaultof<Exception>
-
-                if callbackFailures.TryDequeue(&callbackFailure) then
-                    Assert.Fail($"Real filesystem Watch callback failed while waiting for {description}: {callbackFailure}")
-
                 try
                     callbackSignal.Wait(cancellation.Token) |> ignore
                 with
                 | :? OperationCanceledException ->
+                    raiseCallbackFailureIfPresent description
+
                     let observed =
                         callbacks.ToArray()
                         |> Array.map (fun callback -> $"{callback.Source}:{callback.FullPath}")
@@ -501,7 +512,7 @@ module WatchTests =
                     let observedText = String.Join("; ", observed)
                     Assert.Fail($"Timed out waiting for {description}. Observed callbacks: {observedText}")
 
-                completed <- condition ()
+                completed <- evaluateCondition ()
 
         /// Waits until the production candidate scheduler has normalized every expected path from real filesystem callbacks.
         member this.WaitForCandidates(expectedPaths: string array) =
@@ -519,32 +530,44 @@ module WatchTests =
                     |> Array.forall candidatePaths.Contains
             )
 
-        /// Captures the callback count so a later filesystem operation can wait for fresh delivery instead of reusing an earlier candidate.
-        member _.CallbackCount = callbacks.Count
+        /// Reads the scheduler generation of one normalized path candidate without consuming it.
+        member _.CandidateGeneration(fullPath: string) =
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.tryFind (fun candidate -> String.Equals(candidate.FullPath, fullPath, StringComparison.Ordinal))
+            |> Option.map (fun candidate -> candidate.Generation)
 
-        /// Waits for a fresh callback and normalized candidate state after a caller-recorded callback count.
-        member this.WaitForCandidatesAfter(expectedPaths: string array, callbackCount: int) =
-            let expectedPathText = String.Join(", ", expectedPaths)
+        /// Waits until one path's normalized candidate advances beyond the generation captured before a filesystem operation.
+        member this.WaitForCandidateGenerationAfter(fullPath: string, candidateGeneration: int64 option) =
+            let priorGeneration =
+                candidateGeneration
+                |> Option.map string
+                |> Option.defaultValue "none"
 
             this.WaitFor(
-                $"a fresh callback and normalized candidates for {expectedPathText}",
+                $"a normalized candidate for {fullPath} after generation {priorGeneration}",
                 fun () ->
-                    let candidatePaths =
-                        Watch.localObservationCandidateSnapshotForWatchTests ()
-                        |> Array.map (fun candidate -> candidate.FullPath)
-                        |> Set.ofArray
-
-                    callbacks.Count > callbackCount
-                    && (expectedPaths
-                        |> Array.forall candidatePaths.Contains)
+                    match this.CandidateGeneration(fullPath) with
+                    | Some generation ->
+                        match candidateGeneration with
+                        | Some previousGeneration -> generation > previousGeneration
+                        | None -> true
+                    | None -> false
             )
 
-        /// Drains each newly signalled candidate until the requested file has durable normalized Watch work queued.
-        member this.WaitForNormalizedFileWorkAfter(fullPath: string, callbackCount: int) =
+        /// Drains each candidate newer than the caller's snapshot until the requested file has durable normalized Watch work queued.
+        member this.WaitForNormalizedFileWorkAfter(fullPath: string, candidateGeneration: int64 option) =
             this.WaitFor(
                 $"normalized file work for {fullPath}",
                 fun () ->
-                    if callbacks.Count > callbackCount then
+                    let candidateAdvanced =
+                        match this.CandidateGeneration(fullPath) with
+                        | Some generation ->
+                            match candidateGeneration with
+                            | Some previousGeneration -> generation > previousGeneration
+                            | None -> true
+                        | None -> false
+
+                    if candidateAdvanced then
                         Watch.processDueLocalObservationCandidatesForWatchTests DateTime.MaxValue
 
                     (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
@@ -5913,9 +5936,9 @@ module WatchTests =
             configureRealFilesystemWatchHarness status
 
             use harness = new RealFilesystemWatchHarness(root)
-            let callbackCountBeforeFirstSave = harness.CallbackCount
+            let candidateGenerationBeforeFirstSave = harness.CandidateGeneration(filePath)
             File.WriteAllText(filePath, "first save")
-            harness.WaitForNormalizedFileWorkAfter(filePath, callbackCountBeforeFirstSave)
+            harness.WaitForNormalizedFileWorkAfter(filePath, candidateGenerationBeforeFirstSave)
 
             let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
 
@@ -5960,9 +5983,9 @@ module WatchTests =
             use harness = new RealFilesystemWatchHarness(root)
             File.WriteAllText(filePath, "first write")
             harness.WaitForCandidates([| filePath |])
-            let callbackCountBeforeSecondWrite = harness.CallbackCount
+            let candidateGenerationBeforeSecondWrite = harness.CandidateGeneration(filePath)
             File.AppendAllText(filePath, "\nsecond write")
-            harness.WaitForCandidatesAfter([| filePath |], callbackCountBeforeSecondWrite)
+            harness.WaitForCandidateGenerationAfter(filePath, candidateGenerationBeforeSecondWrite)
 
             Watch.localObservationCandidateSnapshotForWatchTests ()
             |> Array.map (fun candidate -> candidate.FullPath)
@@ -6180,9 +6203,9 @@ module WatchTests =
 
             use harness = new RealFilesystemWatchHarness(root)
             File.Delete(filePath)
-            let callbackCountBeforeRecreate = harness.CallbackCount
+            let candidateGenerationBeforeRecreate = harness.CandidateGeneration(filePath)
             File.WriteAllText(filePath, "new content")
-            harness.WaitForNormalizedFileWorkAfter(filePath, callbackCountBeforeRecreate)
+            harness.WaitForNormalizedFileWorkAfter(filePath, candidateGenerationBeforeRecreate)
 
             let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
 
@@ -6255,9 +6278,9 @@ module WatchTests =
             File.Delete(markerFileName)
             harness.WaitForMarkerCallback("marker-deleted")
 
-            let callbackCountBeforeAfterMarkerWrite = harness.CallbackCount
+            let candidateGenerationBeforeAfterMarkerWrite = harness.CandidateGeneration(afterPath)
             File.WriteAllText(afterPath, "user write after marker")
-            harness.WaitForNormalizedFileWorkAfter(afterPath, callbackCountBeforeAfterMarkerWrite)
+            harness.WaitForNormalizedFileWorkAfter(afterPath, candidateGenerationBeforeAfterMarkerWrite)
 
             let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
 
@@ -6304,6 +6327,8 @@ module WatchTests =
 
             Watch.setGraceStatusForWatchTests replacementStatus
             Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(replacementStatus))
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(replacementStatus))
 
             (Watch.graceStatusForWatchTests ())
                 .RootDirectoryId
