@@ -3737,6 +3737,76 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true)
 
+    /// Verifies that a pending file accepted without a branch identifier rejects a different branch name before file-content work begins.
+    [<Test>]
+    let ``watch stable identity rejects stale branch name fallback before upload`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "stale-name-fallback-scope.txt")
+            let mutable uploadCalls = 0
+            let configuration = Current()
+
+            configuration.BranchId <- BranchId.Empty
+            configuration.BranchName <- "branch-a"
+            File.WriteAllText(filePath, "scope-bound content")
+            Watch.OnChanged(changedEvent filePath)
+            configuration.BranchName <- "branch-b"
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadForTest upload
+
+            uploadCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.quarantinedWatchObservationCountForWatchTests ()
+            |> should equal 1
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
+    /// Verifies that a same-path observation on a different fallback-name branch starts a new bounded retry sequence.
+    [<Test>]
+    let ``watch stable identity resets retries for refreshed branch name fallback scope`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "refreshed-name-fallback-scope.txt")
+            let mutable now = DateTime(2026, 7, 12, 2, 25, 0, DateTimeKind.Utc)
+            let mutable uploadCalls = 0
+            let configuration = Current()
+
+            Watch.setStableFileIdentityNowForWatchTests (fun () -> now)
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            configuration.BranchId <- BranchId.Empty
+            configuration.BranchName <- "branch-a"
+            File.WriteAllText(filePath, "retry-bound content")
+            Watch.OnChanged(changedEvent filePath)
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromException<unit>(IOException("file remains locked"))
+
+            processPendingWatchWorkWithUploadForTest upload
+            uploadCalls |> should equal 1
+
+            configuration.BranchName <- "branch-b"
+            Watch.OnChanged(changedEvent filePath)
+            processPendingWatchWorkWithUploadForTest upload
+
+            uploadCalls |> should equal 2
+
+            now <- now.AddSeconds(1.0)
+            processPendingWatchWorkWithUploadForTest upload
+
+            uploadCalls |> should equal 3
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
     /// Verifies that a root change after observation blocks stable-content I/O before it can use the old repository path.
     [<Test>]
     let ``watch stable identity rejects stale root before upload`` () =

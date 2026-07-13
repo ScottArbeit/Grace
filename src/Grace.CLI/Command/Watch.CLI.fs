@@ -270,6 +270,7 @@ module Watch =
             FullPath: string
             Generation: int64
             BranchId: BranchId
+            BranchName: string
             RootDirectory: string
             StabilizationAttempts: int
             RetryNotBeforeUtc: DateTime
@@ -1914,6 +1915,31 @@ module Watch =
             |> ignore
         | _ -> ()
 
+    /// Compares pending file work scopes, using the stored branch name only when the accepted work lacked a branch identifier.
+    let private pendingFileWorkMatchesScope (acceptedPendingFile: PendingFileWorkSnapshot) (candidatePendingFile: PendingFileWorkSnapshot) =
+        let branchMatches =
+            if acceptedPendingFile.BranchId <> BranchId.Empty then
+                acceptedPendingFile.BranchId = candidatePendingFile.BranchId
+            else
+                String.Equals(acceptedPendingFile.BranchName, candidatePendingFile.BranchName, StringComparison.Ordinal)
+
+        branchMatches
+        && String.Equals(acceptedPendingFile.RootDirectory, candidatePendingFile.RootDirectory, watchPathComparison)
+
+    /// Tests whether queued file work still belongs to the branch and root that accepted its due local observation.
+    let private pendingFileWorkMatchesCurrentScope (pendingFile: PendingFileWorkSnapshot) =
+        let currentScope =
+            { pendingFile with
+                BranchId = Current().BranchId
+                BranchName = Current().BranchName
+                RootDirectory =
+                    Current().RootDirectory
+                    |> Path.GetFullPath
+                    |> Path.TrimEndingDirectorySeparator
+            }
+
+        pendingFileWorkMatchesScope pendingFile currentScope
+
     /// Reads enqueue file upload data needed by the command workflow without changing remote state.
     let private enqueueFileUpload fullPath =
         let shouldIgnore = shouldIgnoreFile fullPath
@@ -1926,6 +1952,7 @@ module Watch =
                     FullPath = fullPath
                     Generation = generation
                     BranchId = Current().BranchId
+                    BranchName = Current().BranchName
                     RootDirectory =
                         Path.GetFullPath(Current().RootDirectory)
                         |> Path.TrimEndingDirectorySeparator
@@ -1937,10 +1964,13 @@ module Watch =
                 fullPath,
                 pendingFileWork,
                 (fun _ existingPendingFile ->
-                    { pendingFileWork with
-                        StabilizationAttempts = existingPendingFile.StabilizationAttempts
-                        RetryNotBeforeUtc = existingPendingFile.RetryNotBeforeUtc
-                    })
+                    if pendingFileWorkMatchesScope existingPendingFile pendingFileWork then
+                        { pendingFileWork with
+                            StabilizationAttempts = existingPendingFile.StabilizationAttempts
+                            RetryNotBeforeUtc = existingPendingFile.RetryNotBeforeUtc
+                        }
+                    else
+                        pendingFileWork)
             )
             |> ignore
 
@@ -3250,16 +3280,6 @@ module Watch =
 
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
-
-    /// Tests whether a queued file still belongs to the branch and root that accepted its due local observation.
-    let private pendingFileWorkMatchesCurrentScope (pendingFile: PendingFileWorkSnapshot) =
-        let currentRootDirectory =
-            Current().RootDirectory
-            |> Path.GetFullPath
-            |> Path.TrimEndingDirectorySeparator
-
-        pendingFile.BranchId = Current().BranchId
-        && String.Equals(pendingFile.RootDirectory, currentRootDirectory, watchPathComparison)
 
     /// Schedules the next timer-driven identity attempt or classifies the final path before bounded exhaustion selects resync recovery.
     let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
