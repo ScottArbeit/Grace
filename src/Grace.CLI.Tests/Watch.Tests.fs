@@ -409,12 +409,14 @@ module WatchTests =
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             Services.clearShouldIgnoreCache ()
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
             deleteWatchStatusFileIfExists ()
             Watch.clearPendingWatchWorkForTests ()
             Watch.setLocalObservationCandidateSchedulingForWatchTests false
             action tempDir
         finally
             Watch.clearPendingWatchWorkForTests ()
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
             Services.clearShouldIgnoreCache ()
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
@@ -435,6 +437,12 @@ module WatchTests =
         configuration.GraceFileIgnoreEntries <- Array.empty
         configuration.GraceDirectoryIgnoreEntries <- Array.empty
         Services.clearShouldIgnoreCache ()
+
+    /// Requires a valid active Watch ignore snapshot and exposes the loader error when a test setup is incomplete.
+    let private activateWatchIgnoreSnapshot () =
+        match Watch.tryActivateWatchIgnoreSnapshotForWatchTests () with
+        | Ok () -> ()
+        | Error error -> Assert.Fail(error)
 
     /// Records one production Watch callback delivered by the operating-system filesystem watcher.
     type private RealFilesystemWatchCallback = { Source: string; FullPath: string }
@@ -1133,7 +1141,11 @@ module WatchTests =
         |> should equal (firstSeenAt.AddMilliseconds(200.0))
 
         currentCandidate.DueAt
-        |> should equal (firstSeenAt.AddMilliseconds(200.0).Add(quietWindow))
+        |> should
+            equal
+            (firstSeenAt
+                .AddMilliseconds(200.0)
+                .Add(quietWindow))
 
     /// Verifies an old-scope create cannot turn a new-scope metadata-only directory change into directory add work.
     [<Test>]
@@ -3617,6 +3629,11 @@ module WatchTests =
             Services.shouldIgnoreFile filePath
             |> should equal false
 
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests filePath
+            |> should equal false
+
             File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), fileName)
 
             writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
@@ -3629,7 +3646,570 @@ module WatchTests =
             recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
 
             Services.shouldIgnoreFile filePath
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests filePath
             |> should equal true)
+
+    /// Verifies that ordinary ignore-file edits wait for a new Watch lifetime while configured project noise applies after restart.
+    [<Test>]
+    let ``watch lifetime ignore snapshot defers ordinary edits until restart`` () =
+        withTempRepo (fun root ->
+            let editorFilePath = Path.Combine(root, "scratch.swp")
+
+            File.WriteAllText(editorFilePath, "unconfigured editor noise")
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests editorFilePath
+            |> should equal false
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "scratch.swp")
+
+            Watch.shouldIgnoreFileForWatchTests editorFilePath
+            |> should equal false
+
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
+            resetConfiguration ()
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests editorFilePath
+            |> should equal true)
+
+    /// Verifies that a changed ignore file cannot purge a candidate admitted under the active Watch snapshot.
+    [<Test>]
+    let ``watch lifetime ignore snapshot retains admitted candidate after ordinary edit`` () =
+        withTempRepo (fun root ->
+            let candidatePath = Path.Combine(root, "queued-before-ignore.txt")
+
+            File.WriteAllText(candidatePath, "candidate payload")
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.OnChanged(changedEvent candidatePath)
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| candidatePath |]
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "queued-before-ignore.txt")
+
+            Watch.shouldIgnoreFileForWatchTests candidatePath
+            |> should equal false
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| candidatePath |])
+
+    /// Verifies that durable pending rows keep their admission snapshot until restart recovery reads a new valid snapshot.
+    [<Test>]
+    let ``watch journal recovery keeps active snapshot then applies restart snapshot`` () =
+        withTempRepo (fun root ->
+            let relativePath = "journal-before-ignore.txt"
+            let fullPath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
+            File.WriteAllText(fullPath, "durable pending payload")
+
+            (LocalStateDb.appendWatchJournalObservations
+                dbPath
+                [|
+                    { Scope = scope; DifferenceType = DifferenceType.Add; EntryType = FileSystemEntryType.File; RelativePath = RelativePath relativePath }
+                |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            activateWatchIgnoreSnapshot ()
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), relativePath)
+
+            (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            Watch.tryPeekStartupReplaySequenceForWatchTests (
+                FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.File (RelativePath relativePath)
+            )
+            |> should equal (Some 1L)
+
+            Watch.clearPendingWatchWorkForTests ()
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
+            resetConfiguration ()
+
+            activateWatchIgnoreSnapshot ()
+
+            (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            Watch.tryPeekStartupReplaySequenceForWatchTests (
+                FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.File (RelativePath relativePath)
+            )
+            |> should equal None
+
+            let quarantinedSnapshot =
+                (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                    .GetAwaiter()
+                    .GetResult()
+
+            quarantinedSnapshot.Rows
+            |> Array.map (fun row -> row.QuarantineReason)
+            |> should
+                equal
+                [|
+                    Some "current startup replay file content ignored before status application"
+                |])
+
+    /// Verifies unreadable ignore reload retains a prior snapshot while startup without one remains non-incremental.
+    [<Test>]
+    let ``unreadable graceignore retains prior snapshot and blocks incremental startup safety`` () =
+        withTempRepo (fun root ->
+            let ignoredFilePath = Path.Combine(root, "preserved.tmp")
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+
+            File.WriteAllText(ignoredFilePath, "configured payload")
+            File.WriteAllText(graceIgnorePath, "preserved.tmp")
+            resetConfiguration ()
+
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests ignoredFilePath
+            |> should equal true
+
+            use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch.tryActivateWatchIgnoreSnapshotForWatchTests ()
+            |> Result.isError
+            |> should equal true
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests ignoredFilePath
+            |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch.tryActivateWatchIgnoreSnapshotForWatchTests ()
+            |> Result.isError
+            |> should equal true
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
+
+    /// Verifies a directory at the configured ignore path fails closed for both initial activation and target-branch reload.
+    [<Test>]
+    let ``non-file graceignore blocks Watch startup and target branch reload`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "non-file-ignore-transition-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let ignoredFilePath = Path.Combine(root, "retained.tmp")
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+
+            Directory.CreateDirectory(graceIgnorePath)
+            |> ignore
+
+            Watch.tryActivateWatchIgnoreSnapshotForWatchTests ()
+            |> Result.isError
+            |> should equal true
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Directory.Delete(graceIgnorePath)
+            File.WriteAllText(graceIgnorePath, "retained.tmp")
+            File.WriteAllText(ignoredFilePath, "configured payload")
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+
+            File.Delete(graceIgnorePath)
+
+            Directory.CreateDirectory(graceIgnorePath)
+            |> ignore
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests ignoredFilePath
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
+
+    /// Verifies startup and resync scans retain the active snapshot after an ordinary on-disk ignore edit changes live configuration.
+    [<TestCase(Services.GraceWatchRuntimeMode.StartingUp)>]
+    [<TestCase(Services.GraceWatchRuntimeMode.Resynchronizing)>]
+    let ``Watch scans use the frozen ignore snapshot after ordinary edit`` runtimeMode =
+        withTempRepo (fun root ->
+            let relativePath = "tracked-before-ordinary-ignore-edit.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "tracked before ordinary ignore edit")
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            activateWatchIgnoreSnapshot ()
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), relativePath)
+            resetConfiguration ()
+            Current() |> ignore
+            Watch.setGraceWatchRuntimeModeForWatchTests runtimeMode
+
+            let differences =
+                (Watch.scanForDifferencesWithWatchIgnoreSnapshotForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+
+            differences
+            |> Seq.exists (fun difference ->
+                difference.DifferenceType = DifferenceType.Delete
+                && difference.FileSystemEntryType = FileSystemEntryType.File
+                && string difference.RelativePath = relativePath)
+            |> should equal false)
+
+    /// Verifies startup receives an explicit frozen-snapshot scan failure instead of an empty clean difference list.
+    [<Test>]
+    let ``frozen snapshot startup scan preserves locked-file failure`` () =
+        withTempRepo (fun root ->
+            let relativePath = "locked-startup-scan.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            File.WriteAllText(filePath, "locked startup scan payload")
+            activateWatchIgnoreSnapshot ()
+
+            use lockedFile = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None)
+
+            (Watch.tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests status)
+                .GetAwaiter()
+                .GetResult()
+            |> Result.isError
+            |> should equal true)
+
+    /// Verifies a transient target-branch ignore read failure retries target activation before any resync scan can complete.
+    [<Test>]
+    let ``transient transition ignore read failure reloads target snapshot before resync scan`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transient-ignore-retry-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let targetIgnoredPath = Path.Combine(root, "target-only.tmp")
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable scanCalls = 0
+
+            File.WriteAllText(targetIgnoredPath, "target branch configured payload")
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+
+            File.WriteAllText(graceIgnorePath, "target-only.tmp")
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+            recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged targetIgnoredPath (DateTime.UtcNow.AddSeconds(-1.0))
+            |> Option.isSome
+            |> should equal true
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            let processRecovery () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ -> Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    scanForDifferences
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            processRecovery ()
+            scanCalls |> should equal 0
+
+            Watch
+                .pendingWatchWorkSnapshotWithoutCandidateDrainForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            lockedIgnore.Dispose()
+            processRecovery ()
+
+            scanCalls |> should equal 1
+
+            Current().BranchId |> should equal branchBId
+
+            Watch.shouldIgnoreFileForWatchTests targetIgnoredPath
+            |> should equal true
+
+            Watch
+                .pendingWatchWorkSnapshotWithoutCandidateDrainForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
+    /// Proves a timer retry and marker-deletion failure complete without inverted locks, retain the newer retry, and publish only after target activation.
+    [<Test>]
+    let ``timer retry and marker deletion failure retain target reload without deadlock`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-lock-order-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let candidatePath = Path.Combine(root, "candidate-before-target-activation.txt")
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable scanCalls = 0
+            let mutable rebindAttempts = 0
+            let mutable successfulRebinds = 0
+            let mutable failMarkerRebind = false
+            let mutable targetBranchAtPublication = BranchId.Empty
+            use retryReadyForPublication = new ManualResetEventSlim(false)
+            use releaseRetryPublication = new ManualResetEventSlim(false)
+            let mutable firstTimerRetry = Task.CompletedTask
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            let processRecovery () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ -> Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    scanForDifferences
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            try
+                writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+                resetConfiguration ()
+                activateWatchIgnoreSnapshot ()
+
+                File.WriteAllText(candidatePath, "candidate admitted under the source snapshot")
+                File.WriteAllText(graceIgnorePath, Path.GetFileName(candidatePath))
+                writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+                let updateMarkerFile = Services.updateInProgressFileName ()
+
+                // The first marker failure creates the timer-owned pending retry while the target ignore file is inaccessible.
+                use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+                recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow
+                lockedIgnore.Dispose()
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged candidatePath (DateTime.UtcNow.AddSeconds(-1.0))
+                |> Option.isSome
+                |> should equal true
+
+                Watch.setUpdateMarkerWatcherRebindForWatchTests (fun () ->
+                    rebindAttempts <- rebindAttempts + 1
+
+                    if failMarkerRebind then
+                        invalidOp "deterministic marker-deletion rebind failure"
+
+                    successfulRebinds <- successfulRebinds + 1)
+
+                Watch.setPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests (fun () ->
+                    targetBranchAtPublication <- Current().BranchId
+                    retryReadyForPublication.Set()
+
+                    if not (releaseRetryPublication.Wait(TimeSpan.FromSeconds(5.0))) then
+                        invalidOp "timer retry publication was not released by the overlap proof")
+
+                firstTimerRetry <- Task.Run(Action processRecovery)
+
+                retryReadyForPublication.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                targetBranchAtPublication
+                |> should equal branchBId
+
+                successfulRebinds |> should equal 1
+
+                let competingTimerRetry = Task.Run(Action processRecovery)
+
+                competingTimerRetry.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                // The competing timer cannot perform a duplicate activation while the first retry owns the claim.
+                successfulRebinds |> should equal 1
+                scanCalls |> should equal 0
+
+                failMarkerRebind <- true
+
+                let markerDeletionFailure = Task.Run(Action(fun () -> recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow))
+
+                // This completion would block here with the prior status-lock then pending-lock acquisition order.
+                markerDeletionFailure.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                Watch
+                    .localObservationCandidateSnapshotForWatchTests()
+                    .Length
+                |> should equal 1
+
+                releaseRetryPublication.Set()
+
+                firstTimerRetry.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                // The first target publication cannot erase the newer marker-deletion retry or drain candidates under an incomplete transition.
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                successfulRebinds |> should equal 1
+                scanCalls |> should equal 0
+
+                readWatchStatusJsonStringProperty "BranchId"
+                |> should equal $"{branchBId}"
+
+                // A persistent failure keeps the same retry pending and still blocks scan recovery.
+                processRecovery ()
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                scanCalls |> should equal 0
+
+                failMarkerRebind <- false
+                processRecovery ()
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal false
+
+                Current().BranchId |> should equal branchBId
+                successfulRebinds |> should equal 2
+                scanCalls |> should equal 1
+            finally
+                releaseRetryPublication.Set()
+
+                firstTimerRetry.Wait(TimeSpan.FromSeconds(5.0))
+                |> ignore
+
+                Watch.resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests ()
+                Watch.resetUpdateMarkerWatcherRebindForWatchTests ())
+
+    /// Verifies a deferred target reload cannot weaken durable replay suspension before the retry reaches a clean recovery boundary.
+    [<Test>]
+    let ``suspended Watch remains suspended when deferred target ignore reload fails`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "suspended-transient-ignore-retry-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable scanCalls = 0
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+
+            File.WriteAllText(graceIgnorePath, "target-only.tmp")
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+            recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow
+
+            // Model durable startup-replay quarantine that has not recovered; retry must not reopen observation capture.
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.Suspended
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(status))
+                (fun () -> Task.FromResult(status))
+                (fun _ _ -> Task.FromResult(()))
+                (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                scanForDifferences
+                (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                (fun _ _ _ -> Task.FromResult(()))
+                (fun _ _ -> Task.FromResult(())))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Suspended
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            scanCalls |> should equal 0)
 
     /// Verifies that current transition completion authority wins over stale sidecars in the target branch directory.
     [<Test>]
@@ -7115,9 +7695,9 @@ module WatchTests =
             updateCalls |> should equal 1
             uploadCalls |> should equal 0)
 
-    /// Verifies that ignored delete uses filesystem casing when cancelling pending upload work.
+    /// Verifies that an ordinary ignore-file edit cannot suppress a later delete callback before Watch restarts.
     [<Test>]
-    let ``ignored delete uses filesystem casing when cancelling pending upload work`` () =
+    let ``ordinary ignore edit does not suppress later delete callback before restart`` () =
         withTempRepo (fun root ->
             Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
 
@@ -7140,7 +7720,7 @@ module WatchTests =
             |> should equal [| queuedFilePath |]
 
             pending.StatusUpdateTriggers
-            |> should equal Array.empty<string>)
+            |> should equal [| "src/foo" |])
 
     /// Verifies that status only triggers remain pending when status update returns none.
     [<Test>]
@@ -18110,7 +18690,7 @@ module WatchTests =
             Watch.currentGraceWatchRuntimeModeForWatchTests ()
             |> should equal Services.GraceWatchRuntimeMode.Suspended)
 
-    /// Verifies that startup tail logic preserves a failed resync recovery instead of resuming healthy mode.
+    /// Verifies an empty scan result marked failed during startup cannot resume healthy incremental mode.
     [<Test>]
     let ``startup completion preserves suspended recovery state`` () =
         withTempRepo (fun _ ->
@@ -18126,8 +18706,10 @@ module WatchTests =
             /// Builds scan-oriented update test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ = Task.FromResult(Some status)
 
-            /// Fails the startup resync scan before the durable status boundary.
-            let scanForDifferences _ = Task.FromException<List<FileSystemDifference>>(InvalidOperationException("startup scan failed"))
+            /// Models a failed startup scan whose legacy list-shaped caller receives no differences.
+            let scanForDifferences _ =
+                Services.setLastScanForDifferencesSuccessfulForWatchTests false
+                Task.FromResult(List<FileSystemDifference>())
 
             /// Builds apply-from-differences test data used to exercise CLI watch behavior.
             let updateGraceStatusFromDifferences status _ _ = Task.FromResult(Some status)
@@ -25060,6 +25642,24 @@ module WatchTests =
 
             use document = parseJsonOutput standardOut
             let root = document.RootElement
+
+            root.GetProperty("ReturnValue").EnumerateObject()
+            |> Seq.map (fun property -> property.Name)
+            |> Set.ofSeq
+            |> should
+                equal
+                (Set.ofList [ "IsRunning"
+                              "CanUseIncrementalStatus"
+                              "Mode"
+                              "Reason"
+                              "Message"
+                              "SafetyFlags"
+                              "IsFresh"
+                              "HasUsableRootSnapshot"
+                              "HasDirectoryIndexSnapshot"
+                              "IsStartupClaim"
+                              "UpdatedAt"
+                              "RootDirectoryId" ])
 
             root
                 .GetProperty("ReturnValue")

@@ -253,9 +253,27 @@ module Configuration =
         let exists = File.Exists(graceIgnorePath)
 
         let entries, errorMessage =
-            match tryGetGraceIgnoreEntries graceIgnorePath with
-            | Ok entries -> entries, None
-            | Error errorMessage -> Array.empty, Some errorMessage
+            let pathKindError =
+                if Directory.Exists(graceIgnorePath) then
+                    Some $"Configured {Constants.GraceIgnoreFileName} path is not a file."
+                elif exists then
+                    None
+                else
+                    try
+                        File.GetAttributes(graceIgnorePath) |> ignore
+
+                        Some $"Configured {Constants.GraceIgnoreFileName} path is not a file."
+                    with
+                    | :? FileNotFoundException
+                    | :? DirectoryNotFoundException -> None
+                    | ex -> Some $"Could not inspect configured {Constants.GraceIgnoreFileName} path: {ex.Message}"
+
+            match pathKindError with
+            | Some errorMessage -> Array.empty, Some errorMessage
+            | None ->
+                match tryGetGraceIgnoreEntries graceIgnorePath with
+                | Ok entries -> entries, None
+                | Error errorMessage -> Array.empty, Some errorMessage
 
         {
             Path = graceIgnorePath

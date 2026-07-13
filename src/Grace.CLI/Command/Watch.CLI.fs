@@ -65,6 +65,135 @@ module Watch =
     /// Reads Grace Watch runtime mode for tests that exercise confidence-loss transitions.
     let internal currentGraceWatchRuntimeModeForWatchTests () = currentGraceWatchRuntimeMode ()
 
+    /// Holds the copied ignore inputs that govern every Watch eligibility decision for one Watch lifetime.
+    type private WatchIgnoreSnapshot =
+        {
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+            FileEntries: string array
+            DirectoryEntries: string array
+        }
+
+    let mutable private activeWatchIgnoreSnapshot: WatchIgnoreSnapshot option = None
+
+    /// Reads a complete ignore snapshot without accepting an unreadable configured `.graceignore` as an empty set.
+    let private tryReadWatchIgnoreSnapshot () =
+        match tryInspectCurrentDirectoryConfiguration () with
+        | Error configurationError -> Error $"Grace Watch could not inspect the repository configuration: {configurationError}"
+        | Ok inspection ->
+            match inspection.Ignore.ErrorMessage with
+            | Some ignoreError -> Error $"Grace Watch could not read {inspection.Ignore.Path}: {ignoreError}"
+            | None ->
+                Ok
+                    {
+                        RootDirectory = Path.GetFullPath(inspection.Configuration.RootDirectory)
+                        GraceDirectory = Path.GetFullPath(inspection.Configuration.GraceDirectory)
+                        GraceStatusFile = Path.GetFullPath(inspection.Configuration.GraceStatusFile)
+                        FileEntries = Array.copy inspection.Configuration.GraceFileIgnoreEntries
+                        DirectoryEntries = Array.copy inspection.Configuration.GraceDirectoryIgnoreEntries
+                    }
+
+    /// Replaces Watch's ignore snapshot only after the repository configuration and `.graceignore` read together successfully.
+    let private tryActivateWatchIgnoreSnapshot () =
+        match tryReadWatchIgnoreSnapshot () with
+        | Ok snapshot ->
+            activeWatchIgnoreSnapshot <- Some snapshot
+            Ok()
+        | Error error ->
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            Error error
+
+    /// Gets the active ignore snapshot, loading it once for focused Watch tests that invoke callbacks without foreground startup.
+    let private currentWatchIgnoreSnapshot () =
+        match activeWatchIgnoreSnapshot with
+        | Some snapshot -> snapshot
+        | None ->
+            match tryActivateWatchIgnoreSnapshot () with
+            | Ok () ->
+                match activeWatchIgnoreSnapshot with
+                | Some snapshot -> snapshot
+                | None -> invalidOp "Grace Watch did not retain the ignore snapshot it just loaded."
+            | Error error -> invalidOp error
+
+    /// Clears the active snapshot between deterministic Watch tests without changing production Watch lifecycle behavior.
+    let internal resetWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot <- None
+
+    /// Loads the current repository snapshot for focused Watch tests that prove restart and invalid-file behavior.
+    let internal tryActivateWatchIgnoreSnapshotForWatchTests () = tryActivateWatchIgnoreSnapshot ()
+
+    /// Checks a file path against the copied Watch-lifetime ignore snapshot.
+    let private shouldIgnoreFileForWatch fullPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let fileInfo = FileInfo(fullPath)
+
+        fullPath.StartsWith(snapshot.GraceDirectory, StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.EndsWith(".gracetmp", StringComparison.OrdinalIgnoreCase)
+        || Directory.Exists(fullPath)
+        || (not (isNull fileInfo.Directory)
+            && snapshot.DirectoryEntries
+               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine))
+        || snapshot.DirectoryEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+        || snapshot.FileEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+
+    /// Checks a directory path against the copied Watch-lifetime ignore snapshot.
+    let private shouldIgnoreDirectoryForWatch directoryPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let directoryInfo = DirectoryInfo(directoryPath)
+
+        directoryInfo.FullName.StartsWith(snapshot.GraceDirectory, StringComparison.InvariantCultureIgnoreCase)
+        || snapshot.DirectoryEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+
+    /// Checks whether a directory remains eligible under the copied Watch-lifetime ignore snapshot.
+    let private shouldNotIgnoreDirectoryForWatch directoryPath = not <| shouldIgnoreDirectoryForWatch directoryPath
+
+    /// Exposes Watch-lifetime file eligibility for deterministic ignore lifecycle tests.
+    let internal shouldIgnoreFileForWatchTests fullPath = shouldIgnoreFileForWatch fullPath
+
+    /// Reports whether Watch retains a previously valid ignore snapshot after a failed reload attempt.
+    let internal hasActiveWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot.IsSome
+
+    /// Returns working-tree differences or the scan failure while retaining the copied Watch-lifetime ignore inputs.
+    let private tryScanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
+        let snapshot = currentWatchIgnoreSnapshot ()
+
+        let scanInput: WorkingTreeScanInput =
+            {
+                RootDirectory = snapshot.RootDirectory
+                GraceDirectory = snapshot.GraceDirectory
+                GraceStatusFile = snapshot.GraceStatusFile
+                DirectoryIgnoreEntries = snapshot.DirectoryEntries
+                FileIgnoreEntries = snapshot.FileEntries
+            }
+
+        scanWorkingTreeForDifferencesReadOnly scanInput previousGraceStatus
+
+    /// Scans the working tree with the copied Watch-lifetime ignore inputs instead of live configuration values.
+    let private scanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
+        task {
+            match! tryScanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus with
+            | Ok differences ->
+                setLastScanForDifferencesSuccessfulForWatchTests true
+                return differences
+            | Error error ->
+                setLastScanForDifferencesSuccessfulForWatchTests false
+                logToAnsiConsole Colors.Error $"Grace Watch could not scan the working tree with its active ignore snapshot: {error}"
+                return List<FileSystemDifference>()
+        }
+
+    /// Exposes frozen-snapshot scan failures for deterministic Watch startup regression tests.
+    let internal tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests previousGraceStatus =
+        tryScanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus
+
+    /// Exposes frozen-snapshot scans for deterministic Watch startup and resync regression tests.
+    let internal scanForDifferencesWithWatchIgnoreSnapshotForWatchTests previousGraceStatus = scanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus
+
     /// Checks whether the current runtime mode can record filesystem observations.
     let private canCaptureFilesystemObservation () = isGraceWatchObservationCaptureLegal (currentGraceWatchRuntimeMode ())
 
@@ -1288,10 +1417,16 @@ module Watch =
 
     /// Reloads repository configuration after another Grace process changes the current branch.
     let private reloadConfigurationForTransitionCompletion () =
-        resetConfiguration ()
-        clearShouldIgnoreCache ()
-        Current() |> ignore
-        configureWatchPathComparisonForCurrentRepository ()
+        match tryReadWatchIgnoreSnapshot () with
+        | Error error ->
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            invalidOp error
+        | Ok snapshot ->
+            resetConfiguration ()
+            Current() |> ignore
+            clearShouldIgnoreCache ()
+            activeWatchIgnoreSnapshot <- Some snapshot
+            configureWatchPathComparisonForCurrentRepository ()
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
@@ -1319,7 +1454,7 @@ module Watch =
         while eligible
               && not (isNull currentDirectory)
               && not (currentDirectory.FullName.Equals(rootDirectory, watchPathComparison)) do
-            if shouldNotIgnoreDirectory currentDirectory.FullName then
+            if shouldNotIgnoreDirectoryForWatch currentDirectory.FullName then
                 currentDirectory <- currentDirectory.Parent
             else
                 eligible <- false
@@ -1797,7 +1932,7 @@ module Watch =
                 addDirectoryDifference directoryPath
 
                 for childDirectoryPath in enumerateDirectoriesForDirectoryStatusAdd directoryPath do
-                    if shouldNotIgnoreDirectory childDirectoryPath then
+                    if shouldNotIgnoreDirectoryForWatch childDirectoryPath then
                         addDirectoryDifference childDirectoryPath
 
                 differences, true
@@ -2046,9 +2181,9 @@ module Watch =
 
     /// Coordinates should ignore deleted path behavior for this CLI command path.
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
-        let configuration = Current()
+        let snapshot = currentWatchIgnoreSnapshot ()
         let normalizedFullPath = Path.GetFullPath(fullPath)
-        let graceDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.GraceDirectory))
+        let graceDirectory = Path.TrimEndingDirectorySeparator(snapshot.GraceDirectory)
         let fileInfo = FileInfo(fullPath)
         let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
 
@@ -2061,10 +2196,10 @@ module Watch =
             )
 
         let isGraceStatusArtifact =
-            normalizedFullPath.Equals(configuration.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+            normalizedFullPath.Equals(snapshot.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
 
         if isInGraceDirectory || isGraceStatusArtifact then
             true
@@ -2081,16 +2216,16 @@ module Watch =
             (pathKind <> DeletedDirectory
              && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists directoryIgnoreMatches)
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
             || (pathKind <> DeletedDirectory
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceFileIgnoreEntries
+                && snapshot.FileEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
 
     /// Coordinates enqueue status update trigger behavior for this CLI command path.
@@ -2277,7 +2412,7 @@ module Watch =
 
     /// Reads enqueue file upload data needed by the command workflow without changing remote state.
     let private enqueueFileUpload fullPath =
-        let shouldIgnore = shouldIgnoreFile fullPath
+        let shouldIgnore = shouldIgnoreFileForWatch fullPath
 
         if not shouldIgnore then
             let generation = Interlocked.Increment(&fileUploadWorkGeneration)
@@ -2319,7 +2454,7 @@ module Watch =
     let private enqueueDirectoryUploadRetry directoryPath =
         if
             Directory.Exists(directoryPath)
-            && shouldNotIgnoreDirectory directoryPath
+            && shouldNotIgnoreDirectoryForWatch directoryPath
         then
             let generation = Interlocked.Increment(&directoryWorkGeneration)
 
@@ -2352,7 +2487,7 @@ module Watch =
     let private tryEnqueueDirectoryContentsForUpload directoryPath =
         if
             Directory.Exists(directoryPath)
-            && shouldNotIgnoreDirectory directoryPath
+            && shouldNotIgnoreDirectoryForWatch directoryPath
         then
             try
                 for filePath in enumerateFilesForDirectoryUpload directoryPath do
@@ -3892,6 +4027,95 @@ module Watch =
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
 
+    let private pendingTransitionConfigurationReloadLock = obj ()
+    let mutable private pendingTransitionConfigurationReloadReason: string option = None
+    /// Advances whenever a newer branch transition supersedes an in-flight configuration retry.
+    let mutable private pendingTransitionConfigurationReloadGeneration = 0L
+    /// Prevents concurrent timer passes from activating the same pending branch configuration twice.
+    let mutable private pendingTransitionConfigurationReloadInProgress = false
+    let private pendingTransitionConfigurationReloadStatusPublicationProbeLock = obj ()
+    /// Holds the deterministic test probe that pauses a claimed retry after target activation and before IPC publication.
+    let mutable private pendingTransitionConfigurationReloadStatusPublicationProbe = ignore
+
+    /// Runs the deterministic test probe after the target configuration is active but before its required non-incremental IPC publication.
+    let private runPendingTransitionConfigurationReloadStatusPublicationProbe () =
+        let probe = lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe)
+
+        probe ()
+
+    /// Installs a deterministic retry/publication interleaving probe for Watch tests.
+    let internal setPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests probe =
+        lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe <- probe)
+
+    /// Restores the production no-op retry/publication probe after Watch tests.
+    let internal resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests () =
+        lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe <- ignore)
+
+    /// Reports whether a target configuration retry remains pending after a deterministic Watch test interleaving.
+    let internal hasPendingTransitionConfigurationReloadForWatchTests () =
+        lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadReason.IsSome)
+
+    /// Defers target-branch configuration activation until the existing resync loop can retry it without trusting the source snapshot.
+    let private deferTransitionConfigurationReload reason =
+        lock pendingTransitionConfigurationReloadLock (fun () ->
+            pendingTransitionConfigurationReloadGeneration <-
+                pendingTransitionConfigurationReloadGeneration
+                + 1L
+
+            pendingTransitionConfigurationReloadReason <- Some reason)
+
+        requestGraceWatchExplicitResync reason
+
+    /// Retries one claimed target-branch activation without holding the pending-reload monitor across IPC publication or other side effects.
+    let private tryReloadPendingTransitionConfiguration () =
+        let mutable claimedReload: (int64 * string) option = None
+
+        let noReloadWasPending =
+            lock pendingTransitionConfigurationReloadLock (fun () ->
+                match pendingTransitionConfigurationReloadReason with
+                | None -> true
+                | Some _ when pendingTransitionConfigurationReloadInProgress -> false
+                | Some reason ->
+                    pendingTransitionConfigurationReloadInProgress <- true
+                    claimedReload <- Some(pendingTransitionConfigurationReloadGeneration, reason)
+                    false)
+
+        match claimedReload with
+        | None -> noReloadWasPending
+        | Some (generation, reason) ->
+            let wasSuspended = currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Suspended
+
+            try
+                reloadConfigurationForTransitionCompletion ()
+                rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                runPendingTransitionConfigurationReloadStatusPublicationProbe ()
+                // Current now identifies the target branch. Publish its existing non-incremental contract before recovery can block.
+                publishGraceWatchResyncRequired ()
+
+                lock pendingTransitionConfigurationReloadLock (fun () ->
+                    pendingTransitionConfigurationReloadInProgress <- false
+
+                    if pendingTransitionConfigurationReloadGeneration = generation then
+                        pendingTransitionConfigurationReloadReason <- None
+                        true
+                    else
+                        // A marker-deletion failure arrived while this retry was outside the lock; preserve its newer retry.
+                        false)
+            with
+            | ex ->
+                lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadInProgress <- false)
+
+                if wasSuspended then
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+                else
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch retained degraded recovery because target branch configuration reload is still unavailable: {Markup.Escape(ex.Message)}. {Markup.Escape(reason)}"
+
+                false
+
     /// Schedules the next timer-driven identity attempt or classifies the final path before bounded exhaustion selects resync recovery.
     let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
         let attemptsAfterFailure = pendingFile.StabilizationAttempts + 1
@@ -4058,7 +4282,7 @@ module Watch =
 
         verified
 
-    /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
+    /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked and returns any deferred reload reason.
     let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
         clearSignalRBranchSubscriptionForTransition ()
         let previousIpcFileName = IpcFileName()
@@ -4072,96 +4296,114 @@ module Watch =
                 reloadConfigurationForTransitionCompletion ()
                 rebindUpdateMarkerWatcherAfterTransitionCompletion ()
                 publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
+                None
             with
             | ex ->
+                let reason = $"branch transition completion could not reload target configuration after previous branch IPC retirement failed: {ex.Message}"
+
                 logToAnsiConsole
                     Colors.Error
                     $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
 
-    /// Completes a Grace-owned branch transition inside the serialized Watch publication boundary.
+                Some reason
+        else
+            None
+
+    /// Completes a Grace-owned branch transition, then records any failed target activation after releasing the status publication monitor.
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
-        lock watchStatusPublishLock (fun () ->
-            recordGraceUpdateMarkerCompletedUtc completedUtc
-            clearSignalRBranchSubscriptionForTransition ()
-            let previousIpcFileName = IpcFileName()
+        let deferredTransitionConfigurationReloadReason =
+            lock watchStatusPublishLock (fun () ->
+                let mutable deferredConfigurationReloadReason = None
 
-            let previousIpcRetired =
-                try
-                    let retired = retirePreviousBranchWatchIpc previousIpcFileName
+                recordGraceUpdateMarkerCompletedUtc completedUtc
+                clearSignalRBranchSubscriptionForTransition ()
+                let previousIpcFileName = IpcFileName()
 
-                    if not retired then
-                        publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc "previous branch IPC still existed after delete"
-
-                    retired
-                with
-                | ex ->
-                    publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
-                    false
-
-            if previousIpcRetired then
-                runBranchTransitionCompletionAfterRetireProbe ()
-
-                let reloadedConfiguration =
+                let previousIpcRetired =
                     try
-                        reloadConfigurationForTransitionCompletion ()
-                        rebindUpdateMarkerWatcherAfterTransitionCompletion ()
-                        true
+                        let retired = retirePreviousBranchWatchIpc previousIpcFileName
+
+                        if not retired then
+                            deferredConfigurationReloadReason <-
+                                publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc "previous branch IPC still existed after delete"
+
+                        retired
                     with
                     | ex ->
-                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-                        graceStatusHasChanged <- true
-
-                        lastPublishedHasPendingWatchWork <- None
-
-                        logToAnsiConsole
-                            Colors.Error
-                            $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
-
+                        deferredConfigurationReloadReason <- publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
                         false
 
-                if reloadedConfiguration then
-                    try
-                        let refreshedStatus =
-                            readGraceStatusFileForTransitionCompletion()
-                                .GetAwaiter()
-                                .GetResult()
+                if previousIpcRetired then
+                    runBranchTransitionCompletionAfterRetireProbe ()
 
-                        graceStatus <- refreshedStatus
-                        updateGraceStatusDirectoryIds graceStatus
+                    let reloadedConfiguration =
+                        try
+                            reloadConfigurationForTransitionCompletion ()
+                            rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                            true
+                        with
+                        | ex ->
+                            graceStatusHasChanged <- true
 
-                        if isTransitionCompletionConfigurationCoherent ()
-                           && isTransitionCompletionGraceStatusCoherent graceStatus then
-                            if
-                                currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
-                                && not (isGraceWatchResyncPending ())
-                            then
-                                let transitionPublicationVerified =
-                                    tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
-                                        updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+                            lastPublishedHasPendingWatchWork <- None
 
-                                if transitionPublicationVerified then
-                                    try
-                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                            deferredConfigurationReloadReason <-
+                                Some $"branch transition completion could not reload target configuration after marker deletion: {ex.Message}"
 
-                                        logToAnsiConsole
-                                            Colors.Important
-                                            $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
-                                    with
-                                    | ex ->
-                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                            logToAnsiConsole
+                                Colors.Error
+                                $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
 
-                                        logToAnsiConsole
-                                            Colors.Error
-                                            $"Grace Watch completed branch transition but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+                            false
+
+                    if reloadedConfiguration then
+                        try
+                            let refreshedStatus =
+                                readGraceStatusFileForTransitionCompletion()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            graceStatus <- refreshedStatus
+                            updateGraceStatusDirectoryIds graceStatus
+
+                            if isTransitionCompletionConfigurationCoherent ()
+                               && isTransitionCompletionGraceStatusCoherent graceStatus then
+                                if
+                                    currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                                    && not (isGraceWatchResyncPending ())
+                                then
+                                    let transitionPublicationVerified =
+                                        tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                            updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+
+                                    if transitionPublicationVerified then
+                                        try
+                                            refreshSignalRSubscriptionsAfterTransitionCompletion ()
+
+                                            logToAnsiConsole
+                                                Colors.Important
+                                                $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                                        with
+                                        | ex ->
+                                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch completed branch transition but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+                                    else
+                                        requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
                                 else
-                                    requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
+                                    publishNonIncrementalTransitionCompletionStatus
+                                        $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
                             else
-                                publishNonIncrementalTransitionCompletionStatus
-                                    $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
-                        else
-                            requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
-                    with
-                    | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}")
+                                requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
+                        with
+                        | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}"
+
+                deferredConfigurationReloadReason)
+
+        deferredTransitionConfigurationReloadReason
+        |> Option.iter deferTransitionConfigurationReload
 
     /// Combines status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
@@ -4242,6 +4484,11 @@ module Watch =
         lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
         clearGraceWatchResyncPending ()
 
+        lock pendingTransitionConfigurationReloadLock (fun () ->
+            pendingTransitionConfigurationReloadReason <- None
+            pendingTransitionConfigurationReloadGeneration <- 0L
+            pendingTransitionConfigurationReloadInProgress <- false)
+
         Interlocked.Exchange(&quarantinedWatchObservationCount, 0)
         |> ignore
 
@@ -4275,6 +4522,7 @@ module Watch =
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests ()
         resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests ()
+        resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests ()
         resetSignalRSubscriptionRefreshForWatchTests ()
         resetWatchJournalClientsForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
@@ -7399,7 +7647,7 @@ module Watch =
                 return Some graceStatus
             else
                 // Get the list of differences between what's in the working directory, and what Grace Index knows about.
-                let! differences = scanForDifferences graceStatus
+                let! differences = scanForDifferencesWithWatchIgnoreSnapshot graceStatus
                 return! updateGraceStatusFromDifferences graceStatus differences correlationId
         }
 
@@ -7866,7 +8114,12 @@ module Watch =
         =
         task {
             configureWatchPathComparisonForCurrentRepository ()
-            processDueLocalObservationCandidates DateTime.UtcNow
+
+            // A target branch must install its own snapshot before Watch can classify due filesystem candidates.
+            let targetConfigurationActive = tryReloadPendingTransitionConfiguration ()
+
+            if targetConfigurationActive then
+                processDueLocalObservationCandidates DateTime.UtcNow
 
             match takeLocalObservationConfidenceLoss () with
             | Some reason ->
@@ -7874,8 +8127,9 @@ module Watch =
                 requestGraceWatchExplicitResync reason
             | None -> ()
 
-            // First, check if there's anything to process.
-            if isGraceWatchResyncPending () then
+            if not targetConfigurationActive then
+                ()
+            elif isGraceWatchResyncPending () then
                 let resyncAttempt = currentGraceWatchResyncAttempt ()
 
                 if not (isGraceWatchResyncAttemptActive resyncAttempt) then
@@ -8441,7 +8695,7 @@ module Watch =
             readGraceStatusFile
             copyFileToObjectDirectoryAndUploadToStorage
             updateGraceStatus
-            scanForDifferences
+            scanForDifferencesWithWatchIgnoreSnapshot
             updateGraceStatusFromDifferences
             applyGraceStatusIncremental
             updateGraceWatchInterprocessFile
@@ -8525,7 +8779,7 @@ module Watch =
           (DifferenceType.Add
           | DifferenceType.Change),
           FinalPathFile ->
-            if shouldIgnoreFile fullPath then
+            if shouldIgnoreFileForWatch fullPath then
                 Some "current startup replay file content ignored before status application"
             elif row.DifferenceType = DifferenceType.Add
                  && isTrackedFile status row.RelativePath then
@@ -8549,7 +8803,7 @@ module Watch =
             else
                 Some "startup replay file delete is not tracked"
         | FileSystemEntryType.Directory, DifferenceType.Add, FinalPathDirectory ->
-            if shouldIgnoreDirectory fullPath then
+            if shouldIgnoreDirectoryForWatch fullPath then
                 Some "current startup replay directory ignored before status application"
             elif isTrackedDirectory status row.RelativePath then
                 Some "startup replay directory add already tracked"
@@ -8822,6 +9076,11 @@ module Watch =
                         raise (WatchCommandExit -1)
 
                     setGraceWatchRuntimeMode GraceWatchRuntimeMode.StartingUp
+
+                    match tryActivateWatchIgnoreSnapshot () with
+                    | Ok () -> ()
+                    | Error error -> raise (InvalidOperationException(error))
+
                     configureWatchPathComparisonForCurrentRepository ()
 
                     // A live watcher waits one timer interval after the most recent raw callback before it reads filesystem state.
@@ -9053,21 +9312,31 @@ module Watch =
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
 
-                    let! differences =
+                    let! startupScan =
                         if isGraceWatchScanLegal (currentGraceWatchRuntimeMode ()) then
-                            scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
+                            tryScanForDifferencesWithWatchIgnoreSnapshot graceStatus
                         else
                             logToAnsiConsole Colors.Verbose $"Grace Watch skipped startup scan while runtime mode is {currentGraceWatchRuntimeMode ()}."
 
-                            Task.FromResult(List<FileSystemDifference>())
+                            Task.FromResult(Error "startup working-tree scan is not legal in the current Watch runtime mode")
 
-                    if differences |> Seq.isEmpty then
-                        logToAnsiConsole Colors.Verbose $"Already up-to-date."
-                    else
-                        logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
+                    match startupScan with
+                    | Ok differences ->
+                        setLastScanForDifferencesSuccessfulForWatchTests true
 
-                    for difference in differences do
-                        queueStartupDifferenceForWatch difference
+                        if differences |> Seq.isEmpty then
+                            logToAnsiConsole Colors.Verbose $"Already up-to-date."
+                        else
+                            logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
+
+                        for difference in differences do
+                            queueStartupDifferenceForWatch difference
+                    | Error error ->
+                        setLastScanForDifferencesSuccessfulForWatchTests false
+                        requestGraceWatchExplicitResync "startup working-tree scan did not complete with the active Watch ignore snapshot"
+
+                        logToAnsiConsole Colors.Error "Grace Watch kept startup non-incremental because the working-tree scan did not complete successfully."
+                        logToAnsiConsole Colors.Error $"Grace Watch startup scan failure: {error}"
 
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
