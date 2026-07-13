@@ -3848,6 +3848,188 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false)
 
+    /// Verifies a trusted delete status boundary retires uploaded recovery evidence after the processed upload path is already cleared.
+    [<Test>]
+    let ``trusted delete status retires uploaded recovery evidence after canceled upload accounting`` () =
+        withTempRepo (fun root ->
+            let relativePath = "uploaded-then-deleted.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let mutable uploadCalls = 0
+            let mutable deleteStatusApplications = 0
+            let mutable trustedDeleteStatusBoundary = false
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            File.WriteAllText(filePath, "uploaded final bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            Watch.retainAcceptedFileRecoveryEvidenceForWatchTests filePath
+            |> should equal true
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+            let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+
+            let updateGraceStatusFromDifferences currentStatus differences _ =
+                if trustedDeleteStatusBoundary then
+                    differences
+                    |> Seq.filter (fun difference ->
+                        difference.DifferenceType = DifferenceType.Delete
+                        && difference.FileSystemEntryType = FileSystemEntryType.File
+                        && difference.RelativePath = RelativePath relativePath)
+                    |> Seq.length
+                    |> fun count -> deleteStatusApplications <- deleteStatusApplications + count
+
+                    Task.FromResult(Some currentStatus)
+                else
+                    // Keep the accepted upload unresolved so the following delete clears processed state before the trusted boundary.
+                    Task.FromResult(None)
+
+            let processWatchPass () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            processWatchPass ()
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal [| filePath |]
+
+            File.Delete(filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+            trustedDeleteStatusBoundary <- true
+            processWatchPass ()
+
+            uploadCalls |> should equal 1
+            deleteStatusApplications |> should equal 1
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.uploadedFileVersionRelativePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false))
+
+    /// Verifies an upload that completes after its accepted scope changes cannot seed same-path upload reuse in the new scope.
+    [<Test>]
+    let ``scope change during upload clears stale identity before current scope reuploads same path`` () =
+        withTempRepo (fun root ->
+            let relativePath = "same-path-after-scope-change.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let configuration = Current()
+            let mutable uploadCalls = 0
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            File.WriteAllText(filePath, "same final bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+
+                if uploadCalls = 1 then
+                    configuration.BranchId <- Guid.NewGuid()
+                    configuration.BranchName <- "watch-test-next-branch"
+
+                Task.FromResult(())
+
+            let scanForDifferences _ =
+                let differences = List<FileSystemDifference>()
+                differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File relativePath)
+                Task.FromResult(differences)
+
+            let processWatchPass () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    upload
+                    (fun status _ -> Task.FromResult(Some status))
+                    scanForDifferences
+                    (fun status _ _ -> Task.FromResult(Some status))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            processWatchPass ()
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.uploadedFileVersionRelativePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.OnChanged(changedEvent filePath)
+            processWatchPass ()
+
+            uploadCalls |> should equal 2
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
+    /// Verifies a newer resync that begins after status trust but before recovery cleanup preserves the newer attempt's blockers.
+    [<Test>]
+    let ``newer resync before evidence retirement leaves recovery blockers intact`` () =
+        withTempRepo (fun root ->
+            let relativePath = "newer-attempt-recovery-blocker.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let mutable retirementProbeCalls = 0
+
+            File.WriteAllText(filePath, "retained final bytes")
+            Watch.OnChanged(changedEvent filePath)
+            Watch.requestGraceWatchExplicitResyncForWatchTests "test initial recovery evidence"
+
+            let upload _ pendingFilePath =
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            Watch.setBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests (fun () ->
+                retirementProbeCalls <- retirementProbeCalls + 1
+                Watch.requestGraceWatchExplicitResyncForWatchTests "newer resync arrived after status trust before evidence retirement")
+
+            try
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    upload
+                    (fun status _ -> Task.FromResult(Some status))
+                    (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                    (fun status _ _ -> Task.FromResult(Some status))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+            finally
+                Watch.resetBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests ()
+
+            retirementProbeCalls |> should equal 1
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal [| filePath |]
+
+            Watch.uploadedFileVersionRelativePathsForWatchTests ()
+            |> should equal [| relativePath |])
+
     /// Verifies that a missing final path does not invoke file-content work and can stabilize after the path returns.
     [<Test>]
     let ``watch stable identity defers missing path until it reappears`` () =

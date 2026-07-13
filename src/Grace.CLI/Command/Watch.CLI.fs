@@ -1982,12 +1982,41 @@ module Watch =
                 fileRecoveryEvidence.TryRemove(evidence.Key, &retiredEvidence)
                 |> ignore
 
+    /// Removes stale-scope recovery state for a path after an upload completes outside its accepted branch and root scope.
+    let private discardStaleFileRecoveryStateForScopeChangedPath (pendingFile: PendingFileWorkSnapshot) =
+        let staleRelativePath = relativePathForPendingFileWork pendingFile
+
+        for evidence in fileRecoveryEvidence.ToArray() do
+            let evidenceRelativePath = relativePathForPendingFileWork evidence.Value
+
+            if
+                not (pendingFileWorkMatchesCurrentScope evidence.Value)
+                && String.Equals(normalizeRelativePath evidenceRelativePath, normalizeRelativePath staleRelativePath, watchPathComparison)
+            then
+                let mutable discardedEvidence = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+                fileRecoveryEvidence.TryRemove(evidence.Key, &discardedEvidence)
+                |> ignore
+
+        // Uploaded identities are not scope-tagged, so retire every identity for this path before the new scope can reuse it.
+        removeUploadedFileVersionsForPaths [ staleRelativePath ]
+
     /// Lists retained current-scope evidence for deterministic recovery lifecycle tests.
     let internal fileRecoveryEvidencePathsForWatchTests () =
         fileRecoveryEvidence.Values
         |> Seq.map (fun pendingFile -> pendingFile.FullPath)
         |> Seq.sort
         |> Seq.toArray
+
+    /// Captures one already accepted pending file as recovery evidence for deterministic trusted-boundary tests.
+    let internal retainAcceptedFileRecoveryEvidenceForWatchTests fullPath =
+        let mutable pendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+        if filesToProcess.TryGetValue(fullPath, &pendingFile) then
+            retainFileRecoveryEvidence pendingFile
+            fileRecoveryEvidence.ContainsKey(fullPath)
+        else
+            false
 
     /// Reads enqueue file upload data needed by the command workflow without changing remote state.
     let private enqueueFileUpload fullPath =
@@ -2500,6 +2529,26 @@ module Watch =
 
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
+
+    let private graceWatchResyncTransitionLock = obj ()
+
+    let mutable private beforeGraceWatchResyncEvidenceRetirementProbe = fun () -> ()
+
+    /// Overrides the evidence-retirement interleaving probe for deterministic Watch resync transition tests.
+    let internal setBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests probe = beforeGraceWatchResyncEvidenceRetirementProbe <- probe
+
+    /// Restores the evidence-retirement interleaving probe after deterministic Watch resync transition tests.
+    let internal resetBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests () = beforeGraceWatchResyncEvidenceRetirementProbe <- fun () -> ()
+
+    /// Retires recovery state only while this exact resync attempt still owns the terminal scan-derived boundary.
+    let private tryRetireRecoveredFileStateForResyncAttempt attempt recoveredEvidencePaths =
+        lock graceWatchResyncTransitionLock (fun () ->
+            if isGraceWatchResyncAttemptActive attempt then
+                retireFileRecoveryEvidenceForPaths recoveredEvidencePaths
+                removeUploadedFileVersionsForPaths recoveredEvidencePaths
+                true
+            else
+                false)
 
     let mutable private beforeGraceWatchResyncAttemptRetirementProbe = fun () -> ()
 
@@ -3343,26 +3392,27 @@ module Watch =
 
     /// Requests a scan-derived resync, retaining only file evidence selected by the caller's current recovery boundary.
     let private requestGraceWatchExplicitResyncCore reason retainPendingFile =
-        retainFileRecoveryEvidenceFromPendingWork retainPendingFile
+        lock graceWatchResyncTransitionLock (fun () ->
+            retainFileRecoveryEvidenceFromPendingWork retainPendingFile
 
-        let startupReplayRowsDurablyTerminal = quarantinePendingWatchWork reason retainPendingFile
+            let startupReplayRowsDurablyTerminal = quarantinePendingWatchWork reason retainPendingFile
 
-        Interlocked.Increment(&graceWatchResyncGeneration)
-        |> ignore
+            Interlocked.Increment(&graceWatchResyncGeneration)
+            |> ignore
 
-        if startupReplayRowsDurablyTerminal then
-            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-        else
-            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+            if startupReplayRowsDurablyTerminal then
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            else
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
 
-        publishGraceWatchResyncRequired ()
+            publishGraceWatchResyncRequired ()
 
-        if startupReplayRowsDurablyTerminal then
-            logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
-        else
-            logToAnsiConsole
-                Colors.Error
-                $"Grace Watch suspended incremental processing because startup replay journal rows could not be made terminal after confidence loss: {reason}."
+            if startupReplayRowsDurablyTerminal then
+                logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
+            else
+                logToAnsiConsole
+                    Colors.Error
+                    $"Grace Watch suspended incremental processing because startup replay journal rows could not be made terminal after confidence loss: {reason}.")
 
     /// Requests a scan-derived resync and quarantines stale observations while retaining current-scope file evidence through recovery.
     let private requestGraceWatchExplicitResync reason = requestGraceWatchExplicitResyncCore reason pendingFileWorkMatchesCurrentScope
@@ -7097,6 +7147,8 @@ module Watch =
                     if pendingFile.RetryNotBeforeUtc > now then
                         ()
                     elif not (pendingFileWorkMatchesCurrentScope pendingFile) then
+                        discardStaleFileRecoveryStateForScopeChangedPath pendingFile
+
                         requestGraceWatchExplicitResyncRetainingPendingFiles
                             $"Watch file identity scope changed before stabilization for {pendingFile.FullPath}."
                     elif updateInProgress () then
@@ -7134,6 +7186,8 @@ module Watch =
                                             || currentMode = GraceWatchRuntimeMode.Stopping))
 
                             if not scopeStillCurrent then
+                                discardStaleFileRecoveryStateForScopeChangedPath pendingFile
+
                                 requestGraceWatchExplicitResync $"Watch file identity scope changed during stabilization for {pendingFile.FullPath}."
                             elif
                                 uploadResultStillTrusted
@@ -7397,8 +7451,12 @@ module Watch =
                                     |> Seq.map relativePathForPendingFileWork
                                     |> Seq.toArray
 
-                                retireFileRecoveryEvidenceForPaths recoveredEvidencePaths
-                                removeUploadedFileVersionsForPaths recoveredEvidencePaths
+                                beforeGraceWatchResyncEvidenceRetirementProbe ()
+
+                                if not (tryRetireRecoveredFileStateForResyncAttempt resyncAttempt recoveredEvidencePaths) then
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch retained recovery evidence because resync attempt {resyncAttempt} became stale before terminal recovery retirement."
 
                                 let materializationPendingLatchOwned = hasManualPendingWatchWorkStatusFlag ()
 
@@ -7725,8 +7783,20 @@ module Watch =
                                     clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
                                     clearStartupReplaySequences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
                                     clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
-                                    retireFileRecoveryEvidenceForPaths processedFileRelativePathsForStatus
-                                    removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
+
+                                    let trustedFileStatusPaths =
+                                        seq {
+                                            yield! processedFileRelativePathsForStatus
+                                            yield! canceledFileUploadDeletePathsToClear
+
+                                            yield!
+                                                statusDifferencesForApply.Resolved
+                                                |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
+                                                |> Seq.map (fun difference -> difference.RelativePath)
+                                        }
+
+                                    retireFileRecoveryEvidenceForPaths trustedFileStatusPaths
+                                    removeUploadedFileVersionsForPaths trustedFileStatusPaths
                             else
                                 clearPendingStatusDifferences pendingDifferencesToClear
                                 clearStartupReplaySequences pendingDifferencesToClear
