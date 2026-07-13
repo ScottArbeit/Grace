@@ -83,6 +83,13 @@ type OperationsDbContextModelSnapshot() =
             .IsRequired()
         |> ignore
 
+        rawFact
+            .Property<System.DateTime>("AcceptedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
         rawFact.Property<int>("ArchiveState").IsRequired()
         |> ignore
 
@@ -1144,6 +1151,37 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         work
+            .Property<bool>("IsAutomaticRetryEligible")
+            .HasDefaultValue(true)
+            .IsRequired()
+        |> ignore
+
+        work
+            .Property<Nullable<DateTime>>("ReenabledAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        work
+            .Property<string>("ReenabledByPrincipalId")
+            .HasMaxLength(256)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledReasonCode")
+            .HasMaxLength(64)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledReasonText")
+            .HasMaxLength(1024)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledCorrelationId")
+            .HasMaxLength(200)
+        |> ignore
+
+        work
             .Property<Nullable<DateTime>>("CompletedAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
@@ -1160,7 +1198,13 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         work
-            .HasIndex([| "CompletedAtUtc"; "CreatedAtUtc" |])
+            .HasIndex(
+                [|
+                    "CompletedAtUtc"
+                    "IsAutomaticRetryEligible"
+                    "CreatedAtUtc"
+                |]
+            )
             .HasDatabaseName("IX_ops_BillingCorrectionWork_Pending")
         |> ignore
 

@@ -93,6 +93,9 @@ END;
     [<Literal>]
     let TryInsertRawUsageFact =
         """
+DECLARE @LockResult int;
+EXEC @LockResult = sys.sp_getapplock @Resource=@LockResource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=60000;
+IF @LockResult < 0 THROW 51000, 'Could not serialize accepted usage against billing close scope.', 1;
 INSERT INTO ops.RawUsageFact
 (
     UsageFactId,

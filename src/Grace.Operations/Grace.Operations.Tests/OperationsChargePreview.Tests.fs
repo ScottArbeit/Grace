@@ -337,6 +337,15 @@ type OperationsChargePreviewTests() =
         let withoutLaterBilling shape =
             shape
             |> Set.filter (fun (entityName, _, _, _, _, _, _, _) -> not (laterBillingEntities.Contains(entityName)))
+            |> Set.map (fun (entityName, schema, table, keys, properties, indexes, foreignKeys, checkConstraints) ->
+                let historicalProperties =
+                    if entityName = typeof<RawUsageFactEntity>.FullName then
+                        properties
+                        |> Set.filter (fun (name, _, _) -> name <> "AcceptedAtUtc")
+                    else
+                        properties
+
+                entityName, schema, table, keys, historicalProperties, indexes, foreignKeys, checkConstraints)
 
         ChargePreviewTestData.multiple (fun () ->
             Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
@@ -349,6 +358,8 @@ type OperationsChargePreviewTests() =
             Assert.That(snapshotModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
             Assert.That(targetModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
+            Assert.That(targetModelSource, Does.Not.Contain("AcceptedAtUtc"))
+            Assert.That(snapshotModelSource, Does.Contain("AcceptedAtUtc"))
             Assert.That((migrationShape = withoutLaterBilling snapshotShape), Is.True)
 
             Assert.That(

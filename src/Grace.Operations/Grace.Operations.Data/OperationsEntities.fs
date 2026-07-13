@@ -36,6 +36,9 @@ type RawUsageFactEntity() =
     /// Stores the UTC minute timestamp associated with the fact.
     member val ObservedAtUtc = DateTime.MinValue with get, set
 
+    /// Stores the database-assigned UTC acceptance instant used to order late-fact correction routing against period close.
+    member val AcceptedAtUtc = DateTime.MinValue with get, set
+
     /// Stores the hot/cold archive state for the raw payload.
     member val ArchiveState = 0 with get, set
 
@@ -426,6 +429,18 @@ type BillingCorrectionWorkEntity() =
     member val BlockedCode: string = null with get, set
     /// Stores current bounded pending detail.
     member val BlockedDetail: string = null with get, set
+    /// Stores whether automatic polling may select this unfinished correction row.
+    member val IsAutomaticRetryEligible = true with get, set
+    /// Stores the database UTC instant when an operator made this exact row eligible again.
+    member val ReenabledAtUtc = Nullable<DateTime>() with get, set
+    /// Stores the principal that explicitly re-enabled this correction row.
+    member val ReenabledByPrincipalId: string = null with get, set
+    /// Stores the operator's bounded re-enable reason code.
+    member val ReenabledReasonCode: string = null with get, set
+    /// Stores the operator's bounded re-enable reason text.
+    member val ReenabledReasonText: string = null with get, set
+    /// Stores the operator correlation that identifies the exact re-enable outcome.
+    member val ReenabledCorrelationId: string = null with get, set
     /// Stores when processing committed successfully.
     member val CompletedAtUtc = Nullable<DateTime>() with get, set
     /// Stores SQL creation time.

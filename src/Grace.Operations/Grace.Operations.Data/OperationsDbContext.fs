@@ -654,6 +654,16 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     /// Configures the Operations SQL Server schema shape that migrations must preserve.
     override _.OnModelCreating(modelBuilder: ModelBuilder) =
         OperationsModel.configure modelBuilder
+
+        let rawFact = modelBuilder.Entity<RawUsageFactEntity>()
+
+        rawFact
+            .Property<System.DateTime>("AcceptedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
         OperationsBillingModel.configure modelBuilder
 
 /// Ensures EF-generated scripts create the Operations schema before SQL Server receives history-table DDL.

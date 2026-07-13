@@ -15,6 +15,8 @@ type AddBillingPeriodCloseLedger() =
     override _.Up(migrationBuilder: MigrationBuilder) =
         migrationBuilder.Sql(
             """
+ALTER TABLE ops.RawUsageFact ADD AcceptedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_RawUsageFact_AcceptedAtUtc DEFAULT SYSUTCDATETIME() WITH VALUES;
+
 CREATE TABLE ops.BillingPeriod
 (
     BillingPeriodId uniqueidentifier NOT NULL,
@@ -117,13 +119,19 @@ CREATE TABLE ops.BillingCorrectionWork
     UsageFactId uniqueidentifier NOT NULL,
     BlockedCode nvarchar(64) NULL,
     BlockedDetail nvarchar(1024) NULL,
+    IsAutomaticRetryEligible bit NOT NULL CONSTRAINT DF_ops_BillingCorrectionWork_IsAutomaticRetryEligible DEFAULT 1,
+    ReenabledAtUtc datetime2(7) NULL,
+    ReenabledByPrincipalId nvarchar(256) NULL,
+    ReenabledReasonCode nvarchar(64) NULL,
+    ReenabledReasonText nvarchar(1024) NULL,
+    ReenabledCorrelationId nvarchar(200) NULL,
     CompletedAtUtc datetime2(7) NULL,
     CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_BillingCorrectionWork_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
     CONSTRAINT PK_ops_BillingCorrectionWork PRIMARY KEY (BillingCorrectionWorkId),
     CONSTRAINT FK_ops_BillingCorrectionWork_BillingPeriod FOREIGN KEY (BillingPeriodId) REFERENCES ops.BillingPeriod(BillingPeriodId)
 );
 CREATE UNIQUE INDEX UX_ops_BillingCorrectionWork_PeriodFact ON ops.BillingCorrectionWork(BillingPeriodId,UsageFactId);
-CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(CompletedAtUtc,CreatedAtUtc);
+CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(CompletedAtUtc,IsAutomaticRetryEligible,CreatedAtUtc);
 """
         )
         |> ignore
@@ -139,7 +147,7 @@ CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(C
     /// Removes billing protection triggers before their referenced billing tables and then removes this migration's schema.
     override _.Down(migrationBuilder: MigrationBuilder) =
         migrationBuilder.Sql(
-            "DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingAssignment_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable; DROP TABLE IF EXISTS ops.BillingCorrectionWork; DROP TABLE IF EXISTS ops.BillingIngestionFailure; DROP TABLE IF EXISTS ops.ChargeLedgerEntry; DROP TABLE IF EXISTS ops.ChargePreviewFreshness; DROP TABLE IF EXISTS ops.BillingPeriod;"
+            "DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_PricingAssignment_HistoricalProtection; DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable; DROP TABLE IF EXISTS ops.BillingCorrectionWork; DROP TABLE IF EXISTS ops.BillingIngestionFailure; DROP TABLE IF EXISTS ops.ChargeLedgerEntry; DROP TABLE IF EXISTS ops.ChargePreviewFreshness; DROP TABLE IF EXISTS ops.BillingPeriod; ALTER TABLE ops.RawUsageFact DROP CONSTRAINT IF EXISTS DF_ops_RawUsageFact_AcceptedAtUtc; ALTER TABLE ops.RawUsageFact DROP COLUMN IF EXISTS AcceptedAtUtc;"
         )
         |> ignore
 
@@ -149,6 +157,15 @@ CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(C
         |> ignore
         // The preceding migration owns the pre-billing model. The billing delta remains literal here so runtime edits cannot rewrite this target.
         OperationsModel.configure modelBuilder
+        let rawFact = modelBuilder.Entity<RawUsageFactEntity>()
+
+        rawFact
+            .Property<System.DateTime>("AcceptedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
         let period = modelBuilder.Entity<BillingPeriodEntity>()
         period.ToTable("BillingPeriod", "ops") |> ignore
 
@@ -583,6 +600,37 @@ CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(C
         |> ignore
 
         work
+            .Property<bool>("IsAutomaticRetryEligible")
+            .HasDefaultValue(true)
+            .IsRequired()
+        |> ignore
+
+        work
+            .Property<System.Nullable<System.DateTime>>("ReenabledAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        work
+            .Property<string>("ReenabledByPrincipalId")
+            .HasMaxLength(256)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledReasonCode")
+            .HasMaxLength(64)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledReasonText")
+            .HasMaxLength(1024)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledCorrelationId")
+            .HasMaxLength(200)
+        |> ignore
+
+        work
             .Property<System.Nullable<System.DateTime>>("CompletedAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
@@ -599,7 +647,13 @@ CREATE INDEX IX_ops_BillingCorrectionWork_Pending ON ops.BillingCorrectionWork(C
         |> ignore
 
         work
-            .HasIndex([| "CompletedAtUtc"; "CreatedAtUtc" |])
+            .HasIndex(
+                [|
+                    "CompletedAtUtc"
+                    "IsAutomaticRetryEligible"
+                    "CreatedAtUtc"
+                |]
+            )
             .HasDatabaseName("IX_ops_BillingCorrectionWork_Pending")
         |> ignore
 

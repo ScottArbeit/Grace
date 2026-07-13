@@ -3,8 +3,9 @@
 `Grace.Operations.Data` owns the EF Core model and migrations for the Azure SQL operations store. The current baseline
 schema is intentionally narrow:
 
-- `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary and keeps
-  the exact accepted broker payload in `RawPayload` for replay and audit.
+- `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary, a
+  database-assigned `AcceptedAtUtc` ordering point, and the exact accepted broker payload in `RawPayload` for replay
+  and audit.
 - `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
 - `ops.ChargePreviewLine` stores deterministic provisional owner charge lines rebuilt from compact immutable usage
   facts and complete effective pricing. A rebuild atomically replaces one owner/repository/half-open-period scope;
@@ -35,10 +36,13 @@ The ingestion hot path still uses reviewed raw SQL for the durable insert and ag
 - Active rejected usage evidence is bounded and scoped by owner/org/repository/month when available. The first active
   non-empty `UsageFactId` failure is canonical; later conflicting rejects settle without replacing its scope. Acceptance
   or explicit repair resolves that bounded conflict evidence.
-- Automatic late usage is routed from the existing terminal owner period, not a current assignment. Its durable work is
-  unique by period and `UsageFactId`, posts one isolated adjustment linked to its work and immediately preceding automatic
-  pricing-grain entry, and remains visibly pending when pricing is missing. Manual adjustments and reversals validate
-  their complete owner-scoped pricing grain and any requested predecessor before appending immutable history.
+- Automatic late usage is routed from the existing terminal owner period, not a current assignment, only when the raw
+  fact's database-assigned `AcceptedAtUtc` is strictly later than the period's database-assigned `ClosedAtUtc`. Its
+  durable work is unique by period and `UsageFactId`, posts one isolated adjustment linked to its work and immediately
+  preceding automatic pricing-grain entry, and remains visibly pending and ineligible for automatic polling when pricing
+  is missing. An explicit internal operator repair with durable provenance may re-enable only that exact blocked row;
+  Grace never inserts or mutates historical pricing to settle it. Manual adjustments and reversals validate their complete
+  owner-scoped pricing grain and any requested predecessor before appending immutable history.
 
 Grace has no production billing data. These migrations describe the current schema only: no compatibility columns,
 views, aliases, backfill, or legacy objects are retained.

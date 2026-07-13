@@ -8,6 +8,7 @@ open NodaTime
 open System
 open System.Data
 open System.Runtime.ExceptionServices
+open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -587,6 +588,13 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+
+        let periodFromUtc, periodToUtc = BillingPeriodRules.monthContaining (toUtcDateTime rawFact.ObservedAt)
+
+        let lockIdentity =
+            $"ops:charge-preview:{rawFact.OwnerId:D}:{rawFact.OrganizationId:D}:{rawFact.RepositoryId:D}:{periodFromUtc.Ticks}:{periodToUtc.Ticks}"
+
+        command.Parameters.Add("@LockResource", SqlDbType.NVarChar, 255).Value <- $"ops:charge-preview:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes lockIdentity))}"
 
     /// Adds raw fact parameters for archive replay inserts that intentionally omit hot payload bytes.
     let addReplayedRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =

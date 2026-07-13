@@ -36,6 +36,9 @@ type IBillingPeriodService =
     abstract RecordAcceptedLateFactAsync:
         ownerId: Guid * organizationId: Guid * repositoryId: Guid * observedAtUtc: DateTime * usageFactId: Guid * cancellationToken: CancellationToken -> Task
 
+    /// Re-enables exactly one product-blocked correction row after an operator has repaired its prerequisite.
+    abstract ReenableCorrectionWorkAsync: workId: Guid * provenance: BillingOperationProvenance * cancellationToken: CancellationToken -> Task
+
 /// Defines repairable billing-relevant rejected-message evidence.
 type IBillingIngestionFailureRecorder =
     /// Records the first active non-empty UsageFactId failure as canonical and settles conflicting duplicates without retry poison.
@@ -792,6 +795,33 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                         }: BillingPeriodScope
                     )
 
+            do! existingReader.CloseAsync()
+            use acceptedFacts = connection.CreateCommand()
+
+            acceptedFacts.CommandText <-
+                "SELECT OwnerId,OrganizationId,RepositoryId,ObservedAtUtc FROM ops.RawUsageFact WITH(READCOMMITTEDLOCK) WHERE ObservedAtUtc < @NowUtc;"
+
+            add acceptedFacts "@NowUtc" SqlDbType.DateTime2 nowUtc
+            use! acceptedFactReader = acceptedFacts.ExecuteReaderAsync(cancellationToken)
+            let mutable hasAcceptedFact = true
+
+            while hasAcceptedFact do
+                let! next = acceptedFactReader.ReadAsync(cancellationToken)
+                hasAcceptedFact <- next
+
+                if hasAcceptedFact then
+                    let fromUtc, toUtc = BillingPeriodRules.monthContaining (utcFromSql (acceptedFactReader.GetDateTime(3)))
+
+                    scopes.Add(
+                        {
+                            OwnerId = acceptedFactReader.GetGuid(0)
+                            OrganizationId = acceptedFactReader.GetGuid(1)
+                            RepositoryId = acceptedFactReader.GetGuid(2)
+                            PeriodFromUtc = fromUtc
+                            PeriodToUtc = toUtc
+                        }: BillingPeriodScope
+                    )
+
             return
                 scopes
                 |> Seq.distinctBy (fun scope -> scope.OwnerId, scope.OrganizationId, scope.RepositoryId, scope.PeriodFromUtc, scope.PeriodToUtc)
@@ -806,7 +836,7 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
             use command = connection.CreateCommand()
 
             command.CommandText <-
-                "SELECT TOP (100) BillingCorrectionWorkId FROM ops.BillingCorrectionWork WITH(READPAST) WHERE CompletedAtUtc IS NULL ORDER BY CreatedAtUtc,BillingCorrectionWorkId;"
+                "SELECT TOP (100) BillingCorrectionWorkId FROM ops.BillingCorrectionWork WITH(READPAST) WHERE CompletedAtUtc IS NULL AND IsAutomaticRetryEligible=1 ORDER BY CreatedAtUtc,BillingCorrectionWorkId;"
 
             use! reader = command.ExecuteReaderAsync(cancellationToken)
             let work = ResizeArray<Guid>()
@@ -898,7 +928,7 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                         block.Transaction <- transaction
 
                         block.CommandText <-
-                            "UPDATE ops.BillingCorrectionWork SET BlockedCode=N'MissingPricing',BlockedDetail=N'Late accepted usage has no complete owner-scoped pricing.' WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL;"
+                            "UPDATE ops.BillingCorrectionWork SET BlockedCode=N'MissingPricing',BlockedDetail=N'Late accepted usage has no complete owner-scoped pricing.',IsAutomaticRetryEligible=0 WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL;"
 
                         add block "@WorkId" SqlDbType.UniqueIdentifier workId
                         let! _ = block.ExecuteNonQueryAsync(cancellationToken)
@@ -957,7 +987,7 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                         post.Transaction <- transaction
 
                         post.CommandText <-
-                            "INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,PriorChargeLedgerEntryId,BillingCorrectionWorkId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId) SELECT @EntryId,@BillingPeriodId,1,@PriorId,@WorkId,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,N'Grace.Operations',N'AutomaticLateUsage',N'Accepted late usage correction.',CONVERT(nvarchar(200),@WorkId) WHERE NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingCorrectionWorkId=@WorkId); UPDATE ops.BillingCorrectionWork SET CompletedAtUtc=SYSUTCDATETIME(),BlockedCode=NULL,BlockedDetail=NULL WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL; UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@BillingPeriodId AND State=2;"
+                            "INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,PriorChargeLedgerEntryId,BillingCorrectionWorkId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId) SELECT @EntryId,@BillingPeriodId,1,@PriorId,@WorkId,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,N'Grace.Operations',N'AutomaticLateUsage',N'Accepted late usage correction.',CONVERT(nvarchar(200),@WorkId) WHERE NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingCorrectionWorkId=@WorkId); UPDATE ops.BillingCorrectionWork SET CompletedAtUtc=SYSUTCDATETIME(),BlockedCode=NULL,BlockedDetail=NULL,IsAutomaticRetryEligible=0 WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL; UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@BillingPeriodId AND State=2;"
 
                         add post "@EntryId" SqlDbType.UniqueIdentifier entryId
                         add post "@BillingPeriodId" SqlDbType.UniqueIdentifier periodId
@@ -1046,8 +1076,10 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
                     enqueue.CommandText <-
                         """
 DECLARE @PeriodId uniqueidentifier;
-SELECT @PeriodId=BillingPeriodId FROM ops.BillingPeriod period WITH(UPDLOCK,HOLDLOCK)
-WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND PeriodFromUtc=@PeriodFromUtc AND PeriodToUtc=@PeriodToUtc AND State IN(2,3);
+SELECT @PeriodId=period.BillingPeriodId FROM ops.BillingPeriod period WITH(UPDLOCK,HOLDLOCK)
+JOIN ops.RawUsageFact fact WITH(UPDLOCK,HOLDLOCK) ON fact.UsageFactId=@UsageFactId
+WHERE period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId AND period.PeriodFromUtc=@PeriodFromUtc AND period.PeriodToUtc=@PeriodToUtc AND period.State IN(2,3)
+AND period.ClosedAtUtc IS NOT NULL AND fact.AcceptedAtUtc > period.ClosedAtUtc;
 IF @PeriodId IS NOT NULL
 BEGIN
     INSERT INTO ops.BillingCorrectionWork(BillingCorrectionWorkId,BillingPeriodId,UsageFactId)
@@ -1072,6 +1104,38 @@ END;
 
                     add resolve "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
                     let! _ = resolve.ExecuteNonQueryAsync(cancellationToken)
+                    do! transaction.CommitAsync(cancellationToken)
+                with
+                | ex ->
+                    do! transaction.RollbackAsync(CancellationToken.None)
+                    return raise ex
+            }
+
+        member _.ReenableCorrectionWorkAsync(workId, provenance, cancellationToken) =
+            task {
+                BillingProvenance.validate provenance
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync(cancellationToken)
+                use! rawTransaction = connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+                use transaction = rawTransaction :?> SqlTransaction
+
+                try
+                    use repair = connection.CreateCommand()
+                    repair.Transaction <- transaction
+
+                    repair.CommandText <-
+                        "UPDATE ops.BillingCorrectionWork WITH(UPDLOCK,SERIALIZABLE) SET IsAutomaticRetryEligible=1,BlockedCode=NULL,BlockedDetail=NULL,ReenabledAtUtc=SYSUTCDATETIME(),ReenabledByPrincipalId=@Principal,ReenabledReasonCode=@ReasonCode,ReenabledReasonText=@ReasonText,ReenabledCorrelationId=@Correlation WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL AND IsAutomaticRetryEligible=0;"
+
+                    add repair "@WorkId" SqlDbType.UniqueIdentifier workId
+                    add repair "@Principal" SqlDbType.NVarChar provenance.InitiatedByPrincipalId
+                    add repair "@ReasonCode" SqlDbType.NVarChar provenance.ReasonCode
+                    add repair "@ReasonText" SqlDbType.NVarChar provenance.ReasonText
+                    add repair "@Correlation" SqlDbType.NVarChar provenance.CorrelationId
+                    let! changed = repair.ExecuteNonQueryAsync(cancellationToken)
+
+                    if changed <> 1 then
+                        invalidArg "BillingCorrectionWorkId" "Only an unfinished product-blocked correction row can be re-enabled."
+
                     do! transaction.CommitAsync(cancellationToken)
                 with
                 | ex ->

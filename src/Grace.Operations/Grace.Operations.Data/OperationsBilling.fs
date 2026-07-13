@@ -615,6 +615,37 @@ module OperationsBillingModel =
         |> ignore
 
         work
+            .Property<bool>("IsAutomaticRetryEligible")
+            .HasDefaultValue(true)
+            .IsRequired()
+        |> ignore
+
+        work
+            .Property<Nullable<DateTime>>("ReenabledAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        work
+            .Property<string>("ReenabledByPrincipalId")
+            .HasMaxLength(256)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledReasonCode")
+            .HasMaxLength(64)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledReasonText")
+            .HasMaxLength(1024)
+        |> ignore
+
+        work
+            .Property<string>("ReenabledCorrelationId")
+            .HasMaxLength(200)
+        |> ignore
+
+        work
             .Property<Nullable<DateTime>>("CompletedAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
@@ -631,7 +662,13 @@ module OperationsBillingModel =
         |> ignore
 
         work
-            .HasIndex([| "CompletedAtUtc"; "CreatedAtUtc" |])
+            .HasIndex(
+                [|
+                    "CompletedAtUtc"
+                    "IsAutomaticRetryEligible"
+                    "CreatedAtUtc"
+                |]
+            )
             .HasDatabaseName("IX_ops_BillingCorrectionWork_Pending")
         |> ignore
 
@@ -701,7 +738,7 @@ BEGIN
         SELECT 1 FROM (SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM inserted UNION ALL SELECT PricingPlanId,EffectiveFromUtc,EffectiveToUtc FROM deleted) d
         JOIN ops.PricingAssignment a ON a.PricingPlanId=d.PricingPlanId
         JOIN ops.BillingPeriod p ON p.OwnerId=a.OwnerId AND p.OrganizationId=a.OrganizationId AND p.RepositoryId=a.RepositoryId
-          AND p.State IN (2,3) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc))
+          AND p.State IN (2,3) AND d.EffectiveFromUtc < p.PeriodToUtc AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)
         WHERE a.EffectiveFromUtc < p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc > p.PeriodFromUtc))
         THROW 51004, 'Pricing rate overlaps immutable billing history.', 1;
 END;

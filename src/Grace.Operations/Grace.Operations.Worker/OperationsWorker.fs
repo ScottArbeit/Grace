@@ -1671,6 +1671,7 @@ type private NoOpBillingPeriodService() =
         member _.RetryCloseAsync(_scope, _nowUtc, _provenance, _cancellationToken) = Task.FromResult(BillingCloseOutcome.NotEligible)
         member _.ApplyManualCorrectionAsync(_correction, _provenance, _cancellationToken) = Task.CompletedTask
         member _.RecordAcceptedLateFactAsync(_ownerId, _organizationId, _repositoryId, _observedAtUtc, _usageFactId, _cancellationToken) = Task.CompletedTask
+        member _.ReenableCorrectionWorkAsync(_workId, _provenance, _cancellationToken) = Task.CompletedTask
 
 /// Handles one usage fact message through validation, SQL persistence, billing evidence, and explicit Service Bus settlement.
 type OperationsUsageIngestionProcessor
@@ -1896,10 +1897,11 @@ type OperationsUsageIngestionProcessor
                             match UsageFact.Validate usageFact with
                             | Error errors ->
                                 let scope = if isNull (box usageFact.Scope) then None else Some usageFact.Scope
+                                let failureUsageFactId = if usageFact.UsageFactId = Guid.Empty then None else Some usageFact.UsageFactId
 
                                 do!
                                     billingFailures.RecordFailureAsync(
-                                        Some usageFact.UsageFactId,
+                                        failureUsageFactId,
                                         scope |> Option.map (fun value -> value.OwnerId),
                                         scope
                                         |> Option.map (fun value -> value.OrganizationId),
@@ -1951,8 +1953,9 @@ type OperationsUsageIngestionProcessor
                                     let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
                                     ()
                                 | Ok result ->
-                                    if result.Status = UsageFactPersistenceStatus.Accepted then
-                                        // Existing Closed/Corrected owner-month periods win over current assignment state.
+                                    if result.Status = UsageFactPersistenceStatus.Accepted
+                                       || result.Status = UsageFactPersistenceStatus.AlreadyProcessed then
+                                        // The durable transaction replays idempotent routing after post-store failures.
                                         do!
                                             billingPeriods.RecordAcceptedLateFactAsync(
                                                 usageFact.Scope.OwnerId,

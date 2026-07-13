@@ -278,6 +278,8 @@ type private RecordingBillingPeriodService() =
             lateFacts.Add(ownerId, organizationId, repositoryId, observedAtUtc, usageFactId)
             Task.CompletedTask
 
+        member _.ReenableCorrectionWorkAsync(_workId, _provenance, _cancellationToken) = Task.CompletedTask
+
 /// Covers the Grace operations worker usage fact ingestion loop.
 [<TestFixture>]
 type OperationsWorkerIngestionTests() =
@@ -782,9 +784,9 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
-    /// Verifies a duplicate durable result cannot enqueue a second late-fact correction after the original billing close.
+    /// Verifies an idempotent redelivery replays durable late-fact routing after a post-store side-effect failure.
     [<Test>]
-    member _.AlreadyProcessedMessageDoesNotRouteLateBillingCorrection() =
+    member _.AlreadyProcessedMessageReplaysLateBillingCorrectionRouting() =
         task {
             let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc"))
 
@@ -800,7 +802,7 @@ type OperationsWorkerIngestionTests() =
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(billingPeriods.LateFacts, Is.Empty)
+                    Assert.That(billingPeriods.LateFacts |> List.length, Is.EqualTo(1))
                     Assert.That(eventText events, Is.EqualTo("store|complete"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
             )
@@ -981,7 +983,8 @@ type OperationsWorkerIngestionTests() =
         task {
             let fact = { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("14141414-1414-4414-8414-141414141414")) with UsageFactId = Guid.Empty }
 
-            let processor, store, actions, events = createProcessor (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+            let processor, store, actions, events, failures, _billingPeriods =
+                createProcessorWithBilling (fun storedFact _rawPayload _ -> Task.FromResult(Ok(accepted storedFact)))
 
             let message =
                 fact
@@ -990,9 +993,17 @@ type OperationsWorkerIngestionTests() =
 
             do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
 
+            let failureUsageFactId =
+                failures.Calls
+                |> List.exactlyOne
+                |> fun (usageFactId, _, _, _, _, _, _) -> usageFactId
+
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(store.StoredFacts, Is.Empty)
+
+                    Assert.That(failureUsageFactId, Is.EqualTo(None))
+
                     Assert.That(eventText events, Is.EqualTo("dead-letter"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
             )

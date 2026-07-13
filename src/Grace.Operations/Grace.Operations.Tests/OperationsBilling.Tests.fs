@@ -220,6 +220,34 @@ type OperationsBillingTests() =
                 Assert.That(source, Does.Contain("CompletedAtUtc=SYSUTCDATETIME()")))
         )
 
+    /// Verifies approved session-two database timestamp ordering, assignment-independent materialization, and operator-only retry eligibility remain explicit.
+    [<Test>]
+    member _.SessionTwoRoutingEligibilityAndMaterializationContractsAreDurable() =
+        let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
+        let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+        let usageSql = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsUsageSql.fs"))
+        let workerSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Worker", "OperationsWorker.fs"))
+        let migrationSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260711140000_AddBillingPeriodCloseLedger.fs"))
+        let docs = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "MIGRATIONS.md"))
+        let testHost = File.ReadAllText(Path.Combine(root, "..", "Grace.Server.Tests", "AspireTestHost.fs"))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(closeSource, Does.Contain("fact.AcceptedAtUtc > period.ClosedAtUtc"))
+                Assert.That(closeSource, Does.Contain("ClosedAtUtc=SYSUTCDATETIME()"))
+                Assert.That(usageSql, Does.Contain("sys.sp_getapplock @Resource=@LockResource"))
+                Assert.That(closeSource, Does.Contain("FROM ops.RawUsageFact WITH(READCOMMITTEDLOCK)"))
+                Assert.That(closeSource, Does.Contain("IsAutomaticRetryEligible=1"))
+                Assert.That(closeSource, Does.Contain("IsAutomaticRetryEligible=0"))
+                Assert.That(closeSource, Does.Contain("ReenableCorrectionWorkAsync"))
+                Assert.That(closeSource, Does.Contain("WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL AND IsAutomaticRetryEligible=0"))
+                Assert.That(workerSource, Does.Contain("UsageFactPersistenceStatus.AlreadyProcessed"))
+                Assert.That(migrationSource, Does.Contain("AcceptedAtUtc datetime2(7) NOT NULL"))
+                Assert.That(migrationSource, Does.Contain("IsAutomaticRetryEligible bit NOT NULL"))
+                Assert.That(docs, Does.Contain("Grace never inserts or mutates historical pricing"))
+                Assert.That(testHost, Does.Contain("20260711140000_AddBillingPeriodCloseLedger")))
+        )
+
     /// Verifies canonical failure handling and owner-period repair validation are not bypassed by conflicting retries or no-prior manual writes.
     [<Test>]
     member _.FailureAndManualCorrectionGuardsCoverHistoricalReviewEdges() =
@@ -272,6 +300,7 @@ type OperationsBillingTests() =
                 typeof<ChargeLedgerEntryEntity>
                 typeof<BillingIngestionFailureEntity>
                 typeof<BillingCorrectionWorkEntity>
+                typeof<RawUsageFactEntity>
             ]
 
         Assert.Multiple(
@@ -301,6 +330,11 @@ type OperationsBillingTests() =
                 Assert.That(
                     OperationsBillingSql.CreateHistoricalPricingProtectionTriggers,
                     Does.Contain("WHERE a.EffectiveFromUtc < p.PeriodToUtc AND (a.EffectiveToUtc IS NULL OR a.EffectiveToUtc > p.PeriodFromUtc))")
+                )
+
+                Assert.That(
+                    OperationsBillingSql.CreateHistoricalPricingProtectionTriggers,
+                    Does.Contain("AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)\n        WHERE a.EffectiveFromUtc")
                 )
 
                 Assert.That(migrationSource, Does.Contain("Split([| \"GO\" |], StringSplitOptions.RemoveEmptyEntries)"))
