@@ -302,10 +302,24 @@ module Watch =
     /// Supplies deterministic time to file stabilization so tests can advance retry eligibility without sleeping.
     let mutable private stableFileIdentityNowForWatch = fun () -> DateTime.UtcNow
 
+    /// Holds one incomplete directory inspection together with the repository and branch scope allowed to retry its bounded subtree.
+    type private PendingDirectoryWorkSnapshot =
+        {
+            FullPath: string
+            Generation: int64
+            RepositoryId: RepositoryId
+            RepositoryName: string
+            BranchId: BranchId
+            BranchName: string
+            RootDirectory: string
+        }
+
     /// Holds a list of the created or changed directories that we need to process, as determined by the FileSystemWatcher.
     ///
-    /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
-    let private directoriesToProcess = ConcurrentDictionary<string, unit>()
+    /// Each value keeps retry ownership bound to the exact repository, branch, and root that admitted the final directory observation.
+    let private directoriesToProcess = ConcurrentDictionary<string, PendingDirectoryWorkSnapshot>()
+
+    let mutable private directoryWorkGeneration = 0L
 
     /// Defines structured data exchanged by CLI helpers.
     type private StatusUpdateTriggerSnapshot = { RelativePath: string; Generation: int64 }
@@ -630,6 +644,7 @@ module Watch =
     /// Describes the final local observation that should be interpreted after its quiet window elapses.
     type internal WatchObservationKind =
         | CreatedOrChanged
+        | Changed
         | Deleted
         | GraceStatusArtifact
 
@@ -688,6 +703,12 @@ module Watch =
                 else
                     pathComparer.Compare(left.FullPath, right.FullPath)
 
+        /// Retains create or rename intent when a trailing change callback describes the same final directory state.
+        let mergeObservationKind incomingKind existingCandidate =
+            match incomingKind, existingCandidate with
+            | Changed, Some existing when existing.Kind = CreatedOrChanged -> CreatedOrChanged
+            | _ -> incomingKind
+
         /// Records one local observation, replacing any older generation while retaining same-path delete proof for a final replacement.
         member _.Observe(origin: WatchObservationOrigin, kind: WatchObservationKind, fullPath: string, seenAt: DateTime) =
             lock gate (fun () ->
@@ -695,16 +716,22 @@ module Watch =
                 | LocalFileSystem, false, Some normalizedPath ->
                     let generation = Interlocked.Increment(&nextGeneration)
 
+                    let existingCandidate =
+                        match candidates.TryGetValue(normalizedPath) with
+                        | true, existing -> Some existing
+                        | false, _ -> None
+
+                    let mergedKind = mergeObservationKind kind existingCandidate
+
                     let requiresRemovalProof =
                         kind = Deleted
-                        || match candidates.TryGetValue(normalizedPath) with
-                           | true, existing -> existing.RequiresRemovalProof
-                           | false, _ -> false
+                        || existingCandidate
+                           |> Option.exists (fun existing -> existing.RequiresRemovalProof)
 
                     let candidate =
                         {
                             FullPath = normalizedPath
-                            Kind = kind
+                            Kind = mergedKind
                             RequiresRemovalProof = requiresRemovalProof
                             Generation = generation
                             LastSeenAt = seenAt
@@ -1978,6 +2005,33 @@ module Watch =
 
         pendingFileWorkMatchesScope pendingFile currentScope
 
+    /// Checks whether an incomplete directory inspection still belongs to the repository, branch, and root that accepted it.
+    let private pendingDirectoryWorkMatchesCurrentScope (pendingDirectory: PendingDirectoryWorkSnapshot) =
+        let current = Current()
+
+        let repositoryMatches =
+            if pendingDirectory.RepositoryId
+               <> RepositoryId.Empty then
+                pendingDirectory.RepositoryId = current.RepositoryId
+            else
+                String.Equals(pendingDirectory.RepositoryName, current.RepositoryName, StringComparison.Ordinal)
+
+        let branchMatches =
+            if pendingDirectory.BranchId <> BranchId.Empty then
+                pendingDirectory.BranchId = current.BranchId
+            else
+                String.Equals(pendingDirectory.BranchName, current.BranchName, StringComparison.Ordinal)
+
+        repositoryMatches
+        && branchMatches
+        && String.Equals(
+            pendingDirectory.RootDirectory,
+            current.RootDirectory
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator,
+            watchPathComparison
+        )
+
     /// Converts accepted file work to the relative path owned by its recorded repository root.
     let private relativePathForPendingFileWork (pendingFile: PendingFileWorkSnapshot) =
         Path.GetRelativePath(pendingFile.RootDirectory, pendingFile.FullPath)
@@ -2113,13 +2167,37 @@ module Watch =
         else
             false
 
-    /// Records a directory whose contents must be enumerated before related status triggers can apply.
+    /// Retains a final directory inspection that could not enumerate every required status or file descendant yet.
     let private enqueueDirectoryUploadRetry directoryPath =
         if
             Directory.Exists(directoryPath)
             && shouldNotIgnoreDirectory directoryPath
         then
-            directoriesToProcess.TryAdd(directoryPath, ())
+            let generation = Interlocked.Increment(&directoryWorkGeneration)
+
+            let pendingDirectory =
+                {
+                    FullPath = directoryPath
+                    Generation = generation
+                    RepositoryId = Current().RepositoryId
+                    RepositoryName = Current().RepositoryName
+                    BranchId = Current().BranchId
+                    BranchName = Current().BranchName
+                    RootDirectory =
+                        Current().RootDirectory
+                        |> Path.GetFullPath
+                        |> Path.TrimEndingDirectorySeparator
+                }
+
+            directoriesToProcess.AddOrUpdate(
+                directoryPath,
+                pendingDirectory,
+                (fun _ existing ->
+                    if pendingDirectory.Generation >= existing.Generation then
+                        pendingDirectory
+                    else
+                        existing)
+            )
             |> ignore
 
     /// Queues every non-ignored file under a directory and reports whether enumeration reached a durable answer.
@@ -2253,6 +2331,23 @@ module Watch =
 
         canceledFileUpload
 
+    /// Retires same-path file stabilization and status evidence when final-state inspection proves the path is now a directory.
+    let private transferFileWorkToDirectoryProcessing directoryPath =
+        removePendingFileUpload directoryPath |> ignore
+
+        match repositoryRelativePath directoryPath with
+        | Some relativePath ->
+            let directoryRelativePath = RelativePath relativePath
+            let mutable removedRecoveryEvidence = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+            fileRecoveryEvidence.TryRemove(directoryPath, &removedRecoveryEvidence)
+            |> ignore
+
+            clearProcessedFileRelativePathsPendingStatusForPaths [ directoryRelativePath ]
+            clearCanceledFileUploadDeleteRelativePaths [ directoryRelativePath ]
+            removeUploadedFileVersionsForPaths [ directoryRelativePath ]
+        | None -> ()
+
     /// Checks whether two status differences represent the same repository path observation.
     let private statusDifferenceMatches (left: FileSystemDifference) (right: FileSystemDifference) =
         left.DifferenceType = right.DifferenceType
@@ -2366,11 +2461,11 @@ module Watch =
             for difference in differences do
                 clearStartupReplaySequenceForDifference difference)
 
-    /// Reads the best available GraceStatus snapshot for classifying directory-create observations.
+    /// Reads the GraceStatus snapshot that authorizes a bounded directory inspection, refusing to derive additions from an unavailable status.
     let private readGraceStatusForDirectoryAddClassification () =
         if (not graceStatusHasChanged)
            && graceStatus.Index.Count > 0 then
-            graceStatus
+            Some graceStatus
         else
             try
                 let refreshedStatus =
@@ -2379,19 +2474,64 @@ module Watch =
                         .GetResult()
 
                 graceStatus <- refreshedStatus
-                refreshedStatus
+                Some refreshedStatus
             with
-            | _ -> GraceStatus.Default
+            | ex ->
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch deferred directory inspection because current Grace Status could not be read: {Markup.Escape(ex.Message)}"
 
-    /// Queues directory add differences and reports whether the affected subtree was fully enumerated.
+                None
+
+    /// Queues directory add differences and reports whether final-state inspection must enumerate the affected subtree.
     let private tryEnqueueDirectoryStatusAdds fullPath =
-        let status = readGraceStatusForDirectoryAddClassification ()
-        let directoryAddDifferences, completedEnumeration = tryDeriveDirectorySubtreeAddDifferences status fullPath
+        match readGraceStatusForDirectoryAddClassification () with
+        | Some status ->
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                let finalDirectoryRelativePath = RelativePath relativePath
 
-        for difference in directoryAddDifferences do
-            addPendingStatusDifference difference
+                let replacedTrackedFile = tryFindTrackedFile status finalDirectoryRelativePath
 
-        directoryAddDifferences.Count > 0, completedEnumeration
+                match replacedTrackedFile with
+                | Some trackedFile -> addPendingStatusDifference (FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
+                | None -> ()
+
+                let directoryAddDifferences, completedEnumeration = tryDeriveDirectorySubtreeAddDifferences status fullPath
+
+                for difference in directoryAddDifferences do
+                    addPendingStatusDifference difference
+
+                directoryAddDifferences.Count > 0
+                || replacedTrackedFile.IsSome,
+                completedEnumeration,
+                true
+            | None -> false, true, false
+        | None -> false, false, false
+
+    /// Queues the final directory state and all retained descendants, transferring stale same-path file work before bounded enumeration.
+    let private enqueueFinalDirectoryWork fullPath =
+        transferFileWorkToDirectoryProcessing fullPath
+
+        let directoryStatusAddQueued, directoryStatusEnumerationComplete, requiresSubtreeEnumeration = tryEnqueueDirectoryStatusAdds fullPath
+
+        let fileUploadWorkCountBefore = filesToProcess.Count
+
+        let fileUploadEnumerationComplete =
+            if directoryStatusEnumerationComplete
+               && requiresSubtreeEnumeration then
+                tryEnqueueDirectoryContentsForUpload fullPath
+            else
+                directoryStatusEnumerationComplete
+
+        if not directoryStatusEnumerationComplete
+           || not fileUploadEnumerationComplete then
+            enqueueDirectoryUploadRetry fullPath
+
+        directoryStatusAddQueued
+        || filesToProcess.Count > fileUploadWorkCountBefore
+        || not directoryStatusEnumerationComplete
+        || not fileUploadEnumerationComplete
 
     /// Captures the already-derived differences waiting for the shared status-application path.
     let private pendingStatusDifferencesSnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.ToList())
@@ -2422,8 +2562,8 @@ module Watch =
     let private quarantinePendingWatchWork reason retainPendingFile =
         let mutable quarantinedCount = 0
         let mutable removedPendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
+        let mutable removedPendingDirectory = Unchecked.defaultof<PendingDirectoryWorkSnapshot>
         let mutable triggerGeneration = 0L
-        let mutable unitValue = ()
         let discardedEvidenceRelativePaths = List<RelativePath>()
 
         for pendingFile in filesToProcess.ToArray() do
@@ -2444,7 +2584,7 @@ module Watch =
                 quarantinedCount <- quarantinedCount + 1
 
         for pendingDirectory in directoriesToProcess.ToArray() do
-            if directoriesToProcess.TryRemove(pendingDirectory.Key, &unitValue) then
+            if directoriesToProcess.TryRemove(pendingDirectory.Key, &removedPendingDirectory) then
                 quarantineWatchObservation reason "directory" pendingDirectory.Key
                 quarantinedCount <- quarantinedCount + 1
 
@@ -3260,7 +3400,7 @@ module Watch =
 
         publishPendingWatchWorkTransitionIfNeeded ()
 
-    /// Applies a due create or change candidate after its quiet window has separated raw callbacks from filesystem work.
+    /// Applies a due create or rename candidate after its quiet window has separated raw callbacks from filesystem work.
     let private applyCreatedOrChangedLocalObservationCandidate fullPath observedAt =
         if updateNotInProgress ()
            && isGraceStatusArtifact fullPath then
@@ -3270,16 +3410,12 @@ module Watch =
             logObservationSuppressed fullPath
             false
         elif Directory.Exists(fullPath) then
-            let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds fullPath
+            let queuedDirectoryWork = enqueueFinalDirectoryWork fullPath
 
-            if directoryStatusAddQueued then
+            if queuedDirectoryWork then
                 logToAnsiConsole Colors.Added $"I saw that directory {fullPath} was created."
 
-            if not directoryStatusEnumerationComplete then
-                enqueueDirectoryUploadRetry fullPath
-
-            directoryStatusAddQueued
-            || not directoryStatusEnumerationComplete
+            queuedDirectoryWork
         elif isNotDirectory fullPath then
             if enqueueFileUpload fullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {fullPath} changed."
@@ -3288,6 +3424,26 @@ module Watch =
                 false
         else
             false
+
+    /// Applies a change-only candidate, retaining unreadable directory classification as scoped retry work while rejecting proven mtime-only noise.
+    let private applyChangedLocalObservationCandidate fullPath observedAt =
+        if Directory.Exists(fullPath) then
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                match readGraceStatusForDirectoryAddClassification () with
+                | Some status when
+                    tryFindTrackedFile status (RelativePath relativePath)
+                    |> Option.isSome
+                    ->
+                    enqueueFinalDirectoryWork fullPath
+                | Some _ -> false
+                | None ->
+                    transferFileWorkToDirectoryProcessing fullPath
+                    enqueueDirectoryUploadRetry fullPath
+                    true
+            | None -> false
+        else
+            applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
 
     /// Applies a due delete candidate after the current marker and final filesystem state can be examined safely.
     let private applyDeletedLocalObservationCandidate fullPath observedAt =
@@ -3356,6 +3512,16 @@ module Watch =
                                 let finalQueuedWork = applyCreatedOrChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
 
                                 removalQueuedWork || finalQueuedWork
+                            | Changed ->
+                                let removalQueuedWork =
+                                    if candidate.RequiresRemovalProof then
+                                        applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                    else
+                                        false
+
+                                let finalQueuedWork = applyChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                                removalQueuedWork || finalQueuedWork
                             | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
                             | GraceStatusArtifact ->
                                 markGraceStatusChangedAndPublishPendingWorkTransition ()
@@ -3379,6 +3545,7 @@ module Watch =
         let queuedPendingWork =
             match kind with
             | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
+            | Changed -> applyChangedLocalObservationCandidate fullPath observedAt
             | Deleted -> applyDeletedLocalObservationCandidate fullPath observedAt
             | GraceStatusArtifact ->
                 if updateNotInProgress () then
@@ -3845,6 +4012,9 @@ module Watch =
         Interlocked.Exchange(&fileUploadWorkGeneration, 0L)
         |> ignore
 
+        Interlocked.Exchange(&directoryWorkGeneration, 0L)
+        |> ignore
+
         Interlocked.Exchange(&graceStatusRefreshGeneration, 0L)
         |> ignore
 
@@ -3917,10 +4087,10 @@ module Watch =
 
     /// Coordinates drain status only triggers behavior for this CLI command path.
     let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
-        let mutable unitValue = ()
+        let mutable removedPendingDirectory = Unchecked.defaultof<PendingDirectoryWorkSnapshot>
 
         for directory in directorySnapshot do
-            directoriesToProcess.TryRemove(directory, &unitValue)
+            directoriesToProcess.TryRemove(directory, &removedPendingDirectory)
             |> ignore
 
         for statusTrigger in statusTriggerSnapshot do
@@ -3950,11 +4120,11 @@ module Watch =
                 |> Seq.map (fun difference -> string difference.RelativePath)
                 |> HashSet
 
-            let mutable unitValue = ()
+            let mutable removedPendingDirectory = Unchecked.defaultof<PendingDirectoryWorkSnapshot>
 
             for directory in directorySnapshot do
                 if directoryPathsToDrain.Contains(directory) then
-                    directoriesToProcess.TryRemove(directory, &unitValue)
+                    directoriesToProcess.TryRemove(directory, &removedPendingDirectory)
                     |> ignore
 
             for statusTrigger in statusTriggerSnapshot do
@@ -6595,28 +6765,15 @@ module Watch =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
-            let kind =
-                if isGraceStatusArtifact args.FullPath then
-                    GraceStatusArtifact
-                else
-                    CreatedOrChanged
+            let kind = if isGraceStatusArtifact args.FullPath then GraceStatusArtifact else Changed
 
             if isLocalObservationCandidateSchedulingActive () then
                 acceptLocalObservationCandidate kind args.FullPath DateTime.UtcNow
             elif useImmediateLocalObservationProcessingForWatchTests ()
                  && kind = GraceStatusArtifact then
                 processLocalObservationImmediately kind args.FullPath
-            elif useImmediateLocalObservationProcessingForWatchTests ()
-                 && isDelayedGraceOwnedFileObservation args.FullPath DateTime.UtcNow then
-                logObservationSuppressed args.FullPath
-            elif
-                useImmediateLocalObservationProcessingForWatchTests ()
-                && isNotDirectory args.FullPath
-                && not (shouldIgnoreFile args.FullPath)
-            then
-                logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
-                enqueueFileUpload args.FullPath |> ignore
-                publishPendingWatchWorkTransitionIfNeeded ()
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                processLocalObservationImmediately kind args.FullPath
             elif not (useImmediateLocalObservationProcessingForWatchTests ()) then
                 logObservationSuppressed args.FullPath
         else
@@ -6625,18 +6782,34 @@ module Watch =
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
     let private enqueueDirectoryContentsForUpload directoryPath = tryEnqueueDirectoryContentsForUpload directoryPath
 
-    /// Retries directory content enumeration before status application consumes directory rename-old triggers.
+    /// Retries a scoped directory inspection before status application consumes its related delete or rename-old trigger.
     let private retryPendingDirectoryUploads () =
-        let mutable unitValue = ()
+        for pendingDirectory in directoriesToProcess.Values.ToArray() do
+            let pendingPair = KeyValuePair(pendingDirectory.FullPath, pendingDirectory)
 
-        for directoryPath in directoriesToProcess.Keys.ToArray() do
-            let _, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds directoryPath
-            let fileUploadEnumerationComplete = enqueueDirectoryContentsForUpload directoryPath
-
-            if directoryStatusEnumerationComplete
-               && fileUploadEnumerationComplete then
-                directoriesToProcess.TryRemove(directoryPath, &unitValue)
+            if not (pendingDirectoryWorkMatchesCurrentScope pendingDirectory) then
+                (directoriesToProcess :> ICollection<KeyValuePair<string, PendingDirectoryWorkSnapshot>>)
+                    .Remove(pendingPair)
                 |> ignore
+
+                requestGraceWatchExplicitResync $"Watch directory inspection scope changed before bounded retry for {pendingDirectory.FullPath}."
+            else
+                let _, directoryStatusEnumerationComplete, requiresSubtreeEnumeration = tryEnqueueDirectoryStatusAdds pendingDirectory.FullPath
+
+                let fileUploadEnumerationComplete =
+                    if directoryStatusEnumerationComplete then
+                        if requiresSubtreeEnumeration then
+                            enqueueDirectoryContentsForUpload pendingDirectory.FullPath
+                        else
+                            true
+                    else
+                        false
+
+                if directoryStatusEnumerationComplete
+                   && fileUploadEnumerationComplete then
+                    (directoriesToProcess :> ICollection<KeyValuePair<string, PendingDirectoryWorkSnapshot>>)
+                        .Remove(pendingPair)
+                    |> ignore
 
     /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
@@ -6671,45 +6844,8 @@ module Watch =
                 acceptLocalObservationCandidate Deleted args.OldFullPath seenAt
                 acceptLocalObservationCandidate kind args.FullPath seenAt
             elif useImmediateLocalObservationProcessingForWatchTests () then
-                let mutable queuedPendingWork = false
-                let newPathIsDirectory = Directory.Exists(args.FullPath)
-                let canceledFileUpload = cancelPendingUploadsForDeletedPath args.OldFullPath
-                let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
-                queuedPendingWork <- queuedPendingWork || oldPathStatusQueued
-
-                if oldPathStatusQueued then
-                    if canceledFileUpload then
-                        match repositoryRelativePath args.OldFullPath with
-                        | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
-                        | None -> ()
-
-                    logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-
-                if newPathIsDirectory then
-                    let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds args.FullPath
-                    queuedPendingWork <- queuedPendingWork || directoryStatusAddQueued
-
-                    if directoryStatusAddQueued
-                       && not oldPathStatusQueued then
-                        logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-
-                    let fileUploadWorkCountBefore = filesToProcess.Count
-                    let fileUploadEnumerationComplete = enqueueDirectoryContentsForUpload args.FullPath
-
-                    if not fileUploadEnumerationComplete then
-                        enqueueDirectoryUploadRetry args.FullPath
-                        queuedPendingWork <- true
-                    elif filesToProcess.Count > fileUploadWorkCountBefore then
-                        queuedPendingWork <- true
-
-                    if not directoryStatusEnumerationComplete then
-                        enqueueDirectoryUploadRetry args.FullPath
-                        queuedPendingWork <- true
-                elif enqueueFileUpload args.FullPath then
-                    logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                    queuedPendingWork <- true
-
-                if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
+                processLocalObservationImmediately Deleted args.OldFullPath
+                processLocalObservationImmediately kind args.FullPath
             else
                 logObservationSuppressed args.FullPath
         else
@@ -8036,7 +8172,23 @@ module Watch =
 
         match difference.FileSystemEntryType, difference.DifferenceType with
         | Directory, _ ->
-            directoriesToProcess.TryAdd(difference.RelativePath, ())
+            let generation = Interlocked.Increment(&directoryWorkGeneration)
+
+            directoriesToProcess.TryAdd(
+                difference.RelativePath,
+                {
+                    FullPath = difference.RelativePath
+                    Generation = generation
+                    RepositoryId = Current().RepositoryId
+                    RepositoryName = Current().RepositoryName
+                    BranchId = Current().BranchId
+                    BranchName = Current().BranchName
+                    RootDirectory =
+                        Current().RootDirectory
+                        |> Path.GetFullPath
+                        |> Path.TrimEndingDirectorySeparator
+                }
+            )
             |> ignore
         | File, Delete ->
             let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
