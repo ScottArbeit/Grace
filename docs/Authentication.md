@@ -769,8 +769,9 @@ unchanged.
 
 Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
 negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this
-foundation. Refresh may update only endpoint, health, software/protocol version, Prefetch support, and liveness timestamps;
-it cannot change a Cache's display name, repository assignments, boundary, public key, or administrative state.
+foundation. Refresh reports the enrolled endpoint as an exact immutable match and may update only health,
+software/protocol version, Prefetch support, and liveness timestamps; it cannot change the endpoint, `AllowHttpEndpoint`,
+a Cache's display name, repository assignments, boundary, public key, or administrative state.
 
 Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. A current-key-proven
 `/cache/rotate-key` request immediately accepts the new canonical P-256 public key, retires the old key, and resets the

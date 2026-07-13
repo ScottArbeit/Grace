@@ -309,6 +309,44 @@ type MaterializationPlanContractTests() =
 
         assertValid (Validation.validatePlan plan)
 
+    /// Verifies CachePreferred plans never publish a partial cache fallback, regardless of grant presence.
+    [<Test>]
+    member _.CachePreferredPlanRejectsMixedCacheEntryAndDirectUriSourcesWithOrWithoutGrant() =
+        let allCachePlan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                MaterializationCacheSelection.Preferred,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+            |> MaterializationPlanTestData.withMatchingCacheGrant
+
+        assertValid (Validation.validatePlan allCachePlan)
+
+        let mixedArtifacts = List<MaterializationArtifactDescriptor>(allCachePlan.RequiredArtifacts)
+
+        let firstArtifact = mixedArtifacts[0]
+
+        mixedArtifacts[0] <- { firstArtifact with Source = Some(MaterializationArtifactSource.Direct "https://direct.example.test/artifacts/root.zip") }
+
+        let mixedPlan = { allCachePlan with RequiredArtifacts = mixedArtifacts }
+
+        for plan in
+            [
+                mixedPlan
+                { mixedPlan with ArtifactGrant = None }
+            ] do
+            assertInvalid "CachePreferred plans must be entirely CacheEntry or entirely DirectUri." (Validation.validatePlan plan)
+
+        let directArtifacts =
+            allCachePlan.RequiredArtifacts
+            |> Seq.map (fun artifact -> { artifact with Source = Some(MaterializationArtifactSource.Direct "https://direct.example.test/artifacts/value") })
+            |> List<MaterializationArtifactDescriptor>
+
+        assertInvalid
+            "CachePreferred Direct fallback plans must not contain an ArtifactGrant."
+            (Validation.validatePlan { allCachePlan with RequiredArtifacts = directArtifacts })
+
     /// Verifies that a null artifact descriptor is reported without breaking source or grant aggregation.
     [<Test>]
     member _.PlanRejectsNullArtifactDescriptorWithoutThrowing() =
@@ -1663,6 +1701,26 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "ArtifactGrant must contain a complete signed envelope." (Validation.validatePlan missingHeaderPlan)
         assertInvalid "ArtifactGrant must contain a complete signed envelope." (Validation.validatePlan blankSignaturePlan)
+
+    /// Verifies plan validation rejects every signed-envelope field that offline cache verification requires structurally.
+    [<Test>]
+    member _.CacheBackedPlanRejectsIncompleteOrUnsupportedSignedEnvelopeStructure() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+        let validGrant = validPlan.ArtifactGrant.Value
+
+        let malformedGrants =
+            [
+                { validGrant with Class = "WrongSignedArtifactGrant" }
+                { validGrant with Header = { validGrant.Header with Class = "WrongArtifactGrantHeader" } }
+                { validGrant with Header = { validGrant.Header with Algorithm = "HS256" } }
+                { validGrant with Header = { validGrant.Header with KeyId = " " } }
+                { validGrant with Payload = { validGrant.Payload with Class = "WrongArtifactGrantPayload" } }
+            ]
+
+        for malformedGrant in malformedGrants do
+            assertInvalid
+                "ArtifactGrant must contain a complete signed envelope."
+                (Validation.validatePlan { validPlan with ArtifactGrant = Some malformedGrant })
 
     /// Verifies cache-plan endpoint substitution is rejected before a client can present its grant or holder proof.
     [<Test>]

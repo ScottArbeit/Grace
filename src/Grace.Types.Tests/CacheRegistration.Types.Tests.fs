@@ -351,3 +351,49 @@ type CacheRegistrationLifecycleTests() =
             CacheRegistrationProof.validate (now.Plus(Duration.FromSeconds 31L)) key cacheId CacheRegistrationProof.RefreshOperation digest proof,
             Is.False
         )
+
+    /// Verifies malformed external proof timestamps remain ordinary admission failures at inclusive skew boundaries.
+    [<Test>]
+    member _.``cache proof timestamp admission is inclusive and overflow safe``() =
+        use privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let parameters = privateKey.ExportParameters false
+        let key = CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode parameters.Q.X, ArtifactGrant.Base64Url.encode parameters.Q.Y)
+        let digest = "canonical-request-digest"
+
+        let validateAt operation timestamp =
+            CacheRegistrationProof.createProof privateKey cacheId operation digest timestamp
+            |> CacheRegistrationProof.validate now key cacheId operation digest
+
+        Assert.Multiple(
+            Action (fun () ->
+                for operation in
+                    [
+                        CacheRegistrationProof.RefreshOperation
+                        CacheRegistrationProof.RotateKeyOperation
+                    ] do
+                    Assert.That(validateAt operation (now.Minus(Duration.FromSeconds 30L)), Is.True)
+                    Assert.That(validateAt operation (now.Plus(Duration.FromSeconds 30L)), Is.True)
+
+                    Assert.That(
+                        validateAt
+                            operation
+                            (now
+                                .Minus(Duration.FromSeconds 30L)
+                                .Minus(Duration.FromMilliseconds 1L)),
+                        Is.False
+                    )
+
+                    Assert.That(
+                        validateAt
+                            operation
+                            (now
+                                .Plus(Duration.FromSeconds 30L)
+                                .Plus(Duration.FromMilliseconds 1L)),
+                        Is.False
+                    )
+
+                    Assert.DoesNotThrow(Action(fun () -> validateAt operation Instant.MinValue |> ignore))
+                    Assert.That(validateAt operation Instant.MinValue, Is.False)
+                    Assert.DoesNotThrow(Action(fun () -> validateAt operation Instant.MaxValue |> ignore))
+                    Assert.That(validateAt operation Instant.MaxValue, Is.False))
+        )

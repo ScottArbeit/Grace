@@ -1083,11 +1083,32 @@ module MaterializationPlan =
                                 | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.DirectUri
                                 | _ -> false)
 
+                    let directArtifacts =
+                        plan.RequiredArtifacts
+                        |> Seq.exists (fun artifact ->
+                            if isNull (box artifact) then
+                                false
+                            else
+                                match artifact.Source with
+                                | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.DirectUri
+                                | _ -> false)
+
                     let allSourcesPresent =
                         plan.RequiredArtifacts
                         |> Seq.forall (fun artifact ->
                             not (isNull (box artifact))
                             && artifact.Source.IsSome)
+
+                    if plan.ExecutionMode = MaterializationExecutionMode.CachePreferred
+                       && cacheBackedArtifacts
+                       && directArtifacts then
+                        errors.Add("CachePreferred plans must be entirely CacheEntry or entirely DirectUri.")
+
+                    if plan.ExecutionMode = MaterializationExecutionMode.CachePreferred
+                       && allSourcesPresent
+                       && allSourcesDirect
+                       && plan.ArtifactGrant.IsSome then
+                        errors.Add("CachePreferred Direct fallback plans must not contain an ArtifactGrant.")
 
                     match plan.ArtifactGrant with
                     | None when

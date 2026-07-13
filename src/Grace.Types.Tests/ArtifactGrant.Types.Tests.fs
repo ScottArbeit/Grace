@@ -161,6 +161,32 @@ type ArtifactGrantValidationTests() =
         validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) unsupported
         |> assertError (UnsupportedAlgorithm "HS256")
 
+    /// Verifies the plan-facing complete-envelope gate agrees with offline verification on every signed header field.
+    [<Test>]
+    member _.``complete signed envelope requires every offline-verifiable structural field``() =
+        let keyNotBefore = now.Minus(Duration.FromHours 1)
+        let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
+        use key = key
+        let grant = signedGrant "key-1" key now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
+
+        let malformedGrants =
+            [
+                { grant with Class = "WrongSignedArtifactGrant" }, InvalidClass
+                { grant with Header = Unchecked.defaultof<ArtifactGrantHeader> }, MissingHeader
+                { grant with Header = { grant.Header with Class = "WrongArtifactGrantHeader" } }, InvalidClass
+                { grant with Header = { grant.Header with Algorithm = "HS256" } }, UnsupportedAlgorithm "HS256"
+                { grant with Header = { grant.Header with KeyId = " " } }, MissingKeyId
+                { grant with Payload = Unchecked.defaultof<ArtifactGrantPayload> }, MissingPayload
+                { grant with Payload = { grant.Payload with Class = "WrongArtifactGrantPayload" } }, InvalidClass
+                { grant with Signature = " " }, MissingSignature
+            ]
+
+        for malformedGrant, expectedError in malformedGrants do
+            Assert.That(hasCompleteSignedEnvelope malformedGrant, Is.False)
+
+            validateWithKeySet now (keySet [ validationKey ]) (validationRequest ()) malformedGrant
+            |> assertError expectedError
+
     [<Test>]
     member _.``wrong cache root execution mode artifact and signature are rejected``() =
         let keyNotBefore = now.Minus(Duration.FromHours 1)

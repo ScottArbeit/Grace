@@ -260,6 +260,11 @@ module ArtifactGrant =
         not (isNull (box grant))
         && not (isNull (box grant.Header))
         && not (isNull (box grant.Payload))
+        && grant.Class = nameof SignedArtifactGrant
+        && grant.Header.Class = nameof ArtifactGrantHeader
+        && grant.Header.Algorithm = ArtifactGrantContract.Algorithm
+        && not (String.IsNullOrWhiteSpace grant.Header.KeyId)
+        && grant.Payload.Class = nameof ArtifactGrantPayload
         && not (String.IsNullOrWhiteSpace grant.Signature)
 
     /// Describes one published public validation key for artifact grant verification.

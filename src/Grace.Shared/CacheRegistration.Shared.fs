@@ -37,7 +37,10 @@ module CacheRegistrationProof =
         use writer = new Utf8JsonWriter(stream, JsonWriterOptions(Indented = false, SkipValidation = false))
         write writer
         writer.Flush()
-        stream.ToArray() |> SHA256.HashData |> Base64Url.encode
+
+        stream.ToArray()
+        |> SHA256.HashData
+        |> Base64Url.encode
 
     /// Computes the canonical digest bound into a refresh proof without including its signature.
     let refreshRequestDigest (request: CacheRegistrationRefreshRequest) =
@@ -86,7 +89,12 @@ module CacheRegistrationProof =
             false
         else
             match Base64Url.tryDecode key.PublicKeyX, Base64Url.tryDecode key.PublicKeyY with
-            | Some x, Some y when x.Length = 32 && y.Length = 32 && Base64Url.encode x = key.PublicKeyX && Base64Url.encode y = key.PublicKeyY ->
+            | Some x, Some y when
+                x.Length = 32
+                && y.Length = 32
+                && Base64Url.encode x = key.PublicKeyX
+                && Base64Url.encode y = key.PublicKeyY
+                ->
                 try
                     use _ = ECDsa.Create(ECParameters(Curve = ECCurve.NamedCurves.nistP256, Q = ECPoint(X = x, Y = y)))
                     true
@@ -103,21 +111,35 @@ module CacheRegistrationProof =
         SignedCacheRequestProof.Create(payload, Base64Url.encode signature)
 
     /// Verifies one current Cache key proof against its exact operation, canonical request digest, and 30-second protocol tolerance.
-    let validate (now: Instant) (publicKey: CacheIdentityPublicKey) (cacheId: Guid) (operation: string) (requestDigest: string) (proof: SignedCacheRequestProof) =
+    let validate
+        (now: Instant)
+        (publicKey: CacheIdentityPublicKey)
+        (cacheId: Guid)
+        (operation: string)
+        (requestDigest: string)
+        (proof: SignedCacheRequestProof)
+        =
         let validTimestamp timestamp =
             let tolerance = ArtifactGrantContract.MaximumProofClockSkew
-            (timestamp <= now || timestamp - now <= tolerance) && (now <= timestamp || now - timestamp <= tolerance)
+            let earliestAcceptedTimestamp = now.Minus tolerance
+            let latestAcceptedTimestamp = now.Plus tolerance
 
-        if not (isValidPublicKey publicKey)
-           || isNull (box proof)
-           || proof.Class <> nameof SignedCacheRequestProof
-           || isNull (box proof.Payload)
-           || proof.Payload.Class <> nameof CacheRequestProofPayload
-           || proof.Payload.CacheId <> cacheId
-           || not (String.Equals(proof.Payload.Operation, operation, StringComparison.Ordinal))
-           || not (String.Equals(proof.Payload.RequestDigest, requestDigest, StringComparison.Ordinal))
-           || String.IsNullOrWhiteSpace proof.Signature
-           || not (validTimestamp proof.Payload.IssuedAt) then
+            timestamp >= earliestAcceptedTimestamp
+            && timestamp <= latestAcceptedTimestamp
+
+        if
+            not (isValidPublicKey publicKey)
+            || isNull (box proof)
+            || proof.Class <> nameof SignedCacheRequestProof
+            || isNull (box proof.Payload)
+            || proof.Payload.Class
+               <> nameof CacheRequestProofPayload
+            || proof.Payload.CacheId <> cacheId
+            || not (String.Equals(proof.Payload.Operation, operation, StringComparison.Ordinal))
+            || not (String.Equals(proof.Payload.RequestDigest, requestDigest, StringComparison.Ordinal))
+            || String.IsNullOrWhiteSpace proof.Signature
+            || not (validTimestamp proof.Payload.IssuedAt)
+        then
             false
         else
             match Base64Url.tryDecode publicKey.PublicKeyX, Base64Url.tryDecode publicKey.PublicKeyY, Base64Url.tryDecode proof.Signature with
