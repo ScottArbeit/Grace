@@ -1883,21 +1883,142 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true)
 
+    /// Verifies that marker confidence loss rejects both existing and newly scheduled callbacks until exact resync recovery completes.
+    [<Test>]
+    let ``marker confidence loss blocks scheduled and immediate callbacks until exact recovery`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let existingScheduledPath = Path.Combine(root, "existing-scheduled-after-confidence-loss.txt")
+            let newScheduledPath = Path.Combine(root, "new-scheduled-after-confidence-loss.txt")
+            let immediatePath = Path.Combine(root, "immediate-after-confidence-loss.txt")
+            let recoveredPath = Path.Combine(root, "valid-after-exact-recovery.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let mutable uploadCalls = 0
+            let mutable incrementalCalls = 0
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(existingScheduledPath, "existing scheduled callback")
+            Watch.OnChanged(changedEvent existingScheduledPath)
+            recordIncompleteUpdateMarkerDeletion updateMarkerFile
+
+            File.WriteAllText(newScheduledPath, "new scheduled callback")
+            Watch.OnChanged(changedEvent newScheduledPath)
+            Watch.processDueLocalObservationCandidatesForWatchTests (DateTime.UtcNow.AddSeconds(2.0))
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            let blockedScheduledWork = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            blockedScheduledWork.FilesToProcess
+            |> should equal Array.empty<string>
+
+            blockedScheduledWork.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            blockedScheduledWork.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests false
+            File.WriteAllText(immediatePath, "immediate callback")
+            Watch.OnChanged(changedEvent immediatePath)
+
+            let blockedImmediateWork = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            blockedImmediateWork.FilesToProcess
+            |> should equal Array.empty<string>
+
+            blockedImmediateWork.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            blockedImmediateWork.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(status))
+                (fun () -> Task.FromResult(status))
+                (fun _ _ ->
+                    uploadCalls <- uploadCalls + 1
+                    Task.FromResult(()))
+                (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                (fun _ _ _ ->
+                    incrementalCalls <- incrementalCalls + 1
+                    Task.FromResult(()))
+                Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 0
+            incrementalCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            File.WriteAllText(recoveredPath, "valid callback after exact recovery")
+            Watch.OnChanged(changedEvent recoveredPath)
+
+            (Watch.pendingWatchWorkSnapshotForTests ())
+                .FilesToProcess
+            |> should equal [| recoveredPath |])
+
     /// Verifies a raw candidate never crosses a branch scope change into upload, journal, or status work.
     [<Test>]
     let ``raw local candidate scope change forces resync before upload or journal admission`` () =
         withTempRepo (fun root ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
             let changedPath = Path.Combine(root, "scope-change.txt")
+            let recoveredPath = Path.Combine(root, "scope-change-recovered.txt")
             let mutable uploadCalls = 0
 
             File.WriteAllText(changedPath, "candidate bytes")
             Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
 
             Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged changedPath DateTime.UtcNow
             |> ignore
 
             Current().BranchId <- Guid.NewGuid()
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.lastPublishedHasPendingWatchWorkForWatchTests ()
+            |> should equal (Some true)
 
             (Watch.processChangedFilesWithClients
                 (fun () -> Task.FromResult(status))
@@ -1920,7 +2041,14 @@ module WatchTests =
             |> should equal Array.empty<string>
 
             Watch.currentGraceWatchRuntimeModeForWatchTests ()
-            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental)
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            File.WriteAllText(recoveredPath, "valid callback after scope recovery")
+            Watch.OnChanged(changedEvent recoveredPath)
+
+            (Watch.pendingWatchWorkSnapshotForTests ())
+                .FilesToProcess
+            |> should equal [| recoveredPath |])
 
     /// Verifies an ordinary callback can use the verified published root identity after transient in-flight status reset.
     [<Test>]
@@ -6814,7 +6942,7 @@ module WatchTests =
                 use command = connection.CreateCommand()
 
                 command.CommandText <-
-                    "INSERT INTO watch_journal (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_blake3_hash, $watch_mode, $difference_type, $entry_type, $relative_path);"
+                    "INSERT INTO watch_journal (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_sha256_hash, $root_directory_blake3_hash, $watch_mode, $difference_type, $entry_type, $relative_path);"
 
                 command.Parameters.AddWithValue("$created_at", getCurrentInstant().ToUnixTimeTicks())
                 |> ignore
@@ -6832,6 +6960,9 @@ module WatchTests =
                 |> ignore
 
                 command.Parameters.AddWithValue("$root_directory_version_id", scope.RootDirectoryId.ToString())
+                |> ignore
+
+                command.Parameters.AddWithValue("$root_directory_sha256_hash", string scope.RootDirectorySha256Hash)
                 |> ignore
 
                 command.Parameters.AddWithValue("$root_directory_blake3_hash", string scope.RootDirectoryBlake3Hash)

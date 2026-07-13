@@ -875,19 +875,22 @@ module Watch =
     let mutable private immediateLocalObservationProcessingForWatchTests = 0
     let private localObservationConfidenceLossLock = obj ()
     let mutable private localObservationConfidenceLossReason: string option = None
+    let mutable private localObservationConfidenceLossActive = 0
 
-    /// Records one non-replayable raw-observation confidence loss for the timer path that owns resync transitions.
-    let private recordLocalObservationConfidenceLoss reason =
-        lock localObservationConfidenceLossLock (fun () ->
-            if localObservationConfidenceLossReason.IsNone then
-                localObservationConfidenceLossReason <- Some reason)
+    /// Reports whether raw-observation confidence loss still has an unconsumed diagnostic reason.
+    let private hasUnconsumedLocalObservationConfidenceLoss () = lock localObservationConfidenceLossLock (fun () -> localObservationConfidenceLossReason.IsSome)
 
-    /// Takes the oldest pending raw-observation confidence loss without allowing it to be rebound as local work.
-    let private takeLocalObservationConfidenceLoss () =
-        lock localObservationConfidenceLossLock (fun () ->
-            let pendingReason = localObservationConfidenceLossReason
-            localObservationConfidenceLossReason <- None
-            pendingReason)
+    /// Reports whether raw-observation confidence loss remains pending through its exact resync recovery boundary.
+    let private hasLocalObservationConfidenceLoss () =
+        hasUnconsumedLocalObservationConfidenceLoss ()
+        || Volatile.Read(&localObservationConfidenceLossActive)
+           <> 0
+
+    /// Reports whether marker or raw-observation confidence loss blocks all local incremental callback paths.
+    let private localObservationIncrementalWorkBlocked () =
+        Volatile.Read(&markerCompletionConfidenceLossActive)
+        <> 0
+        || hasLocalObservationConfidenceLoss ()
 
     /// Reports whether a live Watch lifetime has activated quiet-window candidate scheduling for raw callbacks.
     let private isLocalObservationCandidateSchedulingActive () =
@@ -2889,6 +2892,7 @@ module Watch =
         lock graceWatchResyncTransitionLock (fun () ->
             if tryClearGraceWatchResyncAttempt attempt then
                 Volatile.Write(&markerCompletionConfidenceLossActive, 0)
+                Volatile.Write(&localObservationConfidenceLossActive, 0)
                 true
             else
                 false)
@@ -2966,19 +2970,22 @@ module Watch =
             HasProcessablePendingWork: bool
             HasManualPendingStatusEvidence: bool
             HasDurableWatchJournalEvidence: bool
+            HasLocalObservationConfidenceLoss: bool
         }
 
-        /// Reports whether any Watch work or durable journal evidence must keep IPC dirty.
+        /// Reports whether Watch work, confidence loss, or durable journal evidence must keep IPC dirty.
         member this.HasPendingWork =
             this.HasProcessablePendingWork
             || this.HasManualPendingStatusEvidence
             || this.HasDurableWatchJournalEvidence
+            || this.HasLocalObservationConfidenceLoss
 
         /// Reports whether durable journal evidence is the only reason IPC must be dirty.
         member this.HasDurableOnlyPendingWork =
             this.HasDurableWatchJournalEvidence
             && not this.HasProcessablePendingWork
             && not this.HasManualPendingStatusEvidence
+            && not this.HasLocalObservationConfidenceLoss
 
     /// Distinguishes exact IPC verification from the pending-work state that snapshot advertises.
     type private PendingWatchWorkPublicationVerification =
@@ -3001,6 +3008,7 @@ module Watch =
     /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
     let private hasProcessablePendingWatchWorkExceptManual () =
         isGraceWatchResyncPending ()
+        || hasLocalObservationConfidenceLoss ()
         || graceStatusHasChanged
         || hasPendingLocalObservationCandidates ()
         || not (
@@ -3033,6 +3041,7 @@ module Watch =
             HasProcessablePendingWork = hasProcessablePendingWork
             HasManualPendingStatusEvidence = hasManualPendingWatchWorkStatusFlag ()
             HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+            HasLocalObservationConfidenceLoss = hasLocalObservationConfidenceLoss ()
         }
 
     /// Exposes pending Watch work checks to tests without running the foreground timer loop.
@@ -3264,6 +3273,11 @@ module Watch =
                 )
             HasManualPendingStatusEvidence = false
             HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+            HasLocalObservationConfidenceLoss =
+                hasUnconsumedLocalObservationConfidenceLoss ()
+                || (not recoveryStillOwnsPublication
+                    && Volatile.Read(&localObservationConfidenceLossActive)
+                       <> 0)
         }
 
     /// Publishes clean IPC for one recovered resync attempt while retaining its own fail-closed pending anchors.
@@ -3401,6 +3415,26 @@ module Watch =
     let private publishPendingWatchWorkTransitionIfNeeded () =
         tryPublishPendingWatchWorkTransitionIfNeeded ()
         |> ignore
+
+    /// Records one non-replayable raw-observation confidence loss and immediately publishes its dirty Watch state.
+    let private recordLocalObservationConfidenceLoss reason =
+        let recorded =
+            lock localObservationConfidenceLossLock (fun () ->
+                if localObservationConfidenceLossReason.IsNone then
+                    localObservationConfidenceLossReason <- Some reason
+                    Volatile.Write(&localObservationConfidenceLossActive, 1)
+                    true
+                else
+                    false)
+
+        if recorded then publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Takes the oldest pending raw-observation confidence loss without allowing it to be rebound as local work.
+    let private takeLocalObservationConfidenceLoss () =
+        lock localObservationConfidenceLossLock (fun () ->
+            let pendingReason = localObservationConfidenceLossReason
+            localObservationConfidenceLossReason <- None
+            pendingReason)
 
     /// Verifies the current Watch IPC file still represents the requested pending-work state and GraceStatus identity.
     let private tryVerifyCurrentPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork =
@@ -3648,58 +3682,65 @@ module Watch =
         let mutable claimedCandidate = false
 
         for dueCandidate in dueCandidates do
-            match tryGetActiveGraceUpdateMarkerObservationBoundary () with
-            | ActiveMarker markerObservedAt when dueCandidate.LastSeenAt < markerObservedAt -> logObservationSuppressed dueCandidate.FullPath
-            | markerBoundary ->
+            if localObservationIncrementalWorkBlocked () then
                 match tryClaimLocalObservationCandidate scheduler dueCandidate now with
                 | Some candidate ->
                     claimedCandidate <- true
-
-                    let candidateQueuedWork =
-                        match markerBoundary with
-                        | AmbiguousMarkerBoundary reason ->
-                            recordLocalObservationConfidenceLoss reason
-                            logObservationSuppressed candidate.FullPath
-                            false
-                        | ActiveMarker _ ->
-                            logObservationSuppressed candidate.FullPath
-                            false
-                        | NoActiveMarker ->
-                            match candidate.Scope with
-                            | Some scope when not (watchObservationScopeMatchesCurrent scope) ->
-                                recordLocalObservationConfidenceLoss
-                                    $"raw local observation scope changed before claim for {candidate.FullPath}; incremental work was rejected."
-
-                                false
-                            | _ ->
-                                match candidate.Kind with
-                                | CreatedOrChanged ->
-                                    let removalQueuedWork =
-                                        if candidate.RequiresRemovalProof then
-                                            applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                                        else
-                                            false
-
-                                    let finalQueuedWork = applyCreatedOrChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-
-                                    removalQueuedWork || finalQueuedWork
-                                | Changed ->
-                                    let removalQueuedWork =
-                                        if candidate.RequiresRemovalProof then
-                                            applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                                        else
-                                            false
-
-                                    let finalQueuedWork = applyChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-
-                                    removalQueuedWork || finalQueuedWork
-                                | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                                | GraceStatusArtifact ->
-                                    markGraceStatusChangedAndPublishPendingWorkTransition ()
-                                    false
-
-                    queuedPendingWork <- queuedPendingWork || candidateQueuedWork
+                    logObservationSuppressed candidate.FullPath
                 | None -> ()
+            else
+                match tryGetActiveGraceUpdateMarkerObservationBoundary () with
+                | ActiveMarker markerObservedAt when dueCandidate.LastSeenAt < markerObservedAt -> logObservationSuppressed dueCandidate.FullPath
+                | markerBoundary ->
+                    match tryClaimLocalObservationCandidate scheduler dueCandidate now with
+                    | Some candidate ->
+                        claimedCandidate <- true
+
+                        let candidateQueuedWork =
+                            match markerBoundary with
+                            | AmbiguousMarkerBoundary reason ->
+                                recordLocalObservationConfidenceLoss reason
+                                logObservationSuppressed candidate.FullPath
+                                false
+                            | ActiveMarker _ ->
+                                logObservationSuppressed candidate.FullPath
+                                false
+                            | NoActiveMarker ->
+                                match candidate.Scope with
+                                | Some scope when not (watchObservationScopeMatchesCurrent scope) ->
+                                    recordLocalObservationConfidenceLoss
+                                        $"raw local observation scope changed before claim for {candidate.FullPath}; incremental work was rejected."
+
+                                    false
+                                | _ ->
+                                    match candidate.Kind with
+                                    | CreatedOrChanged ->
+                                        let removalQueuedWork =
+                                            if candidate.RequiresRemovalProof then
+                                                applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                            else
+                                                false
+
+                                        let finalQueuedWork = applyCreatedOrChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                                        removalQueuedWork || finalQueuedWork
+                                    | Changed ->
+                                        let removalQueuedWork =
+                                            if candidate.RequiresRemovalProof then
+                                                applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                            else
+                                                false
+
+                                        let finalQueuedWork = applyChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                                        removalQueuedWork || finalQueuedWork
+                                    | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                    | GraceStatusArtifact ->
+                                        markGraceStatusChangedAndPublishPendingWorkTransition ()
+                                        false
+
+                        queuedPendingWork <- queuedPendingWork || candidateQueuedWork
+                    | None -> ()
 
         if claimedCandidate
            || queuedPendingWork
@@ -3711,10 +3752,7 @@ module Watch =
 
     /// Applies an observation immediately only for direct callback harnesses that did not start the Watch lifetime.
     let private processLocalObservationImmediately kind fullPath =
-        if
-            Volatile.Read(&markerCompletionConfidenceLossActive)
-            <> 0
-        then
+        if localObservationIncrementalWorkBlocked () then
             logObservationSuppressed fullPath
         else
             let observedAt = DateTime.UtcNow
@@ -4175,6 +4213,8 @@ module Watch =
         clearLocalObservationCandidateScheduler ()
         setLocalObservationCandidateSchedulingActive false
         Volatile.Write(&markerCompletionConfidenceLossActive, 0)
+        Volatile.Write(&localObservationConfidenceLossActive, 0)
+        lock localObservationConfidenceLossLock (fun () -> localObservationConfidenceLossReason <- None)
         filesToProcess.Clear()
         fileRecoveryEvidence.Clear()
         directoriesToProcess.Clear()
