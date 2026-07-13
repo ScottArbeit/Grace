@@ -3332,6 +3332,190 @@ module WatchTests =
                 .FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that a deferred file retry blocks resync scanning and clean IPC publication until its retry deadline is due.
+    [<Test>]
+    let ``resync blocks scan while stable file retry is deferred`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "resync-deferred-stable-file.txt")
+            let mutable now = DateTime(2026, 7, 12, 2, 30, 0, DateTimeKind.Utc)
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+            let mutable updateIpcCalls = 0
+
+            Watch.setStableFileIdentityNowForWatchTests (fun () -> now)
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.requestGraceWatchExplicitResyncForWatchTests "test deferred stable file retry"
+            File.WriteAllText(filePath, "locked bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            /// Reads status needed by the deferred resync scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Keeps the file unavailable through the first stabilization attempt.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromException<unit>(IOException("file is locked"))
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Counts scan attempts so the deferred retry can prove it blocked resync recovery.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Fails if deferred retry reaches scan-derived status application.
+            let updateGraceStatusFromDifferences _ _ _ =
+                Assert.Fail("Deferred resync retry must not apply scan-derived status.")
+                Task.FromResult(None)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+
+            /// Counts recovery IPC writes so deferred retry cannot publish clean state.
+            let updateIpc _ _ =
+                updateIpcCalls <- updateIpcCalls + 1
+                Task.FromResult(())
+
+            let processWatchPass () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processWatchPass ()
+            processWatchPass ()
+
+            uploadCalls |> should equal 1
+            scanCalls |> should equal 0
+            updateIpcCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |])
+
+    /// Verifies that same-path refreshes retain bounded retry evidence and exhausted work blocks resync until final bytes upload exactly once.
+    [<Test>]
+    let ``same-path stable retries retain exhaustion through resync and recover final bytes once`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "same-path-exhausted-stable-file.txt")
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+            let mutable uploadedContents = Array.empty<string>
+
+            File.WriteAllText(filePath, "first incomplete bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            /// Reads status needed by the retained exhausted-file scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Fails while the path is unreadable, then records only the final candidate bytes after recovery.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+
+                if uploadCalls <= 4 then
+                    Task.FromException<unit>(IOException("file remains locked"))
+                else
+                    uploadedContents <-
+                        Array.append
+                            uploadedContents
+                            [|
+                                File.ReadAllText($"{pendingFilePath}")
+                            |]
+
+                    recordUploadedFileVersion $"{pendingFilePath}"
+                    Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Counts recovery scans so unreadable bytes cannot retire resync cleanly.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ = Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processWatchPass () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processWatchPass ()
+            File.WriteAllText(filePath, "second incomplete bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            processWatchPass ()
+            File.WriteAllText(filePath, "final readable bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            processWatchPass ()
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |]
+
+            processWatchPass ()
+
+            uploadCalls |> should equal 4
+            scanCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |]
+
+            processWatchPass ()
+            processWatchPass ()
+
+            uploadCalls |> should equal 5
+
+            uploadedContents
+            |> should equal [| "final readable bytes" |]
+
+            scanCalls |> should equal 1
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Verifies that a missing final path does not invoke file-content work and can stabilize after the path returns.
     [<Test>]
     let ``watch stable identity defers missing path until it reappears`` () =
@@ -3540,7 +3724,7 @@ module WatchTests =
             Watch
                 .pendingWatchWorkSnapshotForTests()
                 .FilesToProcess
-            |> should equal Array.empty<string>)
+            |> should equal [| filePath |])
 
     /// Builds process pending watch work for test test data used to exercise CLI watch behavior.
     let private processPendingWatchWorkForTest () =

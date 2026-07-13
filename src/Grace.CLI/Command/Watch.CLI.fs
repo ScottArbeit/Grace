@@ -1929,7 +1929,15 @@ module Watch =
                     RetryNotBeforeUtc = stableFileIdentityNowForWatch ()
                 }
 
-            filesToProcess.AddOrUpdate(fullPath, pendingFileWork, (fun _ _ -> pendingFileWork))
+            filesToProcess.AddOrUpdate(
+                fullPath,
+                pendingFileWork,
+                (fun _ existingPendingFile ->
+                    { pendingFileWork with
+                        StabilizationAttempts = existingPendingFile.StabilizationAttempts
+                        RetryNotBeforeUtc = existingPendingFile.RetryNotBeforeUtc
+                    })
+            )
             |> ignore
 
             true
@@ -2241,15 +2249,22 @@ module Watch =
 
         logToAnsiConsole Colors.Verbose $"Grace Watch quarantined {observationKind} observation for {path}: {reason}."
 
-    /// Moves currently queued watch observations out of the trusted incremental path after confidence is lost.
-    let private quarantinePendingWatchWork reason =
+    /// Moves queued Watch observations out of the trusted incremental path after confidence is lost, except one exhausted file that must remain as recovery evidence.
+    let private quarantinePendingWatchWork reason retainedPendingFilePath =
         let mutable quarantinedCount = 0
         let mutable removedPendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
         let mutable triggerGeneration = 0L
         let mutable unitValue = ()
 
         for pendingFile in filesToProcess.ToArray() do
-            if filesToProcess.TryRemove(pendingFile.Key, &removedPendingFile) then
+            let retainPendingFile =
+                retainedPendingFilePath
+                |> Option.exists (fun retainedPath -> String.Equals(pendingFile.Key, retainedPath, watchPathComparison))
+
+            if
+                not retainPendingFile
+                && filesToProcess.TryRemove(pendingFile.Key, &removedPendingFile)
+            then
                 quarantineWatchObservation reason "file" pendingFile.Key
                 quarantinedCount <- quarantinedCount + 1
 
@@ -3187,7 +3202,7 @@ module Watch =
     /// Suspends only the resync attempt that observed the failure, preserving newer overflow requests.
     let private suspendGraceWatchAttemptAfterFailedRecovery attempt reason =
         if isGraceWatchResyncAttemptActive attempt then
-            quarantinePendingWatchWork reason |> ignore
+            quarantinePendingWatchWork reason None |> ignore
 
             setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
 
@@ -3201,9 +3216,9 @@ module Watch =
         else
             logToAnsiConsole Colors.Important $"Grace Watch ignored stale resync failure for attempt {attempt} because a newer resync attempt is pending."
 
-    /// Requests a scan-derived resync and quarantines observations captured under the previous root confidence.
-    let private requestGraceWatchExplicitResync reason =
-        let startupReplayRowsDurablyTerminal = quarantinePendingWatchWork reason
+    /// Requests a scan-derived resync, retaining one exhausted file only when recovery must prove its final bytes.
+    let private requestGraceWatchExplicitResyncCore reason retainedPendingFilePath =
+        let startupReplayRowsDurablyTerminal = quarantinePendingWatchWork reason retainedPendingFilePath
 
         Interlocked.Increment(&graceWatchResyncGeneration)
         |> ignore
@@ -3222,6 +3237,13 @@ module Watch =
                 Colors.Error
                 $"Grace Watch suspended incremental processing because startup replay journal rows could not be made terminal after confidence loss: {reason}."
 
+    /// Requests a scan-derived resync and quarantines observations captured under the previous root confidence.
+    let private requestGraceWatchExplicitResync reason = requestGraceWatchExplicitResyncCore reason None
+
+    /// Requests a scan-derived resync while retaining the exhausted file that blocks clean recovery until its bytes are uploadable.
+    let private requestGraceWatchExplicitResyncRetainingPendingFile reason retainedPendingFilePath =
+        requestGraceWatchExplicitResyncCore reason (Some retainedPendingFilePath)
+
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
 
@@ -3237,15 +3259,16 @@ module Watch =
 
     /// Schedules the next timer-driven identity attempt or leaves incremental mode when a path cannot stabilize within the fixed budget.
     let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
-        let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile)
         let attemptsAfterFailure = pendingFile.StabilizationAttempts + 1
 
         if attemptsAfterFailure
            >= stableFileIdentityMaximumAttempts then
-            if (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
-                .Contains(pendingPair) then
-                requestGraceWatchExplicitResync
+            let exhaustedPendingFile = { pendingFile with StabilizationAttempts = attemptsAfterFailure; RetryNotBeforeUtc = now }
+
+            if filesToProcess.TryUpdate(pendingFile.FullPath, exhaustedPendingFile, pendingFile) then
+                requestGraceWatchExplicitResyncRetainingPendingFile
                     $"Watch could not compute stable final identity for {pendingFile.FullPath} after {stableFileIdentityMaximumAttempts} attempts: {reason}"
+                    pendingFile.FullPath
         else
             let retryNotBeforeUtc =
                 if isLocalObservationCandidateSchedulingActive () then
@@ -7143,7 +7166,7 @@ module Watch =
                 try
                     let correlationId = generateCorrelationId ()
 
-                    let! uploadedRetryContent, uploadRetryFailed =
+                    let! uploadedRetryContent, uploadRetryBlocked =
                         if filesToProcess.IsEmpty then
                             Task.FromResult(false, false)
                         else
@@ -7158,7 +7181,7 @@ module Watch =
                                             false
                                             (Some resyncAttempt)
 
-                                    return uploadedRetryContent, false
+                                    return uploadedRetryContent, not filesToProcess.IsEmpty
                                 with
                                 | ex ->
                                     if isGraceWatchResyncAttemptActive resyncAttempt then
@@ -7173,8 +7196,10 @@ module Watch =
 
                     let resyncStatusUpdateStillTrusted () = isGraceWatchResyncAttemptActive resyncAttempt
 
-                    if uploadRetryFailed then
-                        ()
+                    if uploadRetryBlocked then
+                        logToAnsiConsole
+                            Colors.Important
+                            "Grace Watch retained pending file work during resync; scan-derived status recovery will retry after final bytes are uploadable."
                     elif not (resyncStatusUpdateStillTrusted ()) then
                         logToAnsiConsole Colors.Important $"Grace Watch skipped stale resync attempt {resyncAttempt} because a newer resync attempt is pending."
                     else
