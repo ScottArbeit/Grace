@@ -657,6 +657,11 @@ module OperationsBillingModel =
         |> ignore
 
         work
+            .Property<Nullable<DateTime>>("PermanentlyFailedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        work
             .Property<Nullable<DateTime>>("ReenabledAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
@@ -732,7 +737,7 @@ BEGIN
 END;
 """
 
-    /// Freezes billing source and evidence fields after a period reaches a terminal close state while allowing raw-payload archive lifecycle updates.
+    /// Freezes billing source and evidence fields when either side of an update belongs to a terminal period while allowing raw-payload archive lifecycle updates.
     let CreateTerminalRawUsageFactProtectionTrigger =
         """
 CREATE TRIGGER ops.TR_ops_RawUsageFact_TerminalBillingProtection ON ops.RawUsageFact
@@ -742,26 +747,32 @@ BEGIN
     (
         SELECT 1
         FROM deleted d
-        JOIN ops.BillingPeriod p ON p.OwnerId=d.OwnerId AND p.OrganizationId=d.OrganizationId AND p.RepositoryId=d.RepositoryId
-          AND d.ObservedAtUtc>=p.PeriodFromUtc AND d.ObservedAtUtc<p.PeriodToUtc AND p.State IN (2,3)
         LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId
-        WHERE i.UsageFactId IS NULL
-           OR i.CorrelationId<>d.CorrelationId
-           OR i.FactKind<>d.FactKind
-           OR i.OwnerId<>d.OwnerId
-           OR i.OrganizationId<>d.OrganizationId
-           OR i.RepositoryId<>d.RepositoryId
-           OR i.StoragePoolId<>d.StoragePoolId
-           OR i.Quantity<>d.Quantity
-           OR i.ObservedAtUtc<>d.ObservedAtUtc
-           OR i.AcceptedAtUtc<>d.AcceptedAtUtc
-           OR i.CreatedAtUtc<>d.CreatedAtUtc
+        LEFT JOIN ops.BillingPeriod sourcePeriod ON sourcePeriod.OwnerId=d.OwnerId AND sourcePeriod.OrganizationId=d.OrganizationId AND sourcePeriod.RepositoryId=d.RepositoryId
+          AND d.ObservedAtUtc>=sourcePeriod.PeriodFromUtc AND d.ObservedAtUtc<sourcePeriod.PeriodToUtc AND sourcePeriod.State IN (2,3)
+        LEFT JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
+          AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3)
+        WHERE (sourcePeriod.BillingPeriodId IS NOT NULL OR destinationPeriod.BillingPeriodId IS NOT NULL)
+          AND
+          (
+              i.UsageFactId IS NULL
+              OR i.CorrelationId<>d.CorrelationId
+              OR i.FactKind<>d.FactKind
+              OR i.OwnerId<>d.OwnerId
+              OR i.OrganizationId<>d.OrganizationId
+              OR i.RepositoryId<>d.RepositoryId
+              OR i.StoragePoolId<>d.StoragePoolId
+              OR i.Quantity<>d.Quantity
+              OR i.ObservedAtUtc<>d.ObservedAtUtc
+              OR i.AcceptedAtUtc<>d.AcceptedAtUtc
+              OR i.CreatedAtUtc<>d.CreatedAtUtc
+          )
     )
         THROW 51005, 'Terminal billing raw fact source and evidence fields are immutable.', 1;
 END;
 """
 
-    /// Prevents a deterministic calculation failure from being deleted, reopened, or stripped of its operator-visible evidence.
+    /// Freezes terminal close evidence, allowing Closed-to-Corrected only after an immutable correction entry posts and preserving permanently failed periods in their original owner scope.
     let CreatePermanentBillingFailureProtectionTrigger =
         """
 CREATE TRIGGER ops.TR_ops_BillingPeriod_PermanentFailureProtection ON ops.BillingPeriod
@@ -772,21 +783,74 @@ BEGIN
         SELECT 1
         FROM deleted d
         LEFT JOIN inserted i ON i.BillingPeriodId=d.BillingPeriodId
-        WHERE d.State=4
+        WHERE d.State IN (2,3,4)
           AND
           (
               i.BillingPeriodId IS NULL
-              OR i.State<>4
-              OR ISNULL(i.PermanentFailureCode,N'')<>ISNULL(d.PermanentFailureCode,N'')
-              OR ISNULL(i.PermanentFailureDetail,N'')<>ISNULL(d.PermanentFailureDetail,N'')
-              OR ISNULL(i.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))
-              OR ISNULL(i.PermanentFailureInitiatedByPrincipalId,N'')<>ISNULL(d.PermanentFailureInitiatedByPrincipalId,N'')
-              OR ISNULL(i.PermanentFailureReasonCode,N'')<>ISNULL(d.PermanentFailureReasonCode,N'')
-              OR ISNULL(i.PermanentFailureReasonText,N'')<>ISNULL(d.PermanentFailureReasonText,N'')
-              OR ISNULL(i.PermanentFailureCorrelationId,N'')<>ISNULL(d.PermanentFailureCorrelationId,N'')
+              OR
+              (
+                  d.State IN (2,3)
+                  AND
+                  (
+                      i.State NOT IN (2,3)
+                      OR (d.State=3 AND i.State<>3)
+                      OR
+                      (
+                          d.State=2 AND i.State=3
+                          AND NOT EXISTS
+                          (
+                              SELECT 1
+                              FROM ops.ChargeLedgerEntry e
+                              WHERE e.BillingPeriodId=d.BillingPeriodId AND e.EntryKind IN (1,2) AND e.SourceChargePreviewLineId IS NULL
+                          )
+                      )
+                      OR i.OwnerId<>d.OwnerId
+                      OR i.OrganizationId<>d.OrganizationId
+                      OR i.RepositoryId<>d.RepositoryId
+                      OR i.PeriodFromUtc<>d.PeriodFromUtc
+                      OR i.PeriodToUtc<>d.PeriodToUtc
+                      OR ISNULL(i.ClosedAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.ClosedAtUtc,CONVERT(datetime2(7),'19000101'))
+                      OR ISNULL(i.CloseInitiatedByPrincipalId,N'')<>ISNULL(d.CloseInitiatedByPrincipalId,N'')
+                      OR ISNULL(i.CloseReasonCode,N'')<>ISNULL(d.CloseReasonCode,N'')
+                      OR ISNULL(i.CloseReasonText,N'')<>ISNULL(d.CloseReasonText,N'')
+                      OR ISNULL(i.CloseCorrelationId,N'')<>ISNULL(d.CloseCorrelationId,N'')
+                      OR ISNULL(i.CloseBlockedCode,N'')<>ISNULL(d.CloseBlockedCode,N'')
+                      OR ISNULL(i.CloseBlockedDetail,N'')<>ISNULL(d.CloseBlockedDetail,N'')
+                      OR ISNULL(i.LastCloseAttemptAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.LastCloseAttemptAtUtc,CONVERT(datetime2(7),'19000101'))
+                      OR i.ConsecutiveCloseFailureCount<>d.ConsecutiveCloseFailureCount
+                      OR ISNULL(i.PermanentFailureCode,N'')<>ISNULL(d.PermanentFailureCode,N'')
+                      OR ISNULL(i.PermanentFailureDetail,N'')<>ISNULL(d.PermanentFailureDetail,N'')
+                      OR ISNULL(i.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))
+                      OR ISNULL(i.PermanentFailureInitiatedByPrincipalId,N'')<>ISNULL(d.PermanentFailureInitiatedByPrincipalId,N'')
+                      OR ISNULL(i.PermanentFailureReasonCode,N'')<>ISNULL(d.PermanentFailureReasonCode,N'')
+                      OR ISNULL(i.PermanentFailureReasonText,N'')<>ISNULL(d.PermanentFailureReasonText,N'')
+                      OR ISNULL(i.PermanentFailureCorrelationId,N'')<>ISNULL(d.PermanentFailureCorrelationId,N'')
+                      OR i.CreatedAtUtc<>d.CreatedAtUtc
+                  )
+              )
+              OR
+              (
+                  d.State=4
+                  AND
+                  (
+                      i.State<>4
+                      OR i.OwnerId<>d.OwnerId
+                      OR i.OrganizationId<>d.OrganizationId
+                      OR i.RepositoryId<>d.RepositoryId
+                      OR i.PeriodFromUtc<>d.PeriodFromUtc
+                      OR i.PeriodToUtc<>d.PeriodToUtc
+                      OR ISNULL(i.PermanentFailureCode,N'')<>ISNULL(d.PermanentFailureCode,N'')
+                      OR ISNULL(i.PermanentFailureDetail,N'')<>ISNULL(d.PermanentFailureDetail,N'')
+                      OR ISNULL(i.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))
+                      OR ISNULL(i.PermanentFailureInitiatedByPrincipalId,N'')<>ISNULL(d.PermanentFailureInitiatedByPrincipalId,N'')
+                      OR ISNULL(i.PermanentFailureReasonCode,N'')<>ISNULL(d.PermanentFailureReasonCode,N'')
+                      OR ISNULL(i.PermanentFailureReasonText,N'')<>ISNULL(d.PermanentFailureReasonText,N'')
+                      OR ISNULL(i.PermanentFailureCorrelationId,N'')<>ISNULL(d.PermanentFailureCorrelationId,N'')
+                  )
+              )
           )
     )
-        THROW 51006, 'Permanently failed billing periods cannot reopen or lose failure evidence.', 1;
+        THROW 51006, 'Terminal billing periods cannot be deleted or lose immutable scope and provenance evidence.', 1;
 END;
 """
 

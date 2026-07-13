@@ -253,7 +253,7 @@ type SqlBillingPeriodService(connectionString: string) =
 
             command.CommandText <-
                 """
-SELECT BillingPeriodId,State FROM ops.BillingPeriod WITH(UPDLOCK,HOLDLOCK)
+SELECT BillingPeriodId,State,PermanentFailureCode FROM ops.BillingPeriod WITH(UPDLOCK,HOLDLOCK)
 WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND PeriodFromUtc=@PeriodFromUtc AND PeriodToUtc=@PeriodToUtc;
 """
 
@@ -262,7 +262,9 @@ WHERE OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@Repo
             let! found = reader.ReadAsync(cancellationToken)
 
             if found then
-                return Some(reader.GetGuid(0), reader.GetInt32(1))
+                let permanentFailureCode = if reader.IsDBNull(2) then None else Some(reader.GetString(2))
+
+                return Some(reader.GetGuid(0), reader.GetInt32(1), permanentFailureCode)
             else
                 return None
         }
@@ -295,7 +297,7 @@ VALUES(@BillingPeriodId,@OwnerId,@OrganizationId,@RepositoryId,@PeriodFromUtc,@P
                 addScope insert scope
                 add insert "@State" SqlDbType.Int (int (BillingPeriodRules.stateAt scope.PeriodToUtc nowUtc))
                 let! _ = insert.ExecuteNonQueryAsync(cancellationToken)
-                return periodId, int (BillingPeriodRules.stateAt scope.PeriodToUtc nowUtc)
+                return periodId, int (BillingPeriodRules.stateAt scope.PeriodToUtc nowUtc), None
         }
 
     let hasAssignmentCoverage (connection: SqlConnection) (transaction: SqlTransaction) (scope: BillingPeriodScope) (cancellationToken: CancellationToken) =
@@ -413,6 +415,36 @@ WHERE BillingPeriodId=@BillingPeriodId AND State=@Provisional;
 
             if changed <> 1 then
                 invalidOp "The provisional billing period was not available to record its permanent calculation failure."
+        }
+
+    /// Records bounded terminal evidence for a deterministic late-correction calculation failure without modifying the closed period or posted history.
+    let writePermanentCorrectionCalculationFailure
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (workId: Guid)
+        (detail: string)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            use command = connection.CreateCommand()
+            command.Transaction <- transaction
+
+            command.CommandText <-
+                """
+UPDATE ops.BillingCorrectionWork
+SET BlockedCode=N'CalculationOverflow',
+    BlockedDetail=@Detail,
+    IsAutomaticRetryEligible=0,
+    PermanentlyFailedAtUtc=SYSUTCDATETIME()
+WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL AND PermanentlyFailedAtUtc IS NULL;
+"""
+
+            add command "@WorkId" SqlDbType.UniqueIdentifier workId
+            command.Parameters.Add("@Detail", SqlDbType.NVarChar, 1024).Value <- if detail.Length > 1024 then detail.Substring(0, 1024) else detail
+            let! changed = command.ExecuteNonQueryAsync(cancellationToken)
+
+            if changed <> 1 then
+                invalidOp "The unfinished correction work was not available to record its permanent calculation failure."
         }
 
     /// Rebuilds and records the final preview under the caller's transaction-owned billing scope lock.
@@ -773,7 +805,7 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
 
             try
                 do! lockScope connection transaction scope cancellationToken
-                let! periodId, state = createPeriodIfMissing connection transaction scope nowUtc cancellationToken
+                let! periodId, state, _ = createPeriodIfMissing connection transaction scope nowUtc cancellationToken
                 let nextState = BillingPeriodRules.stateAt scope.PeriodToUtc nowUtc
 
                 if state = int BillingPeriodState.Open
@@ -789,12 +821,14 @@ UPDATE ops.BillingPeriod SET State=2,ClosedAtUtc=SYSUTCDATETIME(),CloseBlockedCo
 
                 let outcome =
                     match current with
-                    | Some (_, currentState) when
+                    | Some (_, currentState, _) when
                         currentState = int BillingPeriodState.Provisional
                         && BillingPeriodRules.isCloseEligible scope.PeriodToUtc nowUtc
                         ->
                         close connection transaction scope periodId nowUtc provenance cancellationToken
-                    | Some (_, currentState) when currentState >= int BillingPeriodState.Closed -> Task.FromResult(BillingCloseOutcome.AlreadyTerminal)
+                    | Some (_, currentState, Some code) when currentState = int BillingPeriodState.PermanentlyFailed ->
+                        Task.FromResult(BillingCloseOutcome.PermanentlyFailed(code))
+                    | Some (_, currentState, _) when currentState >= int BillingPeriodState.Closed -> Task.FromResult(BillingCloseOutcome.AlreadyTerminal)
                     | _ -> Task.FromResult(BillingCloseOutcome.NotEligible)
 
                 let! result = outcome
@@ -897,7 +931,7 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
             use command = connection.CreateCommand()
 
             command.CommandText <-
-                "SELECT TOP (100) BillingCorrectionWorkId FROM ops.BillingCorrectionWork WITH(READPAST) WHERE CompletedAtUtc IS NULL AND IsAutomaticRetryEligible=1 ORDER BY CreatedAtUtc,BillingCorrectionWorkId;"
+                "SELECT TOP (100) BillingCorrectionWorkId FROM ops.BillingCorrectionWork WITH(READPAST) WHERE CompletedAtUtc IS NULL AND PermanentlyFailedAtUtc IS NULL AND IsAutomaticRetryEligible=1 ORDER BY CreatedAtUtc,BillingCorrectionWorkId;"
 
             use! reader = command.ExecuteReaderAsync(cancellationToken)
             let work = ResizeArray<Guid>()
@@ -925,7 +959,7 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                 scopeLookup.Transaction <- transaction
 
                 scopeLookup.CommandText <-
-                    "SELECT p.OwnerId,p.OrganizationId,p.RepositoryId,p.PeriodFromUtc,p.PeriodToUtc FROM ops.BillingCorrectionWork w WITH(READCOMMITTEDLOCK) JOIN ops.BillingPeriod p WITH(READCOMMITTEDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL;"
+                    "SELECT p.OwnerId,p.OrganizationId,p.RepositoryId,p.PeriodFromUtc,p.PeriodToUtc FROM ops.BillingCorrectionWork w WITH(READCOMMITTEDLOCK) JOIN ops.BillingPeriod p WITH(READCOMMITTEDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL AND w.PermanentlyFailedAtUtc IS NULL;"
 
                 add scopeLookup "@WorkId" SqlDbType.UniqueIdentifier workId
                 use! scopeReader = scopeLookup.ExecuteReaderAsync(cancellationToken)
@@ -950,7 +984,7 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                     work.Transaction <- transaction
 
                     work.CommandText <-
-                        "SELECT w.BillingPeriodId,w.UsageFactId,p.State FROM ops.BillingCorrectionWork w WITH(UPDLOCK,HOLDLOCK) JOIN ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL AND p.OwnerId=@OwnerId AND p.OrganizationId=@OrganizationId AND p.RepositoryId=@RepositoryId AND p.PeriodFromUtc=@PeriodFromUtc AND p.PeriodToUtc=@PeriodToUtc;"
+                        "SELECT w.BillingPeriodId,w.UsageFactId,p.State FROM ops.BillingCorrectionWork w WITH(UPDLOCK,HOLDLOCK) JOIN ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL AND w.PermanentlyFailedAtUtc IS NULL AND p.OwnerId=@OwnerId AND p.OrganizationId=@OrganizationId AND p.RepositoryId=@RepositoryId AND p.PeriodFromUtc=@PeriodFromUtc AND p.PeriodToUtc=@PeriodToUtc;"
 
                     add work "@WorkId" SqlDbType.UniqueIdentifier workId
                     addScope work scope
@@ -1033,66 +1067,76 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                             let effectiveTo = min scope.PeriodToUtc pricingEffectiveTo
 
                             do! priceReader.CloseAsync()
-                            let charge = ChargePreviewCalculation.calculateChargeMicros quantity unitPrice unitQuantity
 
-                            use prior = connection.CreateCommand()
-                            prior.Transaction <- transaction
+                            let chargeOutcome =
+                                try
+                                    Ok(ChargePreviewCalculation.calculateChargeMicros quantity unitPrice unitQuantity)
+                                with
+                                | :? OverflowException as ex -> Error ex
 
-                            prior.CommandText <-
-                                "SELECT TOP (1) ChargeLedgerEntryId FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingPeriodId=@BillingPeriodId AND FactKind=@FactKind AND BillableUsageKindMappingId=@MappingId AND BillableUsageKind=@BillableKind AND PricingAssignmentId=@AssignmentId AND PricingPlanId=@PlanId AND PricingRateId=@RateId AND CurrencyCode=@Currency AND UnitName=@UnitName AND UnitQuantity=@UnitQuantity AND UnitPriceMicros=@UnitPrice AND EffectiveFromUtc=@EffectiveFrom AND EffectiveToUtc=@EffectiveTo AND (EntryKind=0 OR (EntryKind=1 AND ReasonCode=N'AutomaticLateUsage')) ORDER BY CreatedAtUtc DESC,ChargeLedgerEntryId DESC;"
+                            match chargeOutcome with
+                            | Error ex ->
+                                do! writePermanentCorrectionCalculationFailure connection transaction workId ex.Message cancellationToken
+                                do! transaction.CommitAsync(cancellationToken)
+                            | Ok charge ->
+                                use prior = connection.CreateCommand()
+                                prior.Transaction <- transaction
 
-                            add prior "@BillingPeriodId" SqlDbType.UniqueIdentifier periodId
-                            add prior "@FactKind" SqlDbType.Int factKind
-                            add prior "@MappingId" SqlDbType.UniqueIdentifier mappingId
-                            add prior "@BillableKind" SqlDbType.Int billableKind
-                            add prior "@AssignmentId" SqlDbType.UniqueIdentifier assignmentId
-                            add prior "@PlanId" SqlDbType.UniqueIdentifier planId
-                            add prior "@RateId" SqlDbType.UniqueIdentifier rateId
-                            prior.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- currency
-                            prior.Parameters.Add("@UnitName", SqlDbType.NVarChar, 64).Value <- unitName
-                            add prior "@UnitQuantity" SqlDbType.BigInt unitQuantity
-                            add prior "@UnitPrice" SqlDbType.BigInt unitPrice
-                            add prior "@EffectiveFrom" SqlDbType.DateTime2 effectiveFrom
-                            add prior "@EffectiveTo" SqlDbType.DateTime2 effectiveTo
-                            let! priorValue = prior.ExecuteScalarAsync(cancellationToken)
-                            let priorId = if isNull priorValue then None else Some(priorValue :?> Guid)
+                                prior.CommandText <-
+                                    "SELECT TOP (1) ChargeLedgerEntryId FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingPeriodId=@BillingPeriodId AND FactKind=@FactKind AND BillableUsageKindMappingId=@MappingId AND BillableUsageKind=@BillableKind AND PricingAssignmentId=@AssignmentId AND PricingPlanId=@PlanId AND PricingRateId=@RateId AND CurrencyCode=@Currency AND UnitName=@UnitName AND UnitQuantity=@UnitQuantity AND UnitPriceMicros=@UnitPrice AND EffectiveFromUtc=@EffectiveFrom AND EffectiveToUtc=@EffectiveTo AND (EntryKind=0 OR (EntryKind=1 AND ReasonCode=N'AutomaticLateUsage')) ORDER BY CreatedAtUtc DESC,ChargeLedgerEntryId DESC;"
 
-                            let entryId =
-                                BillingPeriodRules.deterministicId [ workId.ToString("D")
-                                                                     "automatic-late-usage" ]
+                                add prior "@BillingPeriodId" SqlDbType.UniqueIdentifier periodId
+                                add prior "@FactKind" SqlDbType.Int factKind
+                                add prior "@MappingId" SqlDbType.UniqueIdentifier mappingId
+                                add prior "@BillableKind" SqlDbType.Int billableKind
+                                add prior "@AssignmentId" SqlDbType.UniqueIdentifier assignmentId
+                                add prior "@PlanId" SqlDbType.UniqueIdentifier planId
+                                add prior "@RateId" SqlDbType.UniqueIdentifier rateId
+                                prior.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- currency
+                                prior.Parameters.Add("@UnitName", SqlDbType.NVarChar, 64).Value <- unitName
+                                add prior "@UnitQuantity" SqlDbType.BigInt unitQuantity
+                                add prior "@UnitPrice" SqlDbType.BigInt unitPrice
+                                add prior "@EffectiveFrom" SqlDbType.DateTime2 effectiveFrom
+                                add prior "@EffectiveTo" SqlDbType.DateTime2 effectiveTo
+                                let! priorValue = prior.ExecuteScalarAsync(cancellationToken)
+                                let priorId = if isNull priorValue then None else Some(priorValue :?> Guid)
 
-                            use post = connection.CreateCommand()
-                            post.Transaction <- transaction
+                                let entryId =
+                                    BillingPeriodRules.deterministicId [ workId.ToString("D")
+                                                                         "automatic-late-usage" ]
 
-                            post.CommandText <-
-                                "INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,PriorChargeLedgerEntryId,BillingCorrectionWorkId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId) SELECT @EntryId,@BillingPeriodId,1,@PriorId,@WorkId,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,N'Grace.Operations',N'AutomaticLateUsage',N'Accepted late usage correction.',CONVERT(nvarchar(200),@WorkId) WHERE NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingCorrectionWorkId=@WorkId); UPDATE ops.BillingCorrectionWork SET CompletedAtUtc=SYSUTCDATETIME(),BlockedCode=NULL,BlockedDetail=NULL,IsAutomaticRetryEligible=0 WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL; UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@BillingPeriodId AND State=2;"
+                                use post = connection.CreateCommand()
+                                post.Transaction <- transaction
 
-                            add post "@EntryId" SqlDbType.UniqueIdentifier entryId
-                            add post "@BillingPeriodId" SqlDbType.UniqueIdentifier periodId
-                            let priorParameter = post.Parameters.Add("@PriorId", SqlDbType.UniqueIdentifier)
+                                post.CommandText <-
+                                    "INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,PriorChargeLedgerEntryId,BillingCorrectionWorkId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId) SELECT @EntryId,@BillingPeriodId,1,@PriorId,@WorkId,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,N'Grace.Operations',N'AutomaticLateUsage',N'Accepted late usage correction.',CONVERT(nvarchar(200),@WorkId) WHERE NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingCorrectionWorkId=@WorkId); UPDATE ops.BillingCorrectionWork SET CompletedAtUtc=SYSUTCDATETIME(),BlockedCode=NULL,BlockedDetail=NULL,IsAutomaticRetryEligible=0 WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL AND PermanentlyFailedAtUtc IS NULL; UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@BillingPeriodId AND State=2;"
 
-                            priorParameter.Value <-
-                                priorId
-                                |> Option.map box
-                                |> Option.defaultValue DBNull.Value
+                                add post "@EntryId" SqlDbType.UniqueIdentifier entryId
+                                add post "@BillingPeriodId" SqlDbType.UniqueIdentifier periodId
+                                let priorParameter = post.Parameters.Add("@PriorId", SqlDbType.UniqueIdentifier)
 
-                            add post "@WorkId" SqlDbType.UniqueIdentifier workId
-                            add post "@FactKind" SqlDbType.Int factKind
-                            add post "@MappingId" SqlDbType.UniqueIdentifier mappingId
-                            add post "@BillableKind" SqlDbType.Int billableKind
-                            add post "@AssignmentId" SqlDbType.UniqueIdentifier assignmentId
-                            add post "@PlanId" SqlDbType.UniqueIdentifier planId
-                            add post "@RateId" SqlDbType.UniqueIdentifier rateId
-                            post.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- currency
-                            post.Parameters.Add("@UnitName", SqlDbType.NVarChar, 64).Value <- unitName
-                            add post "@UnitQuantity" SqlDbType.BigInt unitQuantity
-                            add post "@UnitPrice" SqlDbType.BigInt unitPrice
-                            add post "@EffectiveFrom" SqlDbType.DateTime2 effectiveFrom
-                            add post "@EffectiveTo" SqlDbType.DateTime2 effectiveTo
-                            add post "@Quantity" SqlDbType.BigInt quantity
-                            add post "@Charge" SqlDbType.BigInt charge
-                            let! _ = post.ExecuteNonQueryAsync(cancellationToken)
-                            do! transaction.CommitAsync(cancellationToken)
+                                priorParameter.Value <-
+                                    priorId
+                                    |> Option.map box
+                                    |> Option.defaultValue DBNull.Value
+
+                                add post "@WorkId" SqlDbType.UniqueIdentifier workId
+                                add post "@FactKind" SqlDbType.Int factKind
+                                add post "@MappingId" SqlDbType.UniqueIdentifier mappingId
+                                add post "@BillableKind" SqlDbType.Int billableKind
+                                add post "@AssignmentId" SqlDbType.UniqueIdentifier assignmentId
+                                add post "@PlanId" SqlDbType.UniqueIdentifier planId
+                                add post "@RateId" SqlDbType.UniqueIdentifier rateId
+                                post.Parameters.Add("@Currency", SqlDbType.VarChar, 3).Value <- currency
+                                post.Parameters.Add("@UnitName", SqlDbType.NVarChar, 64).Value <- unitName
+                                add post "@UnitQuantity" SqlDbType.BigInt unitQuantity
+                                add post "@UnitPrice" SqlDbType.BigInt unitPrice
+                                add post "@EffectiveFrom" SqlDbType.DateTime2 effectiveFrom
+                                add post "@EffectiveTo" SqlDbType.DateTime2 effectiveTo
+                                add post "@Quantity" SqlDbType.BigInt quantity
+                                add post "@Charge" SqlDbType.BigInt charge
+                                let! _ = post.ExecuteNonQueryAsync(cancellationToken)
+                                do! transaction.CommitAsync(cancellationToken)
             with
             | ex ->
                 do! transaction.RollbackAsync(CancellationToken.None)
@@ -1264,7 +1308,7 @@ END;
                     repair.Transaction <- transaction
 
                     repair.CommandText <-
-                        "UPDATE w WITH(UPDLOCK,SERIALIZABLE) SET IsAutomaticRetryEligible=1,BlockedCode=NULL,BlockedDetail=NULL,ReenabledAtUtc=SYSUTCDATETIME(),ReenabledByPrincipalId=@Principal,ReenabledReasonCode=@ReasonCode,ReenabledReasonText=@ReasonText,ReenabledCorrelationId=@Correlation FROM ops.BillingCorrectionWork w JOIN ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL AND w.IsAutomaticRetryEligible=0 AND p.OwnerId=@OwnerId AND p.OrganizationId=@OrganizationId AND p.RepositoryId=@RepositoryId AND p.PeriodFromUtc=@PeriodFromUtc AND p.PeriodToUtc=@PeriodToUtc AND p.State IN(2,3);"
+                        "UPDATE w WITH(UPDLOCK,SERIALIZABLE) SET IsAutomaticRetryEligible=1,BlockedCode=NULL,BlockedDetail=NULL,ReenabledAtUtc=SYSUTCDATETIME(),ReenabledByPrincipalId=@Principal,ReenabledReasonCode=@ReasonCode,ReenabledReasonText=@ReasonText,ReenabledCorrelationId=@Correlation FROM ops.BillingCorrectionWork w JOIN ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL AND w.PermanentlyFailedAtUtc IS NULL AND w.IsAutomaticRetryEligible=0 AND p.OwnerId=@OwnerId AND p.OrganizationId=@OrganizationId AND p.RepositoryId=@RepositoryId AND p.PeriodFromUtc=@PeriodFromUtc AND p.PeriodToUtc=@PeriodToUtc AND p.State IN(2,3);"
 
                     add repair "@WorkId" SqlDbType.UniqueIdentifier workId
                     addScope repair scope

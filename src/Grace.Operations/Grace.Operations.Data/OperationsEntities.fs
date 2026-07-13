@@ -445,6 +445,8 @@ type BillingCorrectionWorkEntity() =
     member val BlockedDetail: string = null with get, set
     /// Stores whether automatic polling may select this unfinished correction row.
     member val IsAutomaticRetryEligible = true with get, set
+    /// Stores when a deterministic correction calculation failure permanently removed this exact work item from automatic processing.
+    member val PermanentlyFailedAtUtc = Nullable<DateTime>() with get, set
     /// Stores the database UTC instant when an operator made this exact row eligible again.
     member val ReenabledAtUtc = Nullable<DateTime>() with get, set
     /// Stores the principal that explicitly re-enabled this correction row.

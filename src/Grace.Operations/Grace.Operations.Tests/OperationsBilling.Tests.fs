@@ -240,7 +240,7 @@ type OperationsBillingTests() =
                 Assert.That(closeSource, Does.Contain("IsAutomaticRetryEligible=1"))
                 Assert.That(closeSource, Does.Contain("IsAutomaticRetryEligible=0"))
                 Assert.That(closeSource, Does.Contain("ReenableCorrectionWorkAsync"))
-                Assert.That(closeSource, Does.Contain("w.CompletedAtUtc IS NULL AND w.IsAutomaticRetryEligible=0"))
+                Assert.That(closeSource, Does.Contain("w.CompletedAtUtc IS NULL AND w.PermanentlyFailedAtUtc IS NULL AND w.IsAutomaticRetryEligible=0"))
                 Assert.That(workerSource, Does.Contain("UsageFactPersistenceStatus.AlreadyProcessed"))
                 Assert.That(migrationSource, Does.Contain("AcceptedAtUtc datetime2(7) NOT NULL"))
                 Assert.That(migrationSource, Does.Contain("IsAutomaticRetryEligible bit NOT NULL"))
@@ -380,4 +380,96 @@ type OperationsBillingTests() =
                 Assert.That(migrationSource, Does.Contain("CHECK (State BETWEEN 0 AND 4)"))
                 Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_RawUsageFact_TerminalBillingProtection"))
                 Assert.That(snapshotSource, Does.Contain("PermanentFailureCorrelationId")))
+        )
+
+    /// Proves session-four terminal SQL, correction failure, strict timestamp, retry, migration, and model invariants stay aligned.
+    [<Test>]
+    member _.SessionFourTerminalCorrectionStabilizationContractsAreDurable() =
+        let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
+        let billingSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBilling.fs"))
+        let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+
+        let migrationSource =
+            File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260713130000_StabilizeBillingCorrectionWorkFailure.fs"))
+
+        let snapshotSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "OperationsDbContextModelSnapshot.fs"))
+        let closedAtUtc = utc 2028 3 1 0
+        let earlierAcceptedAtUtc = closedAtUtc.AddTicks(-1L)
+        let equalAcceptedAtUtc = closedAtUtc
+        let laterAcceptedAtUtc = closedAtUtc.AddTicks(1L)
+
+        use context =
+            OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingSessionFourModel;Integrated Security=true;"
+
+        let runtime = context.Model
+
+        let migration =
+            StabilizeBillingCorrectionWorkFailure()
+                .TargetModel
+
+        let snapshot = OperationsDbContextModelSnapshot().Model
+
+        let propertyShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) (entityType: Type) =
+            let entity = model.FindEntityType(entityType)
+
+            entity.GetProperties()
+            |> Seq.map (fun property -> property.Name, property.ClrType.FullName, property.IsNullable)
+            |> Set.ofSeq
+
+        let retryOutcomeIndex = closeSource.IndexOf("BillingCloseOutcome.PermanentlyFailed(code)", StringComparison.Ordinal)
+        let terminalOutcomeIndex = closeSource.IndexOf("BillingCloseOutcome.AlreadyTerminal", StringComparison.Ordinal)
+
+        let migrationWorkShape = propertyShape migration (typeof<BillingCorrectionWorkEntity>)
+        let snapshotWorkShape = propertyShape snapshot (typeof<BillingCorrectionWorkEntity>)
+        let runtimeWorkShape = propertyShape runtime (typeof<BillingCorrectionWorkEntity>)
+
+        Assert.Multiple(
+            Action (fun () ->
+                // Boundary: Q1=C means equality and earlier timestamps are not late; only strictly later timestamps route correction work.
+                Assert.That(earlierAcceptedAtUtc > closedAtUtc, Is.False)
+                Assert.That(equalAcceptedAtUtc > closedAtUtc, Is.False)
+                Assert.That(laterAcceptedAtUtc > closedAtUtc, Is.True)
+                Assert.That(closeSource, Does.Contain("fact.AcceptedAtUtc > period.ClosedAtUtc"))
+                Assert.That(closeSource, Does.Not.Contain("fact.AcceptedAtUtc >= period.ClosedAtUtc"))
+                Assert.That(closeSource, Does.Not.Contain("ROWVERSION"))
+                Assert.That(closeSource, Does.Not.Contain("Watermark"))
+
+                // SQL-bypass: both the original and destination scopes participate, while raw-payload lifecycle changes remain permitted.
+                Assert.That(billingSource, Does.Contain("sourcePeriod.OwnerId=d.OwnerId"))
+                Assert.That(billingSource, Does.Contain("destinationPeriod.OwnerId=i.OwnerId"))
+                Assert.That(billingSource, Does.Contain("sourcePeriod.BillingPeriodId IS NOT NULL OR destinationPeriod.BillingPeriodId IS NOT NULL"))
+                Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
+                Assert.That(billingSource, Does.Contain("d.State IN (2,3,4)"))
+                Assert.That(billingSource, Does.Contain("d.State IN (2,3)"))
+                Assert.That(billingSource, Does.Contain("d.State=4"))
+                Assert.That(billingSource, Does.Contain("d.State=2 AND i.State=3"))
+                Assert.That(billingSource, Does.Contain("e.EntryKind IN (1,2) AND e.SourceChargePreviewLineId IS NULL"))
+                Assert.That(billingSource, Does.Contain("d.PeriodFromUtc"))
+                Assert.That(billingSource, Does.Contain("d.PeriodToUtc"))
+
+                // Overflow: exact work becomes terminal, cannot be selected after restart/retry, and does not prevent later eligible work from filling the batch.
+                Assert.That(closeSource, Does.Contain("writePermanentCorrectionCalculationFailure"))
+                Assert.That(closeSource, Does.Contain("BlockedCode=N'CalculationOverflow'"))
+                Assert.That(closeSource, Does.Contain("PermanentlyFailedAtUtc=SYSUTCDATETIME()"))
+                Assert.That(closeSource, Does.Contain("CompletedAtUtc IS NULL AND PermanentlyFailedAtUtc IS NULL AND IsAutomaticRetryEligible=1"))
+                Assert.That(closeSource, Does.Contain("w.PermanentlyFailedAtUtc IS NULL AND w.IsAutomaticRetryEligible=0"))
+                Assert.That(closeSource, Does.Contain("SELECT TOP (100) BillingCorrectionWorkId"))
+                Assert.That(closeSource, Does.Contain("do! transaction.CommitAsync(cancellationToken)"))
+                Assert.That(closeSource, Does.Not.Contain("PermanentlyFailedAtUtc=NULL"))
+
+                // Retry returns the durable failure outcome before the generic terminal result.
+                Assert.That(retryOutcomeIndex, Is.GreaterThanOrEqualTo(0))
+                Assert.That(terminalOutcomeIndex, Is.GreaterThan(retryOutcomeIndex))
+
+                // The additive persisted field has literal migration, snapshot, and runtime-model parity.
+                Assert.That(migrationSource, Does.Contain("CK_ops_BillingCorrectionWork_PermanentFailure"))
+                Assert.That(migrationSource, Does.Contain("PermanentlyFailedAtUtc datetime2(7) NULL"))
+                Assert.That(migrationSource, Does.Contain("TR_ops_RawUsageFact_TerminalBillingProtection"))
+                Assert.That(migrationSource, Does.Contain("TR_ops_BillingPeriod_PermanentFailureProtection"))
+                Assert.That(snapshotSource, Does.Contain("PermanentlyFailedAtUtc"))
+
+                Assert.That((migrationWorkShape = snapshotWorkShape), Is.True)
+                Assert.That((snapshotWorkShape = runtimeWorkShape), Is.True)
+
+                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("CK_ops_BillingCorrectionWork_PermanentFailure")))
         )

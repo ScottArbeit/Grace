@@ -1192,6 +1192,11 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         work
+            .Property<Nullable<DateTime>>("PermanentlyFailedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        work
             .Property<Nullable<DateTime>>("ReenabledAtUtc")
             .HasColumnType("datetime2(7)")
         |> ignore
