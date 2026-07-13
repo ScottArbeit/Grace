@@ -3821,6 +3821,153 @@ module WatchTests =
             Watch.currentGraceWatchRuntimeModeForWatchTests ()
             |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
 
+    /// Verifies a directory at the configured ignore path fails closed for both initial activation and target-branch reload.
+    [<Test>]
+    let ``non-file graceignore blocks Watch startup and target branch reload`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "non-file-ignore-transition-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let ignoredFilePath = Path.Combine(root, "retained.tmp")
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+
+            Directory.CreateDirectory(graceIgnorePath)
+            |> ignore
+
+            Watch.tryActivateWatchIgnoreSnapshotForWatchTests ()
+            |> Result.isError
+            |> should equal true
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Directory.Delete(graceIgnorePath)
+            File.WriteAllText(graceIgnorePath, "retained.tmp")
+            File.WriteAllText(ignoredFilePath, "configured payload")
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+
+            File.Delete(graceIgnorePath)
+
+            Directory.CreateDirectory(graceIgnorePath)
+            |> ignore
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+            Watch.hasActiveWatchIgnoreSnapshotForWatchTests ()
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests ignoredFilePath
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
+
+    /// Verifies startup and resync scans retain the active snapshot after an ordinary on-disk ignore edit changes live configuration.
+    [<TestCase(Services.GraceWatchRuntimeMode.StartingUp)>]
+    [<TestCase(Services.GraceWatchRuntimeMode.Resynchronizing)>]
+    let ``Watch scans use the frozen ignore snapshot after ordinary edit`` runtimeMode =
+        withTempRepo (fun root ->
+            let relativePath = "tracked-before-ordinary-ignore-edit.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "tracked before ordinary ignore edit")
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            activateWatchIgnoreSnapshot ()
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), relativePath)
+            resetConfiguration ()
+            Current() |> ignore
+            Watch.setGraceWatchRuntimeModeForWatchTests runtimeMode
+
+            let differences =
+                (Watch.scanForDifferencesWithWatchIgnoreSnapshotForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+
+            differences
+            |> Seq.exists (fun difference ->
+                difference.DifferenceType = DifferenceType.Delete
+                && difference.FileSystemEntryType = FileSystemEntryType.File
+                && string difference.RelativePath = relativePath)
+            |> should equal false)
+
+    /// Verifies a transient target-branch ignore read failure retries target activation before any resync scan can complete.
+    [<Test>]
+    let ``transient transition ignore read failure reloads target snapshot before resync scan`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transient-ignore-retry-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let targetIgnoredPath = Path.Combine(root, "target-only.tmp")
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable scanCalls = 0
+
+            File.WriteAllText(targetIgnoredPath, "target branch configured payload")
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+
+            File.WriteAllText(graceIgnorePath, "target-only.tmp")
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+            recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            let processRecovery () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ -> Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    scanForDifferences
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            processRecovery ()
+            scanCalls |> should equal 0
+
+            lockedIgnore.Dispose()
+            processRecovery ()
+
+            scanCalls |> should equal 1
+
+            Current().BranchId |> should equal branchBId
+
+            Watch.shouldIgnoreFileForWatchTests targetIgnoredPath
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
     /// Verifies that current transition completion authority wins over stale sidecars in the target branch directory.
     [<Test>]
     let ``update marker deletion prefers current deletion over stale target branch sidecar`` () =

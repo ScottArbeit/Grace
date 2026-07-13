@@ -66,7 +66,14 @@ module Watch =
     let internal currentGraceWatchRuntimeModeForWatchTests () = currentGraceWatchRuntimeMode ()
 
     /// Holds the copied ignore inputs that govern every Watch eligibility decision for one Watch lifetime.
-    type private WatchIgnoreSnapshot = { GraceDirectory: string; GraceStatusFile: string; FileEntries: string array; DirectoryEntries: string array }
+    type private WatchIgnoreSnapshot =
+        {
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+            FileEntries: string array
+            DirectoryEntries: string array
+        }
 
     let mutable private activeWatchIgnoreSnapshot: WatchIgnoreSnapshot option = None
 
@@ -80,6 +87,7 @@ module Watch =
             | None ->
                 Ok
                     {
+                        RootDirectory = Path.GetFullPath(inspection.Configuration.RootDirectory)
                         GraceDirectory = Path.GetFullPath(inspection.Configuration.GraceDirectory)
                         GraceStatusFile = Path.GetFullPath(inspection.Configuration.GraceStatusFile)
                         FileEntries = Array.copy inspection.Configuration.GraceFileIgnoreEntries
@@ -150,6 +158,33 @@ module Watch =
 
     /// Reports whether Watch retains a previously valid ignore snapshot after a failed reload attempt.
     let internal hasActiveWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot.IsSome
+
+    /// Scans the working tree with the copied Watch-lifetime ignore inputs instead of live configuration values.
+    let private scanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
+        task {
+            let snapshot = currentWatchIgnoreSnapshot ()
+
+            let scanInput: WorkingTreeScanInput =
+                {
+                    RootDirectory = snapshot.RootDirectory
+                    GraceDirectory = snapshot.GraceDirectory
+                    GraceStatusFile = snapshot.GraceStatusFile
+                    DirectoryIgnoreEntries = snapshot.DirectoryEntries
+                    FileIgnoreEntries = snapshot.FileEntries
+                }
+
+            match! scanWorkingTreeForDifferencesReadOnly scanInput previousGraceStatus with
+            | Ok differences ->
+                setLastScanForDifferencesSuccessfulForWatchTests true
+                return differences
+            | Error error ->
+                setLastScanForDifferencesSuccessfulForWatchTests false
+                logToAnsiConsole Colors.Error $"Grace Watch could not scan the working tree with its active ignore snapshot: {error}"
+                return List<FileSystemDifference>()
+        }
+
+    /// Exposes frozen-snapshot scans for deterministic Watch startup and resync regression tests.
+    let internal scanForDifferencesWithWatchIgnoreSnapshotForWatchTests previousGraceStatus = scanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus
 
     /// Checks whether the current runtime mode can record filesystem observations.
     let private canCaptureFilesystemObservation () = isGraceWatchObservationCaptureLegal (currentGraceWatchRuntimeMode ())
@@ -3984,6 +4019,35 @@ module Watch =
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
 
+    let private pendingTransitionConfigurationReloadLock = obj ()
+    let mutable private pendingTransitionConfigurationReloadReason: string option = None
+
+    /// Defers target-branch configuration activation until the existing resync loop can retry it without trusting the source snapshot.
+    let private deferTransitionConfigurationReload reason =
+        lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadReason <- Some reason)
+        requestGraceWatchExplicitResync reason
+
+    /// Retries a failed target-branch configuration activation before resync scans can use the previous branch snapshot.
+    let private tryReloadPendingTransitionConfiguration () =
+        lock pendingTransitionConfigurationReloadLock (fun () ->
+            match pendingTransitionConfigurationReloadReason with
+            | None -> true
+            | Some reason ->
+                try
+                    reloadConfigurationForTransitionCompletion ()
+                    rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                    pendingTransitionConfigurationReloadReason <- None
+                    true
+                with
+                | ex ->
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Watch retained degraded recovery because target branch configuration reload is still unavailable: {Markup.Escape(ex.Message)}. {Markup.Escape(reason)}"
+
+                    false)
+
     /// Schedules the next timer-driven identity attempt or classifies the final path before bounded exhaustion selects resync recovery.
     let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
         let attemptsAfterFailure = pendingFile.StabilizationAttempts + 1
@@ -4166,6 +4230,9 @@ module Watch =
                 publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
             with
             | ex ->
+                deferTransitionConfigurationReload
+                    $"branch transition completion could not reload target configuration after previous branch IPC retirement failed: {ex.Message}"
+
                 logToAnsiConsole
                     Colors.Error
                     $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
@@ -4200,10 +4267,12 @@ module Watch =
                         true
                     with
                     | ex ->
-                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
                         graceStatusHasChanged <- true
 
                         lastPublishedHasPendingWatchWork <- None
+
+                        deferTransitionConfigurationReload
+                            $"branch transition completion could not reload target configuration after marker deletion: {ex.Message}"
 
                         logToAnsiConsole
                             Colors.Error
@@ -4333,6 +4402,7 @@ module Watch =
         clearPendingStatusDifferencesForTests ()
         lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
         clearGraceWatchResyncPending ()
+        lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadReason <- None)
 
         Interlocked.Exchange(&quarantinedWatchObservationCount, 0)
         |> ignore
@@ -7491,7 +7561,7 @@ module Watch =
                 return Some graceStatus
             else
                 // Get the list of differences between what's in the working directory, and what Grace Index knows about.
-                let! differences = scanForDifferences graceStatus
+                let! differences = scanForDifferencesWithWatchIgnoreSnapshot graceStatus
                 return! updateGraceStatusFromDifferences graceStatus differences correlationId
         }
 
@@ -7966,8 +8036,10 @@ module Watch =
                 requestGraceWatchExplicitResync reason
             | None -> ()
 
-            // First, check if there's anything to process.
-            if isGraceWatchResyncPending () then
+            // A target branch must reload its own snapshot before a resync can scan or retire the pending recovery.
+            if not (tryReloadPendingTransitionConfiguration ()) then
+                ()
+            elif isGraceWatchResyncPending () then
                 let resyncAttempt = currentGraceWatchResyncAttempt ()
 
                 if not (isGraceWatchResyncAttemptActive resyncAttempt) then
@@ -8533,7 +8605,7 @@ module Watch =
             readGraceStatusFile
             copyFileToObjectDirectoryAndUploadToStorage
             updateGraceStatus
-            scanForDifferences
+            scanForDifferencesWithWatchIgnoreSnapshot
             updateGraceStatusFromDifferences
             applyGraceStatusIncremental
             updateGraceWatchInterprocessFile
@@ -9152,7 +9224,7 @@ module Watch =
 
                     let! differences =
                         if isGraceWatchScanLegal (currentGraceWatchRuntimeMode ()) then
-                            scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
+                            scanForDifferencesWithWatchIgnoreSnapshot graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
                         else
                             logToAnsiConsole Colors.Verbose $"Grace Watch skipped startup scan while runtime mode is {currentGraceWatchRuntimeMode ()}."
 
