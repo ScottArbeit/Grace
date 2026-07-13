@@ -4048,13 +4048,14 @@ module WatchTests =
                 activateWatchIgnoreSnapshot ()
 
                 File.WriteAllText(candidatePath, "candidate admitted under the source snapshot")
-                File.WriteAllText(graceIgnorePath, "target-only.tmp")
+                File.WriteAllText(graceIgnorePath, Path.GetFileName(candidatePath))
                 writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
                 Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+                let updateMarkerFile = Services.updateInProgressFileName ()
 
                 // The first marker failure creates the timer-owned pending retry while the target ignore file is inaccessible.
                 use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
-                recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+                recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow
                 lockedIgnore.Dispose()
 
                 Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
@@ -4102,8 +4103,7 @@ module WatchTests =
 
                 failMarkerRebind <- true
 
-                let markerDeletionFailure =
-                    Task.Run(Action(fun () -> recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow))
+                let markerDeletionFailure = Task.Run(Action(fun () -> recordCompletedUpdateMarkerDeletion updateMarkerFile DateTime.UtcNow))
 
                 // This completion would block here with the prior status-lock then pending-lock acquisition order.
                 markerDeletionFailure.Wait(TimeSpan.FromSeconds(5.0))
