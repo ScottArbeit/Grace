@@ -1425,13 +1425,17 @@ module Watch =
     let mutable private fileExistsForWatchFinalPath = File.Exists
     let mutable private directoryExistsForWatchFinalPath = Directory.Exists
 
+    /// Classifies the filesystem object currently occupying a final Watch path before recovery selects file-upload behavior.
+    let private finalPathKindForFullPath fullPath =
+        if fileExistsForWatchFinalPath fullPath then FinalPathFile
+        elif directoryExistsForWatchFinalPath fullPath then FinalPathDirectory
+        else FinalPathMissing
+
     /// Reads the final filesystem kind for a repository-relative path.
     let private finalPathKind (relativePath: RelativePath) =
         let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
-        if fileExistsForWatchFinalPath fullPath then FinalPathFile
-        elif directoryExistsForWatchFinalPath fullPath then FinalPathDirectory
-        else FinalPathMissing
+        finalPathKindForFullPath fullPath
 
     /// Installs final path existence readers used by watch classification tests.
     let internal setFinalPathExistsForWatchTests fileExists directoryExists =
@@ -3257,18 +3261,28 @@ module Watch =
         pendingFile.BranchId = Current().BranchId
         && String.Equals(pendingFile.RootDirectory, currentRootDirectory, watchPathComparison)
 
-    /// Schedules the next timer-driven identity attempt or leaves incremental mode when a path cannot stabilize within the fixed budget.
+    /// Schedules the next timer-driven identity attempt or classifies the final path before bounded exhaustion selects resync recovery.
     let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
         let attemptsAfterFailure = pendingFile.StabilizationAttempts + 1
 
         if attemptsAfterFailure
            >= stableFileIdentityMaximumAttempts then
-            let exhaustedPendingFile = { pendingFile with StabilizationAttempts = attemptsAfterFailure; RetryNotBeforeUtc = now }
+            let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile)
 
-            if filesToProcess.TryUpdate(pendingFile.FullPath, exhaustedPendingFile, pendingFile) then
-                requestGraceWatchExplicitResyncRetainingPendingFile
-                    $"Watch could not compute stable final identity for {pendingFile.FullPath} after {stableFileIdentityMaximumAttempts} attempts: {reason}"
-                    pendingFile.FullPath
+            match finalPathKindForFullPath pendingFile.FullPath with
+            | FinalPathMissing ->
+                if (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                    .Remove(pendingPair) then
+                    requestGraceWatchExplicitResync
+                        $"Watch could not compute stable final identity for {pendingFile.FullPath} after {stableFileIdentityMaximumAttempts} attempts because the final path remained absent: {reason}"
+            | FinalPathFile
+            | FinalPathDirectory ->
+                let exhaustedPendingFile = { pendingFile with StabilizationAttempts = attemptsAfterFailure; RetryNotBeforeUtc = now }
+
+                if filesToProcess.TryUpdate(pendingFile.FullPath, exhaustedPendingFile, pendingFile) then
+                    requestGraceWatchExplicitResyncRetainingPendingFile
+                        $"Watch could not compute stable final identity for {pendingFile.FullPath} after {stableFileIdentityMaximumAttempts} attempts: {reason}"
+                        pendingFile.FullPath
         else
             let retryNotBeforeUtc =
                 if isLocalObservationCandidateSchedulingActive () then

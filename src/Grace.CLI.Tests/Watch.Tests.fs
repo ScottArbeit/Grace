@@ -3547,6 +3547,110 @@ module WatchTests =
             Watch
                 .pendingWatchWorkSnapshotForTests()
                 .FilesToProcess
+            |> should equal Array.empty<string>
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
+    /// Verifies that a confirmed-missing final path retires exactly after the bounded attempts so resync can derive and apply its delete.
+    [<Test>]
+    let ``watch stable identity missing exhaustion permits resync delete recovery`` () =
+        withTempRepo (fun root ->
+            let relativePath = "missing-after-change.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let mutable now = DateTime(2026, 7, 12, 2, 15, 0, DateTimeKind.Utc)
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+            let mutable scanApplyCalls = 0
+            let mutable appliedDifferences = List<FileSystemDifference>()
+            let scanDelete = FileSystemDifference.Create Delete FileSystemEntryType.File relativePath
+
+            Watch.setStableFileIdentityNowForWatchTests (fun () -> now)
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(filePath, "content before the missed delete")
+            Watch.OnChanged(changedEvent filePath)
+            File.Delete(filePath)
+
+            /// Reads the status used by the missing-path resync recovery.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Fails if a confirmed-missing path attempts file-content work.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Assert.Fail("A confirmed-missing path must not enter file upload work.")
+                Task.FromResult(())
+
+            /// Returns the delete that scan-derived recovery must apply after bounded missing retries retire upload evidence.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                let differences = List<FileSystemDifference>()
+                differences.Add(scanDelete)
+                Task.FromResult(differences)
+
+            /// Records the scan-derived delete so recovery cannot pass by merely invoking the scanner.
+            let updateGraceStatusFromDifferences status (differences: List<FileSystemDifference>) _ =
+                scanApplyCalls <- scanApplyCalls + 1
+                appliedDifferences <- List<FileSystemDifference>(differences)
+                Task.FromResult(Some status)
+
+            /// Builds update status test data used by the Watch command workflow.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used by the Watch command workflow.
+            let applyIncremental _ _ _ = Task.FromResult(())
+
+            /// Builds IPC update test data used by the Watch command workflow.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processWatchPass () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processWatchPass ()
+            now <- now.AddSeconds(1.0)
+            processWatchPass ()
+            now <- now.AddSeconds(2.0)
+            processWatchPass ()
+
+            uploadCalls |> should equal 0
+            scanCalls |> should equal 0
+            scanApplyCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            processWatchPass ()
+
+            uploadCalls |> should equal 0
+            scanCalls |> should equal 1
+            scanApplyCalls |> should equal 1
+
+            appliedDifferences.ToArray()
+            |> should equal [| scanDelete |]
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
             |> should equal Array.empty<string>)
 
     /// Verifies that a final directory never enters the file-content upload seam.
