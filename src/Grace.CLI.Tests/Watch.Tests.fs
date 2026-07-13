@@ -3335,6 +3335,77 @@ module WatchTests =
                 .FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies transient storage failures retain a proven generation without charging the local stabilization budget.
+    [<Test; Category("StableUploadRetry")>]
+    let ``watch storage retry preserves proven generation and applies it once`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "storage-retry-proven-generation.txt")
+            let mutable now = DateTime(2026, 7, 13, 3, 0, 0, DateTimeKind.Utc)
+            let mutable uploadCalls = 0
+            let mutable incrementalStatusApplications = 0
+
+            Watch.setStableFileIdentityNowForWatchTests (fun () -> now)
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(filePath, "proven generation bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+
+                if uploadCalls <= 2 then
+                    Task.FromException<unit>(Watch.stableFileUploadFailureForWatchTests "transient object storage outage")
+                else
+                    recordUploadedFileVersion $"{pendingFilePath}"
+                    Task.FromResult(())
+
+            let applyIncremental _ _ _ =
+                incrementalStatusApplications <- incrementalStatusApplications + 1
+                Task.FromResult(())
+
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+
+            uploadCalls |> should equal 1
+
+            Watch.pendingFileStabilizationAttemptsForWatchTests filePath
+            |> should equal (Some 0)
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            now <- now.AddSeconds(1.0)
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+
+            uploadCalls |> should equal 2
+
+            Watch.pendingFileStabilizationAttemptsForWatchTests filePath
+            |> should equal (Some 0)
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            now <- now.AddSeconds(1.0)
+            processPendingWatchWorkWithUploadAndIncrementalForTest upload applyIncremental
+
+            uploadCalls |> should equal 3
+            incrementalStatusApplications |> should equal 1
+
+            Watch.pendingFileStabilizationAttemptsForWatchTests filePath
+            |> should equal None
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Verifies that a deferred file retry blocks resync scanning and clean IPC publication until its retry deadline is due.
     [<Test>]
     let ``resync blocks scan while stable file retry is deferred`` () =
@@ -3984,6 +4055,98 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false)
 
+    /// Verifies repository reload quarantines stale name-scoped branch work before the new repository can account for the path.
+    [<Test>]
+    let ``repository reload with name scoped branch cannot reuse stale pending or recovery work`` () =
+        withTempRepo (fun root ->
+            let relativePath = "same-root-name-scoped-branch.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let configuration = Current()
+            let originalRepositoryId = configuration.RepositoryId
+            let replacementRepositoryId = Guid.NewGuid()
+            let sharedRepositoryName = "shared-repository-name"
+            let sharedBranchName = "shared-branch-name"
+            let uploadedRepositoryIds = ResizeArray<string>()
+            let mutable scanApplications = 0
+
+            configuration.RepositoryName <- sharedRepositoryName
+            configuration.BranchId <- BranchId.Empty
+            configuration.BranchName <- sharedBranchName
+            File.WriteAllText(filePath, "old repository bytes")
+            Watch.OnChanged(changedEvent filePath)
+
+            Watch.retainAcceptedFileRecoveryEvidenceForWatchTests filePath
+            |> should equal true
+
+            configuration.RepositoryId <- replacementRepositoryId
+            configuration.RepositoryName <- sharedRepositoryName
+            configuration.BranchId <- BranchId.Empty
+            configuration.BranchName <- sharedBranchName
+
+            let upload (parameters: GetUploadMetadataForFilesParameters) (pendingFilePath: FilePath) =
+                uploadedRepositoryIds.Add($"{parameters.RepositoryId}")
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            let scanForDifferences _ =
+                let differences = List<FileSystemDifference>()
+                differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File relativePath)
+                Task.FromResult(differences)
+
+            let updateGraceStatusFromDifferences status _ _ =
+                scanApplications <- scanApplications + 1
+                Task.FromResult(Some status)
+
+            let processWatchPass () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    upload
+                    (fun status _ -> Task.FromResult(Some status))
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            processWatchPass ()
+
+            uploadedRepositoryIds.ToArray()
+            |> should equal Array.empty<string>
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            originalRepositoryId
+            |> should not' (equal replacementRepositoryId)
+
+            File.WriteAllText(filePath, "replacement repository bytes")
+            Watch.OnChanged(changedEvent filePath)
+            processWatchPass ()
+
+            uploadedRepositoryIds.ToArray()
+            |> should equal [| $"{replacementRepositoryId}" |]
+
+            scanApplications |> should equal 1
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.uploadedFileVersionRelativePathsForWatchTests ()
+            |> should equal Array.empty<string>)
+
     /// Verifies a newer resync that begins after status trust but before recovery cleanup preserves the newer attempt's blockers.
     [<Test>]
     let ``newer resync before evidence retirement leaves recovery blockers intact`` () =
@@ -3991,6 +4154,7 @@ module WatchTests =
             let relativePath = "newer-attempt-recovery-blocker.txt"
             let filePath = Path.Combine(root, relativePath)
             let mutable retirementProbeCalls = 0
+            let mutable scanCalls = 0
 
             File.WriteAllText(filePath, "retained final bytes")
             Watch.OnChanged(changedEvent filePath)
@@ -4004,18 +4168,25 @@ module WatchTests =
                 retirementProbeCalls <- retirementProbeCalls + 1
                 Watch.requestGraceWatchExplicitResyncForWatchTests "newer resync arrived after status trust before evidence retirement")
 
-            try
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            let processWatchPass () =
                 (Watch.processChangedFilesWithClients
                     (fun () -> Task.FromResult(GraceStatus.Default))
                     (fun () -> Task.FromResult(GraceStatus.Default))
                     upload
                     (fun status _ -> Task.FromResult(Some status))
-                    (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                    scanForDifferences
                     (fun status _ _ -> Task.FromResult(Some status))
                     (fun _ _ _ -> Task.FromResult(()))
                     (fun _ _ -> Task.FromResult(())))
                     .GetAwaiter()
                     .GetResult()
+
+            try
+                processWatchPass ()
             finally
                 Watch.resetBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests ()
 
@@ -4024,11 +4195,27 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true
 
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
             Watch.fileRecoveryEvidencePathsForWatchTests ()
             |> should equal [| filePath |]
 
             Watch.uploadedFileVersionRelativePathsForWatchTests ()
-            |> should equal [| relativePath |])
+            |> should equal [| relativePath |]
+
+            processWatchPass ()
+
+            scanCalls |> should equal 2
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>)
 
     /// Verifies that a missing final path does not invoke file-content work and can stabilize after the path returns.
     [<Test>]

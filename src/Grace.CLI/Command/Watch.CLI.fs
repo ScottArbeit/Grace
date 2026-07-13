@@ -272,12 +272,18 @@ module Watch =
         {
             FullPath: string
             Generation: int64
+            RepositoryId: RepositoryId
+            RepositoryName: string
             BranchId: BranchId
             BranchName: string
             RootDirectory: string
             StabilizationAttempts: int
             RetryNotBeforeUtc: DateTime
         }
+
+    /// Marks a storage-side failure after Watch has already proven local file bytes and identity for this generation.
+    type private StableFileUploadFailureException(message: string, innerException: Exception) =
+        inherit Exception(message, innerException)
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
@@ -1937,21 +1943,31 @@ module Watch =
             |> ignore
         | _ -> ()
 
-    /// Compares pending file work scopes, using the stored branch name only when the accepted work lacked a branch identifier.
+    /// Compares pending file work scopes, using stored repository and branch names only when their accepted identifiers were absent.
     let private pendingFileWorkMatchesScope (acceptedPendingFile: PendingFileWorkSnapshot) (candidatePendingFile: PendingFileWorkSnapshot) =
+        let repositoryMatches =
+            if acceptedPendingFile.RepositoryId
+               <> RepositoryId.Empty then
+                acceptedPendingFile.RepositoryId = candidatePendingFile.RepositoryId
+            else
+                String.Equals(acceptedPendingFile.RepositoryName, candidatePendingFile.RepositoryName, StringComparison.Ordinal)
+
         let branchMatches =
             if acceptedPendingFile.BranchId <> BranchId.Empty then
                 acceptedPendingFile.BranchId = candidatePendingFile.BranchId
             else
                 String.Equals(acceptedPendingFile.BranchName, candidatePendingFile.BranchName, StringComparison.Ordinal)
 
-        branchMatches
+        repositoryMatches
+        && branchMatches
         && String.Equals(acceptedPendingFile.RootDirectory, candidatePendingFile.RootDirectory, watchPathComparison)
 
-    /// Tests whether queued file work still belongs to the branch and root that accepted its due local observation.
+    /// Tests whether queued file work still belongs to the repository, branch, and root that accepted its due local observation.
     let private pendingFileWorkMatchesCurrentScope (pendingFile: PendingFileWorkSnapshot) =
         let currentScope =
             { pendingFile with
+                RepositoryId = Current().RepositoryId
+                RepositoryName = Current().RepositoryName
                 BranchId = Current().BranchId
                 BranchName = Current().BranchName
                 RootDirectory =
@@ -1994,8 +2010,9 @@ module Watch =
         for evidence in fileRecoveryEvidence.ToArray() do
             let evidenceRelativePath = relativePathForPendingFileWork evidence.Value
 
-            if normalizedRelativePaths
-               |> Array.exists (fun relativePath -> String.Equals(relativePath, normalizeRelativePath evidenceRelativePath, watchPathComparison)) then
+            if pendingFileWorkMatchesCurrentScope evidence.Value
+               && (normalizedRelativePaths
+                   |> Array.exists (fun relativePath -> String.Equals(relativePath, normalizeRelativePath evidenceRelativePath, watchPathComparison))) then
                 let mutable retiredEvidence = Unchecked.defaultof<PendingFileWorkSnapshot>
 
                 fileRecoveryEvidence.TryRemove(evidence.Key, &retiredEvidence)
@@ -2014,7 +2031,8 @@ module Watch =
                     evidence.Value.Generation = processedFile.Generation
                     && String.Equals(normalizeRelativePath evidenceRelativePath, normalizeRelativePath processedFile.RelativePath, watchPathComparison))
 
-            if accountedFor then
+            if pendingFileWorkMatchesCurrentScope evidence.Value
+               && accountedFor then
                 (fileRecoveryEvidence :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
                     .Remove(KeyValuePair(evidence.Key, evidence.Value))
                 |> ignore
@@ -2066,6 +2084,8 @@ module Watch =
                 {
                     FullPath = fullPath
                     Generation = generation
+                    RepositoryId = Current().RepositoryId
+                    RepositoryName = Current().RepositoryName
                     BranchId = Current().BranchId
                     BranchName = Current().BranchName
                     RootDirectory =
@@ -2585,12 +2605,13 @@ module Watch =
     /// Restores the evidence-retirement interleaving probe after deterministic Watch resync transition tests.
     let internal resetBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests () = beforeGraceWatchResyncEvidenceRetirementProbe <- fun () -> ()
 
-    /// Retires recovery state only while this exact resync attempt still owns the terminal scan-derived boundary.
-    let private tryRetireRecoveredFileStateForResyncAttempt attempt recoveredEvidencePaths =
+    /// Atomically retires recovery evidence and resumes incremental mode only while this exact attempt still owns recovery.
+    let private tryCompleteGraceWatchResyncRecovery attempt recoveredEvidencePaths =
         lock graceWatchResyncTransitionLock (fun () ->
             if isGraceWatchResyncAttemptActive attempt then
                 retireFileRecoveryEvidenceForPaths recoveredEvidencePaths
                 removeUploadedFileVersionsForPaths recoveredEvidencePaths
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
                 true
             else
                 false)
@@ -3503,8 +3524,34 @@ module Watch =
                     Colors.Important
                     $"Grace Watch deferred stable identity attempt {attemptsAfterFailure + 1} for {pendingFile.FullPath}: {reason}"
 
+    /// Defers a storage-side retry without spending local stabilization attempts for bytes already proven locally.
+    let private retryPendingFileUpload (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
+        if not (pendingFileWorkMatchesCurrentScope pendingFile) then
+            discardStaleFileRecoveryStateForScopeChangedPath pendingFile
+
+            requestGraceWatchExplicitResyncRetainingPendingFiles $"Watch file identity scope changed after stable bytes were proven for {pendingFile.FullPath}."
+        else
+            let retryPendingFile = { pendingFile with RetryNotBeforeUtc = now.AddSeconds(1.0) }
+
+            if filesToProcess.TryUpdate(pendingFile.FullPath, retryPendingFile, pendingFile) then
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch deferred storage upload for proven bytes at {pendingFile.FullPath}; the same generation remains queued for the next timer tick: {reason}"
+
     /// Replaces the stabilization clock for deterministic Watch retry tests.
     let internal setStableFileIdentityNowForWatchTests (now: unit -> DateTime) = stableFileIdentityNowForWatch <- now
+
+    /// Reports the local stabilization attempts still charged to one queued file generation.
+    let internal pendingFileStabilizationAttemptsForWatchTests fullPath =
+        let mutable pendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+        if filesToProcess.TryGetValue(fullPath, &pendingFile) then
+            Some pendingFile.StabilizationAttempts
+        else
+            None
+
+    /// Creates a storage-side failure for tests after the local file identity has already been established.
+    let internal stableFileUploadFailureForWatchTests message = StableFileUploadFailureException(message, null) :> Exception
 
     /// Counts quarantined observations for tests that verify confidence loss does not replay stale work.
     let internal quarantinedWatchObservationCountForWatchTests () = Volatile.Read(&quarantinedWatchObservationCount)
@@ -7004,12 +7051,20 @@ module Watch =
         =
         task {
             //logToConsole $"*In fileChanged for {fullPath}."
-            match! copyFileToObjectCache fullPath with
-            | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
-            | None ->
-                match! getCachedFileVersion fullPath with
-                | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
-                | None -> raise (InvalidOperationException($"Failed to copy {fullPath} to the object cache before upload."))
+            let! copiedOrCachedFileVersion =
+                task {
+                    match! copyFileToObjectCache fullPath with
+                    | Some fileVersion -> return Some fileVersion
+                    | None -> return! getCachedFileVersion fullPath
+                }
+
+            match copiedOrCachedFileVersion with
+            | Some fileVersion ->
+                try
+                    do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
+                with
+                | ex -> return raise (StableFileUploadFailureException($"Failed to upload proven file bytes for {fullPath} to storage.", ex))
+            | None -> raise (InvalidOperationException($"Failed to copy {fullPath} to the object cache before upload."))
         }
 
     /// Copies a file from the working directory to the object directory, with its SHA-256 hash, and then uploads it to storage.
@@ -7261,6 +7316,7 @@ module Watch =
                                     $"Grace Watch discarded upload completion for {pendingFile.FullPath} because runtime mode is {currentMode} and resync pending is {isGraceWatchResyncPending ()}."
                         with
                         | :? OperationCanceledException -> ()
+                        | :? StableFileUploadFailureException as ex -> retryPendingFileUpload pendingFile now ex.Message
                         | ex ->
                             retryPendingFileStabilization pendingFile now ex.Message
 
@@ -7501,26 +7557,69 @@ module Watch =
 
                                 beforeGraceWatchResyncEvidenceRetirementProbe ()
 
-                                if not (tryRetireRecoveredFileStateForResyncAttempt resyncAttempt recoveredEvidencePaths) then
-                                    logToAnsiConsole
-                                        Colors.Important
-                                        $"Grace Watch retained recovery evidence because resync attempt {resyncAttempt} became stale before terminal recovery retirement."
+                                if tryCompleteGraceWatchResyncRecovery resyncAttempt recoveredEvidencePaths then
+                                    let materializationPendingLatchOwned = hasManualPendingWatchWorkStatusFlag ()
 
-                                let materializationPendingLatchOwned = hasManualPendingWatchWorkStatusFlag ()
+                                    if materializationPendingLatchOwned then
+                                        let recoveryPublication =
+                                            tryPublishWatchIpcForResyncRecovery resyncAttempt graceStatus graceStatusDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
-                                setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
+                                        match recoveryPublication with
+                                        | VerifiedCleanRecoveryPublication ->
+                                            beforeGraceWatchResyncAttemptRetirementProbe ()
 
-                                if materializationPendingLatchOwned then
-                                    let recoveryPublication =
-                                        tryPublishWatchIpcForResyncRecovery resyncAttempt graceStatus graceStatusDirectoryIds (fun () ->
-                                            updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+                                            if tryClearGraceWatchResyncAttempt resyncAttempt then
+                                                setGraceWatchPendingWorkStatusFlag false
 
-                                    match recoveryPublication with
-                                    | VerifiedCleanRecoveryPublication ->
-                                        beforeGraceWatchResyncAttemptRetirementProbe ()
+                                                if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                                    try
+                                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                                    with
+                                                    | ex ->
+                                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
 
-                                        if tryClearGraceWatchResyncAttempt resyncAttempt then
+                                                        logToAnsiConsole
+                                                            Colors.Error
+                                                            $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+                                                logToAnsiConsole
+                                                    Colors.Important
+                                                    $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                            else
+                                                let dirtyPublicationVerified =
+                                                    reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                                        updateGraceWatchInterprocessFileClient status (Some directoryIds))
+
+                                                let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                                logToAnsiConsole
+                                                    (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                                    $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                        | recoveryPublication ->
+                                            let dirtyPublicationVerified =
+                                                reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                                    updateGraceWatchInterprocessFileClient status (Some directoryIds))
+
+                                            let recoveryPublicationOutcome =
+                                                match recoveryPublication with
+                                                | VerifiedDirtyRecoveryPublication -> "verified dirty"
+                                                | UnverifiedRecoveryPublication -> "unproven"
+                                                | VerifiedCleanRecoveryPublication -> "unexpected verified clean"
+
+                                            let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                            logToAnsiConsole
+                                                (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                                $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                    else
+                                        let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
+
+                                        if clearedResyncAttempt then
                                             setGraceWatchPendingWorkStatusFlag false
+
+                                            publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
                                             if signalRBranchSubscriptionRefreshNeededForTransition () then
                                                 try
@@ -7537,60 +7636,15 @@ module Watch =
                                                 Colors.Important
                                                 $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
                                         else
-                                            let dirtyPublicationVerified =
-                                                reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
-                                                    updateGraceWatchInterprocessFileClient status (Some directoryIds))
-
-                                            let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+                                            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
                                             logToAnsiConsole
-                                                (if dirtyPublicationVerified then Colors.Important else Colors.Error)
-                                                $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
-                                    | recoveryPublication ->
-                                        let dirtyPublicationVerified =
-                                            reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
-                                                updateGraceWatchInterprocessFileClient status (Some directoryIds))
-
-                                        let recoveryPublicationOutcome =
-                                            match recoveryPublication with
-                                            | VerifiedDirtyRecoveryPublication -> "verified dirty"
-                                            | UnverifiedRecoveryPublication -> "unproven"
-                                            | VerifiedCleanRecoveryPublication -> "unexpected verified clean"
-
-                                        let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
-
-                                        logToAnsiConsole
-                                            (if dirtyPublicationVerified then Colors.Important else Colors.Error)
-                                            $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                                Colors.Important
+                                                $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
                                 else
-                                    let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
-
-                                    if clearedResyncAttempt then
-                                        setGraceWatchPendingWorkStatusFlag false
-
-                                        publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
-                                            updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
-
-                                        if signalRBranchSubscriptionRefreshNeededForTransition () then
-                                            try
-                                                refreshSignalRSubscriptionsAfterTransitionCompletion ()
-                                            with
-                                            | ex ->
-                                                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
-
-                                                logToAnsiConsole
-                                                    Colors.Error
-                                                    $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
-
-                                        logToAnsiConsole
-                                            Colors.Important
-                                            $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
-                                    else
-                                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-
-                                        logToAnsiConsole
-                                            Colors.Important
-                                            $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch retained recovery evidence because resync attempt {resyncAttempt} became stale before terminal recovery retirement."
                             | Some _ ->
                                 logToAnsiConsole
                                     Colors.Important
