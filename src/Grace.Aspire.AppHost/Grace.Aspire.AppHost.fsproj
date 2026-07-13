@@ -1,12 +1,15 @@
 <Project Sdk="Aspire.AppHost.Sdk/13.4.3">
-
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <UserSecretsId>f1167a88-7f15-49c3-8ea1-30c2608081c9</UserSecretsId>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AppHostTestingMarker.fs" />
+    <Compile Include="Program.Aspire.AppHost.fs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting" Version="13.4.3" />
@@ -14,13 +17,13 @@
     <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" Version="13.4.3" />
     <PackageReference Include="Aspire.Hosting.Azure.Storage" Version="13.4.3" />
     <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.3" />
+    <PackageReference Update="FSharp.Core" Version="10.1.301" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Grace.Cache\Grace.Cache.fsproj" />
     <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />
-    <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" IsAspireProjectResource="false">
-        <Aliases>Shared</Aliases>
-    </ProjectReference>
+    <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,5 +31,4 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-
 </Project>

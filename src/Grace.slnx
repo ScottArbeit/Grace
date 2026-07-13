@@ -9,10 +9,12 @@
     <File Path="Directory.Build.props" />
   </Folder>
   <Project Path="Grace.Actors/Grace.Actors.fsproj" />
-  <Project Path="Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj" />
+  <Project Path="Grace.Aspire.AppHost/Grace.Aspire.AppHost.fsproj" />
   <Project Path="Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" />
   <Project Path="Grace.CLI.Tests/Grace.CLI.Tests.fsproj" />
   <Project Path="Grace.CLI/Grace.CLI.fsproj" />
+  <Project Path="Grace.Cache.Tests/Grace.Cache.Tests.fsproj" />
+  <Project Path="Grace.Cache/Grace.Cache.fsproj" />
   <Project Path="Grace.Load/Grace.Load.fsproj" />
   <Project Path="Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj" />
   <Project Path="Grace.Operations.Data/Grace.Operations.Data.fsproj" />
