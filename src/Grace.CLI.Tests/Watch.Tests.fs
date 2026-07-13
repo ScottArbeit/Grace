@@ -455,6 +455,7 @@ module WatchTests =
             WatchRoot = current.RootDirectory
             PathComparison = StringComparison.Ordinal
             RootDirectoryId = DirectoryVersionId("11111111-1111-1111-1111-111111111111")
+            RootDirectorySha256Hash = Sha256Hash "test-root-sha256"
             RootDirectoryBlake3Hash = Blake3Hash "test-root-blake3"
             WatchMode = "repository-root"
         }
@@ -873,6 +874,101 @@ module WatchTests =
                 .AddMilliseconds(300.0)
                 .Add(quietWindow))
 
+    /// Verifies that a scope change starts a same-path candidate without inherited removal proof or semantic kind.
+    [<Test>]
+    let ``local observation candidates start fresh when their scope changes`` () =
+        let quietWindow = TimeSpan.FromSeconds(1.0)
+        let scheduler = new Watch.WatchObservationCandidateScheduler(quietWindow, StringComparison.Ordinal)
+        let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "scope-replacement.txt")
+        let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+        let current = Current()
+
+        let scope rootDirectoryId (rootSha256Hash: string) (rootBlake3Hash: string) : Watch.WatchObservationScope =
+            {
+                RepositoryId = current.RepositoryId
+                RepositoryName = current.RepositoryName
+                BranchId = current.BranchId
+                BranchName = current.BranchName
+                RootDirectory = current.RootDirectory
+                PathComparison = StringComparison.Ordinal
+                RootDirectoryId = rootDirectoryId
+                RootDirectorySha256Hash = Sha256Hash rootSha256Hash
+                RootDirectoryBlake3Hash = Blake3Hash rootBlake3Hash
+            }
+
+        let oldScope = scope (DirectoryVersionId "11111111-1111-1111-1111-111111111111") "old-root-sha256" "old-root-blake3"
+
+        let currentScope = scope (DirectoryVersionId "22222222-2222-2222-2222-222222222222") "current-root-sha256" "current-root-blake3"
+
+        scheduler.ObserveScoped(Watch.LocalFileSystem, Watch.Deleted, fullPath, firstSeenAt, Some oldScope)
+        |> Option.isSome
+        |> should equal true
+
+        scheduler.ObserveScoped(Watch.LocalFileSystem, Watch.CreatedOrChanged, fullPath, firstSeenAt.AddMilliseconds(100.0), Some oldScope)
+        |> Option.get
+        |> fun candidate ->
+            candidate.RequiresRemovalProof
+            |> should equal true
+
+        let currentCandidate =
+            scheduler.ObserveScoped(Watch.LocalFileSystem, Watch.Changed, fullPath, firstSeenAt.AddMilliseconds(200.0), Some currentScope)
+            |> Option.get
+
+        currentCandidate.Scope
+        |> should equal (Some currentScope)
+
+        currentCandidate.Kind
+        |> should equal Watch.Changed
+
+        currentCandidate.RequiresRemovalProof
+        |> should equal false
+
+        currentCandidate.LastSeenAt
+        |> should equal (firstSeenAt.AddMilliseconds(200.0))
+
+        currentCandidate.DueAt
+        |> should equal (firstSeenAt.AddMilliseconds(200.0).Add(quietWindow))
+
+    /// Verifies an old-scope create cannot turn a new-scope metadata-only directory change into directory add work.
+    [<Test>]
+    let ``cross-scope created directory then changed metadata queues no directory work`` () =
+        withTempRepo (fun root ->
+            let status = GraceStatus.Default
+            let directoryPath = Path.Combine(root, "metadata-only-directory")
+            let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            clearWatchIgnoreEntries ()
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged directoryPath firstSeenAt
+            |> Option.isSome
+            |> should equal true
+
+            Current().BranchId <- Guid.NewGuid()
+
+            let changedCandidate =
+                Watch.recordLocalObservationCandidateForWatchTests Watch.Changed directoryPath (firstSeenAt.AddMilliseconds(1.0))
+                |> Option.get
+
+            changedCandidate.Kind
+            |> should equal Watch.Changed
+
+            Watch.processDueLocalObservationCandidatesForWatchTests (firstSeenAt.AddMilliseconds(1.0))
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
     /// Verifies a same-path file replacement queues both removal proof and final file upload work.
     [<Test>]
     let ``local observation candidate delete then file create preserves removal and upload work`` () =
@@ -1251,6 +1347,182 @@ module WatchTests =
             |> Array.length
             |> should equal 1)
 
+    /// Verifies that a final directory metadata callback can clear candidate-derived dirty IPC without creating local work.
+    [<Test>]
+    let ``claimed metadata-only directory candidate reconciles dirty IPC to clean`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let metadataOnlyDirectory = Path.Combine(root, "metadata-only-directory")
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Directory.CreateDirectory(metadataOnlyDirectory)
+            |> ignore
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent metadataOnlyDirectory)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true)
+
+    /// Verifies that a delayed Grace-owned callback clears candidate-derived dirty IPC without entering local Save work.
+    [<Test>]
+    let ``claimed delayed Grace-owned candidate reconciles dirty IPC without local work`` () =
+        withTempRepo (fun root ->
+            let relativePath = "delayed-grace-owned-candidate.txt"
+            let changedPath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            File.WriteAllText(changedPath, "Grace-owned payload")
+            File.SetLastWriteTimeUtc(changedPath, markerCompletedUtc.AddSeconds(-1.0))
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) markerCompletedUtc
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent changedPath)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true)
+
+    /// Verifies that claiming a metadata-only candidate cannot clear dirty IPC while another candidate remains pending.
+    [<Test>]
+    let ``claimed metadata-only candidate retains dirty IPC for another candidate`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let metadataOnlyDirectory = Path.Combine(root, "metadata-only-directory")
+            let laterCandidatePath = Path.Combine(root, "later-candidate.txt")
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Directory.CreateDirectory(metadataOnlyDirectory)
+            |> ignore
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent metadataOnlyDirectory)
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged laterCandidatePath (DateTime.UtcNow.AddMinutes(1.0))
+            |> Option.isSome
+            |> should equal true
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.map (fun candidate -> candidate.FullPath)
+            |> should equal [| laterCandidatePath |]
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false)
+
+    /// Verifies that claiming a metadata-only candidate cannot clear dirty IPC while queued file work remains.
+    [<Test>]
+    let ``claimed metadata-only candidate retains dirty IPC for queued file work`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let queuedFilePath = Path.Combine(root, "queued-file.txt")
+            let metadataOnlyDirectory = Path.Combine(root, "metadata-only-directory")
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            File.WriteAllText(queuedFilePath, "queued local work")
+            Watch.setLocalObservationCandidateSchedulingForWatchTests false
+            Watch.OnChanged(changedEvent queuedFilePath)
+
+            Directory.CreateDirectory(metadataOnlyDirectory)
+            |> ignore
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            Watch.OnChanged(changedEvent metadataOnlyDirectory)
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| queuedFilePath |]
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false)
+
     /// Verifies a failed immediate dirty publication retains the accepted candidate until the normal timer retry can drain it.
     [<Test>]
     let ``raw candidate dirty publication failure retains candidate for timer retry`` () =
@@ -1451,7 +1723,7 @@ module WatchTests =
             let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
 
             pending.FilesToProcess
-            |> should equal [| preMarkerPath |]
+            |> should equal Array.empty<string>
 
             pending.DirectoriesToProcess
             |> should equal Array.empty<string>
@@ -1473,6 +1745,40 @@ module WatchTests =
                 File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
                 File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
                 Watch.OnChanged(changedEvent changedFilePath)
+
+                let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+                pending.FilesToProcess
+                |> should equal Array.empty<string>
+
+                pending.DirectoriesToProcess
+                |> should equal Array.empty<string>
+
+                pending.StatusUpdateTriggers
+                |> should equal Array.empty<string>
+            finally
+                if File.Exists(updateMarkerFile) then File.Delete(updateMarkerFile))
+
+    /// Verifies every filesystem callback shape inside an active marker window is terminal Grace-owned noise.
+    [<Test>]
+    let ``update marker suppresses create change delete and rename callback paths without local work`` () =
+        withTempRepo (fun root ->
+            let createdPath = Path.Combine(root, "grace-created.txt")
+            let deletedPath = Path.Combine(root, "grace-deleted.txt")
+            let renamedPath = Path.Combine(root, "grace-renamed.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            try
+                File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+                File.WriteAllText(createdPath, "Grace-owned payload")
+                File.WriteAllText(renamedPath, "Grace-owned renamed payload")
+                Watch.OnCreated(createdEvent createdPath)
+                Watch.OnChanged(changedEvent createdPath)
+                Watch.OnDeleted(deletedEvent deletedPath)
+                Watch.OnRenamed(renamedEvent deletedPath renamedPath)
 
                 let pending = Watch.pendingWatchWorkSnapshotForTests ()
 
@@ -1599,9 +1905,9 @@ module WatchTests =
             File.Exists(completedSidecar)
             |> should equal false)
 
-    /// Verifies that marker deletion without a completion sidecar cannot authorize delayed suppression.
+    /// Verifies that marker deletion without completion evidence rejects delayed local work and requires resync.
     [<Test>]
-    let ``update marker deletion without completion sidecar does not suppress delayed changed observation`` () =
+    let ``update marker deletion without completion sidecar forces resync without delayed local work`` () =
         withTempRepo (fun root ->
             let changedFilePath = Path.Combine(root, "partial-switch-write.txt")
             let updateMarkerFile = Services.updateInProgressFileName ()
@@ -1615,15 +1921,365 @@ module WatchTests =
             let pending = Watch.pendingWatchWorkSnapshotForTests ()
 
             pending.FilesToProcess
-            |> should equal [| changedFilePath |]
+            |> should equal Array.empty<string>
 
             pending.DirectoriesToProcess
             |> should equal Array.empty<string>
 
             pending.StatusUpdateTriggers
-            |> should equal Array.empty<string>)
+            |> should equal Array.empty<string>
 
-    /// Verifies same-branch completion never executes branch-transition subscription effects, including restart recovery.
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true)
+
+    /// Verifies that marker confidence loss rejects both existing and newly scheduled callbacks until exact resync recovery completes.
+    [<Test>]
+    let ``marker confidence loss blocks scheduled and immediate callbacks until exact recovery`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let existingScheduledPath = Path.Combine(root, "existing-scheduled-after-confidence-loss.txt")
+            let newScheduledPath = Path.Combine(root, "new-scheduled-after-confidence-loss.txt")
+            let immediatePath = Path.Combine(root, "immediate-after-confidence-loss.txt")
+            let recoveredPath = Path.Combine(root, "valid-after-exact-recovery.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let mutable uploadCalls = 0
+            let mutable incrementalCalls = 0
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+            File.WriteAllText(existingScheduledPath, "existing scheduled callback")
+            Watch.OnChanged(changedEvent existingScheduledPath)
+            recordIncompleteUpdateMarkerDeletion updateMarkerFile
+
+            File.WriteAllText(newScheduledPath, "new scheduled callback")
+            Watch.OnChanged(changedEvent newScheduledPath)
+            Watch.processDueLocalObservationCandidatesForWatchTests (DateTime.UtcNow.AddSeconds(2.0))
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            let blockedScheduledWork = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            blockedScheduledWork.FilesToProcess
+            |> should equal Array.empty<string>
+
+            blockedScheduledWork.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            blockedScheduledWork.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.setLocalObservationCandidateSchedulingForWatchTests false
+            File.WriteAllText(immediatePath, "immediate callback")
+            Watch.OnChanged(changedEvent immediatePath)
+
+            let blockedImmediateWork = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            blockedImmediateWork.FilesToProcess
+            |> should equal Array.empty<string>
+
+            blockedImmediateWork.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            blockedImmediateWork.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(status))
+                (fun () -> Task.FromResult(status))
+                (fun _ _ ->
+                    uploadCalls <- uploadCalls + 1
+                    Task.FromResult(()))
+                (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                (fun _ _ _ ->
+                    incrementalCalls <- incrementalCalls + 1
+                    Task.FromResult(()))
+                Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 0
+            incrementalCalls |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            File.WriteAllText(recoveredPath, "valid callback after exact recovery")
+            Watch.OnChanged(changedEvent recoveredPath)
+
+            (Watch.pendingWatchWorkSnapshotForTests ())
+                .FilesToProcess
+            |> should equal [| recoveredPath |])
+
+    /// Verifies a raw candidate never crosses a branch scope change into upload, journal, or status work.
+    [<Test>]
+    let ``raw local candidate scope change forces resync before upload or journal admission`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let changedPath = Path.Combine(root, "scope-change.txt")
+            let recoveredPath = Path.Combine(root, "scope-change-recovered.txt")
+            let mutable uploadCalls = 0
+
+            File.WriteAllText(changedPath, "candidate bytes")
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged changedPath DateTime.UtcNow
+            |> ignore
+
+            Current().BranchId <- Guid.NewGuid()
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.lastPublishedHasPendingWatchWorkForWatchTests ()
+            |> should equal (Some true)
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(status))
+                (fun () -> Task.FromResult(status))
+                (fun _ _ ->
+                    uploadCalls <- uploadCalls + 1
+                    Task.FromResult(()))
+                (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                (fun _ _ _ -> Task.FromResult(()))
+                (fun _ _ -> Task.FromResult(())))
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 0
+
+            (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            File.WriteAllText(recoveredPath, "valid callback after scope recovery")
+            Watch.OnChanged(changedEvent recoveredPath)
+
+            (Watch.pendingWatchWorkSnapshotForTests ())
+                .FilesToProcess
+            |> should equal [| recoveredPath |])
+
+    /// Verifies an ordinary callback can use the verified published root identity after transient in-flight status reset.
+    [<Test>]
+    let ``raw local candidate uses published status identity after transient cache reset`` () =
+        withTempRepo (fun root ->
+            let changedPath = Path.Combine(root, "published-identity.txt")
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "published-root-sha256"
+                    RootDirectoryBlake3Hash = Blake3Hash "published-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+
+            File.WriteAllText(changedPath, "ordinary user edit")
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            Watch.setGraceStatusForWatchTests status
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            (Watch.publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests status directoryIds Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            (Watch.storeGraceStatusInMemoryStream ())
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.graceStatusForWatchTests().RootDirectoryId
+            |> should equal GraceStatus.Default.RootDirectoryId
+
+            Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged changedPath DateTime.UtcNow
+            |> Option.isSome
+            |> should equal true
+
+            try
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ ->
+                        uploadCalls <- uploadCalls + 1
+                        Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    (fun _ ->
+                        scanCalls <- scanCalls + 1
+                        Task.FromResult(List<FileSystemDifference>()))
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+                uploadCalls |> should equal 1
+                scanCalls |> should equal 0
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal false
+            finally
+                (Watch.retrieveGraceStatusFromMemoryStream ())
+                    .GetAwaiter()
+                    .GetResult())
+
+    /// Verifies a clean resync recovery retains its verified scope through a transient status reset and rejects a later branch mismatch.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``verified resync recovery retains scope through transient reset and rejects later branch mismatch`` () =
+        withTempRepo (fun root ->
+            let recoveredPath = Path.Combine(root, "recovered-scope-candidate.txt")
+            let originalBranchId = Current().BranchId
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "recovered-scope-sha256"
+                    RootDirectoryBlake3Hash = Blake3Hash "recovered-scope-blake3"
+                }
+
+            let mutable uploadCalls = 0
+
+            try
+                Watch.setGraceStatusForWatchTests GraceStatus.Default
+                Watch.setGraceStatusForWatchTests status
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+                Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+                Watch.requestGraceWatchExplicitResyncForWatchTests "recover a verified observation scope"
+                Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ -> Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    Services.updateGraceWatchInterprocessFile)
+                    .GetAwaiter()
+                    .GetResult()
+
+                match Watch.lastPublishedWatchObservationScopeForWatchTests () with
+                | Some publishedScope ->
+                    publishedScope.BranchId
+                    |> should equal originalBranchId
+
+                    publishedScope.RootDirectoryId
+                    |> should equal status.RootDirectoryId
+
+                    publishedScope.RootDirectorySha256Hash
+                    |> should equal status.RootDirectorySha256Hash
+
+                    publishedScope.RootDirectoryBlake3Hash
+                    |> should equal status.RootDirectoryBlake3Hash
+                | None -> Assert.Fail("Verified resync recovery must retain the scope represented by its clean IPC status.")
+
+                (Watch.storeGraceStatusInMemoryStream ())
+                    .GetAwaiter()
+                    .GetResult()
+
+                File.WriteAllText(recoveredPath, "candidate admitted with recovered scope")
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged recoveredPath DateTime.UtcNow
+                |> Option.isSome
+                |> should equal true
+
+                Current().BranchId <- Guid.NewGuid()
+                Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ ->
+                        uploadCalls <- uploadCalls + 1
+                        Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    Services.updateGraceWatchInterprocessFile)
+                    .GetAwaiter()
+                    .GetResult()
+
+                uploadCalls |> should equal 0
+            finally
+                Current().BranchId <- originalBranchId
+
+                (Watch.retrieveGraceStatusFromMemoryStream ())
+                    .GetAwaiter()
+                    .GetResult())
+
+    /// Verifies an IPC publication whose configuration changes during its write cannot overwrite newer scope evidence.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``stale verified publication does not cache a superseded observation scope`` () =
+        withTempRepo (fun _ ->
+            let originalBranchId = Current().BranchId
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "stale-publication-scope-sha256"
+                    RootDirectoryBlake3Hash = Blake3Hash "stale-publication-scope-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            try
+                Watch.setGraceStatusForWatchTests GraceStatus.Default
+                Watch.setGraceStatusForWatchTests status
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+                (Watch.publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests status directoryIds (fun publishedStatus publishedDirectoryIds ->
+                    task {
+                        Current().BranchId <- Guid.NewGuid()
+                        do! Services.updateGraceWatchInterprocessFile publishedStatus publishedDirectoryIds
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.lastPublishedWatchObservationScopeForWatchTests ()
+                |> should equal None
+            finally
+                Current().BranchId <- originalBranchId)
+
+    /// Verifies same-branch completion requires current observed marker evidence without changing branch-transition subscriptions.
     [<TestCase(true)>]
     [<TestCase(false)>]
     [<Category("CurrentBranchMaterializationApplyBoundary")>]
@@ -1657,13 +2313,50 @@ module WatchTests =
                 Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
                 Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal (Some 1L)
+                |> should equal (if observeCreation then Some 1L else None)
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal (not observeCreation)
 
                 let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
                 subscription.BranchId |> should equal branchId
 
                 subscription.ParentBranchId
                 |> should equal parentBranchId
+            finally
+                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
+
+    /// Verifies a recent sidecar from an earlier marker cannot authorize current Reference catch-up.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``recent earlier reference completion sidecar forces exact recovery instead of catch-up`` () =
+        withTempRepo (fun _ ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let currentMarkerUtc = DateTime.UtcNow
+            let earlierCompletionUtc = currentMarkerUtc.AddSeconds(-1.0)
+
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
+
+            try
+                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                |> ignore
+
+                File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, currentMarkerUtc)
+                Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+
+                File.WriteAllText(
+                    updateMarkerFile + ".completed",
+                    Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization earlierCompletionUtc
+                )
+
+                File.Delete(updateMarkerFile)
+                Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal None
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal true
             finally
                 Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
@@ -6189,7 +6882,13 @@ module WatchTests =
             let trackedAddPath = "tracked.txt"
             let status = graceStatusTracking [| trackedAddPath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             File.WriteAllText(Path.Combine(root, ghostChangePath), "untracked content")
             File.WriteAllText(Path.Combine(root, trackedAddPath), "tracked content")
@@ -6314,7 +7013,13 @@ module WatchTests =
                     .Value
 
             let status = graceStatusTrackingFileVersions [| trackedFile |]
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             try
                 (LocalStateDb.appendWatchJournalObservations
@@ -6419,7 +7124,13 @@ module WatchTests =
         withTempRepo (fun _ ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             (LocalStateDb.recoverWatchJournalForStartup dbPath scope)
                 .GetAwaiter()
@@ -6434,7 +7145,7 @@ module WatchTests =
                 use command = connection.CreateCommand()
 
                 command.CommandText <-
-                    "INSERT INTO watch_journal (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_blake3_hash, $watch_mode, $difference_type, $entry_type, $relative_path);"
+                    "INSERT INTO watch_journal (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_sha256_hash, $root_directory_blake3_hash, $watch_mode, $difference_type, $entry_type, $relative_path);"
 
                 command.Parameters.AddWithValue("$created_at", getCurrentInstant().ToUnixTimeTicks())
                 |> ignore
@@ -6452,6 +7163,9 @@ module WatchTests =
                 |> ignore
 
                 command.Parameters.AddWithValue("$root_directory_version_id", scope.RootDirectoryId.ToString())
+                |> ignore
+
+                command.Parameters.AddWithValue("$root_directory_sha256_hash", string scope.RootDirectorySha256Hash)
                 |> ignore
 
                 command.Parameters.AddWithValue("$root_directory_blake3_hash", string scope.RootDirectoryBlake3Hash)
@@ -6512,7 +7226,13 @@ module WatchTests =
             let directoryPath = Path.Combine(root, "new", "child")
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             Directory.CreateDirectory(directoryPath) |> ignore
 
@@ -6601,7 +7321,14 @@ module WatchTests =
             let relativePath = "startup-replay-scan-duplicate.txt"
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
             let ordering = ResizeArray<string>()
 
             try
@@ -6700,7 +7427,14 @@ module WatchTests =
             let scanPath = "casepath.txt"
             let status = graceStatusTracking [| replayPath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
             let ordering = ResizeArray<string>()
 
             try
@@ -6802,7 +7536,14 @@ module WatchTests =
             let changePath = "missing-replayed-change.txt"
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
             let lifecycleEvents = ResizeArray<string>()
 
             try
@@ -6906,7 +7647,14 @@ module WatchTests =
             let ignoredDirectoryFileRelativePath = "ignored-dir/live.txt"
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
             let lifecycleEvents = ResizeArray<string>()
 
             Directory.CreateDirectory(ignoredDirectory)
@@ -7042,7 +7790,14 @@ module WatchTests =
             let ignoredDirectoryRelativePath = "ignored-dir"
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
             let lifecycleEvents = ResizeArray<string>()
 
             Directory.CreateDirectory(ignoredDirectory)
@@ -7151,7 +7906,13 @@ module WatchTests =
             let directoryDeleteNowFile = "directory-delete-now-file"
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             Directory.CreateDirectory(Path.Combine(root, fileDeleteNowDirectory))
             |> ignore
@@ -7393,7 +8154,13 @@ module WatchTests =
             File.WriteAllText(filePath, "recreated")
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             try
                 (LocalStateDb.appendWatchJournalObservations
@@ -7474,7 +8241,13 @@ module WatchTests =
             let replayFilePath = Path.Combine(root, relativePath)
             let status = graceStatusTracking [| liveRelativePath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             try
                 File.WriteAllText(replayFilePath, "startup replay content still exists")
@@ -7555,7 +8328,13 @@ module WatchTests =
             let relativePath = "quarantined-startup-replay-delete.txt"
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
 
             try
                 let replaySequences =
@@ -7625,7 +8404,14 @@ module WatchTests =
             let filePath = Path.Combine(root, relativePath)
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
-            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            let scope =
+                { (watchJournalScope ()) with
+                    RootDirectoryId = status.RootDirectoryId
+                    RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+                }
+
             let appendedDifferences = ResizeArray<FileSystemDifference>()
             let advancedSequences = ResizeArray<int64>()
 
@@ -17745,6 +18531,7 @@ module WatchTests =
                 |> ignore
 
                 File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, completedUtc.AddSeconds(-1.0))
                 Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
 
                 File.WriteAllText(
