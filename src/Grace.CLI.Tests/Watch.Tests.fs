@@ -18,6 +18,7 @@ open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
@@ -434,6 +435,211 @@ module WatchTests =
         configuration.GraceFileIgnoreEntries <- Array.empty
         configuration.GraceDirectoryIgnoreEntries <- Array.empty
         Services.clearShouldIgnoreCache ()
+
+    /// Records one production Watch callback delivered by the operating-system filesystem watcher.
+    type private RealFilesystemWatchCallback = { Source: string; FullPath: string }
+
+    /// Routes real filesystem notifications through the production Watch callback entry points and exposes bounded deterministic wait signals.
+    type private RealFilesystemWatchHarness(rootDirectory: string) =
+        let callbacks = ConcurrentQueue<RealFilesystemWatchCallback>()
+        let callbackFailures = ConcurrentQueue<Exception>()
+        let callbackSignal = new SemaphoreSlim(0)
+        let markerFileName = Services.updateInProgressFileName ()
+        let rootWatcher = Watch.createFileSystemWatcher rootDirectory
+        let markerWatcher = Watch.createFileSystemWatcher (Path.GetDirectoryName(markerFileName))
+
+        /// Publishes a completed callback only after the production Watch handler has accepted or suppressed it.
+        let recordCallback source fullPath (handler: unit -> unit) =
+            try
+                handler ()
+            with
+            | ex -> callbackFailures.Enqueue(ex)
+
+            callbacks.Enqueue({ Source = source; FullPath = fullPath })
+            callbackSignal.Release() |> ignore
+
+        /// Fails the current wait as soon as a production Watch callback has thrown.
+        let raiseCallbackFailureIfPresent description =
+            let mutable callbackFailure = Unchecked.defaultof<Exception>
+
+            if callbackFailures.TryDequeue(&callbackFailure) then
+                Assert.Fail($"Real filesystem Watch callback failed while waiting for {description}: {callbackFailure}")
+
+        /// Checks whether a marker callback addresses the current repository-scoped update marker.
+        let isCurrentMarker fullPath = String.Equals(fullPath, markerFileName, StringComparison.OrdinalIgnoreCase)
+
+        do
+            rootWatcher.Created.Add(fun args -> recordCallback "root-created" args.FullPath (fun () -> Watch.OnCreated(args)))
+            rootWatcher.Changed.Add(fun args -> recordCallback "root-changed" args.FullPath (fun () -> Watch.OnChanged(args)))
+            rootWatcher.Deleted.Add(fun args -> recordCallback "root-deleted" args.FullPath (fun () -> Watch.OnDeleted(args)))
+
+            rootWatcher.Renamed.Add(fun args -> recordCallback "root-renamed" args.FullPath (fun () -> Watch.OnRenamed(args)))
+
+            markerWatcher.Created.Add (fun args ->
+                if isCurrentMarker args.FullPath then
+                    recordCallback "marker-created" args.FullPath (fun () -> Watch.OnGraceUpdateInProgressCreated(args)))
+
+            markerWatcher.Deleted.Add (fun args ->
+                if isCurrentMarker args.FullPath then
+                    recordCallback "marker-deleted" args.FullPath (fun () -> Watch.OnGraceUpdateInProgressDeleted(args)))
+
+            rootWatcher.EnableRaisingEvents <- true
+            markerWatcher.EnableRaisingEvents <- true
+
+        /// Waits for a callback-derived condition without relying on a fixed delay or callback-count assertion.
+        member private _.WaitFor(description: string, condition: unit -> bool) =
+            use cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10.0))
+
+            let evaluateCondition () =
+                raiseCallbackFailureIfPresent description
+                let conditionSatisfied = condition ()
+                raiseCallbackFailureIfPresent description
+                conditionSatisfied
+
+            let mutable completed = evaluateCondition ()
+
+            while not completed do
+                try
+                    callbackSignal.Wait(cancellation.Token) |> ignore
+                with
+                | :? OperationCanceledException ->
+                    raiseCallbackFailureIfPresent description
+
+                    let observed =
+                        callbacks.ToArray()
+                        |> Array.map (fun callback -> $"{callback.Source}:{callback.FullPath}")
+
+                    let observedText = String.Join("; ", observed)
+                    Assert.Fail($"Timed out waiting for {description}. Observed callbacks: {observedText}")
+
+                completed <- evaluateCondition ()
+
+        /// Waits until the production candidate scheduler has normalized every expected path from real filesystem callbacks.
+        member this.WaitForCandidates(expectedPaths: string array) =
+            let expectedPathText = String.Join(", ", expectedPaths)
+
+            this.WaitFor(
+                $"normalized candidates for {expectedPathText}",
+                fun () ->
+                    let candidatePaths =
+                        Watch.localObservationCandidateSnapshotForWatchTests ()
+                        |> Array.map (fun candidate -> candidate.FullPath)
+                        |> Set.ofArray
+
+                    expectedPaths
+                    |> Array.forall candidatePaths.Contains
+            )
+
+        /// Reads the scheduler generation of one normalized path candidate without consuming it.
+        member _.CandidateGeneration(fullPath: string) =
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.tryFind (fun candidate -> String.Equals(candidate.FullPath, fullPath, StringComparison.Ordinal))
+            |> Option.map (fun candidate -> candidate.Generation)
+
+        /// Waits until one path's normalized candidate advances beyond the generation captured before a filesystem operation.
+        member this.WaitForCandidateGenerationAfter(fullPath: string, candidateGeneration: int64 option) =
+            let priorGeneration =
+                candidateGeneration
+                |> Option.map string
+                |> Option.defaultValue "none"
+
+            this.WaitFor(
+                $"a normalized candidate for {fullPath} after generation {priorGeneration}",
+                fun () ->
+                    match this.CandidateGeneration(fullPath) with
+                    | Some generation ->
+                        match candidateGeneration with
+                        | Some previousGeneration -> generation > previousGeneration
+                        | None -> true
+                    | None -> false
+            )
+
+        /// Drains each candidate newer than the caller's snapshot until the requested file has durable normalized Watch work queued.
+        member this.WaitForNormalizedFileWorkAfter(fullPath: string, candidateGeneration: int64 option) =
+            this.WaitFor(
+                $"normalized file work for {fullPath}",
+                fun () ->
+                    let candidateAdvanced =
+                        match this.CandidateGeneration(fullPath) with
+                        | Some generation ->
+                            match candidateGeneration with
+                            | Some previousGeneration -> generation > previousGeneration
+                            | None -> true
+                        | None -> false
+
+                    if candidateAdvanced then
+                        Watch.processDueLocalObservationCandidatesForWatchTests DateTime.MaxValue
+
+                    (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                        .FilesToProcess
+                    |> Array.contains fullPath
+            )
+
+        /// Waits until the root watcher has routed an operating-system callback for the requested working-tree path.
+        member this.WaitForRootCallback(fullPath: string) =
+            this.WaitFor(
+                $"a root watcher callback for {fullPath}",
+                fun () ->
+                    callbacks.ToArray()
+                    |> Array.exists (fun callback ->
+                        callback.Source.StartsWith("root-", StringComparison.Ordinal)
+                        && callback.FullPath = fullPath)
+            )
+
+        /// Waits until the dedicated update-marker watcher has routed the requested lifecycle callback.
+        member this.WaitForMarkerCallback(source: string) =
+            this.WaitFor(
+                $"the {source} update-marker callback",
+                fun () ->
+                    callbacks.ToArray()
+                    |> Array.exists (fun callback ->
+                        callback.Source = source
+                        && callback.FullPath = markerFileName)
+            )
+
+        interface IDisposable with
+            /// Stops both watchers before the temporary repository or marker directory is removed.
+            member _.Dispose() =
+                rootWatcher.EnableRaisingEvents <- false
+                markerWatcher.EnableRaisingEvents <- false
+                rootWatcher.Dispose()
+                markerWatcher.Dispose()
+
+    /// Configures the real-filesystem harness to record normalized candidates through the current Watch state seams.
+    let private configureRealFilesystemWatchHarness (status: GraceStatus) =
+        Watch.setGraceStatusForWatchTests status
+        Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+        Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+        Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+    /// Claims every candidate observed by the real-filesystem harness at a deterministic post-callback instant.
+    let private drainRealFilesystemWatchCandidates () = Watch.processDueLocalObservationCandidatesForWatchTests DateTime.MaxValue
+
+    /// Captures the journal append and apply-boundary calls that prove normalized Watch effects become durable exactly once.
+    let private withRecordedNormalizedWatchJournal action =
+        let appended = ResizeArray<LocalStateDb.WatchJournalObservation>()
+        let advanced = ResizeArray<int64 array>()
+        let mutable nextSequence = 0L
+
+        Watch.setWatchJournalClientsForWatchTests
+            (fun observations ->
+                task {
+                    let observationArray = observations |> Seq.toArray
+                    appended.AddRange(observationArray)
+                    let sequences = Array.init observationArray.Length (fun _ -> Interlocked.Increment(&nextSequence))
+                    return sequences
+                })
+            (fun sequences ->
+                task {
+                    let sequenceArray = sequences |> Seq.toArray
+                    advanced.Add(sequenceArray)
+                    return sequenceArray |> Array.max
+                })
+
+        try
+            action appended advanced
+        finally
+            Watch.resetWatchJournalClientsForWatchTests ()
 
     /// Builds deleted event test data used to exercise CLI watch behavior.
     let private deletedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
@@ -5719,6 +5925,437 @@ module WatchTests =
             applyIncremental
             updateIpc
         |> fun processTask -> processTask.GetAwaiter().GetResult()
+
+    /// Verifies a real filesystem create/write is normalized once and commits one durable local file add.
+    [<Test>]
+    let ``real filesystem file create write saves one normalized durable add`` () =
+        withTempRepo (fun root ->
+            let relativePath = "created.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            let candidateGenerationBeforeFirstSave = harness.CandidateGeneration(filePath)
+            File.WriteAllText(filePath, "first save")
+            harness.WaitForNormalizedFileWorkAfter(filePath, candidateGenerationBeforeFirstSave)
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| filePath |]
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            withRecordedNormalizedWatchJournal (fun appended advanced ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+
+                uploadCalls |> should equal 1
+                updateCalls |> should equal 1
+
+                appended
+                |> Seq.map (fun observation -> observation.DifferenceType, observation.EntryType, string observation.RelativePath)
+                |> Seq.toArray
+                |> should
+                    equal
+                    [|
+                        DifferenceType.Add, FileSystemEntryType.File, relativePath
+                    |]
+
+                advanced
+                |> Seq.map Array.toList
+                |> Seq.toList
+                |> should equal [ [ 1L ] ]))
+
+    /// Verifies duplicate operating-system callbacks collapse to one normalized file effect and one durable add.
+    [<Test>]
+    let ``real filesystem duplicate changes produce one normalized durable effect`` () =
+        withTempRepo (fun root ->
+            let relativePath = "duplicate.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            File.WriteAllText(filePath, "first write")
+            harness.WaitForCandidates([| filePath |])
+            let candidateGenerationBeforeSecondWrite = harness.CandidateGeneration(filePath)
+            File.AppendAllText(filePath, "\nsecond write")
+            harness.WaitForCandidateGenerationAfter(filePath, candidateGenerationBeforeSecondWrite)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.map (fun candidate -> candidate.FullPath)
+            |> should equal [| filePath |]
+
+            drainRealFilesystemWatchCandidates ()
+
+            withRecordedNormalizedWatchJournal (fun appended advanced ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+
+                uploadCalls |> should equal 1
+                updateCalls |> should equal 1
+                appended.Count |> should equal 1
+                advanced.Count |> should equal 1))
+
+    /// Verifies a real filesystem deletion produces a durable delete without an upload side effect.
+    [<Test>]
+    let ``real filesystem delete produces one normalized durable delete`` () =
+        withTempRepo (fun root ->
+            let relativePath = "deleted.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "tracked content")
+
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            File.Delete(filePath)
+            harness.WaitForCandidates([| filePath |])
+            drainRealFilesystemWatchCandidates ()
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal [| relativePath |]
+
+            withRecordedNormalizedWatchJournal (fun appended advanced ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+
+                uploadCalls |> should equal 0
+                updateCalls |> should equal 1
+
+                appended
+                |> Seq.map (fun observation -> observation.DifferenceType, observation.EntryType, string observation.RelativePath)
+                |> Seq.toArray
+                |> should
+                    equal
+                    [|
+                        DifferenceType.Delete, FileSystemEntryType.File, relativePath
+                    |]
+
+                advanced.Count |> should equal 1))
+
+    /// Verifies a real filesystem rename reaches Watch as the normalized delete-plus-add contract without rename identity.
+    [<Test>]
+    let ``real filesystem rename produces normalized delete plus add`` () =
+        withTempRepo (fun root ->
+            let oldRelativePath = "before.txt"
+            let newRelativePath = "after.txt"
+            let oldPath = Path.Combine(root, oldRelativePath)
+            let newPath = Path.Combine(root, newRelativePath)
+            File.WriteAllText(oldPath, "renamed content")
+
+            let status = graceStatusTracking [| oldRelativePath |] Array.empty<string>
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            File.Move(oldPath, newPath)
+            harness.WaitForCandidates([| oldPath; newPath |])
+            drainRealFilesystemWatchCandidates ()
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| newPath |]
+
+            pending.StatusUpdateTriggers
+            |> should equal [| oldRelativePath |]
+
+            withRecordedNormalizedWatchJournal (fun appended _ ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+
+                uploadCalls |> should equal 1
+                updateCalls |> should equal 1
+
+                appended
+                |> Seq.map (fun observation -> observation.DifferenceType, observation.EntryType, string observation.RelativePath)
+                |> Seq.sortBy (fun (_, _, relativePath) -> relativePath)
+                |> Seq.toArray
+                |> should
+                    equal
+                    [|
+                        DifferenceType.Add, FileSystemEntryType.File, newRelativePath
+                        DifferenceType.Delete, FileSystemEntryType.File, oldRelativePath
+                    |]))
+
+    /// Verifies a real directory create preserves the complete nested subtree as normalized directory and file work.
+    [<Test>]
+    let ``real filesystem directory create includes nested subtree exactly once`` () =
+        withTempRepo (fun root ->
+            let directoryPath = Path.Combine(root, "created-directory")
+            let firstNestedFile = Path.Combine(directoryPath, "first.txt")
+            let secondNestedFile = Path.Combine(directoryPath, "nested", "second.txt")
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            harness.WaitForCandidates([| directoryPath |])
+
+            Directory.CreateDirectory(Path.GetDirectoryName(secondNestedFile))
+            |> ignore
+
+            File.WriteAllText(firstNestedFile, "first nested file")
+            File.WriteAllText(secondNestedFile, "second nested file")
+            harness.WaitForCandidates([| directoryPath |])
+            drainRealFilesystemWatchCandidates ()
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> Array.sort
+            |> should equal [| firstNestedFile; secondNestedFile |]
+
+            withRecordedNormalizedWatchJournal (fun appended _ ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+
+                uploadCalls |> should equal 2
+                updateCalls |> should equal 1
+
+                appended
+                |> Seq.map (fun observation -> observation.DifferenceType, observation.EntryType, string observation.RelativePath)
+                |> Seq.sortBy (fun (_, _, relativePath) -> relativePath)
+                |> Seq.toArray
+                |> should
+                    equal
+                    [|
+                        DifferenceType.Add, FileSystemEntryType.Directory, "created-directory"
+                        DifferenceType.Add, FileSystemEntryType.File, "created-directory/first.txt"
+                        DifferenceType.Add, FileSystemEntryType.Directory, "created-directory/nested"
+                        DifferenceType.Add, FileSystemEntryType.File, "created-directory/nested/second.txt"
+                    |]))
+
+    /// Verifies a real directory rename retains every nested file under the normalized delete-plus-add subtree outcome.
+    [<Test>]
+    let ``real filesystem directory rename includes nested delete plus add subtree`` () =
+        withTempRepo (fun root ->
+            let oldRelativePath = "old-directory"
+            let newRelativePath = "new-directory"
+            let oldDirectoryPath = Path.Combine(root, oldRelativePath)
+            let newDirectoryPath = Path.Combine(root, newRelativePath)
+            let oldNestedFile = Path.Combine(oldDirectoryPath, "nested", "child.txt")
+            let newNestedFile = Path.Combine(newDirectoryPath, "nested", "child.txt")
+
+            Directory.CreateDirectory(Path.GetDirectoryName(oldNestedFile))
+            |> ignore
+
+            File.WriteAllText(oldNestedFile, "nested rename content")
+
+            let status =
+                graceStatusTracking [|
+                                        Path.Combine(oldRelativePath, "nested", "child.txt")
+                                    |] [|
+                    oldRelativePath
+                |]
+
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            Directory.Move(oldDirectoryPath, newDirectoryPath)
+            harness.WaitForCandidates([| oldDirectoryPath; newDirectoryPath |])
+            drainRealFilesystemWatchCandidates ()
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| oldRelativePath |]
+
+            pending.FilesToProcess
+            |> should contain newNestedFile
+
+            withRecordedNormalizedWatchJournal (fun appended _ ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+
+                uploadCalls |> should equal 1
+                updateCalls |> should equal 1
+
+                appended
+                |> Seq.map (fun observation -> observation.DifferenceType, observation.EntryType, string observation.RelativePath)
+                |> Seq.sortBy (fun (_, _, relativePath) -> relativePath)
+                |> Seq.toArray
+                |> should
+                    equal
+                    [|
+                        DifferenceType.Add, FileSystemEntryType.Directory, newRelativePath
+                        DifferenceType.Add, FileSystemEntryType.Directory, $"{newRelativePath}/nested"
+                        DifferenceType.Add, FileSystemEntryType.File, $"{newRelativePath}/nested/child.txt"
+                        DifferenceType.Delete, FileSystemEntryType.Directory, oldRelativePath
+                    |]))
+
+    /// Verifies rapid delete and recreate at one path collapses to the final file upload while preserving stale-delete proof.
+    [<Test>]
+    let ``real filesystem rapid delete recreate produces one final normalized result`` () =
+        withTempRepo (fun root ->
+            let relativePath = "recreated.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "old content")
+
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            File.Delete(filePath)
+            let candidateGenerationBeforeRecreate = harness.CandidateGeneration(filePath)
+            File.WriteAllText(filePath, "new content")
+            harness.WaitForNormalizedFileWorkAfter(filePath, candidateGenerationBeforeRecreate)
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| filePath |]
+
+            pending.StatusUpdateTriggers
+            |> should equal [| relativePath |]
+
+            withRecordedNormalizedWatchJournal (fun appended _ ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+
+                uploadCalls |> should equal 1
+                updateCalls |> should equal 1
+
+                appended
+                |> Seq.map (fun observation -> observation.EntryType, string observation.RelativePath)
+                |> Seq.toArray
+                |> should
+                    equal
+                    [|
+                        FileSystemEntryType.File, relativePath
+                    |]))
+
+    /// Verifies valid materialization marker lifecycle suppresses Grace-owned writes but preserves immediate user edits before and after it.
+    [<Test>]
+    let ``real filesystem valid marker suppresses Grace writes and preserves adjacent user saves`` () =
+        withTempRepo (fun root ->
+            let beforePath = Path.Combine(root, "before-marker.txt")
+            let graceOwnedPath = Path.Combine(root, "grace-owned.txt")
+            let afterPath = Path.Combine(root, "after-marker.txt")
+            let markerFileName = Services.updateInProgressFileName ()
+            let status = graceStatusTracking [| "grace-owned.txt" |] Array.empty<string>
+            configureRealFilesystemWatchHarness status
+
+            use harness = new RealFilesystemWatchHarness(root)
+            File.WriteAllText(beforePath, "user write before marker")
+            harness.WaitForCandidates([| beforePath |])
+
+            File.WriteAllText(markerFileName, "Grace reference materialization is in progress.")
+            File.SetLastWriteTimeUtc(markerFileName, DateTime.UtcNow.AddSeconds(-1.0))
+            harness.WaitForMarkerCallback("marker-created")
+            File.WriteAllText(graceOwnedPath, "Grace-owned materialization payload")
+            harness.WaitForRootCallback(graceOwnedPath)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.exists (fun candidate -> candidate.FullPath = graceOwnedPath)
+            |> should equal false
+
+            (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                .FilesToProcess
+            |> Array.contains graceOwnedPath
+            |> should equal false
+
+            (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                .DirectoriesToProcess
+            |> Array.contains graceOwnedPath
+            |> should equal false
+
+            (Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ())
+                .StatusUpdateTriggers
+            |> Array.contains "grace-owned.txt"
+            |> should equal false
+
+            File.WriteAllText(
+                markerFileName + ".completed",
+                Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization DateTime.UtcNow
+            )
+
+            File.Delete(markerFileName)
+            harness.WaitForMarkerCallback("marker-deleted")
+
+            let candidateGenerationBeforeAfterMarkerWrite = harness.CandidateGeneration(afterPath)
+            File.WriteAllText(afterPath, "user write after marker")
+            harness.WaitForNormalizedFileWorkAfter(afterPath, candidateGenerationBeforeAfterMarkerWrite)
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> Array.sort
+            |> should equal [| afterPath; beforePath |]
+
+            withRecordedNormalizedWatchJournal (fun appended _ ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus status
+                uploadCalls |> should equal 2
+                updateCalls |> should equal 1
+
+                appended
+                |> Seq.map (fun observation -> observation.DifferenceType, observation.EntryType, string observation.RelativePath)
+                |> Seq.sortBy (fun (_, _, relativePath) -> relativePath)
+                |> Seq.toArray
+                |> should
+                    equal
+                    [|
+                        DifferenceType.Add, FileSystemEntryType.File, "after-marker.txt"
+                        DifferenceType.Add, FileSystemEntryType.File, "before-marker.txt"
+                    |]))
+
+    /// Verifies a real callback admitted under an old root identity fails closed before queueing upload, journal, or Save work.
+    [<Test>]
+    let ``real filesystem stale root candidate fails closed before durable admission`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "stale-root.txt")
+            let acceptedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let replacementStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            configureRealFilesystemWatchHarness acceptedStatus
+
+            use harness = new RealFilesystemWatchHarness(root)
+            File.WriteAllText(filePath, "candidate admitted under old root")
+            harness.WaitForCandidates([| filePath |])
+
+            let admittedCandidate =
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> Array.exactlyOne
+
+            admittedCandidate.Scope
+            |> Option.map (fun scope -> scope.RootDirectoryId)
+            |> should equal (Some acceptedStatus.RootDirectoryId)
+
+            Watch.setGraceStatusForWatchTests replacementStatus
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(replacementStatus))
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(replacementStatus))
+
+            (Watch.graceStatusForWatchTests ())
+                .RootDirectoryId
+            |> should equal replacementStatus.RootDirectoryId
+
+            drainRealFilesystemWatchCandidates ()
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (true, true)
+
+            withRecordedNormalizedWatchJournal (fun appended advanced ->
+                let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus replacementStatus
+                uploadCalls |> should equal 0
+                updateCalls |> should equal 0
+                appended.Count |> should equal 0
+                advanced.Count |> should equal 0))
 
     /// Writes grace ignore needed by the test scenario.
     let private writeGraceIgnore root (entries: string array) =
