@@ -1,37 +1,29 @@
-  /cache/register:
+  /cache/enroll:
     post:
       tags:
         - Cache
-      summary: Register a Grace Cache service.
-      description: >-
-        Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate
-        with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when
-        they are approved by server configuration.
-      operationId: RegisterCacheService
+      summary: Enroll a Grace Cache with an administrator-authorized repository boundary.
+      operationId: EnrollCache
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationRequest'
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheEnrollmentRequest'
       responses:
-        '200':
-          $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse'
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
-        '401':
-          $ref: './Responses.OpenAPI.yaml#/401'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
   /cache/refresh:
     post:
       tags:
         - Cache
-      summary: Refresh a Grace Cache service registration.
-      description: >-
-        Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after
-        interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
-      operationId: RefreshCacheService
+      summary: Refresh Cache operational facts with a current identity-key proof.
+      operationId: RefreshCache
       requestBody:
         required: true
         content:
@@ -39,12 +31,69 @@
             schema:
               $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshRequest'
       responses:
-        '200':
-          $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse'
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
-        '401':
-          $ref: './Responses.OpenAPI.yaml#/401'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/assign-repositories:
+    post:
+      tags:
+        - Cache
+      summary: Replace a Cache's exact repository assignments as a current administrator.
+      operationId: AssignCacheRepositories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheRepositoryAssignmentRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/revoke:
+    post:
+      tags:
+        - Cache
+      summary: Revoke a Cache registration as a current administrator.
+      operationId: RevokeCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheRevocationRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/rotate-key:
+    post:
+      tags:
+        - Cache
+      summary: Rotate a Cache identity key after proof by the currently accepted key.
+      operationId: RotateCacheKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheKeyRotationRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
   /cache/validation-keys:
@@ -52,17 +101,11 @@
       tags:
         - Cache
       summary: Publish artifact grant validation keys.
-      description: >-
-        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants
-        locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The
-        response contains no private signing material and advertises a 15-minute cache TTL.
       operationId: GetArtifactGrantValidationKeys
       responses:
-        '200':
-          $ref: './Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKeySetResponse'
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKeySetResponse' }
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
-        '401':
-          $ref: './Responses.OpenAPI.yaml#/401'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'

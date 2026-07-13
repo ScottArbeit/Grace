@@ -69,7 +69,7 @@ export interface ArtifactGrantPayload {
      * @type {string}
      * @memberof ArtifactGrantPayload
      */
-    cacheServicePrincipalId: string;
+    cacheId: string;
     /**
      * 
      * @type {string}
@@ -119,7 +119,7 @@ export function instanceOfArtifactGrantPayload(value: object): value is Artifact
     if (!('requesterPrincipalType' in value) || value['requesterPrincipalType'] === undefined) return false;
     if (!('requesterPrincipalId' in value) || value['requesterPrincipalId'] === undefined) return false;
     if (!('holderKeyThumbprint' in value) || value['holderKeyThumbprint'] === undefined) return false;
-    if (!('cacheServicePrincipalId' in value) || value['cacheServicePrincipalId'] === undefined) return false;
+    if (!('cacheId' in value) || value['cacheId'] === undefined) return false;
     if (!('targetRootDirectoryVersionId' in value) || value['targetRootDirectoryVersionId'] === undefined) return false;
     if (!('executionMode' in value) || value['executionMode'] === undefined) return false;
     if (!('artifactIdentities' in value) || value['artifactIdentities'] === undefined) return false;
@@ -144,7 +144,7 @@ export function ArtifactGrantPayloadFromJSONTyped(json: any, ignoreDiscriminator
         'requesterPrincipalType': ArtifactGrantRequesterPrincipalTypeFromJSON(json['RequesterPrincipalType']),
         'requesterPrincipalId': json['RequesterPrincipalId'],
         'holderKeyThumbprint': json['HolderKeyThumbprint'],
-        'cacheServicePrincipalId': json['CacheServicePrincipalId'],
+        'cacheId': json['CacheId'],
         'targetRootDirectoryVersionId': json['TargetRootDirectoryVersionId'],
         'executionMode': MaterializationExecutionModeFromJSON(json['ExecutionMode']),
         'artifactIdentities': json['ArtifactIdentities'],
@@ -170,7 +170,7 @@ export function ArtifactGrantPayloadToJSONTyped(value?: ArtifactGrantPayload | n
         'RequesterPrincipalType': ArtifactGrantRequesterPrincipalTypeToJSON(value['requesterPrincipalType']),
         'RequesterPrincipalId': value['requesterPrincipalId'],
         'HolderKeyThumbprint': value['holderKeyThumbprint'],
-        'CacheServicePrincipalId': value['cacheServicePrincipalId'],
+        'CacheId': value['cacheId'],
         'TargetRootDirectoryVersionId': value['targetRootDirectoryVersionId'],
         'ExecutionMode': MaterializationExecutionModeToJSON(value['executionMode']),
         'ArtifactIdentities': value['artifactIdentities'],

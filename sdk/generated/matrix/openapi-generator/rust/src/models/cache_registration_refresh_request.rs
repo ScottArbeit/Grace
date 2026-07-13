@@ -11,18 +11,42 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// CacheRegistrationRefreshRequest : Request body used by an approved Grace Cache service to refresh its current registration.
+/// CacheRegistrationRefreshRequest : Cache-authenticated refresh that may update operational facts only.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CacheRegistrationRefreshRequest {
     #[serde(rename = "Class")]
     pub class: String,
+    #[serde(rename = "CacheId")]
+    pub cache_id: uuid::Uuid,
+    #[serde(rename = "Endpoint")]
+    pub endpoint: String,
+    #[serde(rename = "Health")]
+    pub health: models::CacheHealthStatus,
+    #[serde(rename = "SoftwareVersion")]
+    pub software_version: String,
+    #[serde(rename = "ProtocolVersion")]
+    pub protocol_version: String,
+    #[serde(rename = "PrefetchSupported")]
+    pub prefetch_supported: bool,
+    #[serde(rename = "ObservedAt")]
+    pub observed_at: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(rename = "Proof")]
+    pub proof: Box<models::SignedCacheRequestProof>,
 }
 
 impl CacheRegistrationRefreshRequest {
-    /// Request body used by an approved Grace Cache service to refresh its current registration.
-    pub fn new(class: String) -> CacheRegistrationRefreshRequest {
+    /// Cache-authenticated refresh that may update operational facts only.
+    pub fn new(class: String, cache_id: uuid::Uuid, endpoint: String, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, observed_at: chrono::DateTime<chrono::FixedOffset>, proof: models::SignedCacheRequestProof) -> CacheRegistrationRefreshRequest {
         CacheRegistrationRefreshRequest {
             class,
+            cache_id,
+            endpoint,
+            health,
+            software_version,
+            protocol_version,
+            prefetch_supported,
+            observed_at,
+            proof: Box::new(proof),
         }
     }
 }

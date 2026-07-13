@@ -1,96 +1,135 @@
-CacheRegistrationRequest:
-  description: Request body used by an approved Grace Cache service to register its endpoint and requested boundary.
-  type: object
-  properties:
-    Class:
-      type: string
-      example: CacheRegistrationRequest
-    Endpoint:
-      type: string
-      format: uri
-      example: https://cache.example.net/grace
-    RequestedScopes:
-      type: array
-      description: Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.
-      items:
-        type: string
-      example: ["repository:<OwnerId>/<OrganizationId>/<RepositoryId>"]
-    RequestedCapabilities:
-      type: array
-      items:
-        type: string
-      example: [read-through, prefetch]
-    RequestedExecutionModes:
-      type: array
-      items:
-        $ref: './Materialization.Components.OpenAPI.yaml#/MaterializationExecutionMode'
-      example: [cachePreferred, cacheRequired]
-  required: [Class, Endpoint, RequestedScopes, RequestedCapabilities, RequestedExecutionModes]
-CacheRegistrationRefreshRequest:
-  description: Request body used by an approved Grace Cache service to refresh its current registration.
-  type: object
-  properties:
-    Class:
-      type: string
-      example: CacheRegistrationRefreshRequest
-  required: [Class]
-CacheRegistrationRefreshStatus:
-  description: Result classification for a Cache registration or refresh operation.
+CacheBoundaryKind:
   type: string
-  enum: [refreshed, refreshNotDue, expired, notFound]
-  x-enumNames: [Refreshed, RefreshNotDue, Expired, NotFound]
-  example: refreshed
-CacheRegistration:
-  description: Server-owned active registration record for an approved Grace Cache service.
+  enum: [owner, organization]
+  x-enumNames: [Owner, Organization]
+CacheHealthStatus:
+  type: string
+  enum: [healthy, unhealthy]
+  x-enumNames: [Healthy, Unhealthy]
+CacheIdentityPublicKey:
+  description: Canonical P-256 public key for a Cache identity. Private key material is never accepted or returned.
   type: object
   properties:
-    Class:
-      type: string
-      example: CacheRegistration
-    ServicePrincipalId:
-      type: string
-      example: cache-service-client
-    Endpoint:
-      type: string
-      format: uri
-      example: https://cache.example.net/grace
-    ApprovedScopes:
+    Class: { type: string, example: CacheIdentityPublicKey }
+    Algorithm: { type: string, enum: [ES256] }
+    Curve: { type: string, enum: [P-256] }
+    PublicKeyX: { type: string }
+    PublicKeyY: { type: string }
+  required: [Class, Algorithm, Curve, PublicKeyX, PublicKeyY]
+CacheRepositoryScope:
+  description: Explicit durable repository assignment with its organization needed for authoritative lookup.
+  type: object
+  properties:
+    Class: { type: string, example: CacheRepositoryScope }
+    OrganizationId: { type: string, format: uuid }
+    RepositoryId: { type: string, format: uuid }
+  required: [Class, OrganizationId, RepositoryId]
+CacheRequestProofPayload:
+  description: Canonical Cache proof binding the cache id, operation, canonical request digest, and Unix-millisecond timestamp.
+  type: object
+  properties:
+    Class: { type: string, example: CacheRequestProofPayload }
+    CacheId: { type: string, format: uuid }
+    Operation: { type: string }
+    RequestDigest: { type: string }
+    IssuedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+  required: [Class, CacheId, Operation, RequestDigest, IssuedAt]
+SignedCacheRequestProof:
+  type: object
+  properties:
+    Class: { type: string, example: SignedCacheRequestProof }
+    Payload: { $ref: '#/CacheRequestProofPayload' }
+    Signature: { type: string }
+  required: [Class, Payload, Signature]
+CacheEnrollmentRequest:
+  description: Administrator-authenticated enrollment for exactly one Owner or Organization and explicit repositories within it.
+  type: object
+  properties:
+    Class: { type: string, example: CacheEnrollmentRequest }
+    DisplayName: { type: string }
+    BoundaryKind: { $ref: '#/CacheBoundaryKind' }
+    OwnerId: { type: string, format: uuid }
+    OrganizationId: { type: string, format: uuid, nullable: true }
+    RepositoryScopes:
       type: array
-      items:
-        type: string
-    ApprovedCapabilities:
+      minItems: 1
+      items: { $ref: '#/CacheRepositoryScope' }
+    PublicKey: { $ref: '#/CacheIdentityPublicKey' }
+    Endpoint: { type: string, format: uri }
+    Health: { $ref: '#/CacheHealthStatus' }
+    SoftwareVersion: { type: string }
+    ProtocolVersion: { type: string }
+    PrefetchSupported: { type: boolean }
+  required: [Class, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported]
+CacheRegistrationRefreshRequest:
+  description: Cache-authenticated refresh that may update operational facts only.
+  type: object
+  properties:
+    Class: { type: string, example: CacheRegistrationRefreshRequest }
+    CacheId: { type: string, format: uuid }
+    Endpoint: { type: string, format: uri }
+    Health: { $ref: '#/CacheHealthStatus' }
+    SoftwareVersion: { type: string }
+    ProtocolVersion: { type: string }
+    PrefetchSupported: { type: boolean }
+    ObservedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+    Proof: { $ref: '#/SignedCacheRequestProof' }
+  required: [Class, CacheId, Endpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported, ObservedAt, Proof]
+CacheRepositoryAssignmentRequest:
+  type: object
+  properties:
+    Class: { type: string, example: CacheRepositoryAssignmentRequest }
+    CacheId: { type: string, format: uuid }
+    RepositoryScopes:
       type: array
-      items:
-        type: string
-    ApprovedExecutionModes:
-      type: array
-      items:
-        $ref: './Materialization.Components.OpenAPI.yaml#/MaterializationExecutionMode'
-    RegisteredAt:
-      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
-    LastRefreshedAt:
-      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
-    RefreshAfter:
-      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
-    ExpiresAt:
-      $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
-    ReadThroughEnabled:
-      type: boolean
-    PrefetchEnabled:
-      type: boolean
-  required:
-    - Class
-    - ServicePrincipalId
-    - Endpoint
-    - ApprovedScopes
-    - ApprovedCapabilities
-    - ApprovedExecutionModes
-    - RegisteredAt
-    - LastRefreshedAt
-    - RefreshAfter
-    - ExpiresAt
-    - ReadThroughEnabled
-    - PrefetchEnabled
+      minItems: 1
+      items: { $ref: '#/CacheRepositoryScope' }
+  required: [Class, CacheId, RepositoryScopes]
+CacheRevocationRequest:
+  type: object
+  properties:
+    Class: { type: string, example: CacheRevocationRequest }
+    CacheId: { type: string, format: uuid }
+  required: [Class, CacheId]
+CacheKeyRotationRequest:
+  type: object
+  properties:
+    Class: { type: string, example: CacheKeyRotationRequest }
+    CacheId: { type: string, format: uuid }
+    NewPublicKey: { $ref: '#/CacheIdentityPublicKey' }
+    Proof: { $ref: '#/SignedCacheRequestProof' }
+  required: [Class, CacheId, NewPublicKey, Proof]
+CacheRegistrationRefreshStatus:
+  description: Result classification for Cache enrollment and lifecycle operations.
+  type: string
+  enum: [enrolled, refreshed, refreshNotDue, expired, notFound, revoked, updated, rotated]
+  x-enumNames: [Enrolled, Refreshed, RefreshNotDue, Expired, NotFound, Revoked, Updated, Rotated]
+  example: enrolled
+CacheRegistration:
+  description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
+  type: object
+  properties:
+    Class: { type: string, example: CacheRegistration }
+    CacheId: { type: string, format: uuid }
+    DisplayName: { type: string }
+    BoundaryKind: { $ref: '#/CacheBoundaryKind' }
+    OwnerId: { type: string, format: uuid }
+    OrganizationId: { type: string, format: uuid, nullable: true }
+    RepositoryScopes: { type: array, items: { $ref: '#/CacheRepositoryScope' } }
+    PublicKey: { $ref: '#/CacheIdentityPublicKey' }
+    Endpoint: { type: string, format: uri }
+    Health: { $ref: '#/CacheHealthStatus' }
+    SoftwareVersion: { type: string }
+    ProtocolVersion: { type: string }
+    PrefetchSupported: { type: boolean }
+    EnrolledBy: { type: string }
+    EnrolledAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+    LastRefreshedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+    RefreshAfter: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+    ExpiresAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+    RotationDueAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+    RevokedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant', nullable: true }
+  required: [Class, CacheId, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported, EnrolledBy, EnrolledAt, LastRefreshedAt, RefreshAfter, ExpiresAt, RotationDueAt]
 CacheRegistrationResult:
   description: Result returned by Cache registration and refresh routes.
   type: object
@@ -227,7 +266,7 @@ ArtifactGrantPayload:
     HolderKeyThumbprint:
       type: string
       description: Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.
-    CacheServicePrincipalId:
+    CacheId:
       type: string
     TargetRootDirectoryVersionId:
       $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
@@ -250,7 +289,7 @@ ArtifactGrantPayload:
     - RequesterPrincipalType
     - RequesterPrincipalId
     - HolderKeyThumbprint
-    - CacheServicePrincipalId
+    - CacheId
     - TargetRootDirectoryVersionId
     - ExecutionMode
     - ArtifactIdentities

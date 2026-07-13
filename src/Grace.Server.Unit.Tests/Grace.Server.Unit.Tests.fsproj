@@ -19,7 +19,6 @@
     <Compile Include="Authorization.Unit.Tests.fs" />
     <Compile Include="CreatorScopeAdminGrant.Unit.Tests.fs" />
     <Compile Include="ExternalAuthConfig.Unit.Tests.fs" />
-    <Compile Include="CacheServiceIdentity.Unit.Tests.fs" />
     <Compile Include="ArtifactGrantKeys.Server.Tests.fs" />
     <Compile Include="AuthSchemeSelection.Unit.Tests.fs" />
     <Compile Include="SecurityPrivacy.Unit.Tests.fs" />

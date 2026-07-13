@@ -203,8 +203,11 @@ module EndpointAuthorizationManifest =
                 (AnyOf [ Authorized(RepositoryAdmin, Repository)
                          Authorized(RepositoryWrite, Repository) ])
             endpoint "POST" "/materialization/plan" (Authorized(RepositoryRead, Repository))
-            endpoint "POST" "/cache/register" Authenticated
+            endpoint "POST" "/cache/enroll" Authenticated
             endpoint "POST" "/cache/refresh" Authenticated
+            endpoint "POST" "/cache/assign-repositories" Authenticated
+            endpoint "POST" "/cache/revoke" Authenticated
+            endpoint "POST" "/cache/rotate-key" Authenticated
             endpoint "GET" "/cache/validation-keys" Authenticated
             endpoint "GET" "/healthz" AllowAnonymous
             endpoint

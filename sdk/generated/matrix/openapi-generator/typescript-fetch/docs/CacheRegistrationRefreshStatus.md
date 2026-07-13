@@ -1,7 +1,7 @@
 
 # CacheRegistrationRefreshStatus
 
-Result classification for a Cache registration or refresh operation.
+Result classification for Cache enrollment and lifecycle operations.
 
 ## Properties
 

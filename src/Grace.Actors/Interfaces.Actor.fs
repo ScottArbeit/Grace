@@ -605,21 +605,27 @@ module Interfaces =
     type ICacheRegistrationActor =
         inherit IGrainWithStringKey
 
-        /// Registers or replaces one Cache service registration after server identity approval.
-        abstract member Register:
-            servicePrincipalId: string *
-            request: CacheRegistrationRequest *
-            approvedScopes: string array *
-            approvedCapabilities: string array *
-            now: Instant *
-            correlationId: CorrelationId ->
+        /// Enrolls one administrator-authorized Cache identity under its immutable server-assigned CacheId.
+        abstract member Enroll:
+            cacheId: Guid * request: CacheEnrollmentRequest * enrolledBy: string * now: Instant * correlationId: CorrelationId ->
                 Task<GraceResult<CacheRegistrationResult>>
 
-        /// Refreshes one current Cache service registration without changing approved scopes or capabilities.
-        abstract member Refresh: servicePrincipalId: string * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+        /// Refreshes only operational facts after the actor validates possession of the currently accepted Cache identity key.
+        abstract member Refresh:
+            request: CacheRegistrationRefreshRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
 
-        /// Removes expired registrations from durable actor state.
-        abstract member Expire: now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>
+        /// Replaces explicit repository assignments after server-side administrator authorization.
+        abstract member UpdateAssignments:
+            request: CacheRepositoryAssignmentRequest * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Revokes one Cache identity after server-side administrator authorization.
+        abstract member Revoke: request: CacheRevocationRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Rotates an identity key only after the actor validates a proof from the currently accepted key.
+        abstract member RotateKey: request: CacheKeyRotationRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Returns one stored registration, including terminal lifecycle state, for administrator authorization preflight.
+        abstract member Get: cacheId: Guid * correlationId: CorrelationId -> Task<CacheRegistration option>
 
         /// Returns current registrations that match the server-owned selection query.
         abstract member SelectEligible: query: CacheRegistrationSelectionQuery * now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>

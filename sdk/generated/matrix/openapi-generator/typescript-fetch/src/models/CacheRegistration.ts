@@ -13,16 +13,37 @@
  */
 
 import { mapValues } from '../runtime';
-import type { MaterializationExecutionMode } from './MaterializationExecutionMode';
+import type { CacheBoundaryKind } from './CacheBoundaryKind';
 import {
-    MaterializationExecutionModeFromJSON,
-    MaterializationExecutionModeFromJSONTyped,
-    MaterializationExecutionModeToJSON,
-    MaterializationExecutionModeToJSONTyped,
-} from './MaterializationExecutionMode';
+    CacheBoundaryKindFromJSON,
+    CacheBoundaryKindFromJSONTyped,
+    CacheBoundaryKindToJSON,
+    CacheBoundaryKindToJSONTyped,
+} from './CacheBoundaryKind';
+import type { CacheHealthStatus } from './CacheHealthStatus';
+import {
+    CacheHealthStatusFromJSON,
+    CacheHealthStatusFromJSONTyped,
+    CacheHealthStatusToJSON,
+    CacheHealthStatusToJSONTyped,
+} from './CacheHealthStatus';
+import type { CacheIdentityPublicKey } from './CacheIdentityPublicKey';
+import {
+    CacheIdentityPublicKeyFromJSON,
+    CacheIdentityPublicKeyFromJSONTyped,
+    CacheIdentityPublicKeyToJSON,
+    CacheIdentityPublicKeyToJSONTyped,
+} from './CacheIdentityPublicKey';
+import type { CacheRepositoryScope } from './CacheRepositoryScope';
+import {
+    CacheRepositoryScopeFromJSON,
+    CacheRepositoryScopeFromJSONTyped,
+    CacheRepositoryScopeToJSON,
+    CacheRepositoryScopeToJSONTyped,
+} from './CacheRepositoryScope';
 
 /**
- * Server-owned active registration record for an approved Grace Cache service.
+ * Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
  * @export
  * @interface CacheRegistration
  */
@@ -38,7 +59,43 @@ export interface CacheRegistration {
      * @type {string}
      * @memberof CacheRegistration
      */
-    servicePrincipalId: string;
+    cacheId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistration
+     */
+    displayName: string;
+    /**
+     * 
+     * @type {CacheBoundaryKind}
+     * @memberof CacheRegistration
+     */
+    boundaryKind: CacheBoundaryKind;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistration
+     */
+    ownerId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistration
+     */
+    organizationId?: string;
+    /**
+     * 
+     * @type {Array<CacheRepositoryScope>}
+     * @memberof CacheRegistration
+     */
+    repositoryScopes: Array<CacheRepositoryScope>;
+    /**
+     * 
+     * @type {CacheIdentityPublicKey}
+     * @memberof CacheRegistration
+     */
+    publicKey: CacheIdentityPublicKey;
     /**
      * 
      * @type {string}
@@ -47,28 +104,40 @@ export interface CacheRegistration {
     endpoint: string;
     /**
      * 
-     * @type {Array<string>}
+     * @type {CacheHealthStatus}
      * @memberof CacheRegistration
      */
-    approvedScopes: Array<string>;
+    health: CacheHealthStatus;
     /**
      * 
-     * @type {Array<string>}
+     * @type {string}
      * @memberof CacheRegistration
      */
-    approvedCapabilities: Array<string>;
+    softwareVersion: string;
     /**
      * 
-     * @type {Array<MaterializationExecutionMode>}
+     * @type {string}
      * @memberof CacheRegistration
      */
-    approvedExecutionModes: Array<MaterializationExecutionMode>;
+    protocolVersion: string;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof CacheRegistration
+     */
+    prefetchSupported: boolean;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistration
+     */
+    enrolledBy: string;
     /**
      * 
      * @type {Date}
      * @memberof CacheRegistration
      */
-    registeredAt: Date;
+    enrolledAt: Date;
     /**
      * 
      * @type {Date}
@@ -89,34 +158,42 @@ export interface CacheRegistration {
     expiresAt: Date;
     /**
      * 
-     * @type {boolean}
+     * @type {Date}
      * @memberof CacheRegistration
      */
-    readThroughEnabled: boolean;
+    rotationDueAt: Date;
     /**
      * 
-     * @type {boolean}
+     * @type {Date}
      * @memberof CacheRegistration
      */
-    prefetchEnabled: boolean;
+    revokedAt?: Date;
 }
+
+
 
 /**
  * Check if a given object implements the CacheRegistration interface.
  */
 export function instanceOfCacheRegistration(value: object): value is CacheRegistration {
     if (!('_class' in value) || value['_class'] === undefined) return false;
-    if (!('servicePrincipalId' in value) || value['servicePrincipalId'] === undefined) return false;
+    if (!('cacheId' in value) || value['cacheId'] === undefined) return false;
+    if (!('displayName' in value) || value['displayName'] === undefined) return false;
+    if (!('boundaryKind' in value) || value['boundaryKind'] === undefined) return false;
+    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
+    if (!('repositoryScopes' in value) || value['repositoryScopes'] === undefined) return false;
+    if (!('publicKey' in value) || value['publicKey'] === undefined) return false;
     if (!('endpoint' in value) || value['endpoint'] === undefined) return false;
-    if (!('approvedScopes' in value) || value['approvedScopes'] === undefined) return false;
-    if (!('approvedCapabilities' in value) || value['approvedCapabilities'] === undefined) return false;
-    if (!('approvedExecutionModes' in value) || value['approvedExecutionModes'] === undefined) return false;
-    if (!('registeredAt' in value) || value['registeredAt'] === undefined) return false;
+    if (!('health' in value) || value['health'] === undefined) return false;
+    if (!('softwareVersion' in value) || value['softwareVersion'] === undefined) return false;
+    if (!('protocolVersion' in value) || value['protocolVersion'] === undefined) return false;
+    if (!('prefetchSupported' in value) || value['prefetchSupported'] === undefined) return false;
+    if (!('enrolledBy' in value) || value['enrolledBy'] === undefined) return false;
+    if (!('enrolledAt' in value) || value['enrolledAt'] === undefined) return false;
     if (!('lastRefreshedAt' in value) || value['lastRefreshedAt'] === undefined) return false;
     if (!('refreshAfter' in value) || value['refreshAfter'] === undefined) return false;
     if (!('expiresAt' in value) || value['expiresAt'] === undefined) return false;
-    if (!('readThroughEnabled' in value) || value['readThroughEnabled'] === undefined) return false;
-    if (!('prefetchEnabled' in value) || value['prefetchEnabled'] === undefined) return false;
+    if (!('rotationDueAt' in value) || value['rotationDueAt'] === undefined) return false;
     return true;
 }
 
@@ -131,17 +208,25 @@ export function CacheRegistrationFromJSONTyped(json: any, ignoreDiscriminator: b
     return {
         
         '_class': json['Class'],
-        'servicePrincipalId': json['ServicePrincipalId'],
+        'cacheId': json['CacheId'],
+        'displayName': json['DisplayName'],
+        'boundaryKind': CacheBoundaryKindFromJSON(json['BoundaryKind']),
+        'ownerId': json['OwnerId'],
+        'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
+        'repositoryScopes': ((json['RepositoryScopes'] as Array<any>).map(CacheRepositoryScopeFromJSON)),
+        'publicKey': CacheIdentityPublicKeyFromJSON(json['PublicKey']),
         'endpoint': json['Endpoint'],
-        'approvedScopes': json['ApprovedScopes'],
-        'approvedCapabilities': json['ApprovedCapabilities'],
-        'approvedExecutionModes': ((json['ApprovedExecutionModes'] as Array<any>).map(MaterializationExecutionModeFromJSON)),
-        'registeredAt': (new Date(json['RegisteredAt'])),
+        'health': CacheHealthStatusFromJSON(json['Health']),
+        'softwareVersion': json['SoftwareVersion'],
+        'protocolVersion': json['ProtocolVersion'],
+        'prefetchSupported': json['PrefetchSupported'],
+        'enrolledBy': json['EnrolledBy'],
+        'enrolledAt': (new Date(json['EnrolledAt'])),
         'lastRefreshedAt': (new Date(json['LastRefreshedAt'])),
         'refreshAfter': (new Date(json['RefreshAfter'])),
         'expiresAt': (new Date(json['ExpiresAt'])),
-        'readThroughEnabled': json['ReadThroughEnabled'],
-        'prefetchEnabled': json['PrefetchEnabled'],
+        'rotationDueAt': (new Date(json['RotationDueAt'])),
+        'revokedAt': json['RevokedAt'] == null ? undefined : (new Date(json['RevokedAt'])),
     };
 }
 
@@ -157,17 +242,25 @@ export function CacheRegistrationToJSONTyped(value?: CacheRegistration | null, i
     return {
         
         'Class': value['_class'],
-        'ServicePrincipalId': value['servicePrincipalId'],
+        'CacheId': value['cacheId'],
+        'DisplayName': value['displayName'],
+        'BoundaryKind': CacheBoundaryKindToJSON(value['boundaryKind']),
+        'OwnerId': value['ownerId'],
+        'OrganizationId': value['organizationId'],
+        'RepositoryScopes': ((value['repositoryScopes'] as Array<any>).map(CacheRepositoryScopeToJSON)),
+        'PublicKey': CacheIdentityPublicKeyToJSON(value['publicKey']),
         'Endpoint': value['endpoint'],
-        'ApprovedScopes': value['approvedScopes'],
-        'ApprovedCapabilities': value['approvedCapabilities'],
-        'ApprovedExecutionModes': ((value['approvedExecutionModes'] as Array<any>).map(MaterializationExecutionModeToJSON)),
-        'RegisteredAt': value['registeredAt'].toISOString(),
+        'Health': CacheHealthStatusToJSON(value['health']),
+        'SoftwareVersion': value['softwareVersion'],
+        'ProtocolVersion': value['protocolVersion'],
+        'PrefetchSupported': value['prefetchSupported'],
+        'EnrolledBy': value['enrolledBy'],
+        'EnrolledAt': value['enrolledAt'].toISOString(),
         'LastRefreshedAt': value['lastRefreshedAt'].toISOString(),
         'RefreshAfter': value['refreshAfter'].toISOString(),
         'ExpiresAt': value['expiresAt'].toISOString(),
-        'ReadThroughEnabled': value['readThroughEnabled'],
-        'PrefetchEnabled': value['prefetchEnabled'],
+        'RotationDueAt': value['rotationDueAt'].toISOString(),
+        'RevokedAt': value['revokedAt'] == null ? value['revokedAt'] : value['revokedAt'].toISOString(),
     };
 }
 

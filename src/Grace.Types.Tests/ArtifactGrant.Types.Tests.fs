@@ -18,7 +18,7 @@ open System.Text.Json
 type ArtifactGrantValidationTests() =
 
     let now = Instant.FromUtc(2026, 7, 9, 12, 0)
-    let cacheServicePrincipalId = "cache-service-client"
+    let cacheId = "cache-service-client"
     let targetRoot = DirectoryVersionId.Parse "11111111-1111-1111-1111-111111111111"
     let otherRoot = DirectoryVersionId.Parse "22222222-2222-2222-2222-222222222222"
     let artifactIdentity = "GraceZipFiles/11111111-1111-1111-1111-111111111111.zip"
@@ -28,8 +28,7 @@ type ArtifactGrantValidationTests() =
     let canonicalValidationKeyLifetime = ArtifactGrantContract.SigningKeyActiveLifetime.Plus ArtifactGrantContract.MaximumAcceptedGrantTtl
 
     /// Creates a deterministic validation request for the cache-mode artifact test surface.
-    let validationRequest () =
-        ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
+    let validationRequest () = ArtifactGrantValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
 
     /// Creates one P-256 signing key and matching public validation key.
     let signingKey keyId createdAt expiresAt =
@@ -44,7 +43,7 @@ type ArtifactGrantValidationTests() =
             ArtifactGrantPayload.Create(
                 "user-11111111-1111-1111-1111-111111111111",
                 "holder-thumbprint",
-                cacheServicePrincipalId,
+                cacheId,
                 targetRoot,
                 executionMode,
                 artifacts,
@@ -85,7 +84,7 @@ type ArtifactGrantValidationTests() =
 
     [<Test>]
     member _.``direct mode does not require an artifact grant``() =
-        let request = ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity)
+        let request = ArtifactGrantValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity)
 
         let mutable refreshCalled = false
 
@@ -108,7 +107,7 @@ type ArtifactGrantValidationTests() =
         let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
         let grant = signedGrantForMode "key-1" key MaterializationExecutionMode.Direct now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
-        let request = ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity)
+        let request = ArtifactGrantValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity)
 
         validateWithKeySet now (keySet [ validationKey ]) request grant
         |> assertError WrongExecutionMode
@@ -144,13 +143,11 @@ type ArtifactGrantValidationTests() =
 
         let wrongCache = ArtifactGrantValidationRequest.Create("other-cache", targetRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
 
-        let wrongRoot = ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, otherRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
+        let wrongRoot = ArtifactGrantValidationRequest.Create(cacheId, otherRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
 
-        let wrongMode =
-            ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.CachePreferred, artifactIdentity)
+        let wrongMode = ArtifactGrantValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.CachePreferred, artifactIdentity)
 
-        let wrongArtifact =
-            ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.CacheRequired, otherArtifactIdentity)
+        let wrongArtifact = ArtifactGrantValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.CacheRequired, otherArtifactIdentity)
 
         let wrongSignature = signedGrant "key-1" wrongKey now ArtifactGrantContract.DefaultGrantTtl [ artifactIdentity ]
 
@@ -571,7 +568,7 @@ type ArtifactGrantValidationTests() =
 type ArtifactRequestProofValidationTests() =
 
     let now = Instant.FromUtc(2026, 7, 9, 12, 0)
-    let cacheServicePrincipalId = "cache-service-client"
+    let cacheId = "cache-service-client"
     let requesterPrincipalId = "user-11111111-1111-1111-1111-111111111111"
     let targetRoot = DirectoryVersionId.Parse "11111111-1111-1111-1111-111111111111"
     let artifactIdentity = "GraceZipFiles/11111111-1111-1111-1111-111111111111.zip"
@@ -600,7 +597,7 @@ type ArtifactRequestProofValidationTests() =
             ArtifactGrantPayload.Create(
                 requesterPrincipalId,
                 GrantCrypto.holderKeyThumbprint holderPublicKey,
-                cacheServicePrincipalId,
+                cacheId,
                 targetRoot,
                 MaterializationExecutionMode.CacheRequired,
                 [ artifactIdentity ],
@@ -614,14 +611,7 @@ type ArtifactRequestProofValidationTests() =
 
     /// Creates the expected request-admission contract for one GET.
     let request methodName requestRoute =
-        ArtifactRequestValidationRequest.Create(
-            cacheServicePrincipalId,
-            targetRoot,
-            MaterializationExecutionMode.CacheRequired,
-            artifactIdentity,
-            methodName,
-            requestRoute
-        )
+        ArtifactRequestValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity, methodName, requestRoute)
 
     /// Asserts that full grant and holder-proof validation succeeded.
     let assertProofOk result =
@@ -852,8 +842,7 @@ type ArtifactRequestProofValidationTests() =
 
     [<Test>]
     member _.``direct mode bypass remains explicit and requires neither grant nor holder proof``() =
-        let directRequest =
-            ArtifactRequestValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity, "GET", route)
+        let directRequest = ArtifactRequestValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity, "GET", route)
 
         GrantCrypto.validateArtifactRequestWithKeySet now (ArtifactGrantValidationKeySet.Create(now, [])) directRequest None None
         |> assertProofOk
@@ -867,7 +856,7 @@ type ArtifactRequestProofValidationTests() =
             now
             (fun _ -> RefreshSkipped)
             malformedKeySet
-            (ArtifactGrantValidationRequest.Create(cacheServicePrincipalId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity))
+            (ArtifactGrantValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.Direct, artifactIdentity))
             None
         |> assertProofOk
 
@@ -891,7 +880,7 @@ type ArtifactRequestProofValidationTests() =
             ArtifactGrantPayload.Create(
                 requesterPrincipalId,
                 GrantCrypto.holderKeyThumbprint holderPublicKey,
-                cacheServicePrincipalId,
+                cacheId,
                 targetRoot,
                 MaterializationExecutionMode.CacheRequired,
                 [ artifactIdentity ],

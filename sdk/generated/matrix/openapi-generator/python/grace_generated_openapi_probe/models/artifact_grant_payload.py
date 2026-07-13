@@ -38,14 +38,14 @@ class ArtifactGrantPayload(BaseModel):
     requester_principal_type: ArtifactGrantRequesterPrincipalType = Field(alias="RequesterPrincipalType")
     requester_principal_id: StrictStr = Field(description="Stable authenticated grace_user_id supplied by Grace Server.", alias="RequesterPrincipalId")
     holder_key_thumbprint: StrictStr = Field(description="Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.", alias="HolderKeyThumbprint")
-    cache_service_principal_id: StrictStr = Field(alias="CacheServicePrincipalId")
+    cache_id: StrictStr = Field(alias="CacheId")
     target_root_directory_version_id: UUID = Field(alias="TargetRootDirectoryVersionId")
     execution_mode: MaterializationExecutionMode = Field(alias="ExecutionMode")
     artifact_identities: Annotated[List[StrictStr], Field(min_length=1)] = Field(alias="ArtifactIdentities")
     issued_at: datetime = Field(alias="IssuedAt")
     not_before: datetime = Field(alias="NotBefore")
     expires_at: datetime = Field(alias="ExpiresAt")
-    __properties: ClassVar[List[str]] = ["Class", "Issuer", "RequesterPrincipalType", "RequesterPrincipalId", "HolderKeyThumbprint", "CacheServicePrincipalId", "TargetRootDirectoryVersionId", "ExecutionMode", "ArtifactIdentities", "IssuedAt", "NotBefore", "ExpiresAt"]
+    __properties: ClassVar[List[str]] = ["Class", "Issuer", "RequesterPrincipalType", "RequesterPrincipalId", "HolderKeyThumbprint", "CacheId", "TargetRootDirectoryVersionId", "ExecutionMode", "ArtifactIdentities", "IssuedAt", "NotBefore", "ExpiresAt"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -103,7 +103,7 @@ class ArtifactGrantPayload(BaseModel):
             "RequesterPrincipalType": obj.get("RequesterPrincipalType"),
             "RequesterPrincipalId": obj.get("RequesterPrincipalId"),
             "HolderKeyThumbprint": obj.get("HolderKeyThumbprint"),
-            "CacheServicePrincipalId": obj.get("CacheServicePrincipalId"),
+            "CacheId": obj.get("CacheId"),
             "TargetRootDirectoryVersionId": obj.get("TargetRootDirectoryVersionId"),
             "ExecutionMode": obj.get("ExecutionMode"),
             "ArtifactIdentities": obj.get("ArtifactIdentities"),

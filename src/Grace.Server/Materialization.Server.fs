@@ -56,10 +56,6 @@ module Materialization =
         else
             Ok()
 
-    /// Formats the only cache-registration scope eligible for a fully resolved repository target.
-    let internal repositoryCacheScope (target: ResolvedMaterializationTarget) =
-        $"repository:{target.OwnerId:D}/{target.OrganizationId:D}/{target.RepositoryId:D}"
-
     /// Public-safe selector error used when a DirectoryVersionId is missing or outside the authorized repository.
     let directoryVersionSelectorNotFoundMessage = "DirectoryVersionId selector did not match an authorized directory version."
 
@@ -256,14 +252,7 @@ module Materialization =
                             | Ok directPlan ->
                                 let now = getCurrentInstant ()
 
-                                let query =
-                                    CacheRegistrationSelectionQuery.Create(
-                                        Some(repositoryCacheScope target),
-                                        [ Capability.ReadThrough ],
-                                        Some request.ExecutionMode,
-                                        true,
-                                        false
-                                    )
+                                let query = CacheRegistrationSelectionQuery.Create(Some target.RepositoryId, false)
 
                                 let! cachePlanResult =
                                     task {
@@ -297,7 +286,7 @@ module Materialization =
                                                                         MaterializationArtifactSource.Cache(
                                                                             identity,
                                                                             registration.Endpoint,
-                                                                            registration.ServicePrincipalId,
+                                                                            registration.CacheId.ToString("D"),
                                                                             fallback
                                                                         ))
                                                             })
@@ -811,7 +800,7 @@ module Materialization =
                                                                             {
                                                                                 AuthenticatedUserId = userId
                                                                                 HolderPublicKey = holderPublicKey
-                                                                                CacheServicePrincipalId = registration.ServicePrincipalId
+                                                                                CacheId = registration.CacheId.ToString("D")
                                                                                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                                                                                 ExecutionMode = request.ExecutionMode
                                                                                 ArtifactIdentities = identities

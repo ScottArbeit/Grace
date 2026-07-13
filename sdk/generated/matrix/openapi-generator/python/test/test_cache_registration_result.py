@@ -37,32 +37,44 @@ class TestCacheRegistrationResult(unittest.TestCase):
         if include_optional:
             return CacheRegistrationResult(
                 var_class = 'CacheRegistrationResult',
-                status = 'refreshed',
+                status = 'enrolled',
                 registration = grace_generated_openapi_probe.models.cache_registration.CacheRegistration(
                     class = 'CacheRegistration', 
-                    service_principal_id = 'cache-service-client', 
-                    endpoint = 'https://cache.example.net/grace', 
-                    approved_scopes = [
-                        ''
+                    cache_id = '', 
+                    display_name = '', 
+                    boundary_kind = 'owner', 
+                    owner_id = '', 
+                    organization_id = '', 
+                    repository_scopes = [
+                        grace_generated_openapi_probe.models.cache_repository_scope.CacheRepositoryScope(
+                            class = 'CacheRepositoryScope', 
+                            organization_id = '', 
+                            repository_id = '', )
                         ], 
-                    approved_capabilities = [
-                        ''
-                        ], 
-                    approved_execution_modes = [
-                        'direct'
-                        ], 
-                    registered_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                    public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
+                        class = 'CacheIdentityPublicKey', 
+                        algorithm = 'ES256', 
+                        curve = 'P-256', 
+                        public_key_x = '', 
+                        public_key_y = '', ), 
+                    endpoint = '', 
+                    health = 'healthy', 
+                    software_version = '', 
+                    protocol_version = '', 
+                    prefetch_supported = True, 
+                    enrolled_by = '', 
+                    enrolled_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
                     last_refreshed_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
                     refresh_after = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
                     expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
-                    read_through_enabled = True, 
-                    prefetch_enabled = True, ),
+                    rotation_due_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                    revoked_at = null, ),
                 message = 'Cache registration is current.'
             )
         else:
             return CacheRegistrationResult(
                 var_class = 'CacheRegistrationResult',
-                status = 'refreshed',
+                status = 'enrolled',
                 message = 'Cache registration is current.',
         )
         """

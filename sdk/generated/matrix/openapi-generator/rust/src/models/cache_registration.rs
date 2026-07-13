@@ -11,51 +11,75 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// CacheRegistration : Server-owned active registration record for an approved Grace Cache service.
+/// CacheRegistration : Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CacheRegistration {
     #[serde(rename = "Class")]
     pub class: String,
-    #[serde(rename = "ServicePrincipalId")]
-    pub service_principal_id: String,
+    #[serde(rename = "CacheId")]
+    pub cache_id: uuid::Uuid,
+    #[serde(rename = "DisplayName")]
+    pub display_name: String,
+    #[serde(rename = "BoundaryKind")]
+    pub boundary_kind: models::CacheBoundaryKind,
+    #[serde(rename = "OwnerId")]
+    pub owner_id: uuid::Uuid,
+    #[serde(rename = "OrganizationId", skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<uuid::Uuid>,
+    #[serde(rename = "RepositoryScopes")]
+    pub repository_scopes: Vec<models::CacheRepositoryScope>,
+    #[serde(rename = "PublicKey")]
+    pub public_key: Box<models::CacheIdentityPublicKey>,
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
-    #[serde(rename = "ApprovedScopes")]
-    pub approved_scopes: Vec<String>,
-    #[serde(rename = "ApprovedCapabilities")]
-    pub approved_capabilities: Vec<String>,
-    #[serde(rename = "ApprovedExecutionModes")]
-    pub approved_execution_modes: Vec<models::MaterializationExecutionMode>,
-    #[serde(rename = "RegisteredAt")]
-    pub registered_at: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(rename = "Health")]
+    pub health: models::CacheHealthStatus,
+    #[serde(rename = "SoftwareVersion")]
+    pub software_version: String,
+    #[serde(rename = "ProtocolVersion")]
+    pub protocol_version: String,
+    #[serde(rename = "PrefetchSupported")]
+    pub prefetch_supported: bool,
+    #[serde(rename = "EnrolledBy")]
+    pub enrolled_by: String,
+    #[serde(rename = "EnrolledAt")]
+    pub enrolled_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "LastRefreshedAt")]
     pub last_refreshed_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "RefreshAfter")]
     pub refresh_after: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "ExpiresAt")]
     pub expires_at: chrono::DateTime<chrono::FixedOffset>,
-    #[serde(rename = "ReadThroughEnabled")]
-    pub read_through_enabled: bool,
-    #[serde(rename = "PrefetchEnabled")]
-    pub prefetch_enabled: bool,
+    #[serde(rename = "RotationDueAt")]
+    pub rotation_due_at: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(rename = "RevokedAt", skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
 impl CacheRegistration {
-    /// Server-owned active registration record for an approved Grace Cache service.
-    pub fn new(class: String, service_principal_id: String, endpoint: String, approved_scopes: Vec<String>, approved_capabilities: Vec<String>, approved_execution_modes: Vec<models::MaterializationExecutionMode>, registered_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>, read_through_enabled: bool, prefetch_enabled: bool) -> CacheRegistration {
+    /// Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
+    pub fn new(class: String, cache_id: uuid::Uuid, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, enrolled_by: String, enrolled_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>, rotation_due_at: chrono::DateTime<chrono::FixedOffset>) -> CacheRegistration {
         CacheRegistration {
             class,
-            service_principal_id,
+            cache_id,
+            display_name,
+            boundary_kind,
+            owner_id,
+            organization_id: None,
+            repository_scopes,
+            public_key: Box::new(public_key),
             endpoint,
-            approved_scopes,
-            approved_capabilities,
-            approved_execution_modes,
-            registered_at,
+            health,
+            software_version,
+            protocol_version,
+            prefetch_supported,
+            enrolled_by,
+            enrolled_at,
             last_refreshed_at,
             refresh_after,
             expires_at,
-            read_through_enabled,
-            prefetch_enabled,
+            rotation_due_at,
+            revoked_at: None,
         }
     }
 }

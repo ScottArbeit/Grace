@@ -20,21 +20,19 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List
-from grace_generated_openapi_probe.models.materialization_execution_mode import MaterializationExecutionMode
+from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class CacheRegistrationRequest(BaseModel):
+class CacheRepositoryScope(BaseModel):
     """
-    Request body used by an approved Grace Cache service to register its endpoint and requested boundary.
+    Explicit durable repository assignment with its organization needed for authoritative lookup.
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
-    endpoint: StrictStr = Field(alias="Endpoint")
-    requested_scopes: List[StrictStr] = Field(description="Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.", alias="RequestedScopes")
-    requested_capabilities: List[StrictStr] = Field(alias="RequestedCapabilities")
-    requested_execution_modes: List[MaterializationExecutionMode] = Field(alias="RequestedExecutionModes")
-    __properties: ClassVar[List[str]] = ["Class", "Endpoint", "RequestedScopes", "RequestedCapabilities", "RequestedExecutionModes"]
+    organization_id: UUID = Field(alias="OrganizationId")
+    repository_id: UUID = Field(alias="RepositoryId")
+    __properties: ClassVar[List[str]] = ["Class", "OrganizationId", "RepositoryId"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -54,7 +52,7 @@ class CacheRegistrationRequest(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of CacheRegistrationRequest from a JSON string"""
+        """Create an instance of CacheRepositoryScope from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -79,7 +77,7 @@ class CacheRegistrationRequest(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of CacheRegistrationRequest from a dict"""
+        """Create an instance of CacheRepositoryScope from a dict"""
         if obj is None:
             return None
 
@@ -88,10 +86,8 @@ class CacheRegistrationRequest(BaseModel):
 
         _obj = cls.model_validate({
             "Class": obj.get("Class"),
-            "Endpoint": obj.get("Endpoint"),
-            "RequestedScopes": obj.get("RequestedScopes"),
-            "RequestedCapabilities": obj.get("RequestedCapabilities"),
-            "RequestedExecutionModes": obj.get("RequestedExecutionModes")
+            "OrganizationId": obj.get("OrganizationId"),
+            "RepositoryId": obj.get("RepositoryId")
         })
         return _obj
 

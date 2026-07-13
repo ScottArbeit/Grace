@@ -1,24 +1,32 @@
 
 # CacheRegistration
 
-Server-owned active registration record for an approved Grace Cache service.
+Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
 
 ## Properties
 
 Name | Type
 ------------ | -------------
 `_class` | string
-`servicePrincipalId` | string
+`cacheId` | string
+`displayName` | string
+`boundaryKind` | [CacheBoundaryKind](CacheBoundaryKind.md)
+`ownerId` | string
+`organizationId` | string
+`repositoryScopes` | [Array&lt;CacheRepositoryScope&gt;](CacheRepositoryScope.md)
+`publicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
 `endpoint` | string
-`approvedScopes` | Array&lt;string&gt;
-`approvedCapabilities` | Array&lt;string&gt;
-`approvedExecutionModes` | [Array&lt;MaterializationExecutionMode&gt;](MaterializationExecutionMode.md)
-`registeredAt` | Date
+`health` | [CacheHealthStatus](CacheHealthStatus.md)
+`softwareVersion` | string
+`protocolVersion` | string
+`prefetchSupported` | boolean
+`enrolledBy` | string
+`enrolledAt` | Date
 `lastRefreshedAt` | Date
 `refreshAfter` | Date
 `expiresAt` | Date
-`readThroughEnabled` | boolean
-`prefetchEnabled` | boolean
+`rotationDueAt` | Date
+`revokedAt` | Date
 
 ## Example
 
@@ -28,17 +36,25 @@ import type { CacheRegistration } from '@grace-vcs/generated-openapi-probe'
 // TODO: Update the object below with actual values
 const example = {
   "_class": CacheRegistration,
-  "servicePrincipalId": cache-service-client,
-  "endpoint": https://cache.example.net/grace,
-  "approvedScopes": null,
-  "approvedCapabilities": null,
-  "approvedExecutionModes": null,
-  "registeredAt": null,
+  "cacheId": null,
+  "displayName": null,
+  "boundaryKind": null,
+  "ownerId": null,
+  "organizationId": null,
+  "repositoryScopes": null,
+  "publicKey": null,
+  "endpoint": null,
+  "health": null,
+  "softwareVersion": null,
+  "protocolVersion": null,
+  "prefetchSupported": null,
+  "enrolledBy": null,
+  "enrolledAt": null,
   "lastRefreshedAt": null,
   "refreshAfter": null,
   "expiresAt": null,
-  "readThroughEnabled": null,
-  "prefetchEnabled": null,
+  "rotationDueAt": null,
+  "revokedAt": null,
 } satisfies CacheRegistration
 
 console.log(example)

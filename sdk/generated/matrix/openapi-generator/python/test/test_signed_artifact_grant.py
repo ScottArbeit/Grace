@@ -47,7 +47,7 @@ class TestSignedArtifactGrant(unittest.TestCase):
                     requester_principal_type = 'user', 
                     requester_principal_id = '', 
                     holder_key_thumbprint = '', 
-                    cache_service_principal_id = '', 
+                    cache_id = '', 
                     target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
                     execution_mode = 'direct', 
                     artifact_identities = [
@@ -71,7 +71,7 @@ class TestSignedArtifactGrant(unittest.TestCase):
                     requester_principal_type = 'user', 
                     requester_principal_id = '', 
                     holder_key_thumbprint = '', 
-                    cache_service_principal_id = '', 
+                    cache_id = '', 
                     target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
                     execution_mode = 'direct', 
                     artifact_identities = [

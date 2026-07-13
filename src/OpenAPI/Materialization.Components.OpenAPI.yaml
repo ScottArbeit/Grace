@@ -150,8 +150,9 @@
           type: string
           format: uri
           nullable: true
-        CacheServicePrincipalId:
+        CacheId:
           type: string
+          format: uuid
           nullable: true
         DirectFallbackUri:
           type: string

@@ -13,8 +13,23 @@
  */
 
 import { mapValues } from '../runtime';
+import type { CacheHealthStatus } from './CacheHealthStatus';
+import {
+    CacheHealthStatusFromJSON,
+    CacheHealthStatusFromJSONTyped,
+    CacheHealthStatusToJSON,
+    CacheHealthStatusToJSONTyped,
+} from './CacheHealthStatus';
+import type { SignedCacheRequestProof } from './SignedCacheRequestProof';
+import {
+    SignedCacheRequestProofFromJSON,
+    SignedCacheRequestProofFromJSONTyped,
+    SignedCacheRequestProofToJSON,
+    SignedCacheRequestProofToJSONTyped,
+} from './SignedCacheRequestProof';
+
 /**
- * Request body used by an approved Grace Cache service to refresh its current registration.
+ * Cache-authenticated refresh that may update operational facts only.
  * @export
  * @interface CacheRegistrationRefreshRequest
  */
@@ -25,13 +40,71 @@ export interface CacheRegistrationRefreshRequest {
      * @memberof CacheRegistrationRefreshRequest
      */
     _class: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    cacheId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    endpoint: string;
+    /**
+     * 
+     * @type {CacheHealthStatus}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    health: CacheHealthStatus;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    softwareVersion: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    protocolVersion: string;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    prefetchSupported: boolean;
+    /**
+     * 
+     * @type {Date}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    observedAt: Date;
+    /**
+     * 
+     * @type {SignedCacheRequestProof}
+     * @memberof CacheRegistrationRefreshRequest
+     */
+    proof: SignedCacheRequestProof;
 }
+
+
 
 /**
  * Check if a given object implements the CacheRegistrationRefreshRequest interface.
  */
 export function instanceOfCacheRegistrationRefreshRequest(value: object): value is CacheRegistrationRefreshRequest {
     if (!('_class' in value) || value['_class'] === undefined) return false;
+    if (!('cacheId' in value) || value['cacheId'] === undefined) return false;
+    if (!('endpoint' in value) || value['endpoint'] === undefined) return false;
+    if (!('health' in value) || value['health'] === undefined) return false;
+    if (!('softwareVersion' in value) || value['softwareVersion'] === undefined) return false;
+    if (!('protocolVersion' in value) || value['protocolVersion'] === undefined) return false;
+    if (!('prefetchSupported' in value) || value['prefetchSupported'] === undefined) return false;
+    if (!('observedAt' in value) || value['observedAt'] === undefined) return false;
+    if (!('proof' in value) || value['proof'] === undefined) return false;
     return true;
 }
 
@@ -46,6 +119,14 @@ export function CacheRegistrationRefreshRequestFromJSONTyped(json: any, ignoreDi
     return {
         
         '_class': json['Class'],
+        'cacheId': json['CacheId'],
+        'endpoint': json['Endpoint'],
+        'health': CacheHealthStatusFromJSON(json['Health']),
+        'softwareVersion': json['SoftwareVersion'],
+        'protocolVersion': json['ProtocolVersion'],
+        'prefetchSupported': json['PrefetchSupported'],
+        'observedAt': (new Date(json['ObservedAt'])),
+        'proof': SignedCacheRequestProofFromJSON(json['Proof']),
     };
 }
 
@@ -61,6 +142,14 @@ export function CacheRegistrationRefreshRequestToJSONTyped(value?: CacheRegistra
     return {
         
         'Class': value['_class'],
+        'CacheId': value['cacheId'],
+        'Endpoint': value['endpoint'],
+        'Health': CacheHealthStatusToJSON(value['health']),
+        'SoftwareVersion': value['softwareVersion'],
+        'ProtocolVersion': value['protocolVersion'],
+        'PrefetchSupported': value['prefetchSupported'],
+        'ObservedAt': value['observedAt'].toISOString(),
+        'Proof': SignedCacheRequestProofToJSON(value['proof']),
     };
 }
 

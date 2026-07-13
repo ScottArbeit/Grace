@@ -1351,11 +1351,20 @@ module Application =
                     [
                         GET [ route "/validation-keys" CacheRegistration.GetValidationKeys ]
 
-                        POST [ route "/register" CacheRegistration.Register
-                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRequest>
+                        POST [ route "/enroll" CacheRegistration.Enroll
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheEnrollmentRequest>
 
                                route "/refresh" CacheRegistration.Refresh
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRefreshRequest> ]
+
+                        POST [ route "/assign-repositories" CacheRegistration.AssignRepositories
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRepositoryAssignmentRequest>
+
+                               route "/revoke" CacheRegistration.Revoke
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRevocationRequest>
+
+                               route "/rotate-key" CacheRegistration.RotateKey
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationRequest> ]
                     ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute

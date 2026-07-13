@@ -38,7 +38,7 @@ class TestCacheRegistrationReturnValue(unittest.TestCase):
             return CacheRegistrationReturnValue(
                 return_value = grace_generated_openapi_probe.models.cache_registration_result.CacheRegistrationResult(
                     class = 'CacheRegistrationResult', 
-                    status = 'refreshed', 
+                    status = 'enrolled', 
                     registration = null, 
                     message = 'Cache registration is current.', ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
@@ -51,7 +51,7 @@ class TestCacheRegistrationReturnValue(unittest.TestCase):
             return CacheRegistrationReturnValue(
                 return_value = grace_generated_openapi_probe.models.cache_registration_result.CacheRegistrationResult(
                     class = 'CacheRegistrationResult', 
-                    status = 'refreshed', 
+                    status = 'enrolled', 
                     registration = null, 
                     message = 'Cache registration is current.', ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),

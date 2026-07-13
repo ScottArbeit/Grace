@@ -11,7 +11,7 @@ Name | Type | Description | Notes
 **requester_principal_type** | [**ArtifactGrantRequesterPrincipalType**](ArtifactGrantRequesterPrincipalType.md) |  | 
 **requester_principal_id** | **str** | Stable authenticated grace_user_id supplied by Grace Server. | 
 **holder_key_thumbprint** | **str** | Base64url SHA-256 thumbprint of the canonical ephemeral holder public key. | 
-**cache_service_principal_id** | **str** |  | 
+**cache_id** | **str** |  | 
 **target_root_directory_version_id** | **UUID** |  | 
 **execution_mode** | [**MaterializationExecutionMode**](MaterializationExecutionMode.md) |  | 
 **artifact_identities** | **List[str]** |  | 

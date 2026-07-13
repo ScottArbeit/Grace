@@ -15,6 +15,28 @@ use crate::{apis::ResponseContent, models};
 use super::{Error, configuration, ContentType};
 
 
+/// struct for typed errors of method [`assign_cache_repositories`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AssignCacheRepositoriesError {
+    Status400(models::GraceError),
+    Status401(String),
+    Status403(String),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`enroll_cache`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnrollCacheError {
+    Status400(models::GraceError),
+    Status401(String),
+    Status403(String),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`get_artifact_grant_validation_keys`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -25,20 +47,31 @@ pub enum GetArtifactGrantValidationKeysError {
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`refresh_cache_service`]
+/// struct for typed errors of method [`refresh_cache`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum RefreshCacheServiceError {
+pub enum RefreshCacheError {
     Status400(models::GraceError),
     Status401(String),
     Status500(models::GraceError),
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`register_cache_service`]
+/// struct for typed errors of method [`revoke_cache`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum RegisterCacheServiceError {
+pub enum RevokeCacheError {
+    Status400(models::GraceError),
+    Status401(String),
+    Status403(String),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`rotate_cache_key`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RotateCacheKeyError {
     Status400(models::GraceError),
     Status401(String),
     Status500(models::GraceError),
@@ -46,7 +79,86 @@ pub enum RegisterCacheServiceError {
 }
 
 
-/// Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
+pub async fn assign_cache_repositories(configuration: &configuration::Configuration, cache_repository_assignment_request: models::CacheRepositoryAssignmentRequest) -> Result<models::CacheRegistrationReturnValue, Error<AssignCacheRepositoriesError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_cache_repository_assignment_request = cache_repository_assignment_request;
+
+    let uri_str = format!("{}/cache/assign-repositories", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_cache_repository_assignment_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::CacheRegistrationReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::CacheRegistrationReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<AssignCacheRepositoriesError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+pub async fn enroll_cache(configuration: &configuration::Configuration, cache_enrollment_request: models::CacheEnrollmentRequest) -> Result<models::CacheRegistrationReturnValue, Error<EnrollCacheError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_cache_enrollment_request = cache_enrollment_request;
+
+    let uri_str = format!("{}/cache/enroll", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_cache_enrollment_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::CacheRegistrationReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::CacheRegistrationReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<EnrollCacheError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
 pub async fn get_artifact_grant_validation_keys(configuration: &configuration::Configuration, ) -> Result<models::ArtifactGrantValidationKeySet, Error<GetArtifactGrantValidationKeysError>> {
 
     let uri_str = format!("{}/cache/validation-keys", configuration.base_path);
@@ -84,8 +196,7 @@ pub async fn get_artifact_grant_validation_keys(configuration: &configuration::C
     }
 }
 
-/// Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
-pub async fn refresh_cache_service(configuration: &configuration::Configuration, cache_registration_refresh_request: models::CacheRegistrationRefreshRequest) -> Result<models::CacheRegistrationReturnValue, Error<RefreshCacheServiceError>> {
+pub async fn refresh_cache(configuration: &configuration::Configuration, cache_registration_refresh_request: models::CacheRegistrationRefreshRequest) -> Result<models::CacheRegistrationReturnValue, Error<RefreshCacheError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_cache_registration_refresh_request = cache_registration_refresh_request;
 
@@ -120,17 +231,16 @@ pub async fn refresh_cache_service(configuration: &configuration::Configuration,
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<RefreshCacheServiceError> = serde_json::from_str(&content).ok();
+        let entity: Option<RefreshCacheError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }
 
-/// Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
-pub async fn register_cache_service(configuration: &configuration::Configuration, cache_registration_request: models::CacheRegistrationRequest) -> Result<models::CacheRegistrationReturnValue, Error<RegisterCacheServiceError>> {
+pub async fn revoke_cache(configuration: &configuration::Configuration, cache_revocation_request: models::CacheRevocationRequest) -> Result<models::CacheRegistrationReturnValue, Error<RevokeCacheError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_body_cache_registration_request = cache_registration_request;
+    let p_body_cache_revocation_request = cache_revocation_request;
 
-    let uri_str = format!("{}/cache/register", configuration.base_path);
+    let uri_str = format!("{}/cache/revoke", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
@@ -139,7 +249,7 @@ pub async fn register_cache_service(configuration: &configuration::Configuration
     if let Some(ref token) = configuration.bearer_access_token {
         req_builder = req_builder.bearer_auth(token.to_owned());
     };
-    req_builder = req_builder.json(&p_body_cache_registration_request);
+    req_builder = req_builder.json(&p_body_cache_revocation_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -161,7 +271,47 @@ pub async fn register_cache_service(configuration: &configuration::Configuration
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<RegisterCacheServiceError> = serde_json::from_str(&content).ok();
+        let entity: Option<RevokeCacheError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+pub async fn rotate_cache_key(configuration: &configuration::Configuration, cache_key_rotation_request: models::CacheKeyRotationRequest) -> Result<models::CacheRegistrationReturnValue, Error<RotateCacheKeyError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_cache_key_rotation_request = cache_key_rotation_request;
+
+    let uri_str = format!("{}/cache/rotate-key", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_cache_key_rotation_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::CacheRegistrationReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::CacheRegistrationReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<RotateCacheKeyError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

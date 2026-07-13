@@ -170,10 +170,16 @@ paths:
   /materialization/plan:
     $ref: './Materialization.Paths.OpenAPI.yaml#/~1materialization~1plan'
 
-  /cache/register:
-    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1register'
+  /cache/enroll:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1enroll'
   /cache/refresh:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1refresh'
+  /cache/assign-repositories:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1assign-repositories'
+  /cache/revoke:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1revoke'
+  /cache/rotate-key:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1rotate-key'
   /cache/validation-keys:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1validation-keys'
       
@@ -429,10 +435,28 @@ components:
     MaterializationPlanReturnValue:
       $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlanReturnValue'
 
-    CacheRegistrationRequest:
-      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRequest'
+    CacheBoundaryKind:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheBoundaryKind'
+    CacheHealthStatus:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheHealthStatus'
+    CacheIdentityPublicKey:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheIdentityPublicKey'
+    CacheRepositoryScope:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRepositoryScope'
+    CacheRequestProofPayload:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRequestProofPayload'
+    SignedCacheRequestProof:
+      $ref: 'Cache.Components.OpenAPI.yaml#/SignedCacheRequestProof'
+    CacheEnrollmentRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheEnrollmentRequest'
     CacheRegistrationRefreshRequest:
       $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshRequest'
+    CacheRepositoryAssignmentRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRepositoryAssignmentRequest'
+    CacheRevocationRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRevocationRequest'
+    CacheKeyRotationRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheKeyRotationRequest'
     CacheRegistrationRefreshStatus:
       $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshStatus'
     CacheRegistration:

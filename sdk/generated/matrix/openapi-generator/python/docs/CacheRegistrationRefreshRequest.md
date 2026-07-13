@@ -1,12 +1,20 @@
 # CacheRegistrationRefreshRequest
 
-Request body used by an approved Grace Cache service to refresh its current registration.
+Cache-authenticated refresh that may update operational facts only.
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **var_class** | **str** |  | 
+**cache_id** | **UUID** |  | 
+**endpoint** | **str** |  | 
+**health** | [**CacheHealthStatus**](CacheHealthStatus.md) |  | 
+**software_version** | **str** |  | 
+**protocol_version** | **str** |  | 
+**prefetch_supported** | **bool** |  | 
+**observed_at** | **datetime** |  | 
+**proof** | [**SignedCacheRequestProof**](SignedCacheRequestProof.md) |  | 
 
 ## Example
 

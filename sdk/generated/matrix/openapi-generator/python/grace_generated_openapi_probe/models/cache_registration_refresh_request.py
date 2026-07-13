@@ -18,18 +18,30 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List
+from uuid import UUID
+from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus
+from grace_generated_openapi_probe.models.signed_cache_request_proof import SignedCacheRequestProof
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
 class CacheRegistrationRefreshRequest(BaseModel):
     """
-    Request body used by an approved Grace Cache service to refresh its current registration.
+    Cache-authenticated refresh that may update operational facts only.
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
-    __properties: ClassVar[List[str]] = ["Class"]
+    cache_id: UUID = Field(alias="CacheId")
+    endpoint: StrictStr = Field(alias="Endpoint")
+    health: CacheHealthStatus = Field(alias="Health")
+    software_version: StrictStr = Field(alias="SoftwareVersion")
+    protocol_version: StrictStr = Field(alias="ProtocolVersion")
+    prefetch_supported: StrictBool = Field(alias="PrefetchSupported")
+    observed_at: datetime = Field(alias="ObservedAt")
+    proof: SignedCacheRequestProof = Field(alias="Proof")
+    __properties: ClassVar[List[str]] = ["Class", "CacheId", "Endpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "ObservedAt", "Proof"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -70,6 +82,9 @@ class CacheRegistrationRefreshRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of proof
+        if self.proof:
+            _dict['Proof'] = self.proof.to_dict()
         return _dict
 
     @classmethod
@@ -82,7 +97,15 @@ class CacheRegistrationRefreshRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "Class": obj.get("Class")
+            "Class": obj.get("Class"),
+            "CacheId": obj.get("CacheId"),
+            "Endpoint": obj.get("Endpoint"),
+            "Health": obj.get("Health"),
+            "SoftwareVersion": obj.get("SoftwareVersion"),
+            "ProtocolVersion": obj.get("ProtocolVersion"),
+            "PrefetchSupported": obj.get("PrefetchSupported"),
+            "ObservedAt": obj.get("ObservedAt"),
+            "Proof": SignedCacheRequestProof.from_dict(obj["Proof"]) if obj.get("Proof") is not None else None
         })
         return _obj
 

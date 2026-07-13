@@ -24,8 +24,8 @@ pub struct MaterializationArtifactSource {
     pub cache_key: Option<String>,
     #[serde(rename = "CacheEndpoint", skip_serializing_if = "Option::is_none")]
     pub cache_endpoint: Option<String>,
-    #[serde(rename = "CacheServicePrincipalId", skip_serializing_if = "Option::is_none")]
-    pub cache_service_principal_id: Option<String>,
+    #[serde(rename = "CacheId", skip_serializing_if = "Option::is_none")]
+    pub cache_id: Option<uuid::Uuid>,
     #[serde(rename = "DirectFallbackUri", skip_serializing_if = "Option::is_none")]
     pub direct_fallback_uri: Option<String>,
 }
@@ -39,7 +39,7 @@ impl MaterializationArtifactSource {
             direct_uri: None,
             cache_key: None,
             cache_endpoint: None,
-            cache_service_principal_id: None,
+            cache_id: None,
             direct_fallback_uri: None,
         }
     }

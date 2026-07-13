@@ -1,23 +1,31 @@
 # CacheRegistration
 
-Server-owned active registration record for an approved Grace Cache service.
+Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **var_class** | **str** |  | 
-**service_principal_id** | **str** |  | 
+**cache_id** | **UUID** |  | 
+**display_name** | **str** |  | 
+**boundary_kind** | [**CacheBoundaryKind**](CacheBoundaryKind.md) |  | 
+**owner_id** | **UUID** |  | 
+**organization_id** | **UUID** |  | [optional] 
+**repository_scopes** | [**List[CacheRepositoryScope]**](CacheRepositoryScope.md) |  | 
+**public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
 **endpoint** | **str** |  | 
-**approved_scopes** | **List[str]** |  | 
-**approved_capabilities** | **List[str]** |  | 
-**approved_execution_modes** | [**List[MaterializationExecutionMode]**](MaterializationExecutionMode.md) |  | 
-**registered_at** | **datetime** |  | 
+**health** | [**CacheHealthStatus**](CacheHealthStatus.md) |  | 
+**software_version** | **str** |  | 
+**protocol_version** | **str** |  | 
+**prefetch_supported** | **bool** |  | 
+**enrolled_by** | **str** |  | 
+**enrolled_at** | **datetime** |  | 
 **last_refreshed_at** | **datetime** |  | 
 **refresh_after** | **datetime** |  | 
 **expires_at** | **datetime** |  | 
-**read_through_enabled** | **bool** |  | 
-**prefetch_enabled** | **bool** |  | 
+**rotation_due_at** | **datetime** |  | 
+**revoked_at** | **datetime** |  | [optional] 
 
 ## Example
 

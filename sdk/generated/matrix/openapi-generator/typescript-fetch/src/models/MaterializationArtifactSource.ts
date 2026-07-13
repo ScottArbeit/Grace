@@ -62,7 +62,7 @@ export interface MaterializationArtifactSource {
      * @type {string}
      * @memberof MaterializationArtifactSource
      */
-    cacheServicePrincipalId?: string;
+    cacheId?: string;
     /**
      * 
      * @type {string}
@@ -97,7 +97,7 @@ export function MaterializationArtifactSourceFromJSONTyped(json: any, ignoreDisc
         'directUri': json['DirectUri'] == null ? undefined : json['DirectUri'],
         'cacheKey': json['CacheKey'] == null ? undefined : json['CacheKey'],
         'cacheEndpoint': json['CacheEndpoint'] == null ? undefined : json['CacheEndpoint'],
-        'cacheServicePrincipalId': json['CacheServicePrincipalId'] == null ? undefined : json['CacheServicePrincipalId'],
+        'cacheId': json['CacheId'] == null ? undefined : json['CacheId'],
         'directFallbackUri': json['DirectFallbackUri'] == null ? undefined : json['DirectFallbackUri'],
     };
 }
@@ -118,7 +118,7 @@ export function MaterializationArtifactSourceToJSONTyped(value?: Materialization
         'DirectUri': value['directUri'],
         'CacheKey': value['cacheKey'],
         'CacheEndpoint': value['cacheEndpoint'],
-        'CacheServicePrincipalId': value['cacheServicePrincipalId'],
+        'CacheId': value['cacheId'],
         'DirectFallbackUri': value['directFallbackUri'],
     };
 }

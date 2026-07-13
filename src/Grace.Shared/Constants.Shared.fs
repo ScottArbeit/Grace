@@ -302,22 +302,6 @@ module Constants =
         [<Literal>]
         let GraceAuthOidcM2mScopes = "grace__auth__oidc__m2m_scopes"
 
-        /// Enables Grace Cache service registration endpoints when the server has approved service principals and scope policy.
-        [<Literal>]
-        let GraceCacheRegistrationEnabled = "grace__cache__registration__enabled"
-
-        /// Semicolon-delimited OIDC service principal IDs that may register Grace Cache services.
-        [<Literal>]
-        let GraceCacheRegistrationServicePrincipalIds = "grace__cache__registration__service_principal_ids"
-
-        /// Semicolon-delimited Grace Cache registration scopes approved by server configuration.
-        [<Literal>]
-        let GraceCacheRegistrationAllowedScopes = "grace__cache__registration__allowed_scopes"
-
-        /// Semicolon-delimited Grace Cache registration capabilities approved by server configuration.
-        [<Literal>]
-        let GraceCacheRegistrationAllowedCapabilities = "grace__cache__registration__allowed_capabilities"
-
         /// Deprecated: External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftClientId = "grace__auth__microsoft__client_id"

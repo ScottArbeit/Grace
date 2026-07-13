@@ -21,16 +21,20 @@ from typing_extensions import Self
 
 class CacheRegistrationRefreshStatus(str, Enum):
     """
-    Result classification for a Cache registration or refresh operation.
+    Result classification for Cache enrollment and lifecycle operations.
     """
 
     """
     allowed enum values
     """
+    ENROLLED = 'enrolled'
     REFRESHED = 'refreshed'
     REFRESHNOTDUE = 'refreshNotDue'
     EXPIRED = 'expired'
     NOTFOUND = 'notFound'
+    REVOKED = 'revoked'
+    UPDATED = 'updated'
+    ROTATED = 'rotated'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

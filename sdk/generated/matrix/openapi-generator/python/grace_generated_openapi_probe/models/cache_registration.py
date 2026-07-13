@@ -20,29 +20,41 @@ import json
 
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
-from typing import Any, ClassVar, Dict, List
-from grace_generated_openapi_probe.models.materialization_execution_mode import MaterializationExecutionMode
+from typing import Any, ClassVar, Dict, List, Optional
+from uuid import UUID
+from grace_generated_openapi_probe.models.cache_boundary_kind import CacheBoundaryKind
+from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus
+from grace_generated_openapi_probe.models.cache_identity_public_key import CacheIdentityPublicKey
+from grace_generated_openapi_probe.models.cache_repository_scope import CacheRepositoryScope
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
 class CacheRegistration(BaseModel):
     """
-    Server-owned active registration record for an approved Grace Cache service.
+    Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
-    service_principal_id: StrictStr = Field(alias="ServicePrincipalId")
+    cache_id: UUID = Field(alias="CacheId")
+    display_name: StrictStr = Field(alias="DisplayName")
+    boundary_kind: CacheBoundaryKind = Field(alias="BoundaryKind")
+    owner_id: UUID = Field(alias="OwnerId")
+    organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
+    repository_scopes: List[CacheRepositoryScope] = Field(alias="RepositoryScopes")
+    public_key: CacheIdentityPublicKey = Field(alias="PublicKey")
     endpoint: StrictStr = Field(alias="Endpoint")
-    approved_scopes: List[StrictStr] = Field(alias="ApprovedScopes")
-    approved_capabilities: List[StrictStr] = Field(alias="ApprovedCapabilities")
-    approved_execution_modes: List[MaterializationExecutionMode] = Field(alias="ApprovedExecutionModes")
-    registered_at: datetime = Field(alias="RegisteredAt")
+    health: CacheHealthStatus = Field(alias="Health")
+    software_version: StrictStr = Field(alias="SoftwareVersion")
+    protocol_version: StrictStr = Field(alias="ProtocolVersion")
+    prefetch_supported: StrictBool = Field(alias="PrefetchSupported")
+    enrolled_by: StrictStr = Field(alias="EnrolledBy")
+    enrolled_at: datetime = Field(alias="EnrolledAt")
     last_refreshed_at: datetime = Field(alias="LastRefreshedAt")
     refresh_after: datetime = Field(alias="RefreshAfter")
     expires_at: datetime = Field(alias="ExpiresAt")
-    read_through_enabled: StrictBool = Field(alias="ReadThroughEnabled")
-    prefetch_enabled: StrictBool = Field(alias="PrefetchEnabled")
-    __properties: ClassVar[List[str]] = ["Class", "ServicePrincipalId", "Endpoint", "ApprovedScopes", "ApprovedCapabilities", "ApprovedExecutionModes", "RegisteredAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "ReadThroughEnabled", "PrefetchEnabled"]
+    rotation_due_at: datetime = Field(alias="RotationDueAt")
+    revoked_at: Optional[datetime] = Field(default=None, alias="RevokedAt")
+    __properties: ClassVar[List[str]] = ["Class", "CacheId", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "EnrolledBy", "EnrolledAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "RotationDueAt", "RevokedAt"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -83,6 +95,16 @@ class CacheRegistration(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in repository_scopes (list)
+        _items = []
+        if self.repository_scopes:
+            for _item_repository_scopes in self.repository_scopes:
+                if _item_repository_scopes:
+                    _items.append(_item_repository_scopes.to_dict())
+            _dict['RepositoryScopes'] = _items
+        # override the default output from pydantic by calling `to_dict()` of public_key
+        if self.public_key:
+            _dict['PublicKey'] = self.public_key.to_dict()
         return _dict
 
     @classmethod
@@ -96,17 +118,25 @@ class CacheRegistration(BaseModel):
 
         _obj = cls.model_validate({
             "Class": obj.get("Class"),
-            "ServicePrincipalId": obj.get("ServicePrincipalId"),
+            "CacheId": obj.get("CacheId"),
+            "DisplayName": obj.get("DisplayName"),
+            "BoundaryKind": obj.get("BoundaryKind"),
+            "OwnerId": obj.get("OwnerId"),
+            "OrganizationId": obj.get("OrganizationId"),
+            "RepositoryScopes": [CacheRepositoryScope.from_dict(_item) for _item in obj["RepositoryScopes"]] if obj.get("RepositoryScopes") is not None else None,
+            "PublicKey": CacheIdentityPublicKey.from_dict(obj["PublicKey"]) if obj.get("PublicKey") is not None else None,
             "Endpoint": obj.get("Endpoint"),
-            "ApprovedScopes": obj.get("ApprovedScopes"),
-            "ApprovedCapabilities": obj.get("ApprovedCapabilities"),
-            "ApprovedExecutionModes": obj.get("ApprovedExecutionModes"),
-            "RegisteredAt": obj.get("RegisteredAt"),
+            "Health": obj.get("Health"),
+            "SoftwareVersion": obj.get("SoftwareVersion"),
+            "ProtocolVersion": obj.get("ProtocolVersion"),
+            "PrefetchSupported": obj.get("PrefetchSupported"),
+            "EnrolledBy": obj.get("EnrolledBy"),
+            "EnrolledAt": obj.get("EnrolledAt"),
             "LastRefreshedAt": obj.get("LastRefreshedAt"),
             "RefreshAfter": obj.get("RefreshAfter"),
             "ExpiresAt": obj.get("ExpiresAt"),
-            "ReadThroughEnabled": obj.get("ReadThroughEnabled"),
-            "PrefetchEnabled": obj.get("PrefetchEnabled")
+            "RotationDueAt": obj.get("RotationDueAt"),
+            "RevokedAt": obj.get("RevokedAt")
         })
         return _obj
 

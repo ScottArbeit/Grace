@@ -1713,19 +1713,18 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
-  /cache/register:
+  /cache/enroll:
     post:
       tags:
         - Cache
-      summary: Register a Grace Cache service.
-      description: Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
-      operationId: RegisterCacheService
+      summary: Enroll a Grace Cache with an administrator-authorized repository boundary.
+      operationId: EnrollCache
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CacheRegistrationRequest'
+              $ref: '#/components/schemas/CacheEnrollmentRequest'
       responses:
         '200':
           $ref: '#/components/responses/CacheRegistrationResponse'
@@ -1733,15 +1732,16 @@ paths:
           $ref: '#/components/responses/400'
         '401':
           $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
   /cache/refresh:
     post:
       tags:
         - Cache
-      summary: Refresh a Grace Cache service registration.
-      description: Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
-      operationId: RefreshCacheService
+      summary: Refresh Cache operational facts with a current identity-key proof.
+      operationId: RefreshCache
       requestBody:
         required: true
         content:
@@ -1757,12 +1757,78 @@ paths:
           $ref: '#/components/responses/401'
         '500':
           $ref: '#/components/responses/500'
+  /cache/assign-repositories:
+    post:
+      tags:
+        - Cache
+      summary: Replace a Cache's exact repository assignments as a current administrator.
+      operationId: AssignCacheRepositories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheRepositoryAssignmentRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/revoke:
+    post:
+      tags:
+        - Cache
+      summary: Revoke a Cache registration as a current administrator.
+      operationId: RevokeCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheRevocationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/rotate-key:
+    post:
+      tags:
+        - Cache
+      summary: Rotate a Cache identity key after proof by the currently accepted key.
+      operationId: RotateCacheKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheKeyRotationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '500':
+          $ref: '#/components/responses/500'
   /cache/validation-keys:
     get:
       tags:
         - Cache
       summary: Publish artifact grant validation keys.
-      description: Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
       operationId: GetArtifactGrantValidationKeys
       responses:
         '200':
@@ -4076,8 +4142,9 @@ components:
           type: string
           format: uri
           nullable: true
-        CacheServicePrincipalId:
+        CacheId:
           type: string
+          format: uuid
           nullable: true
         DirectFallbackUri:
           type: string
@@ -4177,94 +4244,294 @@ components:
         - EventTime
         - CorrelationId
         - Properties
-    CacheRegistrationRequest:
-      description: Request body used by an approved Grace Cache service to register its endpoint and requested boundary.
+    CacheBoundaryKind:
+      type: string
+      enum:
+        - owner
+        - organization
+      x-enumNames:
+        - Owner
+        - Organization
+    CacheHealthStatus:
+      type: string
+      enum:
+        - healthy
+        - unhealthy
+      x-enumNames:
+        - Healthy
+        - Unhealthy
+    CacheIdentityPublicKey:
+      description: Canonical P-256 public key for a Cache identity. Private key material is never accepted or returned.
       type: object
       properties:
         Class:
           type: string
-          example: CacheRegistrationRequest
+          example: CacheIdentityPublicKey
+        Algorithm:
+          type: string
+          enum:
+            - ES256
+        Curve:
+          type: string
+          enum:
+            - P-256
+        PublicKeyX:
+          type: string
+        PublicKeyY:
+          type: string
+      required:
+        - Class
+        - Algorithm
+        - Curve
+        - PublicKeyX
+        - PublicKeyY
+    CacheRepositoryScope:
+      description: Explicit durable repository assignment with its organization needed for authoritative lookup.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRepositoryScope
+        OrganizationId:
+          type: string
+          format: uuid
+        RepositoryId:
+          type: string
+          format: uuid
+      required:
+        - Class
+        - OrganizationId
+        - RepositoryId
+    CacheRequestProofPayload:
+      description: Canonical Cache proof binding the cache id, operation, canonical request digest, and Unix-millisecond timestamp.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRequestProofPayload
+        CacheId:
+          type: string
+          format: uuid
+        Operation:
+          type: string
+        RequestDigest:
+          type: string
+        IssuedAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - Class
+        - CacheId
+        - Operation
+        - RequestDigest
+        - IssuedAt
+    SignedCacheRequestProof:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: SignedCacheRequestProof
+        Payload:
+          $ref: '#/components/schemas/CacheRequestProofPayload'
+        Signature:
+          type: string
+      required:
+        - Class
+        - Payload
+        - Signature
+    CacheEnrollmentRequest:
+      description: Administrator-authenticated enrollment for exactly one Owner or Organization and explicit repositories within it.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheEnrollmentRequest
+        DisplayName:
+          type: string
+        BoundaryKind:
+          $ref: '#/components/schemas/CacheBoundaryKind'
+        OwnerId:
+          type: string
+          format: uuid
+        OrganizationId:
+          type: string
+          format: uuid
+          nullable: true
+        RepositoryScopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CacheRepositoryScope'
+        PublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
         Endpoint:
           type: string
           format: uri
-          example: https://cache.example.net/grace
-        RequestedScopes:
-          type: array
-          description: Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.
-          items:
-            type: string
-          example:
-            - repository:<OwnerId>/<OrganizationId>/<RepositoryId>
-        RequestedCapabilities:
-          type: array
-          items:
-            type: string
-          example:
-            - read-through
-            - prefetch
-        RequestedExecutionModes:
-          type: array
-          items:
-            $ref: '#/components/schemas/MaterializationExecutionMode'
-          example:
-            - cachePreferred
-            - cacheRequired
+        Health:
+          $ref: '#/components/schemas/CacheHealthStatus'
+        SoftwareVersion:
+          type: string
+        ProtocolVersion:
+          type: string
+        PrefetchSupported:
+          type: boolean
       required:
         - Class
+        - DisplayName
+        - BoundaryKind
+        - OwnerId
+        - RepositoryScopes
+        - PublicKey
         - Endpoint
-        - RequestedScopes
-        - RequestedCapabilities
-        - RequestedExecutionModes
+        - Health
+        - SoftwareVersion
+        - ProtocolVersion
+        - PrefetchSupported
     CacheRegistrationRefreshRequest:
-      description: Request body used by an approved Grace Cache service to refresh its current registration.
+      description: Cache-authenticated refresh that may update operational facts only.
       type: object
       properties:
         Class:
           type: string
           example: CacheRegistrationRefreshRequest
+        CacheId:
+          type: string
+          format: uuid
+        Endpoint:
+          type: string
+          format: uri
+        Health:
+          $ref: '#/components/schemas/CacheHealthStatus'
+        SoftwareVersion:
+          type: string
+        ProtocolVersion:
+          type: string
+        PrefetchSupported:
+          type: boolean
+        ObservedAt:
+          $ref: '#/components/schemas/Instant'
+        Proof:
+          $ref: '#/components/schemas/SignedCacheRequestProof'
       required:
         - Class
+        - CacheId
+        - Endpoint
+        - Health
+        - SoftwareVersion
+        - ProtocolVersion
+        - PrefetchSupported
+        - ObservedAt
+        - Proof
+    CacheRepositoryAssignmentRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRepositoryAssignmentRequest
+        CacheId:
+          type: string
+          format: uuid
+        RepositoryScopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CacheRepositoryScope'
+      required:
+        - Class
+        - CacheId
+        - RepositoryScopes
+    CacheRevocationRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRevocationRequest
+        CacheId:
+          type: string
+          format: uuid
+      required:
+        - Class
+        - CacheId
+    CacheKeyRotationRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheKeyRotationRequest
+        CacheId:
+          type: string
+          format: uuid
+        NewPublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
+        Proof:
+          $ref: '#/components/schemas/SignedCacheRequestProof'
+      required:
+        - Class
+        - CacheId
+        - NewPublicKey
+        - Proof
     CacheRegistrationRefreshStatus:
-      description: Result classification for a Cache registration or refresh operation.
+      description: Result classification for Cache enrollment and lifecycle operations.
       type: string
       enum:
+        - enrolled
         - refreshed
         - refreshNotDue
         - expired
         - notFound
+        - revoked
+        - updated
+        - rotated
       x-enumNames:
+        - Enrolled
         - Refreshed
         - RefreshNotDue
         - Expired
         - NotFound
-      example: refreshed
+        - Revoked
+        - Updated
+        - Rotated
+      example: enrolled
     CacheRegistration:
-      description: Server-owned active registration record for an approved Grace Cache service.
+      description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
       type: object
       properties:
         Class:
           type: string
           example: CacheRegistration
-        ServicePrincipalId:
+        CacheId:
           type: string
-          example: cache-service-client
+          format: uuid
+        DisplayName:
+          type: string
+        BoundaryKind:
+          $ref: '#/components/schemas/CacheBoundaryKind'
+        OwnerId:
+          type: string
+          format: uuid
+        OrganizationId:
+          type: string
+          format: uuid
+          nullable: true
+        RepositoryScopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CacheRepositoryScope'
+        PublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
         Endpoint:
           type: string
           format: uri
-          example: https://cache.example.net/grace
-        ApprovedScopes:
-          type: array
-          items:
-            type: string
-        ApprovedCapabilities:
-          type: array
-          items:
-            type: string
-        ApprovedExecutionModes:
-          type: array
-          items:
-            $ref: '#/components/schemas/MaterializationExecutionMode'
-        RegisteredAt:
+        Health:
+          $ref: '#/components/schemas/CacheHealthStatus'
+        SoftwareVersion:
+          type: string
+        ProtocolVersion:
+          type: string
+        PrefetchSupported:
+          type: boolean
+        EnrolledBy:
+          type: string
+        EnrolledAt:
           $ref: '#/components/schemas/Instant'
         LastRefreshedAt:
           $ref: '#/components/schemas/Instant'
@@ -4272,23 +4539,30 @@ components:
           $ref: '#/components/schemas/Instant'
         ExpiresAt:
           $ref: '#/components/schemas/Instant'
-        ReadThroughEnabled:
-          type: boolean
-        PrefetchEnabled:
-          type: boolean
+        RotationDueAt:
+          $ref: '#/components/schemas/Instant'
+        RevokedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
       required:
         - Class
-        - ServicePrincipalId
+        - CacheId
+        - DisplayName
+        - BoundaryKind
+        - OwnerId
+        - RepositoryScopes
+        - PublicKey
         - Endpoint
-        - ApprovedScopes
-        - ApprovedCapabilities
-        - ApprovedExecutionModes
-        - RegisteredAt
+        - Health
+        - SoftwareVersion
+        - ProtocolVersion
+        - PrefetchSupported
+        - EnrolledBy
+        - EnrolledAt
         - LastRefreshedAt
         - RefreshAfter
         - ExpiresAt
-        - ReadThroughEnabled
-        - PrefetchEnabled
+        - RotationDueAt
     CacheRegistrationResult:
       description: Result returned by Cache registration and refresh routes.
       type: object
@@ -4459,7 +4733,7 @@ components:
         HolderKeyThumbprint:
           type: string
           description: Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.
-        CacheServicePrincipalId:
+        CacheId:
           type: string
         TargetRootDirectoryVersionId:
           $ref: '#/components/schemas/DirectoryVersionId'
@@ -4482,7 +4756,7 @@ components:
         - RequesterPrincipalType
         - RequesterPrincipalId
         - HolderKeyThumbprint
-        - CacheServicePrincipalId
+        - CacheId
         - TargetRootDirectoryVersionId
         - ExecutionMode
         - ArtifactIdentities
@@ -7799,6 +8073,16 @@ components:
             emptyChallenge:
               summary: Framework authentication challenge
               value: ''
+    '403':
+      description: Forbidden
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            forbidden:
+              summary: Framework authorization failure
+              value: Forbidden.
     '500':
       description: Internal Server Error
       content:

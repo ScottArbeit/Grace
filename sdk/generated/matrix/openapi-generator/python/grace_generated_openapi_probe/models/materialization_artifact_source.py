@@ -20,6 +20,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from uuid import UUID
 from grace_generated_openapi_probe.models.materialization_artifact_source_kind import MaterializationArtifactSourceKind
 from typing import Optional, Set
 from typing_extensions import Self
@@ -34,9 +35,9 @@ class MaterializationArtifactSource(BaseModel):
     direct_uri: Optional[StrictStr] = Field(default=None, alias="DirectUri")
     cache_key: Optional[StrictStr] = Field(default=None, alias="CacheKey")
     cache_endpoint: Optional[StrictStr] = Field(default=None, alias="CacheEndpoint")
-    cache_service_principal_id: Optional[StrictStr] = Field(default=None, alias="CacheServicePrincipalId")
+    cache_id: Optional[UUID] = Field(default=None, alias="CacheId")
     direct_fallback_uri: Optional[StrictStr] = Field(default=None, alias="DirectFallbackUri")
-    __properties: ClassVar[List[str]] = ["Class", "SourceKind", "DirectUri", "CacheKey", "CacheEndpoint", "CacheServicePrincipalId", "DirectFallbackUri"]
+    __properties: ClassVar[List[str]] = ["Class", "SourceKind", "DirectUri", "CacheKey", "CacheEndpoint", "CacheId", "DirectFallbackUri"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -94,7 +95,7 @@ class MaterializationArtifactSource(BaseModel):
             "DirectUri": obj.get("DirectUri"),
             "CacheKey": obj.get("CacheKey"),
             "CacheEndpoint": obj.get("CacheEndpoint"),
-            "CacheServicePrincipalId": obj.get("CacheServicePrincipalId"),
+            "CacheId": obj.get("CacheId"),
             "DirectFallbackUri": obj.get("DirectFallbackUri")
         })
         return _obj

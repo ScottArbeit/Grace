@@ -746,52 +746,29 @@ export grace__auth__oidc__m2m_scopes="read:foo write:bar"
 
 ---
 
-### Grace Cache service registration identity
+### Grace Cache enrollment and identity
 
-Grace Cache registration uses the existing OIDC/JWT bearer authentication path. A cache service must authenticate with
-an OIDC machine-to-machine credential. Grace Server accepts it for cache registration only when the token is a JWT bearer
-token with `gty=client-credentials`, and the presented service principal ID is listed in server-side cache registration
-configuration. Grace PATs, interactive user credentials, local TestAuth headers, endpoint URLs, and cache-reported
-locations are not proof of cache service identity.
+A Grace administrator enrolls each Cache with the authenticated Grace identity already used for administrator routes.
+Enrollment binds one server-assigned immutable `CacheId` to exactly one Owner or Organization and one or more explicit
+stable repository IDs within that boundary. Grace Server revalidates the administrator's current boundary and repository
+permissions before the atomic enrollment or assignment change; no installation-wide service-principal allowlist or
+global cache-scope configuration exists.
 
-Registration scope and capability approval is also server-owned. A cache service can request only scopes and
-capabilities that Grace Server configuration already approved; the cache service does not approve its own repositories,
-StoragePools, artifact grants, or read-through capabilities.
+The future Cache host generates a canonical P-256 key pair and sends only its public key to `/cache/enroll`. Grace Server
+stores that public key, the display name, operational facts, explicit repository assignments, and enrollment audit identity.
+It never receives or stores the private key. A refresh or key rotation proves possession of the currently accepted key by
+signing the canonical request payload that binds `CacheId`, operation, request digest, and Unix-millisecond timestamp.
+Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration state.
 
-Configure cache registration with these environment variables when the registration endpoint is implemented:
+Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
+negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this
+foundation. Refresh may update only endpoint, health, software/protocol version, Prefetch support, and liveness timestamps;
+it cannot change a Cache's display name, repository assignments, boundary, public key, or administrative state.
 
-* `grace__cache__registration__enabled`: `true` enables cache registration configuration validation. The default is
-  disabled.
-* `grace__cache__registration__service_principal_ids`: semicolon-delimited OIDC service principal IDs that may register
-  cache services.
-* `grace__cache__registration__allowed_scopes`: semicolon-delimited server-approved cache registration scopes. For
-  materialization-plan selection, each repository scope must use
-  `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` with stable IDs. Repository names and `storage-pool:*` scopes
-  do not match this selector. A Cache that serves multiple repositories must list each repository scope explicitly.
-* `grace__cache__registration__allowed_capabilities`: semicolon-delimited server-approved cache registration
-  capabilities.
-
-PowerShell:
-
-```powershell
-$env:grace__cache__registration__enabled="true"
-$env:grace__cache__registration__service_principal_ids="cache-service-client"
-$env:grace__cache__registration__allowed_scopes="repository:<OwnerId>/<OrganizationId>/<RepositoryId>"
-$env:grace__cache__registration__allowed_capabilities="Register;PublishHealth"
-```
-
-bash / zsh:
-
-```bash
-export grace__cache__registration__enabled="true"
-export grace__cache__registration__service_principal_ids="cache-service-client"
-export grace__cache__registration__allowed_scopes="repository:<OwnerId>/<OrganizationId>/<RepositoryId>"
-export grace__cache__registration__allowed_capabilities="Register;PublishHealth"
-```
-
-Later Grace.Cache startup must validate this configuration before exposing its HTTP listener. Logs and status output
-must report only non-secret summaries, such as service principal count, approved scope count, and approved capability
-names; they must not print client secrets, bearer tokens, service principal IDs, or credential-bearing URLs.
+Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. A current-key-proven
+`/cache/rotate-key` request immediately accepts the new canonical P-256 public key, retires the old key, and resets the
+four-hour rotation schedule. A lost key requires revocation and re-enrollment. Cache enrollment does not require cache
+environment variables, service principal IDs, or private-key configuration in Grace Server.
 
 ---
 

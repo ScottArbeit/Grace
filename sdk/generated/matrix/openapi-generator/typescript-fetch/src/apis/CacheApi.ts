@@ -19,38 +19,175 @@ import {
     ArtifactGrantValidationKeySetToJSON,
 } from '../models/ArtifactGrantValidationKeySet';
 import {
+    type CacheEnrollmentRequest,
+    CacheEnrollmentRequestFromJSON,
+    CacheEnrollmentRequestToJSON,
+} from '../models/CacheEnrollmentRequest';
+import {
+    type CacheKeyRotationRequest,
+    CacheKeyRotationRequestFromJSON,
+    CacheKeyRotationRequestToJSON,
+} from '../models/CacheKeyRotationRequest';
+import {
     type CacheRegistrationRefreshRequest,
     CacheRegistrationRefreshRequestFromJSON,
     CacheRegistrationRefreshRequestToJSON,
 } from '../models/CacheRegistrationRefreshRequest';
-import {
-    type CacheRegistrationRequest,
-    CacheRegistrationRequestFromJSON,
-    CacheRegistrationRequestToJSON,
-} from '../models/CacheRegistrationRequest';
 import {
     type CacheRegistrationReturnValue,
     CacheRegistrationReturnValueFromJSON,
     CacheRegistrationReturnValueToJSON,
 } from '../models/CacheRegistrationReturnValue';
 import {
+    type CacheRepositoryAssignmentRequest,
+    CacheRepositoryAssignmentRequestFromJSON,
+    CacheRepositoryAssignmentRequestToJSON,
+} from '../models/CacheRepositoryAssignmentRequest';
+import {
+    type CacheRevocationRequest,
+    CacheRevocationRequestFromJSON,
+    CacheRevocationRequestToJSON,
+} from '../models/CacheRevocationRequest';
+import {
     type GraceError,
     GraceErrorFromJSON,
     GraceErrorToJSON,
 } from '../models/GraceError';
 
-export interface RefreshCacheServiceRequest {
+export interface AssignCacheRepositoriesRequest {
+    cacheRepositoryAssignmentRequest: CacheRepositoryAssignmentRequest;
+}
+
+export interface EnrollCacheRequest {
+    cacheEnrollmentRequest: CacheEnrollmentRequest;
+}
+
+export interface RefreshCacheRequest {
     cacheRegistrationRefreshRequest: CacheRegistrationRefreshRequest;
 }
 
-export interface RegisterCacheServiceRequest {
-    cacheRegistrationRequest: CacheRegistrationRequest;
+export interface RevokeCacheRequest {
+    cacheRevocationRequest: CacheRevocationRequest;
+}
+
+export interface RotateCacheKeyRequest {
+    cacheKeyRotationRequest: CacheKeyRotationRequest;
 }
 
 /**
  * 
  */
 export class CacheApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for assignCacheRepositories without sending the request
+     */
+    async assignCacheRepositoriesRequestOpts(requestParameters: AssignCacheRepositoriesRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['cacheRepositoryAssignmentRequest'] == null) {
+            throw new runtime.RequiredError(
+                'cacheRepositoryAssignmentRequest',
+                'Required parameter "cacheRepositoryAssignmentRequest" was null or undefined when calling assignCacheRepositories().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/cache/assign-repositories`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: CacheRepositoryAssignmentRequestToJSON(requestParameters['cacheRepositoryAssignmentRequest']),
+        };
+    }
+
+    /**
+     * Replace a Cache\'s exact repository assignments as a current administrator.
+     */
+    async assignCacheRepositoriesRaw(requestParameters: AssignCacheRepositoriesRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
+        const requestOptions = await this.assignCacheRepositoriesRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => CacheRegistrationReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Replace a Cache\'s exact repository assignments as a current administrator.
+     */
+    async assignCacheRepositories(requestParameters: AssignCacheRepositoriesRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
+        const response = await this.assignCacheRepositoriesRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for enrollCache without sending the request
+     */
+    async enrollCacheRequestOpts(requestParameters: EnrollCacheRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['cacheEnrollmentRequest'] == null) {
+            throw new runtime.RequiredError(
+                'cacheEnrollmentRequest',
+                'Required parameter "cacheEnrollmentRequest" was null or undefined when calling enrollCache().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/cache/enroll`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: CacheEnrollmentRequestToJSON(requestParameters['cacheEnrollmentRequest']),
+        };
+    }
+
+    /**
+     * Enroll a Grace Cache with an administrator-authorized repository boundary.
+     */
+    async enrollCacheRaw(requestParameters: EnrollCacheRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
+        const requestOptions = await this.enrollCacheRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => CacheRegistrationReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Enroll a Grace Cache with an administrator-authorized repository boundary.
+     */
+    async enrollCache(requestParameters: EnrollCacheRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
+        const response = await this.enrollCacheRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
 
     /**
      * Creates request options for getArtifactGrantValidationKeys without sending the request
@@ -80,7 +217,6 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
      * Publish artifact grant validation keys.
      */
     async getArtifactGrantValidationKeysRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ArtifactGrantValidationKeySet>> {
@@ -91,7 +227,6 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
      * Publish artifact grant validation keys.
      */
     async getArtifactGrantValidationKeys(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ArtifactGrantValidationKeySet> {
@@ -100,13 +235,13 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Creates request options for refreshCacheService without sending the request
+     * Creates request options for refreshCache without sending the request
      */
-    async refreshCacheServiceRequestOpts(requestParameters: RefreshCacheServiceRequest): Promise<runtime.RequestOpts> {
+    async refreshCacheRequestOpts(requestParameters: RefreshCacheRequest): Promise<runtime.RequestOpts> {
         if (requestParameters['cacheRegistrationRefreshRequest'] == null) {
             throw new runtime.RequiredError(
                 'cacheRegistrationRefreshRequest',
-                'Required parameter "cacheRegistrationRefreshRequest" was null or undefined when calling refreshCacheService().'
+                'Required parameter "cacheRegistrationRefreshRequest" was null or undefined when calling refreshCache().'
             );
         }
 
@@ -137,33 +272,31 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
-     * Refresh a Grace Cache service registration.
+     * Refresh Cache operational facts with a current identity-key proof.
      */
-    async refreshCacheServiceRaw(requestParameters: RefreshCacheServiceRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
-        const requestOptions = await this.refreshCacheServiceRequestOpts(requestParameters);
+    async refreshCacheRaw(requestParameters: RefreshCacheRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
+        const requestOptions = await this.refreshCacheRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
         return new runtime.JSONApiResponse(response, (jsonValue) => CacheRegistrationReturnValueFromJSON(jsonValue));
     }
 
     /**
-     * Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
-     * Refresh a Grace Cache service registration.
+     * Refresh Cache operational facts with a current identity-key proof.
      */
-    async refreshCacheService(requestParameters: RefreshCacheServiceRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
-        const response = await this.refreshCacheServiceRaw(requestParameters, initOverrides);
+    async refreshCache(requestParameters: RefreshCacheRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
+        const response = await this.refreshCacheRaw(requestParameters, initOverrides);
         return await response.value();
     }
 
     /**
-     * Creates request options for registerCacheService without sending the request
+     * Creates request options for revokeCache without sending the request
      */
-    async registerCacheServiceRequestOpts(requestParameters: RegisterCacheServiceRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['cacheRegistrationRequest'] == null) {
+    async revokeCacheRequestOpts(requestParameters: RevokeCacheRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['cacheRevocationRequest'] == null) {
             throw new runtime.RequiredError(
-                'cacheRegistrationRequest',
-                'Required parameter "cacheRegistrationRequest" was null or undefined when calling registerCacheService().'
+                'cacheRevocationRequest',
+                'Required parameter "cacheRevocationRequest" was null or undefined when calling revokeCache().'
             );
         }
 
@@ -182,34 +315,87 @@ export class CacheApi extends runtime.BaseAPI {
             }
         }
 
-        let urlPath = `/cache/register`;
+        let urlPath = `/cache/revoke`;
 
         return {
             path: urlPath,
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: CacheRegistrationRequestToJSON(requestParameters['cacheRegistrationRequest']),
+            body: CacheRevocationRequestToJSON(requestParameters['cacheRevocationRequest']),
         };
     }
 
     /**
-     * Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
-     * Register a Grace Cache service.
+     * Revoke a Cache registration as a current administrator.
      */
-    async registerCacheServiceRaw(requestParameters: RegisterCacheServiceRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
-        const requestOptions = await this.registerCacheServiceRequestOpts(requestParameters);
+    async revokeCacheRaw(requestParameters: RevokeCacheRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
+        const requestOptions = await this.revokeCacheRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
         return new runtime.JSONApiResponse(response, (jsonValue) => CacheRegistrationReturnValueFromJSON(jsonValue));
     }
 
     /**
-     * Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
-     * Register a Grace Cache service.
+     * Revoke a Cache registration as a current administrator.
      */
-    async registerCacheService(requestParameters: RegisterCacheServiceRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
-        const response = await this.registerCacheServiceRaw(requestParameters, initOverrides);
+    async revokeCache(requestParameters: RevokeCacheRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
+        const response = await this.revokeCacheRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for rotateCacheKey without sending the request
+     */
+    async rotateCacheKeyRequestOpts(requestParameters: RotateCacheKeyRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['cacheKeyRotationRequest'] == null) {
+            throw new runtime.RequiredError(
+                'cacheKeyRotationRequest',
+                'Required parameter "cacheKeyRotationRequest" was null or undefined when calling rotateCacheKey().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/cache/rotate-key`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: CacheKeyRotationRequestToJSON(requestParameters['cacheKeyRotationRequest']),
+        };
+    }
+
+    /**
+     * Rotate a Cache identity key after proof by the currently accepted key.
+     */
+    async rotateCacheKeyRaw(requestParameters: RotateCacheKeyRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
+        const requestOptions = await this.rotateCacheKeyRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => CacheRegistrationReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Rotate a Cache identity key after proof by the currently accepted key.
+     */
+    async rotateCacheKey(requestParameters: RotateCacheKeyRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
+        const response = await this.rotateCacheKeyRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

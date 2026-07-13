@@ -40,30 +40,33 @@ type MaterializationPlanRouteTests() =
         use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
         ArtifactGrant.exportHolderPublicKey key
 
-    let cacheRegistration mode =
-        CacheRegistration.Create(
-            "cache-service",
-            "https://cache.example.test",
-            Seq.empty,
-            [ Capability.ReadThrough ],
-            [ mode ],
-            Instant.FromUtc(2026, 7, 11, 20, 0),
-            Duration.FromHours 2,
-            Duration.FromHours 1
-        )
-
-    /// Builds a current read-through registration with exactly the supplied approved repository scopes.
-    let scopedCacheRegistration servicePrincipalId mode scopes =
-        CacheRegistration.Create(
-            servicePrincipalId,
-            "https://cache.example.test",
-            scopes,
-            [ Capability.ReadThrough ],
-            [ mode ],
-            Instant.FromUtc(2026, 7, 11, 20, 0),
-            Duration.FromHours 2,
-            Duration.FromHours 1
-        )
+    /// Builds one current Cache registration with exact stable repository assignments and no execution-mode or read-through fields.
+    let cacheRegistration _mode =
+        {
+            Class = nameof CacheRegistration
+            CacheId = Guid.Parse "88888888-8888-8888-8888-888888888888"
+            DisplayName = "test-cache"
+            BoundaryKind = CacheBoundaryKind.Organization
+            OwnerId = ownerId
+            OrganizationId = Some organizationId
+            RepositoryScopes =
+                [|
+                    CacheRepositoryScope.Create(organizationId, repositoryId)
+                |]
+            PublicKey = CacheIdentityPublicKey.Create("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            Endpoint = "https://cache.example.test"
+            Health = CacheHealthStatus.Healthy
+            SoftwareVersion = "1.0.0"
+            ProtocolVersion = "v1"
+            PrefetchSupported = false
+            EnrolledBy = "admin-user"
+            EnrolledAt = Instant.FromUtc(2026, 7, 11, 20, 0)
+            LastRefreshedAt = Instant.FromUtc(2026, 7, 11, 20, 0)
+            RefreshAfter = Instant.FromUtc(2026, 7, 11, 21, 0)
+            ExpiresAt = Instant.FromUtc(2026, 7, 11, 22, 0)
+            RotationDueAt = Instant.FromUtc(2026, 7, 12, 0, 0)
+            RevokedAt = None
+        }
 
     let signedGrant mode identities =
         let issuedAt = Instant.FromUtc(2026, 7, 11, 20, 0)
@@ -72,7 +75,7 @@ type MaterializationPlanRouteTests() =
             ArtifactGrantPayload.Create(
                 "authenticated-user",
                 "holder-thumbprint",
-                "cache-service",
+                (cacheRegistration mode).CacheId.ToString("D"),
                 targetRootDirectoryVersionId,
                 mode,
                 identities,
@@ -88,7 +91,7 @@ type MaterializationPlanRouteTests() =
             ArtifactGrantPayload.Create(
                 "authenticated-user",
                 "holder-thumbprint",
-                "cache-service",
+                (cacheRegistration mode).CacheId.ToString("D"),
                 targetRootDirectoryVersionId,
                 mode,
                 identities,
@@ -1193,11 +1196,11 @@ type MaterializationPlanRouteTests() =
                     Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
         }
 
-    /// Verifies that cache-mode selection requests one stable-ID repository scope instead of accepting caller scope input.
+    /// Verifies that cache-mode selection requests one exact stable repository id instead of accepting caller scope input.
     [<Test>]
     member _.CachePlanSelectionUsesStableRepositoryScope() =
         task {
-            let mutable selectedScope = None
+            let mutable selectedRepositoryId = None
 
             let request =
                 MaterializationPlanRequest
@@ -1219,7 +1222,7 @@ type MaterializationPlanRouteTests() =
                     (fun _ -> Task.FromResult(Ok(rootArtifacts ())))
                     (fun () -> Instant.FromUtc(2026, 7, 11, 20, 0))
                     (fun query _ ->
-                        selectedScope <- query.Scope
+                        selectedRepositoryId <- query.RepositoryId
                         Task.FromResult(Array.empty))
                     (fun _ _ _ -> Task.FromResult(Ok(Unchecked.defaultof<_>)))
                     ignore
@@ -1227,68 +1230,32 @@ type MaterializationPlanRouteTests() =
 
             assertErrorContains "No eligible Cache registration" result
 
-            let expected = $"repository:{ownerId:D}/{organizationId:D}/{repositoryId:D}"
-            Assert.That(selectedScope, Is.EqualTo(Some expected))
+            Assert.That(selectedRepositoryId, Is.EqualTo(Some repositoryId))
         }
 
-    /// Verifies cache eligibility accepts only an exact stable repository scope, including explicitly listed multi-repository registrations.
+    /// Verifies cache eligibility accepts only an exact stable repository id, including explicitly listed multi-repository registrations.
     [<Test>]
-    member _.RepositoryScopeEligibilityRejectsLookalikesAndStoragePoolScopes() =
-        let expectedScope = Materialization.repositoryCacheScope resolvedTarget
-        let reroutedRoot = { resolvedTarget with TargetRootDirectoryVersionId = DirectoryVersionId.Parse "88888888-8888-8888-8888-888888888888" }
-        let otherRepositoryScope = $"repository:{ownerId:D}/{organizationId:D}/99999999-9999-9999-9999-999999999999"
+    member _.RepositoryEligibilityUsesExactStableIdsAndCurrentHealth() =
+        let current = cacheRegistration MaterializationExecutionMode.CacheRequired
+        let unhealthy = { current with CacheId = Guid.Parse "99999999-9999-9999-9999-999999999999"; Health = CacheHealthStatus.Unhealthy }
 
-        let registrations =
-            [|
-                scopedCacheRegistration "cache-missing" MaterializationExecutionMode.CacheRequired Seq.empty
-                scopedCacheRegistration "cache-unrelated" MaterializationExecutionMode.CacheRequired [ otherRepositoryScope ]
-                scopedCacheRegistration
-                    "cache-malformed"
-                    MaterializationExecutionMode.CacheRequired
-                    [
-                        $"repository:{ownerId:D}/{organizationId:D}/not-a-guid"
-                    ]
-                scopedCacheRegistration
-                    "cache-name-lookalike"
-                    MaterializationExecutionMode.CacheRequired
-                    [
-                        "repository:owner-name/organization-name/repository-name"
-                    ]
-                scopedCacheRegistration "cache-wrong-case" MaterializationExecutionMode.CacheRequired [ expectedScope.ToUpperInvariant() ]
-                scopedCacheRegistration "cache-storage-pool" MaterializationExecutionMode.CacheRequired [ "storage-pool:rerouted-pool" ]
-                scopedCacheRegistration
-                    "cache-multi-unrelated"
-                    MaterializationExecutionMode.CacheRequired
-                    [
-                        otherRepositoryScope
-                        "repository:other-owner/other-organization/other-repository"
-                    ]
-                scopedCacheRegistration "cache-exact" MaterializationExecutionMode.CacheRequired [ expectedScope ]
-                scopedCacheRegistration "cache-multi-explicit" MaterializationExecutionMode.CacheRequired [ otherRepositoryScope; expectedScope ]
-            |]
-
-        let query =
-            CacheRegistrationSelectionQuery.Create(Some expectedScope, [ Capability.ReadThrough ], Some MaterializationExecutionMode.CacheRequired, true, false)
+        let unrelated =
+            { current with
+                CacheId = Guid.Parse "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                RepositoryScopes =
+                    [|
+                        CacheRepositoryScope.Create(organizationId, Guid.Parse "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+                    |]
+            }
 
         let eligible =
             Grace.Types.CacheRegistration.Lifecycle.selectEligible
-                { Class = nameof CacheRegistrationState; Registrations = registrations }
-                query
+                { Class = nameof CacheRegistrationState; Registrations = [| current; unhealthy; unrelated |] }
+                (CacheRegistrationSelectionQuery.Create(Some repositoryId, false))
                 (Instant.FromUtc(2026, 7, 11, 20, 30))
 
-        Assert.That(Materialization.repositoryCacheScope reroutedRoot, Is.EqualTo(expectedScope))
-
-        let expectedServicePrincipalIds: string array =
-            [|
-                "cache-exact"
-                "cache-multi-explicit"
-            |]
-
-        Assert.That(
-            eligible
-            |> Array.map (fun registration -> registration.ServicePrincipalId),
-            Is.EqualTo(expectedServicePrincipalIds :> obj)
-        )
+        Assert.That(eligible, Has.Length.EqualTo 1)
+        Assert.That(eligible[0].CacheId, Is.EqualTo current.CacheId)
 
     /// Verifies every unsupported path-scoped kind fails before cache projection, selection, or grant work in both cache modes.
     [<Test>]

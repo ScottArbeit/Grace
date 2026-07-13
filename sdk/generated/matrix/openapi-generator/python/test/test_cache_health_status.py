@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.cache_registration_request import CacheRegistrationRequest
+from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus
 
-class TestCacheRegistrationRequest(unittest.TestCase):
-    """CacheRegistrationRequest unit test stubs"""
+class TestCacheHealthStatus(unittest.TestCase):
+    """CacheHealthStatus unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,36 +26,9 @@ class TestCacheRegistrationRequest(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> CacheRegistrationRequest:
-        """Test CacheRegistrationRequest
-            include_optional is a boolean, when False only required
-            params are included, when True both required and
-            optional params are included """
-        # uncomment below to create an instance of `CacheRegistrationRequest`
-        """
-        model = CacheRegistrationRequest()
-        if include_optional:
-            return CacheRegistrationRequest(
-                var_class = 'CacheRegistrationRequest',
-                endpoint = 'https://cache.example.net/grace',
-                requested_scopes = [repository:<OwnerId>/<OrganizationId>/<RepositoryId>],
-                requested_capabilities = [read-through, prefetch],
-                requested_execution_modes = [cachePreferred, cacheRequired]
-            )
-        else:
-            return CacheRegistrationRequest(
-                var_class = 'CacheRegistrationRequest',
-                endpoint = 'https://cache.example.net/grace',
-                requested_scopes = [repository:<OwnerId>/<OrganizationId>/<RepositoryId>],
-                requested_capabilities = [read-through, prefetch],
-                requested_execution_modes = [cachePreferred, cacheRequired],
-        )
-        """
-
-    def testCacheRegistrationRequest(self):
-        """Test CacheRegistrationRequest"""
-        # inst_req_only = self.make_instance(include_optional=False)
-        # inst_req_and_optional = self.make_instance(include_optional=True)
+    def testCacheHealthStatus(self):
+        """Test CacheHealthStatus"""
+        # inst = CacheHealthStatus()
 
 if __name__ == '__main__':
     unittest.main()

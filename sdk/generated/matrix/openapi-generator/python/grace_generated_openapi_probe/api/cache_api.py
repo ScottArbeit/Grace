@@ -17,9 +17,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
 from grace_generated_openapi_probe.models.artifact_grant_validation_key_set import ArtifactGrantValidationKeySet
+from grace_generated_openapi_probe.models.cache_enrollment_request import CacheEnrollmentRequest
+from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest
 from grace_generated_openapi_probe.models.cache_registration_refresh_request import CacheRegistrationRefreshRequest
-from grace_generated_openapi_probe.models.cache_registration_request import CacheRegistrationRequest
 from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue
+from grace_generated_openapi_probe.models.cache_repository_assignment_request import CacheRepositoryAssignmentRequest
+from grace_generated_openapi_probe.models.cache_revocation_request import CacheRevocationRequest
 
 from grace_generated_openapi_probe.api_client import ApiClient, RequestSerialized
 from grace_generated_openapi_probe.api_response import ApiResponse
@@ -40,6 +43,574 @@ class CacheApi:
 
 
     @validate_call
+    def assign_cache_repositories(
+        self,
+        cache_repository_assignment_request: CacheRepositoryAssignmentRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> CacheRegistrationReturnValue:
+        """Replace a Cache's exact repository assignments as a current administrator.
+
+
+        :param cache_repository_assignment_request: (required)
+        :type cache_repository_assignment_request: CacheRepositoryAssignmentRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._assign_cache_repositories_serialize(
+            cache_repository_assignment_request=cache_repository_assignment_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '403': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        ).data
+
+
+    @validate_call
+    def assign_cache_repositories_with_http_info(
+        self,
+        cache_repository_assignment_request: CacheRepositoryAssignmentRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ApiResponse[CacheRegistrationReturnValue]:
+        """Replace a Cache's exact repository assignments as a current administrator.
+
+
+        :param cache_repository_assignment_request: (required)
+        :type cache_repository_assignment_request: CacheRepositoryAssignmentRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._assign_cache_repositories_serialize(
+            cache_repository_assignment_request=cache_repository_assignment_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '403': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        )
+
+
+    @validate_call
+    def assign_cache_repositories_without_preload_content(
+        self,
+        cache_repository_assignment_request: CacheRepositoryAssignmentRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> RESTResponseType:
+        """Replace a Cache's exact repository assignments as a current administrator.
+
+
+        :param cache_repository_assignment_request: (required)
+        :type cache_repository_assignment_request: CacheRepositoryAssignmentRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._assign_cache_repositories_serialize(
+            cache_repository_assignment_request=cache_repository_assignment_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '403': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        return response_data.response
+
+
+    def _assign_cache_repositories_serialize(
+        self,
+        cache_repository_assignment_request,
+        _request_auth,
+        _content_type,
+        _headers,
+        _host_index,
+    ) -> RequestSerialized:
+
+        _host = None
+
+        _collection_formats: Dict[str, str] = {
+        }
+
+        _path_params: Dict[str, str] = {}
+        _query_params: List[Tuple[str, str]] = []
+        _header_params: Dict[str, Optional[str]] = _headers or {}
+        _form_params: List[Tuple[str, str]] = []
+        _files: Dict[
+            str, Union[str, bytes, List[str], List[bytes], List[Tuple[str, bytes]]]
+        ] = {}
+        _body_params: Optional[bytes] = None
+
+        # process the path parameters
+        # process the query parameters
+        # process the header parameters
+        # process the form parameters
+        # process the body parameter
+        if cache_repository_assignment_request is not None:
+            _body_params = cache_repository_assignment_request
+
+
+        # set the HTTP header `Accept`
+        if 'Accept' not in _header_params:
+            _header_params['Accept'] = self.api_client.select_header_accept(
+                [
+                    'application/json', 
+                    'text/plain'
+                ]
+            )
+
+        # set the HTTP header `Content-Type`
+        if _content_type:
+            _header_params['Content-Type'] = _content_type
+        else:
+            _default_content_type = (
+                self.api_client.select_header_content_type(
+                    [
+                        'application/json'
+                    ]
+                )
+            )
+            if _default_content_type is not None:
+                _header_params['Content-Type'] = _default_content_type
+
+        # authentication setting
+        _auth_settings: List[str] = [
+            'bearerAuth'
+        ]
+
+        return self.api_client.param_serialize(
+            method='POST',
+            resource_path='/cache/assign-repositories',
+            path_params=_path_params,
+            query_params=_query_params,
+            header_params=_header_params,
+            body=_body_params,
+            post_params=_form_params,
+            files=_files,
+            auth_settings=_auth_settings,
+            collection_formats=_collection_formats,
+            _host=_host,
+            _request_auth=_request_auth
+        )
+
+
+
+
+    @validate_call
+    def enroll_cache(
+        self,
+        cache_enrollment_request: CacheEnrollmentRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> CacheRegistrationReturnValue:
+        """Enroll a Grace Cache with an administrator-authorized repository boundary.
+
+
+        :param cache_enrollment_request: (required)
+        :type cache_enrollment_request: CacheEnrollmentRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._enroll_cache_serialize(
+            cache_enrollment_request=cache_enrollment_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '403': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        ).data
+
+
+    @validate_call
+    def enroll_cache_with_http_info(
+        self,
+        cache_enrollment_request: CacheEnrollmentRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ApiResponse[CacheRegistrationReturnValue]:
+        """Enroll a Grace Cache with an administrator-authorized repository boundary.
+
+
+        :param cache_enrollment_request: (required)
+        :type cache_enrollment_request: CacheEnrollmentRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._enroll_cache_serialize(
+            cache_enrollment_request=cache_enrollment_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '403': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        )
+
+
+    @validate_call
+    def enroll_cache_without_preload_content(
+        self,
+        cache_enrollment_request: CacheEnrollmentRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> RESTResponseType:
+        """Enroll a Grace Cache with an administrator-authorized repository boundary.
+
+
+        :param cache_enrollment_request: (required)
+        :type cache_enrollment_request: CacheEnrollmentRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._enroll_cache_serialize(
+            cache_enrollment_request=cache_enrollment_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '403': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        return response_data.response
+
+
+    def _enroll_cache_serialize(
+        self,
+        cache_enrollment_request,
+        _request_auth,
+        _content_type,
+        _headers,
+        _host_index,
+    ) -> RequestSerialized:
+
+        _host = None
+
+        _collection_formats: Dict[str, str] = {
+        }
+
+        _path_params: Dict[str, str] = {}
+        _query_params: List[Tuple[str, str]] = []
+        _header_params: Dict[str, Optional[str]] = _headers or {}
+        _form_params: List[Tuple[str, str]] = []
+        _files: Dict[
+            str, Union[str, bytes, List[str], List[bytes], List[Tuple[str, bytes]]]
+        ] = {}
+        _body_params: Optional[bytes] = None
+
+        # process the path parameters
+        # process the query parameters
+        # process the header parameters
+        # process the form parameters
+        # process the body parameter
+        if cache_enrollment_request is not None:
+            _body_params = cache_enrollment_request
+
+
+        # set the HTTP header `Accept`
+        if 'Accept' not in _header_params:
+            _header_params['Accept'] = self.api_client.select_header_accept(
+                [
+                    'application/json', 
+                    'text/plain'
+                ]
+            )
+
+        # set the HTTP header `Content-Type`
+        if _content_type:
+            _header_params['Content-Type'] = _content_type
+        else:
+            _default_content_type = (
+                self.api_client.select_header_content_type(
+                    [
+                        'application/json'
+                    ]
+                )
+            )
+            if _default_content_type is not None:
+                _header_params['Content-Type'] = _default_content_type
+
+        # authentication setting
+        _auth_settings: List[str] = [
+            'bearerAuth'
+        ]
+
+        return self.api_client.param_serialize(
+            method='POST',
+            resource_path='/cache/enroll',
+            path_params=_path_params,
+            query_params=_query_params,
+            header_params=_header_params,
+            body=_body_params,
+            post_params=_form_params,
+            files=_files,
+            auth_settings=_auth_settings,
+            collection_formats=_collection_formats,
+            _host=_host,
+            _request_auth=_request_auth
+        )
+
+
+
+
+    @validate_call
     def get_artifact_grant_validation_keys(
         self,
         _request_timeout: Union[
@@ -57,7 +628,6 @@ class CacheApi:
     ) -> ArtifactGrantValidationKeySet:
         """Publish artifact grant validation keys.
 
-        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -123,7 +693,6 @@ class CacheApi:
     ) -> ApiResponse[ArtifactGrantValidationKeySet]:
         """Publish artifact grant validation keys.
 
-        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -189,7 +758,6 @@ class CacheApi:
     ) -> RESTResponseType:
         """Publish artifact grant validation keys.
 
-        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -296,7 +864,7 @@ class CacheApi:
 
 
     @validate_call
-    def refresh_cache_service(
+    def refresh_cache(
         self,
         cache_registration_refresh_request: CacheRegistrationRefreshRequest,
         _request_timeout: Union[
@@ -312,9 +880,8 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> CacheRegistrationReturnValue:
-        """Refresh a Grace Cache service registration.
+        """Refresh Cache operational facts with a current identity-key proof.
 
-        Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
 
         :param cache_registration_refresh_request: (required)
         :type cache_registration_refresh_request: CacheRegistrationRefreshRequest
@@ -340,7 +907,7 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._refresh_cache_service_serialize(
+        _param = self._refresh_cache_serialize(
             cache_registration_refresh_request=cache_registration_refresh_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -366,7 +933,7 @@ class CacheApi:
 
 
     @validate_call
-    def refresh_cache_service_with_http_info(
+    def refresh_cache_with_http_info(
         self,
         cache_registration_refresh_request: CacheRegistrationRefreshRequest,
         _request_timeout: Union[
@@ -382,9 +949,8 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[CacheRegistrationReturnValue]:
-        """Refresh a Grace Cache service registration.
+        """Refresh Cache operational facts with a current identity-key proof.
 
-        Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
 
         :param cache_registration_refresh_request: (required)
         :type cache_registration_refresh_request: CacheRegistrationRefreshRequest
@@ -410,7 +976,7 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._refresh_cache_service_serialize(
+        _param = self._refresh_cache_serialize(
             cache_registration_refresh_request=cache_registration_refresh_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -436,7 +1002,7 @@ class CacheApi:
 
 
     @validate_call
-    def refresh_cache_service_without_preload_content(
+    def refresh_cache_without_preload_content(
         self,
         cache_registration_refresh_request: CacheRegistrationRefreshRequest,
         _request_timeout: Union[
@@ -452,9 +1018,8 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Refresh a Grace Cache service registration.
+        """Refresh Cache operational facts with a current identity-key proof.
 
-        Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
 
         :param cache_registration_refresh_request: (required)
         :type cache_registration_refresh_request: CacheRegistrationRefreshRequest
@@ -480,7 +1045,7 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._refresh_cache_service_serialize(
+        _param = self._refresh_cache_serialize(
             cache_registration_refresh_request=cache_registration_refresh_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -501,7 +1066,7 @@ class CacheApi:
         return response_data.response
 
 
-    def _refresh_cache_service_serialize(
+    def _refresh_cache_serialize(
         self,
         cache_registration_refresh_request,
         _request_auth,
@@ -580,9 +1145,9 @@ class CacheApi:
 
 
     @validate_call
-    def register_cache_service(
+    def revoke_cache(
         self,
-        cache_registration_request: CacheRegistrationRequest,
+        cache_revocation_request: CacheRevocationRequest,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -596,12 +1161,11 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> CacheRegistrationReturnValue:
-        """Register a Grace Cache service.
+        """Revoke a Cache registration as a current administrator.
 
-        Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
 
-        :param cache_registration_request: (required)
-        :type cache_registration_request: CacheRegistrationRequest
+        :param cache_revocation_request: (required)
+        :type cache_revocation_request: CacheRevocationRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -624,8 +1188,8 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._register_cache_service_serialize(
-            cache_registration_request=cache_registration_request,
+        _param = self._revoke_cache_serialize(
+            cache_revocation_request=cache_revocation_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -636,6 +1200,7 @@ class CacheApi:
             '200': "CacheRegistrationReturnValue",
             '400': "GraceError",
             '401': "str",
+            '403': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -650,9 +1215,9 @@ class CacheApi:
 
 
     @validate_call
-    def register_cache_service_with_http_info(
+    def revoke_cache_with_http_info(
         self,
-        cache_registration_request: CacheRegistrationRequest,
+        cache_revocation_request: CacheRevocationRequest,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -666,12 +1231,11 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[CacheRegistrationReturnValue]:
-        """Register a Grace Cache service.
+        """Revoke a Cache registration as a current administrator.
 
-        Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
 
-        :param cache_registration_request: (required)
-        :type cache_registration_request: CacheRegistrationRequest
+        :param cache_revocation_request: (required)
+        :type cache_revocation_request: CacheRevocationRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -694,8 +1258,8 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._register_cache_service_serialize(
-            cache_registration_request=cache_registration_request,
+        _param = self._revoke_cache_serialize(
+            cache_revocation_request=cache_revocation_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -706,6 +1270,7 @@ class CacheApi:
             '200': "CacheRegistrationReturnValue",
             '400': "GraceError",
             '401': "str",
+            '403': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -720,9 +1285,9 @@ class CacheApi:
 
 
     @validate_call
-    def register_cache_service_without_preload_content(
+    def revoke_cache_without_preload_content(
         self,
-        cache_registration_request: CacheRegistrationRequest,
+        cache_revocation_request: CacheRevocationRequest,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -736,12 +1301,11 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Register a Grace Cache service.
+        """Revoke a Cache registration as a current administrator.
 
-        Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
 
-        :param cache_registration_request: (required)
-        :type cache_registration_request: CacheRegistrationRequest
+        :param cache_revocation_request: (required)
+        :type cache_revocation_request: CacheRevocationRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -764,8 +1328,8 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._register_cache_service_serialize(
-            cache_registration_request=cache_registration_request,
+        _param = self._revoke_cache_serialize(
+            cache_revocation_request=cache_revocation_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -776,6 +1340,7 @@ class CacheApi:
             '200': "CacheRegistrationReturnValue",
             '400': "GraceError",
             '401': "str",
+            '403': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -785,9 +1350,9 @@ class CacheApi:
         return response_data.response
 
 
-    def _register_cache_service_serialize(
+    def _revoke_cache_serialize(
         self,
-        cache_registration_request,
+        cache_revocation_request,
         _request_auth,
         _content_type,
         _headers,
@@ -813,8 +1378,8 @@ class CacheApi:
         # process the header parameters
         # process the form parameters
         # process the body parameter
-        if cache_registration_request is not None:
-            _body_params = cache_registration_request
+        if cache_revocation_request is not None:
+            _body_params = cache_revocation_request
 
 
         # set the HTTP header `Accept`
@@ -847,7 +1412,288 @@ class CacheApi:
 
         return self.api_client.param_serialize(
             method='POST',
-            resource_path='/cache/register',
+            resource_path='/cache/revoke',
+            path_params=_path_params,
+            query_params=_query_params,
+            header_params=_header_params,
+            body=_body_params,
+            post_params=_form_params,
+            files=_files,
+            auth_settings=_auth_settings,
+            collection_formats=_collection_formats,
+            _host=_host,
+            _request_auth=_request_auth
+        )
+
+
+
+
+    @validate_call
+    def rotate_cache_key(
+        self,
+        cache_key_rotation_request: CacheKeyRotationRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> CacheRegistrationReturnValue:
+        """Rotate a Cache identity key after proof by the currently accepted key.
+
+
+        :param cache_key_rotation_request: (required)
+        :type cache_key_rotation_request: CacheKeyRotationRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._rotate_cache_key_serialize(
+            cache_key_rotation_request=cache_key_rotation_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        ).data
+
+
+    @validate_call
+    def rotate_cache_key_with_http_info(
+        self,
+        cache_key_rotation_request: CacheKeyRotationRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ApiResponse[CacheRegistrationReturnValue]:
+        """Rotate a Cache identity key after proof by the currently accepted key.
+
+
+        :param cache_key_rotation_request: (required)
+        :type cache_key_rotation_request: CacheKeyRotationRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._rotate_cache_key_serialize(
+            cache_key_rotation_request=cache_key_rotation_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        )
+
+
+    @validate_call
+    def rotate_cache_key_without_preload_content(
+        self,
+        cache_key_rotation_request: CacheKeyRotationRequest,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> RESTResponseType:
+        """Rotate a Cache identity key after proof by the currently accepted key.
+
+
+        :param cache_key_rotation_request: (required)
+        :type cache_key_rotation_request: CacheKeyRotationRequest
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._rotate_cache_key_serialize(
+            cache_key_rotation_request=cache_key_rotation_request,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "CacheRegistrationReturnValue",
+            '400': "GraceError",
+            '401': "str",
+            '500': "GraceError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        return response_data.response
+
+
+    def _rotate_cache_key_serialize(
+        self,
+        cache_key_rotation_request,
+        _request_auth,
+        _content_type,
+        _headers,
+        _host_index,
+    ) -> RequestSerialized:
+
+        _host = None
+
+        _collection_formats: Dict[str, str] = {
+        }
+
+        _path_params: Dict[str, str] = {}
+        _query_params: List[Tuple[str, str]] = []
+        _header_params: Dict[str, Optional[str]] = _headers or {}
+        _form_params: List[Tuple[str, str]] = []
+        _files: Dict[
+            str, Union[str, bytes, List[str], List[bytes], List[Tuple[str, bytes]]]
+        ] = {}
+        _body_params: Optional[bytes] = None
+
+        # process the path parameters
+        # process the query parameters
+        # process the header parameters
+        # process the form parameters
+        # process the body parameter
+        if cache_key_rotation_request is not None:
+            _body_params = cache_key_rotation_request
+
+
+        # set the HTTP header `Accept`
+        if 'Accept' not in _header_params:
+            _header_params['Accept'] = self.api_client.select_header_accept(
+                [
+                    'application/json', 
+                    'text/plain'
+                ]
+            )
+
+        # set the HTTP header `Content-Type`
+        if _content_type:
+            _header_params['Content-Type'] = _content_type
+        else:
+            _default_content_type = (
+                self.api_client.select_header_content_type(
+                    [
+                        'application/json'
+                    ]
+                )
+            )
+            if _default_content_type is not None:
+                _header_params['Content-Type'] = _default_content_type
+
+        # authentication setting
+        _auth_settings: List[str] = [
+            'bearerAuth'
+        ]
+
+        return self.api_client.param_serialize(
+            method='POST',
+            resource_path='/cache/rotate-key',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,

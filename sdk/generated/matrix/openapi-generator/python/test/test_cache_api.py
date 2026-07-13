@@ -27,6 +27,20 @@ class TestCacheApi(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
+    def test_assign_cache_repositories(self) -> None:
+        """Test case for assign_cache_repositories
+
+        Replace a Cache's exact repository assignments as a current administrator.
+        """
+        pass
+
+    def test_enroll_cache(self) -> None:
+        """Test case for enroll_cache
+
+        Enroll a Grace Cache with an administrator-authorized repository boundary.
+        """
+        pass
+
     def test_get_artifact_grant_validation_keys(self) -> None:
         """Test case for get_artifact_grant_validation_keys
 
@@ -34,17 +48,24 @@ class TestCacheApi(unittest.TestCase):
         """
         pass
 
-    def test_refresh_cache_service(self) -> None:
-        """Test case for refresh_cache_service
+    def test_refresh_cache(self) -> None:
+        """Test case for refresh_cache
 
-        Refresh a Grace Cache service registration.
+        Refresh Cache operational facts with a current identity-key proof.
         """
         pass
 
-    def test_register_cache_service(self) -> None:
-        """Test case for register_cache_service
+    def test_revoke_cache(self) -> None:
+        """Test case for revoke_cache
 
-        Register a Grace Cache service.
+        Revoke a Cache registration as a current administrator.
+        """
+        pass
+
+    def test_rotate_cache_key(self) -> None:
+        """Test case for rotate_cache_key
+
+        Rotate a Cache identity key after proof by the currently accepted key.
         """
         pass
 

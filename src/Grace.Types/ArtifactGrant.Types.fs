@@ -107,7 +107,7 @@ module ArtifactGrant =
             [<Id(4u)>]
             HolderKeyThumbprint: string
             [<Id(5u)>]
-            CacheServicePrincipalId: string
+            CacheId: string
             [<Id(6u)>]
             TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(7u)>]
@@ -127,7 +127,7 @@ module ArtifactGrant =
             (
                 requesterPrincipalId: string,
                 holderKeyThumbprint: string,
-                cacheServicePrincipalId: string,
+                cacheId: string,
                 targetRootDirectoryVersionId: DirectoryVersionId,
                 executionMode: MaterializationExecutionMode,
                 artifactIdentities: string seq,
@@ -142,7 +142,7 @@ module ArtifactGrant =
                 RequesterPrincipalType = ArtifactGrantRequesterPrincipalType.User
                 RequesterPrincipalId = requesterPrincipalId
                 HolderKeyThumbprint = holderKeyThumbprint
-                CacheServicePrincipalId = cacheServicePrincipalId
+                CacheId = cacheId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                 ExecutionMode = executionMode
                 ArtifactIdentities = List<string>(artifactIdentities)
@@ -191,7 +191,7 @@ module ArtifactGrant =
             [<Id(2u)>]
             HolderPublicKey: ArtifactGrantHolderPublicKey
             [<Id(3u)>]
-            CacheServicePrincipalId: string
+            CacheId: string
             [<Id(4u)>]
             TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(5u)>]
@@ -207,7 +207,7 @@ module ArtifactGrant =
     type ArtifactGrantIssueError =
         | InvalidRequesterPrincipal
         | InvalidHolderKeyThumbprint
-        | InvalidCacheServicePrincipal
+        | InvalidCacheId
         | InvalidTargetRoot
         | InvalidExecutionMode
         | InvalidArtifactIdentities
@@ -222,7 +222,7 @@ module ArtifactGrant =
             match error with
             | InvalidRequesterPrincipal -> "An authenticated user requester is required."
             | InvalidHolderKeyThumbprint -> "A canonical holder-key thumbprint is required."
-            | InvalidCacheServicePrincipal -> "Cache service principal id is required."
+            | InvalidCacheId -> "CacheId is required."
             | InvalidTargetRoot -> "Target root DirectoryVersionId is required."
             | InvalidExecutionMode -> "Artifact grant execution mode is not supported."
             | InvalidArtifactIdentities -> "Artifact grants must bind at least one explicit artifact identity."
@@ -317,7 +317,7 @@ module ArtifactGrant =
             [<Id(0u)>]
             Class: string
             [<Id(1u)>]
-            CacheServicePrincipalId: string
+            CacheId: string
             [<Id(2u)>]
             TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(3u)>]
@@ -329,14 +329,14 @@ module ArtifactGrant =
         /// Builds the local validation request that cache runtime code checks before serving one artifact.
         static member Create
             (
-                cacheServicePrincipalId: string,
+                cacheId: string,
                 targetRootDirectoryVersionId: DirectoryVersionId,
                 executionMode: MaterializationExecutionMode,
                 artifactIdentity: string
             ) =
             {
                 Class = nameof ArtifactGrantValidationRequest
-                CacheServicePrincipalId = cacheServicePrincipalId
+                CacheId = cacheId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                 ExecutionMode = executionMode
                 ArtifactIdentity = artifactIdentity
@@ -349,7 +349,7 @@ module ArtifactGrant =
             [<Id(0u)>]
             Class: string
             [<Id(1u)>]
-            CacheServicePrincipalId: string
+            CacheId: string
             [<Id(2u)>]
             TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(3u)>]
@@ -365,7 +365,7 @@ module ArtifactGrant =
         /// Builds the full local admission contract for one artifact HTTP request.
         static member Create
             (
-                cacheServicePrincipalId: string,
+                cacheId: string,
                 targetRootDirectoryVersionId: DirectoryVersionId,
                 executionMode: MaterializationExecutionMode,
                 artifactIdentity: string,
@@ -374,7 +374,7 @@ module ArtifactGrant =
             ) =
             {
                 Class = nameof ArtifactRequestValidationRequest
-                CacheServicePrincipalId = cacheServicePrincipalId
+                CacheId = cacheId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                 ExecutionMode = executionMode
                 ArtifactIdentity = artifactIdentity

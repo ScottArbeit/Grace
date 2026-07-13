@@ -14,14 +14,18 @@
 
 
 /**
- * Result classification for a Cache registration or refresh operation.
+ * Result classification for Cache enrollment and lifecycle operations.
  * @export
  */
 export const CacheRegistrationRefreshStatus = {
+    Enrolled: 'enrolled',
     Refreshed: 'refreshed',
     RefreshNotDue: 'refreshNotDue',
     Expired: 'expired',
-    NotFound: 'notFound'
+    NotFound: 'notFound',
+    Revoked: 'revoked',
+    Updated: 'updated',
+    Rotated: 'rotated'
 } as const;
 export type CacheRegistrationRefreshStatus = typeof CacheRegistrationRefreshStatus[keyof typeof CacheRegistrationRefreshStatus];
 

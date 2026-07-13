@@ -194,7 +194,7 @@ module ArtifactGrant =
 
             writer.WriteStartObject()
             writeStringArray writer "artifacts" payload.ArtifactIdentities
-            writer.WriteString("cache", payload.CacheServicePrincipalId)
+            writer.WriteString("cache", payload.CacheId)
             writer.WriteString("class", payload.Class)
             writer.WriteNumber("exp", instantMilliseconds payload.ExpiresAt)
             writer.WriteString("holder", payload.HolderKeyThumbprint)
@@ -419,7 +419,7 @@ module ArtifactGrant =
         elif isNull (box request)
              || request.Class
                 <> nameof ArtifactGrantValidationRequest
-             || String.IsNullOrWhiteSpace request.CacheServicePrincipalId
+             || String.IsNullOrWhiteSpace request.CacheId
              || request.TargetRootDirectoryVersionId = Guid.Empty
              || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
              || String.IsNullOrWhiteSpace request.ArtifactIdentity then
@@ -452,7 +452,7 @@ module ArtifactGrant =
             Error ExpiredGrant
         elif (grant.Payload.ExpiresAt - grant.Payload.IssuedAt) > ArtifactGrantContract.MaximumAcceptedGrantTtl then
             Error GrantTtlTooLong
-        elif not (String.Equals(grant.Payload.CacheServicePrincipalId, request.CacheServicePrincipalId, StringComparison.Ordinal)) then
+        elif not (String.Equals(grant.Payload.CacheId, request.CacheId, StringComparison.Ordinal)) then
             Error WrongCacheService
         elif grant.Payload.TargetRootDirectoryVersionId
              <> request.TargetRootDirectoryVersionId then
@@ -501,7 +501,7 @@ module ArtifactGrant =
             isNull (box request)
             || request.Class
                <> nameof ArtifactRequestValidationRequest
-            || String.IsNullOrWhiteSpace request.CacheServicePrincipalId
+            || String.IsNullOrWhiteSpace request.CacheId
             || request.TargetRootDirectoryVersionId = Guid.Empty
             || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
             || String.IsNullOrWhiteSpace request.ArtifactIdentity
@@ -522,7 +522,7 @@ module ArtifactGrant =
             | Some signedGrant, Some signedProof ->
                 let grantRequest =
                     ArtifactGrantValidationRequest.Create(
-                        request.CacheServicePrincipalId,
+                        request.CacheId,
                         request.TargetRootDirectoryVersionId,
                         request.ExecutionMode,
                         request.ArtifactIdentity
@@ -611,7 +611,7 @@ module ArtifactGrant =
         if isNull (box request)
            || request.Class
               <> nameof ArtifactGrantValidationRequest
-           || String.IsNullOrWhiteSpace request.CacheServicePrincipalId
+           || String.IsNullOrWhiteSpace request.CacheId
            || request.TargetRootDirectoryVersionId = Guid.Empty
            || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
            || String.IsNullOrWhiteSpace request.ArtifactIdentity then

@@ -4,10 +4,159 @@ All URIs are relative to *http://localhost:5000*
 
 | Method | HTTP request | Description |
 |------------- | ------------- | -------------|
+| [**assignCacheRepositories**](CacheApi.md#assigncacherepositories) | **POST** /cache/assign-repositories | Replace a Cache\&#39;s exact repository assignments as a current administrator. |
+| [**enrollCache**](CacheApi.md#enrollcache) | **POST** /cache/enroll | Enroll a Grace Cache with an administrator-authorized repository boundary. |
 | [**getArtifactGrantValidationKeys**](CacheApi.md#getartifactgrantvalidationkeys) | **GET** /cache/validation-keys | Publish artifact grant validation keys. |
-| [**refreshCacheService**](CacheApi.md#refreshcacheservice) | **POST** /cache/refresh | Refresh a Grace Cache service registration. |
-| [**registerCacheService**](CacheApi.md#registercacheservice) | **POST** /cache/register | Register a Grace Cache service. |
+| [**refreshCache**](CacheApi.md#refreshcache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof. |
+| [**revokeCache**](CacheApi.md#revokecache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator. |
+| [**rotateCacheKey**](CacheApi.md#rotatecachekey) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key. |
 
+
+
+## assignCacheRepositories
+
+> CacheRegistrationReturnValue assignCacheRepositories(cacheRepositoryAssignmentRequest)
+
+Replace a Cache\&#39;s exact repository assignments as a current administrator.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  CacheApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { AssignCacheRepositoriesRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new CacheApi(config);
+
+  const body = {
+    // CacheRepositoryAssignmentRequest
+    cacheRepositoryAssignmentRequest: ...,
+  } satisfies AssignCacheRepositoriesRequest;
+
+  try {
+    const data = await api.assignCacheRepositories(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **cacheRepositoryAssignmentRequest** | [CacheRepositoryAssignmentRequest](CacheRepositoryAssignmentRequest.md) |  | |
+
+### Return type
+
+[**CacheRegistrationReturnValue**](CacheRegistrationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`, `text/plain`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
+| **403** | Forbidden |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## enrollCache
+
+> CacheRegistrationReturnValue enrollCache(cacheEnrollmentRequest)
+
+Enroll a Grace Cache with an administrator-authorized repository boundary.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  CacheApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { EnrollCacheRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new CacheApi(config);
+
+  const body = {
+    // CacheEnrollmentRequest
+    cacheEnrollmentRequest: ...,
+  } satisfies EnrollCacheRequest;
+
+  try {
+    const data = await api.enrollCache(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **cacheEnrollmentRequest** | [CacheEnrollmentRequest](CacheEnrollmentRequest.md) |  | |
+
+### Return type
+
+[**CacheRegistrationReturnValue**](CacheRegistrationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`, `text/plain`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
+| **403** | Forbidden |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
 ## getArtifactGrantValidationKeys
@@ -15,8 +164,6 @@ All URIs are relative to *http://localhost:5000*
 > ArtifactGrantValidationKeySet getArtifactGrantValidationKeys()
 
 Publish artifact grant validation keys.
-
-Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
 ### Example
 
@@ -76,13 +223,11 @@ This endpoint does not need any parameter.
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
-## refreshCacheService
+## refreshCache
 
-> CacheRegistrationReturnValue refreshCacheService(cacheRegistrationRefreshRequest)
+> CacheRegistrationReturnValue refreshCache(cacheRegistrationRefreshRequest)
 
-Refresh a Grace Cache service registration.
-
-Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
+Refresh Cache operational facts with a current identity-key proof.
 
 ### Example
 
@@ -91,7 +236,7 @@ import {
   Configuration,
   CacheApi,
 } from '@grace-vcs/generated-openapi-probe';
-import type { RefreshCacheServiceRequest } from '@grace-vcs/generated-openapi-probe';
+import type { RefreshCacheRequest } from '@grace-vcs/generated-openapi-probe';
 
 async function example() {
   console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
@@ -104,10 +249,10 @@ async function example() {
   const body = {
     // CacheRegistrationRefreshRequest
     cacheRegistrationRefreshRequest: ...,
-  } satisfies RefreshCacheServiceRequest;
+  } satisfies RefreshCacheRequest;
 
   try {
-    const data = await api.refreshCacheService(body);
+    const data = await api.refreshCache(body);
     console.log(data);
   } catch (error) {
     console.error(error);
@@ -150,13 +295,11 @@ example().catch(console.error);
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
-## registerCacheService
+## revokeCache
 
-> CacheRegistrationReturnValue registerCacheService(cacheRegistrationRequest)
+> CacheRegistrationReturnValue revokeCache(cacheRevocationRequest)
 
-Register a Grace Cache service.
-
-Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
+Revoke a Cache registration as a current administrator.
 
 ### Example
 
@@ -165,7 +308,7 @@ import {
   Configuration,
   CacheApi,
 } from '@grace-vcs/generated-openapi-probe';
-import type { RegisterCacheServiceRequest } from '@grace-vcs/generated-openapi-probe';
+import type { RevokeCacheRequest } from '@grace-vcs/generated-openapi-probe';
 
 async function example() {
   console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
@@ -176,12 +319,12 @@ async function example() {
   const api = new CacheApi(config);
 
   const body = {
-    // CacheRegistrationRequest
-    cacheRegistrationRequest: ...,
-  } satisfies RegisterCacheServiceRequest;
+    // CacheRevocationRequest
+    cacheRevocationRequest: ...,
+  } satisfies RevokeCacheRequest;
 
   try {
-    const data = await api.registerCacheService(body);
+    const data = await api.revokeCache(body);
     console.log(data);
   } catch (error) {
     console.error(error);
@@ -197,7 +340,80 @@ example().catch(console.error);
 
 | Name | Type | Description  | Notes |
 |------------- | ------------- | ------------- | -------------|
-| **cacheRegistrationRequest** | [CacheRegistrationRequest](CacheRegistrationRequest.md) |  | |
+| **cacheRevocationRequest** | [CacheRevocationRequest](CacheRevocationRequest.md) |  | |
+
+### Return type
+
+[**CacheRegistrationReturnValue**](CacheRegistrationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`, `text/plain`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
+| **403** | Forbidden |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## rotateCacheKey
+
+> CacheRegistrationReturnValue rotateCacheKey(cacheKeyRotationRequest)
+
+Rotate a Cache identity key after proof by the currently accepted key.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  CacheApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { RotateCacheKeyRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new CacheApi(config);
+
+  const body = {
+    // CacheKeyRotationRequest
+    cacheKeyRotationRequest: ...,
+  } satisfies RotateCacheKeyRequest;
+
+  try {
+    const data = await api.rotateCacheKey(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **cacheKeyRotationRequest** | [CacheKeyRotationRequest](CacheKeyRotationRequest.md) |  | |
 
 ### Return type
 

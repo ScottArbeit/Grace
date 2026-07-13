@@ -17,7 +17,7 @@ module ArtifactGrantKeys =
         {
             AuthenticatedUserId: string
             HolderPublicKey: ArtifactGrantHolderPublicKey
-            CacheServicePrincipalId: string
+            CacheId: string
             TargetRootDirectoryVersionId: DirectoryVersionId
             ExecutionMode: MaterializationExecutionMode
             ArtifactIdentities: string seq
@@ -49,7 +49,7 @@ module ArtifactGrantKeys =
                         RequesterPrincipalType = ArtifactGrantRequesterPrincipalType.User
                         RequesterPrincipalId = request.AuthenticatedUserId
                         HolderPublicKey = request.HolderPublicKey
-                        CacheServicePrincipalId = request.CacheServicePrincipalId
+                        CacheId = request.CacheId
                         TargetRootDirectoryVersionId = request.TargetRootDirectoryVersionId
                         ExecutionMode = request.ExecutionMode
                         ArtifactIdentities = artifactIdentities

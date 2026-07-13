@@ -90,9 +90,12 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**rebaseBranch**](docs/BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**assignCacheRepositories**](docs/CacheApi.md#assigncacherepositories) | **POST** /cache/assign-repositories | Replace a Cache\&#39;s exact repository assignments as a current administrator.
+*CacheApi* | [**enrollCache**](docs/CacheApi.md#enrollcache) | **POST** /cache/enroll | Enroll a Grace Cache with an administrator-authorized repository boundary.
 *CacheApi* | [**getArtifactGrantValidationKeys**](docs/CacheApi.md#getartifactgrantvalidationkeys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
-*CacheApi* | [**refreshCacheService**](docs/CacheApi.md#refreshcacheservice) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
-*CacheApi* | [**registerCacheService**](docs/CacheApi.md#registercacheservice) | **POST** /cache/register | Register a Grace Cache service.
+*CacheApi* | [**refreshCache**](docs/CacheApi.md#refreshcache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
+*CacheApi* | [**revokeCache**](docs/CacheApi.md#revokecache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
+*CacheApi* | [**rotateCacheKey**](docs/CacheApi.md#rotatecachekey) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirmContentBlockUpload**](docs/DefaultApi.md#confirmcontentblockupload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discoverContentBlocks**](docs/DefaultApi.md#discovercontentblocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -203,12 +206,20 @@ All URIs are relative to *http://localhost:5000*
 - [BranchParameters](docs/BranchParameters.md)
 - [BranchQueryParameters](docs/BranchQueryParameters.md)
 - [BranchReturnValue](docs/BranchReturnValue.md)
+- [CacheBoundaryKind](docs/CacheBoundaryKind.md)
+- [CacheEnrollmentRequest](docs/CacheEnrollmentRequest.md)
+- [CacheHealthStatus](docs/CacheHealthStatus.md)
+- [CacheIdentityPublicKey](docs/CacheIdentityPublicKey.md)
+- [CacheKeyRotationRequest](docs/CacheKeyRotationRequest.md)
 - [CacheRegistration](docs/CacheRegistration.md)
 - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
 - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)
-- [CacheRegistrationRequest](docs/CacheRegistrationRequest.md)
 - [CacheRegistrationResult](docs/CacheRegistrationResult.md)
 - [CacheRegistrationReturnValue](docs/CacheRegistrationReturnValue.md)
+- [CacheRepositoryAssignmentRequest](docs/CacheRepositoryAssignmentRequest.md)
+- [CacheRepositoryScope](docs/CacheRepositoryScope.md)
+- [CacheRequestProofPayload](docs/CacheRequestProofPayload.md)
+- [CacheRevocationRequest](docs/CacheRevocationRequest.md)
 - [ChangeType](docs/ChangeType.md)
 - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
 - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
@@ -378,6 +389,7 @@ All URIs are relative to *http://localhost:5000*
 - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
 - [SignedArtifactGrant](docs/SignedArtifactGrant.md)
 - [SignedArtifactRequestProof](docs/SignedArtifactRequestProof.md)
+- [SignedCacheRequestProof](docs/SignedCacheRequestProof.md)
 - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
 - [StartUploadSession](docs/StartUploadSession.md)
 - [StorageParameters](docs/StorageParameters.md)

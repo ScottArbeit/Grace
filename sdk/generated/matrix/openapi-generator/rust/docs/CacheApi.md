@@ -4,18 +4,75 @@ All URIs are relative to *http://localhost:5000*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**assign_cache_repositories**](CacheApi.md#assign_cache_repositories) | **POST** /cache/assign-repositories | Replace a Cache's exact repository assignments as a current administrator.
+[**enroll_cache**](CacheApi.md#enroll_cache) | **POST** /cache/enroll | Enroll a Grace Cache with an administrator-authorized repository boundary.
 [**get_artifact_grant_validation_keys**](CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
-[**refresh_cache_service**](CacheApi.md#refresh_cache_service) | **POST** /cache/refresh | Refresh a Grace Cache service registration.
-[**register_cache_service**](CacheApi.md#register_cache_service) | **POST** /cache/register | Register a Grace Cache service.
+[**refresh_cache**](CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
+[**revoke_cache**](CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
+[**rotate_cache_key**](CacheApi.md#rotate_cache_key) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
 
+
+
+## assign_cache_repositories
+
+> models::CacheRegistrationReturnValue assign_cache_repositories(cache_repository_assignment_request)
+Replace a Cache's exact repository assignments as a current administrator.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**cache_repository_assignment_request** | [**CacheRepositoryAssignmentRequest**](CacheRepositoryAssignmentRequest.md) |  | [required] |
+
+### Return type
+
+[**models::CacheRegistrationReturnValue**](CacheRegistrationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json, text/plain
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## enroll_cache
+
+> models::CacheRegistrationReturnValue enroll_cache(cache_enrollment_request)
+Enroll a Grace Cache with an administrator-authorized repository boundary.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**cache_enrollment_request** | [**CacheEnrollmentRequest**](CacheEnrollmentRequest.md) |  | [required] |
+
+### Return type
+
+[**models::CacheRegistrationReturnValue**](CacheRegistrationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json, text/plain
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
 ## get_artifact_grant_validation_keys
 
 > models::ArtifactGrantValidationKeySet get_artifact_grant_validation_keys()
 Publish artifact grant validation keys.
-
-Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
 ### Parameters
 
@@ -37,12 +94,10 @@ This endpoint does not need any parameter.
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
-## refresh_cache_service
+## refresh_cache
 
-> models::CacheRegistrationReturnValue refresh_cache_service(cache_registration_refresh_request)
-Refresh a Grace Cache service registration.
-
-Refreshes the current registration for the authenticated Cache service after the server-owned refresh-after interval. Refresh preserves the scopes, capabilities, and execution modes approved during registration.
+> models::CacheRegistrationReturnValue refresh_cache(cache_registration_refresh_request)
+Refresh Cache operational facts with a current identity-key proof.
 
 ### Parameters
 
@@ -67,19 +122,45 @@ Name | Type | Description  | Required | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
-## register_cache_service
+## revoke_cache
 
-> models::CacheRegistrationReturnValue register_cache_service(cache_registration_request)
-Register a Grace Cache service.
-
-Registers or replaces the server-owned state for an approved Grace Cache service. The caller must authenticate with the configured OIDC JWT bearer service identity. Requested scopes and capabilities are persisted only when they are approved by server configuration.
+> models::CacheRegistrationReturnValue revoke_cache(cache_revocation_request)
+Revoke a Cache registration as a current administrator.
 
 ### Parameters
 
 
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
-**cache_registration_request** | [**CacheRegistrationRequest**](CacheRegistrationRequest.md) |  | [required] |
+**cache_revocation_request** | [**CacheRevocationRequest**](CacheRevocationRequest.md) |  | [required] |
+
+### Return type
+
+[**models::CacheRegistrationReturnValue**](CacheRegistrationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json, text/plain
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## rotate_cache_key
+
+> models::CacheRegistrationReturnValue rotate_cache_key(cache_key_rotation_request)
+Rotate a Cache identity key after proof by the currently accepted key.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**cache_key_rotation_request** | [**CacheKeyRotationRequest**](CacheKeyRotationRequest.md) |  | [required] |
 
 ### Return type
 

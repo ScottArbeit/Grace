@@ -36,11 +36,43 @@ class TestCacheRegistrationRefreshRequest(unittest.TestCase):
         model = CacheRegistrationRefreshRequest()
         if include_optional:
             return CacheRegistrationRefreshRequest(
-                var_class = 'CacheRegistrationRefreshRequest'
+                var_class = 'CacheRegistrationRefreshRequest',
+                cache_id = '',
+                endpoint = '',
+                health = 'healthy',
+                software_version = '',
+                protocol_version = '',
+                prefetch_supported = True,
+                observed_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
+                proof = grace_generated_openapi_probe.models.signed_cache_request_proof.SignedCacheRequestProof(
+                    class = 'SignedCacheRequestProof', 
+                    payload = grace_generated_openapi_probe.models.cache_request_proof_payload.CacheRequestProofPayload(
+                        class = 'CacheRequestProofPayload', 
+                        cache_id = '', 
+                        operation = '', 
+                        request_digest = '', 
+                        issued_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), ), 
+                    signature = '', )
             )
         else:
             return CacheRegistrationRefreshRequest(
                 var_class = 'CacheRegistrationRefreshRequest',
+                cache_id = '',
+                endpoint = '',
+                health = 'healthy',
+                software_version = '',
+                protocol_version = '',
+                prefetch_supported = True,
+                observed_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
+                proof = grace_generated_openapi_probe.models.signed_cache_request_proof.SignedCacheRequestProof(
+                    class = 'SignedCacheRequestProof', 
+                    payload = grace_generated_openapi_probe.models.cache_request_proof_payload.CacheRequestProofPayload(
+                        class = 'CacheRequestProofPayload', 
+                        cache_id = '', 
+                        operation = '', 
+                        request_digest = '', 
+                        issued_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), ), 
+                    signature = '', ),
         )
         """
 

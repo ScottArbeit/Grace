@@ -11,32 +11,28 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// CacheRegistrationRequest : Request body used by an approved Grace Cache service to register its endpoint and requested boundary.
-#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CacheRegistrationRequest {
-    #[serde(rename = "Class")]
-    pub class: String,
-    #[serde(rename = "Endpoint")]
-    pub endpoint: String,
-    /// Materialization-plan selection requires stable `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` scopes; repository names and `storage-pool:*` scopes do not match, and multi-repository Cache registrations list each repository scope explicitly.
-    #[serde(rename = "RequestedScopes")]
-    pub requested_scopes: Vec<String>,
-    #[serde(rename = "RequestedCapabilities")]
-    pub requested_capabilities: Vec<String>,
-    #[serde(rename = "RequestedExecutionModes")]
-    pub requested_execution_modes: Vec<models::MaterializationExecutionMode>,
+/// 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum CacheHealthStatus {
+    #[serde(rename = "healthy")]
+    Healthy,
+    #[serde(rename = "unhealthy")]
+    Unhealthy,
+
 }
 
-impl CacheRegistrationRequest {
-    /// Request body used by an approved Grace Cache service to register its endpoint and requested boundary.
-    pub fn new(class: String, endpoint: String, requested_scopes: Vec<String>, requested_capabilities: Vec<String>, requested_execution_modes: Vec<models::MaterializationExecutionMode>) -> CacheRegistrationRequest {
-        CacheRegistrationRequest {
-            class,
-            endpoint,
-            requested_scopes,
-            requested_capabilities,
-            requested_execution_modes,
+impl std::fmt::Display for CacheHealthStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Healthy => write!(f, "healthy"),
+            Self::Unhealthy => write!(f, "unhealthy"),
         }
+    }
+}
+
+impl Default for CacheHealthStatus {
+    fn default() -> CacheHealthStatus {
+        Self::Healthy
     }
 }
 

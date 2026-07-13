@@ -74,8 +74,9 @@ Future implementation PRs must preserve these V1 guardrails when updating any au
   immutable target identity is necessary, but it is not an authorization scope by itself.
 - Narrowed path-scope grants must be rejected for V1 full-root artifacts until Grace accepts a
   path-scoped artifact shape and proof obligation.
-- Cache Service Identity authorizes configured cache operations only. It must not become a global
-  artifact reader or bypass per-call artifact grant validation.
+- A Cache identity is a server-assigned `CacheId` and canonical P-256 public key bound to one explicit
+  Owner or Organization repository boundary. It cannot become a global artifact reader or bypass per-call
+  artifact grant validation.
 
 ## Requirement Group Scaffold
 
@@ -103,11 +104,10 @@ docs-only classification with current evidence for the behavior they own.
 ### CachePreferred Materialization
 
 - Implementation seam: mode selection and materialization path that tries Grace Cache first and can
-  fall back to Direct only when the accepted contract allows it. Grace Server derives the only eligible
-  cache-registration scope as `repository:<OwnerId>/<OrganizationId>/<RepositoryId>` from the fully
-  resolved target's stable IDs; callers cannot supply a cache scope. Repository names and `storage-pool:*`
-  scopes do not participate in plan selection, and a multi-repository Cache lists every repository scope
-  explicitly.
+  fall back to Direct only when the accepted contract allows it. Grace Server selects only a current,
+  healthy Cache with an exact explicit repository assignment for the fully resolved target. Callers
+  cannot supply a cache scope; repository names, wildcard scopes, and storage-pool assignments do not
+  participate in selection.
 - Proof seam: positive and negative tests for cache hit, cache miss, grant failure, cache outage,
   fallback observability, exact stable-ID scope matching, and exclusion of missing, unrelated,
   malformed, name-like, wrong-case, storage-pool-only, and unlisted multi-repository registrations.
@@ -153,7 +153,7 @@ docs-only classification with current evidence for the behavior they own.
   signed artifact grant contract. One fixed-key Orleans actor backed by `GraceActorStorage` persists
   P-256 private keys before use and owns rotation for every Grace Server instance. Grants bind the
   authenticated `grace_user_id` as a `User` requester, the canonical ephemeral holder-key
-  thumbprint, selected Cache service principal, immutable target root, non-Direct execution mode,
+  thumbprint, selected CacheId, immutable target root, non-Direct execution mode,
   and explicit artifact identities. Each cache artifact request carries a stateless holder proof
   over the grant digest, normalized method and route, artifact identity, and a presentation window
   of at most 30 seconds with at most 30 seconds of clock-skew tolerance. Canonical request encoding
@@ -184,29 +184,26 @@ docs-only classification with current evidence for the behavior they own.
   and just-in-time proof generation. V1 intentionally has no nonce store, so replay of a captured
   complete request remains possible inside the narrow proof window; TLS protects it in transit.
 
-### Cache Service Registration And Identity
+### Cache Registration And Identity
 
-- Implementation seam: #617 defines the pre-registration identity boundary in
-  `Grace.Server.Security.CacheServiceIdentity`. #618 adds
-  `Grace.Types.CacheRegistration`, `CacheRegistrationActor`, and the `/cache/register` plus
-  `/cache/refresh` server routes. Registration state is server-owned, keyed by service principal,
-  records the cache endpoint, approved scopes, approved capabilities, approved execution modes,
-  read-through and prefetch flags, a 2-hour active lifetime, and a 1-hour refresh-after interval.
-- Proof seam: `CacheServiceIdentityUnitTests` covers disabled configuration, fail-fast enabled
-  configuration, valid OIDC service-principal registration, PAT rejection, normal user rejection,
-  missing client-credentials marker rejection, unapproved scope and capability rejection, and
-  non-secret status summaries. `CacheRegistrationLifecycleTests` covers default lifetime,
-  duplicate register upsert behavior, refresh-before-due behavior, refresh-after-due extension,
-  expired registration exclusion, selection query filtering, and HTTPS endpoint validation.
-- Status classification: `implemented but proof incomplete`.
-- Issue or PR evidence: #617 owns the service credential, identity claim, allowed scheme, scope
-  model, configuration boundary, docs, and `pwsh ./scripts/validate.ps1 -Fast` validation for the
-  preflight. #618 owns the registration actor/API implementation and must cite its PR, commit, and
-  final validation evidence before this row can move to `implemented and proven`.
-- Residual risk or rationale: #619 still owns per-call artifact grants. #620 still owns cache-mode
-  plan generation and consuming the eligible-registration selection seam. Cache Service Identity and
-  Cache registration authorize configured registration behavior only; they must not become global
-  artifact readers or bypass per-call artifact grants.
+- Implementation seam: an authenticated Grace administrator enrolls one Cache under a server-assigned
+  `CacheId`, one Owner or Organization boundary, and exact explicit repository assignments. Enrollment
+  stores only a canonical P-256 public key and the enrollment audit identity. The singleton
+  `CacheRegistrationActor` persists registration lifecycle state through `GraceActorStorage`; refresh
+  and rotation prove possession of the current private key but never store it. Refresh updates only
+  operational facts and liveness. Dedicated administrator routes replace assignments or revoke; key
+  rotation accepts the new public key before retiring the old key.
+- Proof seam: `CacheRegistrationLifecycleTests` covers immutable enrollment facts, restricted refresh,
+  revocation, exact healthy repository selection, malformed/duplicate boundaries, and canonical proof
+  verification. The Orleans partition-key test proves the singleton `CacheRegistration` Cosmos mapping,
+  persistent-state activation, durable writes, and Cosmos provider selection.
+- Status classification: `implemented and proven` for the server foundation; Cache host scheduling,
+  local private-key storage, and artifact-serving behavior remain out of scope.
+- Issue or PR evidence: #600 and PR #706 own the administrator authorization, durable registration,
+  proof, key-rotation, route, OpenAPI, generated-client, and validation evidence.
+- Residual risk or rationale: every current healthy Cache is inherently read-through eligible for its
+  exact assignments. Read-through is mandatory, not an advertised capability. `PrefetchSupported` is
+  the sole optional capability and does not authorize artifact access.
 
 ### Read-Through Behavior
 

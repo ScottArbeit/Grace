@@ -11,10 +11,12 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// CacheRegistrationRefreshStatus : Result classification for a Cache registration or refresh operation.
-/// Result classification for a Cache registration or refresh operation.
+/// CacheRegistrationRefreshStatus : Result classification for Cache enrollment and lifecycle operations.
+/// Result classification for Cache enrollment and lifecycle operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum CacheRegistrationRefreshStatus {
+    #[serde(rename = "enrolled")]
+    Enrolled,
     #[serde(rename = "refreshed")]
     Refreshed,
     #[serde(rename = "refreshNotDue")]
@@ -23,23 +25,33 @@ pub enum CacheRegistrationRefreshStatus {
     Expired,
     #[serde(rename = "notFound")]
     NotFound,
+    #[serde(rename = "revoked")]
+    Revoked,
+    #[serde(rename = "updated")]
+    Updated,
+    #[serde(rename = "rotated")]
+    Rotated,
 
 }
 
 impl std::fmt::Display for CacheRegistrationRefreshStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Self::Enrolled => write!(f, "enrolled"),
             Self::Refreshed => write!(f, "refreshed"),
             Self::RefreshNotDue => write!(f, "refreshNotDue"),
             Self::Expired => write!(f, "expired"),
             Self::NotFound => write!(f, "notFound"),
+            Self::Revoked => write!(f, "revoked"),
+            Self::Updated => write!(f, "updated"),
+            Self::Rotated => write!(f, "rotated"),
         }
     }
 }
 
 impl Default for CacheRegistrationRefreshStatus {
     fn default() -> CacheRegistrationRefreshStatus {
-        Self::Refreshed
+        Self::Enrolled
     }
 }
 

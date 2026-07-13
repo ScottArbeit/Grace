@@ -181,7 +181,7 @@ module MaterializationPlan =
             DirectUri: string option
             CacheKey: string option
             CacheEndpoint: string option
-            CacheServicePrincipalId: string option
+            CacheId: string option
             DirectFallbackUri: string option
         }
 
@@ -193,7 +193,7 @@ module MaterializationPlan =
                 DirectUri = Some uri
                 CacheKey = None
                 CacheEndpoint = None
-                CacheServicePrincipalId = None
+                CacheId = None
                 DirectFallbackUri = None
             }
 
@@ -205,19 +205,19 @@ module MaterializationPlan =
                 DirectUri = None
                 CacheKey = Some cacheKey
                 CacheEndpoint = None
-                CacheServicePrincipalId = None
+                CacheId = None
                 DirectFallbackUri = None
             }
 
         /// Points to a selected Cache endpoint and optionally retains the explicit Preferred-mode Direct fallback.
-        static member Cache(cacheKey: string, endpoint: string, cacheServicePrincipalId: string, directFallbackUri: string option) =
+        static member Cache(cacheKey: string, endpoint: string, cacheId: string, directFallbackUri: string option) =
             {
                 Class = nameof MaterializationArtifactSource
                 SourceKind = MaterializationArtifactSourceKind.CacheEntry
                 DirectUri = None
                 CacheKey = Some cacheKey
                 CacheEndpoint = Some endpoint
-                CacheServicePrincipalId = Some cacheServicePrincipalId
+                CacheId = Some cacheId
                 DirectFallbackUri = directFallbackUri
             }
 
@@ -229,7 +229,7 @@ module MaterializationPlan =
                 DirectUri = None
                 CacheKey = None
                 CacheEndpoint = None
-                CacheServicePrincipalId = None
+                CacheId = None
                 DirectFallbackUri = None
             }
 
@@ -661,7 +661,7 @@ module MaterializationPlan =
                             errors.Add("Artifact CacheKey must be empty for DirectUri sources.")
 
                         if source.CacheEndpoint.IsSome
-                           || source.CacheServicePrincipalId.IsSome
+                           || source.CacheId.IsSome
                            || source.DirectFallbackUri.IsSome then
                             errors.Add("DirectUri sources must not contain Cache endpoint, principal, or fallback fields.")
                     | MaterializationArtifactSourceKind.CacheEntry ->
@@ -672,7 +672,7 @@ module MaterializationPlan =
                         if source.DirectUri.IsSome then
                             errors.Add("Artifact DirectUri must be empty for CacheEntry sources.")
 
-                        match source.CacheEndpoint, source.CacheServicePrincipalId with
+                        match source.CacheEndpoint, source.CacheId with
                         | None, None -> ()
                         | Some endpoint, Some principal when
                             isAllowedDirectUri endpoint
@@ -692,7 +692,7 @@ module MaterializationPlan =
                             errors.Add("Artifact CacheKey must be empty for Deferred sources.")
 
                         if source.CacheEndpoint.IsSome
-                           || source.CacheServicePrincipalId.IsSome
+                           || source.CacheId.IsSome
                            || source.DirectFallbackUri.IsSome then
                             errors.Add("Deferred sources must not contain Cache endpoint, principal, or fallback fields.")
                     | _ -> errors.Add($"Artifact SourceKind '{int source.SourceKind}' is not supported.")
@@ -1055,7 +1055,33 @@ module MaterializationPlan =
                     elif recursiveMetadataCount > 1 then
                         errors.Add("RequiredArtifacts must include exactly one RecursiveDirectoryMetadata for the target root.")
 
+                    let cacheBackedArtifacts =
+                        plan.RequiredArtifacts
+                        |> Seq.exists (fun artifact ->
+                            match artifact.Source with
+                            | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.CacheEntry
+                            | _ -> false)
+
+                    let allSourcesDirect =
+                        plan.RequiredArtifacts
+                        |> Seq.forall (fun artifact ->
+                            match artifact.Source with
+                            | Some source when not (isNull (box source)) -> source.SourceKind = MaterializationArtifactSourceKind.DirectUri
+                            | _ -> false)
+
+                    let allSourcesPresent =
+                        plan.RequiredArtifacts
+                        |> Seq.forall (fun artifact -> artifact.Source.IsSome)
+
                     match plan.ArtifactGrant with
+                    | None when
+                        errors.Count = 0
+                        && allSourcesPresent
+                        && (plan.ExecutionMode = MaterializationExecutionMode.CacheRequired
+                            || cacheBackedArtifacts
+                            || not allSourcesDirect)
+                        ->
+                        errors.Add("ArtifactGrant is required for CacheRequired plans, CacheEntry sources, and plans that are not entirely Direct.")
                     | None -> ()
                     | Some grant when isNull (box grant) || isNull (box grant.Payload) -> errors.Add("ArtifactGrant must contain a signed payload.")
                     | Some grant ->
@@ -1085,9 +1111,9 @@ module MaterializationPlan =
                         for artifact in plan.RequiredArtifacts do
                             match artifact.Source with
                             | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
-                                match source.CacheServicePrincipalId with
-                                | Some principal when principal = payload.CacheServicePrincipalId -> ()
-                                | _ -> errors.Add("ArtifactGrant Cache service principal must match every Cache source.")
+                                match source.CacheId with
+                                | Some principal when principal = payload.CacheId -> ()
+                                | _ -> errors.Add("ArtifactGrant CacheId must match every Cache source.")
                             | _ -> ()
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)

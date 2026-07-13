@@ -1,13 +1,21 @@
 
 # CacheRegistrationRefreshRequest
 
-Request body used by an approved Grace Cache service to refresh its current registration.
+Cache-authenticated refresh that may update operational facts only.
 
 ## Properties
 
 Name | Type
 ------------ | -------------
 `_class` | string
+`cacheId` | string
+`endpoint` | string
+`health` | [CacheHealthStatus](CacheHealthStatus.md)
+`softwareVersion` | string
+`protocolVersion` | string
+`prefetchSupported` | boolean
+`observedAt` | Date
+`proof` | [SignedCacheRequestProof](SignedCacheRequestProof.md)
 
 ## Example
 
@@ -17,6 +25,14 @@ import type { CacheRegistrationRefreshRequest } from '@grace-vcs/generated-opena
 // TODO: Update the object below with actual values
 const example = {
   "_class": CacheRegistrationRefreshRequest,
+  "cacheId": null,
+  "endpoint": null,
+  "health": null,
+  "softwareVersion": null,
+  "protocolVersion": null,
+  "prefetchSupported": null,
+  "observedAt": null,
+  "proof": null,
 } satisfies CacheRegistrationRefreshRequest
 
 console.log(example)

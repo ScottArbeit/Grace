@@ -26,8 +26,8 @@ pub struct ArtifactGrantPayload {
     /// Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.
     #[serde(rename = "HolderKeyThumbprint")]
     pub holder_key_thumbprint: String,
-    #[serde(rename = "CacheServicePrincipalId")]
-    pub cache_service_principal_id: String,
+    #[serde(rename = "CacheId")]
+    pub cache_id: String,
     #[serde(rename = "TargetRootDirectoryVersionId")]
     pub target_root_directory_version_id: uuid::Uuid,
     #[serde(rename = "ExecutionMode")]
@@ -44,14 +44,14 @@ pub struct ArtifactGrantPayload {
 
 impl ArtifactGrantPayload {
     /// Requester-, holder-, cache-, root-, mode-, and artifact-bound authorization payload.
-    pub fn new(class: String, issuer: String, requester_principal_type: models::ArtifactGrantRequesterPrincipalType, requester_principal_id: String, holder_key_thumbprint: String, cache_service_principal_id: String, target_root_directory_version_id: uuid::Uuid, execution_mode: models::MaterializationExecutionMode, artifact_identities: Vec<String>, issued_at: chrono::DateTime<chrono::FixedOffset>, not_before: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>) -> ArtifactGrantPayload {
+    pub fn new(class: String, issuer: String, requester_principal_type: models::ArtifactGrantRequesterPrincipalType, requester_principal_id: String, holder_key_thumbprint: String, cache_id: String, target_root_directory_version_id: uuid::Uuid, execution_mode: models::MaterializationExecutionMode, artifact_identities: Vec<String>, issued_at: chrono::DateTime<chrono::FixedOffset>, not_before: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>) -> ArtifactGrantPayload {
         ArtifactGrantPayload {
             class,
             issuer,
             requester_principal_type,
             requester_principal_id,
             holder_key_thumbprint,
-            cache_service_principal_id,
+            cache_id,
             target_root_directory_version_id,
             execution_mode,
             artifact_identities,

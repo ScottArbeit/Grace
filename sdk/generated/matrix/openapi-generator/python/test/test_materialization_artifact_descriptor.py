@@ -54,7 +54,7 @@ class TestMaterializationArtifactDescriptor(unittest.TestCase):
                     direct_uri = '', 
                     cache_key = '', 
                     cache_endpoint = '', 
-                    cache_service_principal_id = '', 
+                    cache_id = '', 
                     direct_fallback_uri = '', )
             )
         else:

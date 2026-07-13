@@ -12,7 +12,7 @@ Name | Type
 `directUri` | string
 `cacheKey` | string
 `cacheEndpoint` | string
-`cacheServicePrincipalId` | string
+`cacheId` | string
 `directFallbackUri` | string
 
 ## Example
@@ -27,7 +27,7 @@ const example = {
   "directUri": null,
   "cacheKey": null,
   "cacheEndpoint": null,
-  "cacheServicePrincipalId": null,
+  "cacheId": null,
   "directFallbackUri": null,
 } satisfies MaterializationArtifactSource
 

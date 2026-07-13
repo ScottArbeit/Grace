@@ -75,12 +75,20 @@ __all__ = [
     "BranchParameters",
     "BranchQueryParameters",
     "BranchReturnValue",
+    "CacheBoundaryKind",
+    "CacheEnrollmentRequest",
+    "CacheHealthStatus",
+    "CacheIdentityPublicKey",
+    "CacheKeyRotationRequest",
     "CacheRegistration",
     "CacheRegistrationRefreshRequest",
     "CacheRegistrationRefreshStatus",
-    "CacheRegistrationRequest",
     "CacheRegistrationResult",
     "CacheRegistrationReturnValue",
+    "CacheRepositoryAssignmentRequest",
+    "CacheRepositoryScope",
+    "CacheRequestProofPayload",
+    "CacheRevocationRequest",
     "ChangeType",
     "ClaimReuseRangesParameters",
     "ClaimedReuseRange",
@@ -250,6 +258,7 @@ __all__ = [
     "SetSaveDaysParameters",
     "SignedArtifactGrant",
     "SignedArtifactRequestProof",
+    "SignedCacheRequestProof",
     "StartManifestUploadSessionParameters",
     "StartUploadSession",
     "StorageParameters",
@@ -352,12 +361,20 @@ from grace_generated_openapi_probe.models.branch_hash_query_parameters import Br
 from grace_generated_openapi_probe.models.branch_parameters import BranchParameters as BranchParameters
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
+from grace_generated_openapi_probe.models.cache_boundary_kind import CacheBoundaryKind as CacheBoundaryKind
+from grace_generated_openapi_probe.models.cache_enrollment_request import CacheEnrollmentRequest as CacheEnrollmentRequest
+from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus as CacheHealthStatus
+from grace_generated_openapi_probe.models.cache_identity_public_key import CacheIdentityPublicKey as CacheIdentityPublicKey
+from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest as CacheKeyRotationRequest
 from grace_generated_openapi_probe.models.cache_registration import CacheRegistration as CacheRegistration
 from grace_generated_openapi_probe.models.cache_registration_refresh_request import CacheRegistrationRefreshRequest as CacheRegistrationRefreshRequest
 from grace_generated_openapi_probe.models.cache_registration_refresh_status import CacheRegistrationRefreshStatus as CacheRegistrationRefreshStatus
-from grace_generated_openapi_probe.models.cache_registration_request import CacheRegistrationRequest as CacheRegistrationRequest
 from grace_generated_openapi_probe.models.cache_registration_result import CacheRegistrationResult as CacheRegistrationResult
 from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue as CacheRegistrationReturnValue
+from grace_generated_openapi_probe.models.cache_repository_assignment_request import CacheRepositoryAssignmentRequest as CacheRepositoryAssignmentRequest
+from grace_generated_openapi_probe.models.cache_repository_scope import CacheRepositoryScope as CacheRepositoryScope
+from grace_generated_openapi_probe.models.cache_request_proof_payload import CacheRequestProofPayload as CacheRequestProofPayload
+from grace_generated_openapi_probe.models.cache_revocation_request import CacheRevocationRequest as CacheRevocationRequest
 from grace_generated_openapi_probe.models.change_type import ChangeType as ChangeType
 from grace_generated_openapi_probe.models.claim_reuse_ranges_parameters import ClaimReuseRangesParameters as ClaimReuseRangesParameters
 from grace_generated_openapi_probe.models.claimed_reuse_range import ClaimedReuseRange as ClaimedReuseRange
@@ -527,6 +544,7 @@ from grace_generated_openapi_probe.models.set_repository_visibility_parameters i
 from grace_generated_openapi_probe.models.set_save_days_parameters import SetSaveDaysParameters as SetSaveDaysParameters
 from grace_generated_openapi_probe.models.signed_artifact_grant import SignedArtifactGrant as SignedArtifactGrant
 from grace_generated_openapi_probe.models.signed_artifact_request_proof import SignedArtifactRequestProof as SignedArtifactRequestProof
+from grace_generated_openapi_probe.models.signed_cache_request_proof import SignedCacheRequestProof as SignedCacheRequestProof
 from grace_generated_openapi_probe.models.start_manifest_upload_session_parameters import StartManifestUploadSessionParameters as StartManifestUploadSessionParameters
 from grace_generated_openapi_probe.models.start_upload_session import StartUploadSession as StartUploadSession
 from grace_generated_openapi_probe.models.storage_parameters import StorageParameters as StorageParameters
