@@ -2113,7 +2113,124 @@ module WatchTests =
                     .GetAwaiter()
                     .GetResult())
 
-    /// Verifies same-branch completion never executes branch-transition subscription effects, including restart recovery.
+    /// Verifies a clean resync recovery retains its verified scope through a transient status reset and rejects a later branch mismatch.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``verified resync recovery retains scope through transient reset and rejects later branch mismatch`` () =
+        withTempRepo (fun root ->
+            let recoveredPath = Path.Combine(root, "recovered-scope-candidate.txt")
+            let originalBranchId = Current().BranchId
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "recovered-scope-sha256"
+                    RootDirectoryBlake3Hash = Blake3Hash "recovered-scope-blake3"
+                }
+
+            let mutable uploadCalls = 0
+
+            try
+                Watch.setGraceStatusForWatchTests GraceStatus.Default
+                Watch.setGraceStatusForWatchTests status
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+                Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+                Watch.requestGraceWatchExplicitResyncForWatchTests "recover a verified observation scope"
+                Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ -> Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    Services.updateGraceWatchInterprocessFile)
+                    .GetAwaiter()
+                    .GetResult()
+
+                match Watch.lastPublishedWatchObservationScopeForWatchTests () with
+                | Some publishedScope ->
+                    publishedScope.BranchId
+                    |> should equal originalBranchId
+
+                    publishedScope.RootDirectoryId
+                    |> should equal status.RootDirectoryId
+
+                    publishedScope.RootDirectorySha256Hash
+                    |> should equal status.RootDirectorySha256Hash
+
+                    publishedScope.RootDirectoryBlake3Hash
+                    |> should equal status.RootDirectoryBlake3Hash
+                | None -> Assert.Fail("Verified resync recovery must retain the scope represented by its clean IPC status.")
+
+                (Watch.storeGraceStatusInMemoryStream ())
+                    .GetAwaiter()
+                    .GetResult()
+
+                File.WriteAllText(recoveredPath, "candidate admitted with recovered scope")
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged recoveredPath DateTime.UtcNow
+                |> Option.isSome
+                |> should equal true
+
+                Current().BranchId <- Guid.NewGuid()
+                Watch.processDueLocalObservationCandidatesForWatchTests DateTime.UtcNow
+
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ ->
+                        uploadCalls <- uploadCalls + 1
+                        Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    (fun _ -> Task.FromResult(List<FileSystemDifference>()))
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    Services.updateGraceWatchInterprocessFile)
+                    .GetAwaiter()
+                    .GetResult()
+
+                uploadCalls |> should equal 0
+            finally
+                Current().BranchId <- originalBranchId
+
+                (Watch.retrieveGraceStatusFromMemoryStream ())
+                    .GetAwaiter()
+                    .GetResult())
+
+    /// Verifies an IPC publication whose configuration changes during its write cannot overwrite newer scope evidence.
+    [<Test; Category("CurrentBranchMaterializationPublication")>]
+    let ``stale verified publication does not cache a superseded observation scope`` () =
+        withTempRepo (fun _ ->
+            let originalBranchId = Current().BranchId
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "stale-publication-scope-sha256"
+                    RootDirectoryBlake3Hash = Blake3Hash "stale-publication-scope-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            try
+                Watch.setGraceStatusForWatchTests GraceStatus.Default
+                Watch.setGraceStatusForWatchTests status
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+                (Watch.publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests status directoryIds (fun publishedStatus publishedDirectoryIds ->
+                    task {
+                        Current().BranchId <- Guid.NewGuid()
+                        do! Services.updateGraceWatchInterprocessFile publishedStatus publishedDirectoryIds
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.lastPublishedWatchObservationScopeForWatchTests ()
+                |> should equal None
+            finally
+                Current().BranchId <- originalBranchId)
+
+    /// Verifies same-branch completion requires current observed marker evidence without changing branch-transition subscriptions.
     [<TestCase(true)>]
     [<TestCase(false)>]
     [<Category("CurrentBranchMaterializationApplyBoundary")>]
@@ -2147,13 +2264,50 @@ module WatchTests =
                 Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
                 Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal (Some 1L)
+                |> should equal (if observeCreation then Some 1L else None)
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal (not observeCreation)
 
                 let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
                 subscription.BranchId |> should equal branchId
 
                 subscription.ParentBranchId
                 |> should equal parentBranchId
+            finally
+                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
+
+    /// Verifies a recent sidecar from an earlier marker cannot authorize current Reference catch-up.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``recent earlier reference completion sidecar forces exact recovery instead of catch-up`` () =
+        withTempRepo (fun _ ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let currentMarkerUtc = DateTime.UtcNow
+            let earlierCompletionUtc = currentMarkerUtc.AddSeconds(-1.0)
+
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
+
+            try
+                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                |> ignore
+
+                File.WriteAllText(updateMarkerFile, "`grace watch` remote materialization is in progress.")
+                File.SetLastWriteTimeUtc(updateMarkerFile, currentMarkerUtc)
+                Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+
+                File.WriteAllText(
+                    updateMarkerFile + ".completed",
+                    Services.serializeGraceUpdateMarkerCompletion Services.GraceUpdateMarkerPurpose.ReferenceMaterialization earlierCompletionUtc
+                )
+
+                File.Delete(updateMarkerFile)
+                Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal None
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal true
             finally
                 Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 

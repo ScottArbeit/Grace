@@ -704,13 +704,8 @@ module Watch =
         || status.RootDirectoryBlake3Hash
            <> GraceStatus.Default.RootDirectoryBlake3Hash
 
-    /// Retains the exact status identity that was verified in the latest IPC publication for the active Watch configuration.
-    let private rememberPublishedWatchObservationScope (status: GraceStatus) =
-        if hasWatchObservationRootIdentity status then
-            lastPublishedWatchObservationScope <- Some(watchObservationScopeForStatus status)
-
     /// Discards a published identity when its Watch lifetime ends so it cannot bridge a later configuration.
-    let private clearPublishedWatchObservationScope () = lastPublishedWatchObservationScope <- None
+    let private clearPublishedWatchObservationScope () = lock watchStatusPublishLock (fun () -> lastPublishedWatchObservationScope <- None)
 
     /// Checks whether a retained publication belongs to the configuration that currently owns callback admission.
     let private publishedWatchObservationScopeMatchesCurrentConfiguration (scope: WatchObservationScope) =
@@ -3086,6 +3081,9 @@ module Watch =
     /// Reports the cached pending-work result so recovery tests can prove failed dirty reassertion discards clean evidence.
     let internal lastPublishedHasPendingWatchWorkForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork)
 
+    /// Returns the exact verified status scope retained for callback admission in focused Watch tests.
+    let internal lastPublishedWatchObservationScopeForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedWatchObservationScope)
+
     /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
     let private pendingWatchWorkTransitionNeedsPublication () =
         File.Exists(IpcFileName())
@@ -3144,8 +3142,8 @@ module Watch =
         status.UpdatedAt >= publicationStartedAt
         && statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork status
 
-    /// Advances the pending-work publication cache only after the exact IPC snapshot proves it reached disk.
-    let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt =
+    /// Advances pending-work and observation-scope caches together only after the exact IPC snapshot proves it reached disk.
+    let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds expectedObservationScope hasPendingWork publicationStartedAt =
         let transitionWasPublished =
             try
                 let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
@@ -3155,7 +3153,14 @@ module Watch =
             with
             | _ -> false
 
-        lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- if transitionWasPublished then Some hasPendingWork else None)
+        lock watchStatusPublishLock (fun () ->
+            lastPublishedHasPendingWatchWork <- if transitionWasPublished then Some hasPendingWork else None
+
+            if transitionWasPublished then
+                match expectedObservationScope with
+                | Some observationScope when publishedWatchObservationScopeMatchesCurrentConfiguration observationScope ->
+                    lastPublishedWatchObservationScope <- Some observationScope
+                | _ -> ())
 
         if not transitionWasPublished then
             logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
@@ -3188,6 +3193,12 @@ module Watch =
                     else
                         expectedStatus, expectedDirectoryIds
 
+                let observationScopeForVerification =
+                    if hasWatchObservationRootIdentity statusForVerification then
+                        Some(watchObservationScopeForStatus statusForVerification)
+                    else
+                        None
+
                 try
                     if pendingEvidence.HasDurableOnlyPendingWork then
                         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
@@ -3200,7 +3211,12 @@ module Watch =
                         writeSnapshot().GetAwaiter().GetResult()
 
                     transitionWasPublished <-
-                        cachePendingWatchWorkPublicationIfVerified statusForVerification directoryIdsForVerification hasPendingWork publicationStartedAt
+                        cachePendingWatchWorkPublicationIfVerified
+                            statusForVerification
+                            directoryIdsForVerification
+                            observationScopeForVerification
+                            hasPendingWork
+                            publicationStartedAt
 
                     publishedHasPendingWork <- if transitionWasPublished then Some hasPendingWork else None
                 with
@@ -3248,11 +3264,7 @@ module Watch =
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
-        let published = tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWatchWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
-
-        if published then rememberPublishedWatchObservationScope expectedStatus
-
-        published
+        tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWatchWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
 
     /// Reads new pending work while excluding only the current recovery attempt and its materialization latch.
     let private readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt =
@@ -7162,14 +7174,13 @@ module Watch =
                             Colors.Important
                             $"Update marker ended with incomplete completion evidence for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
                 | Some (GraceUpdateMarkerPurpose.ReferenceMaterialization, completedUtc) ->
-                    forgetObservedGraceUpdateMarkerInstance args.FullPath
-
-                    if isRecentGraceUpdateMarkerCompletion completedUtc then
+                    match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
+                    | ObservedCurrentMarker when isRecentGraceUpdateMarkerCompletion completedUtc ->
                         recordGraceUpdateMarkerCompletedUtc completedUtc
                         requestCurrentBranchReferenceCatchUp "current-branch reference materialization marker deletion"
                         logToAnsiConsole Colors.Important $"Reference materialization update has finished."
-                    else
-                        let reason = $"reference-materialization marker deletion had stale completion evidence for {args.FullPath}."
+                    | _ ->
+                        let reason = $"reference-materialization marker deletion did not provide current observed completion evidence for {args.FullPath}."
 
                         recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
                         requestGraceWatchMarkerCompletionConfidenceLossResync reason
@@ -7570,9 +7581,16 @@ module Watch =
         task {
             setGraceWatchPendingWorkStatusFlag true
             let publicationStartedAt = getCurrentInstant ()
+
+            let observationScopeForPublication =
+                if hasWatchObservationRootIdentity trustedStatus then
+                    Some(watchObservationScopeForStatus trustedStatus)
+                else
+                    None
+
             do! updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds)
 
-            cachePendingWatchWorkPublicationIfVerified trustedStatus directoryIds true publicationStartedAt
+            cachePendingWatchWorkPublicationIfVerified trustedStatus directoryIds observationScopeForPublication true publicationStartedAt
             |> ignore
         }
 
