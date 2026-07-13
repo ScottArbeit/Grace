@@ -799,6 +799,41 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         billingPeriod
+            .Property<string>("PermanentFailureCode")
+            .HasMaxLength(64)
+        |> ignore
+
+        billingPeriod
+            .Property<string>("PermanentFailureDetail")
+            .HasMaxLength(1024)
+        |> ignore
+
+        billingPeriod
+            .Property<Nullable<DateTime>>("PermanentlyFailedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        billingPeriod
+            .Property<string>("PermanentFailureInitiatedByPrincipalId")
+            .HasMaxLength(256)
+        |> ignore
+
+        billingPeriod
+            .Property<string>("PermanentFailureReasonCode")
+            .HasMaxLength(64)
+        |> ignore
+
+        billingPeriod
+            .Property<string>("PermanentFailureReasonText")
+            .HasMaxLength(1024)
+        |> ignore
+
+        billingPeriod
+            .Property<string>("PermanentFailureCorrelationId")
+            .HasMaxLength(200)
+        |> ignore
+
+        billingPeriod
             .Property<DateTime>("CreatedAtUtc")
             .HasDefaultValueSql("SYSUTCDATETIME()")
         |> ignore

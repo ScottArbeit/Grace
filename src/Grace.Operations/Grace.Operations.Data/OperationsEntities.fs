@@ -319,6 +319,20 @@ type BillingPeriodEntity() =
     member val CloseReasonText: string = null with get, set
     /// Stores the accepted correlation identity for the close.
     member val CloseCorrelationId: string = null with get, set
+    /// Stores the stable code for a deterministic calculation failure that cannot be retried on this period.
+    member val PermanentFailureCode: string = null with get, set
+    /// Stores bounded operator-visible detail for a deterministic calculation failure.
+    member val PermanentFailureDetail: string = null with get, set
+    /// Stores when this period became permanently failed.
+    member val PermanentlyFailedAtUtc = Nullable<DateTime>() with get, set
+    /// Stores the principal that initiated the calculation attempt that permanently failed.
+    member val PermanentFailureInitiatedByPrincipalId: string = null with get, set
+    /// Stores the reason classification for the permanent calculation failure.
+    member val PermanentFailureReasonCode: string = null with get, set
+    /// Stores bounded reason detail for the permanent calculation failure.
+    member val PermanentFailureReasonText: string = null with get, set
+    /// Stores the correlation identity that produced the permanent calculation failure.
+    member val PermanentFailureCorrelationId: string = null with get, set
     /// Stores the SQL creation time.
     member val CreatedAtUtc = DateTime.MinValue with get, set
 

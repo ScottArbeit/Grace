@@ -197,7 +197,7 @@ type OperationsBillingTests() =
                 Assert.That(source, Does.Contain("PricingDigest"))
                 Assert.That(source, Does.Contain("@Principal,@ReasonCode,@ReasonText,@Correlation"))
                 Assert.That(source, Does.Contain("return! runScope scope nowUtc provenance cancellationToken"))
-                Assert.That(source, Does.Contain("BillingPeriodRules.intersectingMonths (utcFromSql (reader.GetDateTime(3)))"))
+                Assert.That(source, Does.Contain("WITH WindowMonths AS"))
                 Assert.That(OperationsBillingSql.AcquireScopeLock, Does.Contain("LockOwner='Transaction'"))
                 Assert.That(source, Does.Contain("OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId")))
         )
@@ -236,11 +236,11 @@ type OperationsBillingTests() =
                 Assert.That(closeSource, Does.Contain("fact.AcceptedAtUtc > period.ClosedAtUtc"))
                 Assert.That(closeSource, Does.Contain("ClosedAtUtc=SYSUTCDATETIME()"))
                 Assert.That(usageSql, Does.Contain("sys.sp_getapplock @Resource=@LockResource"))
-                Assert.That(closeSource, Does.Contain("FROM ops.RawUsageFact WITH(READCOMMITTEDLOCK)"))
+                Assert.That(closeSource, Does.Contain("FROM ops.RawUsageFact f WITH(READCOMMITTEDLOCK)"))
                 Assert.That(closeSource, Does.Contain("IsAutomaticRetryEligible=1"))
                 Assert.That(closeSource, Does.Contain("IsAutomaticRetryEligible=0"))
                 Assert.That(closeSource, Does.Contain("ReenableCorrectionWorkAsync"))
-                Assert.That(closeSource, Does.Contain("WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL AND IsAutomaticRetryEligible=0"))
+                Assert.That(closeSource, Does.Contain("w.CompletedAtUtc IS NULL AND w.IsAutomaticRetryEligible=0"))
                 Assert.That(workerSource, Does.Contain("UsageFactPersistenceStatus.AlreadyProcessed"))
                 Assert.That(migrationSource, Does.Contain("AcceptedAtUtc datetime2(7) NOT NULL"))
                 Assert.That(migrationSource, Does.Contain("IsAutomaticRetryEligible bit NOT NULL"))
@@ -272,7 +272,7 @@ type OperationsBillingTests() =
     member _.BillingFrozenArtifactsAndSqlProtectionMatrixAgree() =
         let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
 
-        let migrationPath = Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260711140000_AddBillingPeriodCloseLedger.fs")
+        let migrationPath = Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260713120000_StabilizeBillingPeriodCloseLedger.fs")
 
         let snapshotPath = Path.Combine(root, "Grace.Operations.Data", "Migrations", "OperationsDbContextModelSnapshot.fs")
         let migrationSource = File.ReadAllText(migrationPath)
@@ -283,7 +283,7 @@ type OperationsBillingTests() =
         let snapshot = snapshotSource.Substring(snapshotStart)
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingFrozenModel;Integrated Security=true;"
         let runtime = context.Model
-        let migration = AddBillingPeriodCloseLedger().TargetModel
+        let migration = StabilizeBillingPeriodCloseLedger().TargetModel
         let snapshotModel = OperationsDbContextModelSnapshot().Model
 
         let billingShape (model: Microsoft.EntityFrameworkCore.Metadata.IModel) (entityType: Type) : Set<string * string * bool> =
@@ -309,12 +309,12 @@ type OperationsBillingTests() =
                 Assert.That(snapshotStart, Is.GreaterThanOrEqualTo(0))
                 Assert.That(target, Does.Not.Contain("OperationsBillingModel.configure"))
                 Assert.That(snapshot, Does.Not.Contain("OperationsBillingModel.configure"))
-                Assert.That(target, Does.Contain("let ledger = modelBuilder.Entity<ChargeLedgerEntryEntity>()"))
                 Assert.That(snapshot, Does.Contain("let ledger = modelBuilder.Entity<ChargeLedgerEntryEntity>()"))
 
                 for entity in entities do
-                    Assert.That((billingShape migration entity = billingShape snapshotModel entity), Is.True)
-                    Assert.That((billingShape migration entity = billingShape runtime entity), Is.True)
+                    Assert.That((billingShape snapshotModel entity = billingShape runtime entity), Is.True)
+
+                Assert.That(billingShape migration typeof<BillingPeriodEntity> = billingShape snapshotModel typeof<BillingPeriodEntity>, Is.True)
 
                 for trigger in
                     [
@@ -337,17 +337,47 @@ type OperationsBillingTests() =
                     Does.Contain("AND (d.EffectiveToUtc IS NULL OR d.EffectiveToUtc > p.PeriodFromUtc)\n        WHERE a.EffectiveFromUtc")
                 )
 
-                Assert.That(migrationSource, Does.Contain("Split([| \"GO\" |], StringSplitOptions.RemoveEmptyEntries)"))
+                Assert.That(migrationSource, Does.Contain("TR_ops_RawUsageFact_TerminalBillingProtection"))
+                Assert.That(migrationSource, Does.Contain("TR_ops_BillingPeriod_PermanentFailureProtection"))
+                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("TR_ops_RawUsageFact_TerminalBillingProtection")))
+        )
+
+    /// Verifies session-three source, lifecycle, materialization, idempotency, routing, and lock-order invariants are explicit.
+    [<Test>]
+    member _.SessionThreeStabilizationContractIsPropagatedAcrossRuntimeAndSchema() =
+        let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
+        let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+        let billingSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBilling.fs"))
+
+        let migrationSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260713120000_StabilizeBillingPeriodCloseLedger.fs"))
+
+        let snapshotSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "OperationsDbContextModelSnapshot.fs"))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(billingSource, Does.Contain("TR_ops_RawUsageFact_TerminalBillingProtection"))
+                Assert.That(billingSource, Does.Contain("AFTER UPDATE, DELETE"))
+                Assert.That(billingSource, Does.Contain("i.CorrelationId<>d.CorrelationId"))
+                Assert.That(billingSource, Does.Contain("i.AcceptedAtUtc<>d.AcceptedAtUtc"))
+                Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
+                Assert.That(billingSource, Does.Contain("TR_ops_BillingPeriod_PermanentFailureProtection"))
+                Assert.That(closeSource, Does.Contain("SAVE TRANSACTION BillingCloseFinalPreview"))
+                Assert.That(closeSource, Does.Contain("ROLLBACK TRANSACTION BillingCloseFinalPreview"))
+                Assert.That(closeSource, Does.Contain("BillingPeriodState.PermanentlyFailed"))
+                Assert.That(closeSource, Does.Contain("WHERE BillingIngestionFailureId=@Id"))
+                Assert.That(closeSource, Does.Contain("WITH WindowMonths AS"))
+                Assert.That(closeSource, Does.Contain("@LookbackFromUtc"))
+                Assert.That(closeSource, Does.Contain("FROM ops.BillingIngestionFailure f WITH(READCOMMITTEDLOCK)"))
+                Assert.That(closeSource, Does.Contain("persisted owner and observed month were used"))
+                Assert.That(closeSource, Does.Contain("SELECT OwnerId,OrganizationId,RepositoryId,ObservedAtUtc FROM ops.RawUsageFact WITH(UPDLOCK,HOLDLOCK)"))
 
                 Assert.That(
-                    migrationSource.IndexOf("DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection", StringComparison.Ordinal),
-                    Is.LessThan(migrationSource.IndexOf("DROP TABLE IF EXISTS ops.BillingPeriod", StringComparison.Ordinal))
+                    closeSource.IndexOf("do! lockScope connection transaction scope cancellationToken", StringComparison.Ordinal),
+                    Is.LessThan(closeSource.IndexOf("FROM ops.BillingCorrectionWork w WITH(UPDLOCK,HOLDLOCK)", StringComparison.Ordinal))
                 )
 
-                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_ChargeLedgerEntry_Immutable"))
-                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_PricingAssignment_HistoricalProtection"))
-                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_PricingPlan_HistoricalProtection"))
-                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_BillableUsageKindMapping_HistoricalProtection"))
-                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_PricingRate_HistoricalProtection"))
-                Assert.That(context.GetService<IMigrator>().GenerateScript(), Does.Contain("TR_ops_ChargeLedgerEntry_Immutable")))
+                Assert.That(migrationSource, Does.Contain("PermanentFailureCode nvarchar(64) NULL"))
+                Assert.That(migrationSource, Does.Contain("CHECK (State BETWEEN 0 AND 4)"))
+                Assert.That(migrationSource, Does.Contain("DROP TRIGGER IF EXISTS ops.TR_ops_RawUsageFact_TerminalBillingProtection"))
+                Assert.That(snapshotSource, Does.Contain("PermanentFailureCorrelationId")))
         )

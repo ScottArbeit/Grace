@@ -14,6 +14,7 @@ type BillingPeriodState =
     | Provisional = 1
     | Closed = 2
     | Corrected = 3
+    | PermanentlyFailed = 4
 
 /// Names immutable charge-ledger entry kinds in their stable SQL representation.
 [<RequireQualifiedAccess>]
@@ -286,6 +287,41 @@ module OperationsBillingModel =
 
         period
             .Property<string>("CloseCorrelationId")
+            .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
+        |> ignore
+
+        period
+            .Property<string>("PermanentFailureCode")
+            .HasMaxLength(64)
+        |> ignore
+
+        period
+            .Property<string>("PermanentFailureDetail")
+            .HasMaxLength(1024)
+        |> ignore
+
+        period
+            .Property<Nullable<DateTime>>("PermanentlyFailedAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        period
+            .Property<string>("PermanentFailureInitiatedByPrincipalId")
+            .HasMaxLength(256)
+        |> ignore
+
+        period
+            .Property<string>("PermanentFailureReasonCode")
+            .HasMaxLength(64)
+        |> ignore
+
+        period
+            .Property<string>("PermanentFailureReasonText")
+            .HasMaxLength(1024)
+        |> ignore
+
+        period
+            .Property<string>("PermanentFailureCorrelationId")
             .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
         |> ignore
 
@@ -693,6 +729,64 @@ CREATE TRIGGER ops.TR_ops_ChargeLedgerEntry_Immutable ON ops.ChargeLedgerEntry
 AFTER UPDATE, DELETE AS
 BEGIN
     THROW 51000, 'Charge ledger entries are immutable.', 1;
+END;
+"""
+
+    /// Freezes billing source and evidence fields after a period reaches a terminal close state while allowing raw-payload archive lifecycle updates.
+    let CreateTerminalRawUsageFactProtectionTrigger =
+        """
+CREATE TRIGGER ops.TR_ops_RawUsageFact_TerminalBillingProtection ON ops.RawUsageFact
+AFTER UPDATE, DELETE AS
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM deleted d
+        JOIN ops.BillingPeriod p ON p.OwnerId=d.OwnerId AND p.OrganizationId=d.OrganizationId AND p.RepositoryId=d.RepositoryId
+          AND d.ObservedAtUtc>=p.PeriodFromUtc AND d.ObservedAtUtc<p.PeriodToUtc AND p.State IN (2,3)
+        LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId
+        WHERE i.UsageFactId IS NULL
+           OR i.CorrelationId<>d.CorrelationId
+           OR i.FactKind<>d.FactKind
+           OR i.OwnerId<>d.OwnerId
+           OR i.OrganizationId<>d.OrganizationId
+           OR i.RepositoryId<>d.RepositoryId
+           OR i.StoragePoolId<>d.StoragePoolId
+           OR i.Quantity<>d.Quantity
+           OR i.ObservedAtUtc<>d.ObservedAtUtc
+           OR i.AcceptedAtUtc<>d.AcceptedAtUtc
+           OR i.CreatedAtUtc<>d.CreatedAtUtc
+    )
+        THROW 51005, 'Terminal billing raw fact source and evidence fields are immutable.', 1;
+END;
+"""
+
+    /// Prevents a deterministic calculation failure from being deleted, reopened, or stripped of its operator-visible evidence.
+    let CreatePermanentBillingFailureProtectionTrigger =
+        """
+CREATE TRIGGER ops.TR_ops_BillingPeriod_PermanentFailureProtection ON ops.BillingPeriod
+AFTER UPDATE, DELETE AS
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM deleted d
+        LEFT JOIN inserted i ON i.BillingPeriodId=d.BillingPeriodId
+        WHERE d.State=4
+          AND
+          (
+              i.BillingPeriodId IS NULL
+              OR i.State<>4
+              OR ISNULL(i.PermanentFailureCode,N'')<>ISNULL(d.PermanentFailureCode,N'')
+              OR ISNULL(i.PermanentFailureDetail,N'')<>ISNULL(d.PermanentFailureDetail,N'')
+              OR ISNULL(i.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.PermanentlyFailedAtUtc,CONVERT(datetime2(7),'19000101'))
+              OR ISNULL(i.PermanentFailureInitiatedByPrincipalId,N'')<>ISNULL(d.PermanentFailureInitiatedByPrincipalId,N'')
+              OR ISNULL(i.PermanentFailureReasonCode,N'')<>ISNULL(d.PermanentFailureReasonCode,N'')
+              OR ISNULL(i.PermanentFailureReasonText,N'')<>ISNULL(d.PermanentFailureReasonText,N'')
+              OR ISNULL(i.PermanentFailureCorrelationId,N'')<>ISNULL(d.PermanentFailureCorrelationId,N'')
+          )
+    )
+        THROW 51006, 'Permanently failed billing periods cannot reopen or lose failure evidence.', 1;
 END;
 """
 

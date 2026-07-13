@@ -43,6 +43,16 @@ The ingestion hot path still uses reviewed raw SQL for the durable insert and ag
   is missing. An explicit internal operator repair with durable provenance may re-enable only that exact blocked row;
   Grace never inserts or mutates historical pricing to settle it. Manual adjustments and reversals validate their complete
   owner-scoped pricing grain and any requested predecessor before appending immutable history.
+- `20260713120000_StabilizeBillingPeriodCloseLedger` protects the raw billing source and evidence fields of every
+  `Closed` or `Corrected` period at the SQL boundary. `RawPayload` and archive, retention, rehydration, and
+  archive-failure metadata remain operable so the existing hot/cold archive lifecycle can complete. The migration also
+  adds `PermanentlyFailed` (`State = 4`) for deterministic calculation overflow. It records bounded code, detail,
+  timestamp, and provenance, cannot return to ordinary close or correction processing, and has no replacement or
+  settlement behavior in this leaf; that separately tracked outcome belongs to #715.
+- Routine billing materialization reads only the current UTC calendar month and two preceding UTC months for pricing
+  assignments and accepted raw facts. Existing nonterminal periods, unfinished explicit correction work, and active
+  scoped ingestion-failure evidence are independently selected, including scopes older than the rolling window. Older
+  terminal-history recovery requires a separate operator-directed workflow rather than silently growing every worker pass.
 
 Grace has no production billing data. These migrations describe the current schema only: no compatibility columns,
 views, aliases, backfill, or legacy objects are retained.
