@@ -13299,7 +13299,7 @@ module WatchTests =
             scanCalls |> should equal 0
             applyFromDifferencesCalls |> should equal 0)
 
-    /// Verifies that a non-ignored empty directory create reaches status application without a whole-root scan.
+    /// Verifies that a created non-ignored empty directory reaches status application without a whole-root scan.
     [<Test>]
     let ``created non-ignored empty directory derives directory add without scan`` () =
         withTempRepo (fun root ->
@@ -13379,15 +13379,17 @@ module WatchTests =
             afterProcessing.FilesToProcess
             |> should equal Array.empty<string>)
 
-    /// Verifies that a leaf-only nested empty directory event queues every missing parent before the child add.
+    /// Verifies that a nested directory event includes an untracked ancestor's sibling file without a whole-root scan.
     [<Test>]
-    let ``nested empty directory leaf event derives missing parent adds without scan`` () =
+    let ``nested directory leaf event includes untracked ancestor sibling without scan`` () =
         withTempRepo (fun root ->
             let parentRelativePath = "new-parent"
             let childRelativePath = "new-parent/empty-child"
             let childPath = Path.Combine(root, childRelativePath)
-            /// Tracks upload Calls changes so the empty directory tree is not file-derived.
-            let mutable uploadCalls = 0
+            let siblingRelativePath = "new-parent/sibling.txt"
+            let siblingPath = Path.Combine(root, "new-parent", "sibling.txt")
+            /// Records upload paths so the bounded ancestor subtree includes the sibling file.
+            let uploadedPaths = ResizeArray<string>()
             /// Tracks scan Calls changes so healthy running mode stays event-derived for leaf-only directory events.
             let mutable scanCalls = 0
             /// Tracks apply-from-differences Calls changes so the nested directory adds create status work.
@@ -13396,14 +13398,24 @@ module WatchTests =
             let mutable observedDifferences = List<FileSystemDifference>()
 
             Directory.CreateDirectory(childPath) |> ignore
+            File.WriteAllText(siblingPath, "sibling")
             Watch.OnCreated(createdEvent childPath)
+
+            let pendingBeforeProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pendingBeforeProcessing.FilesToProcess
+            |> should equal [| siblingPath |]
 
             /// Reads status needed by the test scenario.
             let readStatus () = Task.FromResult(GraceStatus.Default)
 
             /// Builds upload test data used to exercise CLI watch behavior.
-            let upload _ _ =
-                uploadCalls <- uploadCalls + 1
+            let upload _ filePath =
+                let fullPath = $"{filePath}"
+                uploadedPaths.Add(fullPath)
+
+                if File.Exists(fullPath) then recordUploadedFileVersion fullPath
+
                 Task.FromResult(())
 
             /// Builds scan-oriented update test data used to exercise CLI watch behavior.
@@ -13437,7 +13449,8 @@ module WatchTests =
                 .GetAwaiter()
                 .GetResult()
 
-            uploadCalls |> should equal 0
+            uploadedPaths.ToArray()
+            |> should equal [| siblingPath |]
             scanCalls |> should equal 0
             applyFromDifferencesCalls |> should equal 1
 
@@ -13449,6 +13462,7 @@ module WatchTests =
                 [|
                     DifferenceType.Add, FileSystemEntryType.Directory, parentRelativePath
                     DifferenceType.Add, FileSystemEntryType.Directory, childRelativePath
+                    DifferenceType.Add, FileSystemEntryType.File, siblingRelativePath
                 |]
 
             let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()

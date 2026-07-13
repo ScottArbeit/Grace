@@ -2766,6 +2766,38 @@ module Watch =
 
                 None
 
+    /// Finds the first untracked directory below the tracked tree that bounds an observed directory's affected subtree.
+    let private affectedDirectorySubtreeRoot (status: GraceStatus) fullPath =
+        match repositoryRelativePath fullPath with
+        | Some relativePath ->
+            let segments =
+                (normalizeRelativePath (RelativePath relativePath)).Split(
+                    '/',
+                    StringSplitOptions.RemoveEmptyEntries
+                )
+
+            let mutable subtreeRoot = fullPath
+            let mutable foundUntrackedAncestor = false
+
+            for segmentIndex in 0 .. segments.Length - 1 do
+                if not foundUntrackedAncestor then
+                    let candidateRelativePath =
+                        RelativePath(String.Join("/", segments[0..segmentIndex]))
+                        |> canonicalizeTrackedAncestorCasing status
+
+                    let candidatePath = Path.Combine(Current().RootDirectory, normalizeRelativePath candidateRelativePath)
+
+                    if
+                        not (isTrackedDirectory status candidateRelativePath)
+                        && Directory.Exists(candidatePath)
+                        && directoryAndAncestorsShouldNotBeIgnored candidatePath
+                    then
+                        subtreeRoot <- candidatePath
+                        foundUntrackedAncestor <- true
+
+            subtreeRoot
+        | None -> fullPath
+
     /// Queues directory add differences and reports whether final-state inspection must enumerate the affected subtree.
     let private tryEnqueueDirectoryStatusAdds fullPath =
         match readGraceStatusForDirectoryAddClassification () with
@@ -2780,6 +2812,7 @@ module Watch =
                 | Some trackedFile -> addPendingStatusDifference (FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
                 | None -> ()
 
+                let subtreeRoot = affectedDirectorySubtreeRoot status fullPath
                 let directoryAddDifferences, completedEnumeration = tryDeriveDirectorySubtreeAddDifferences status fullPath
 
                 for difference in directoryAddDifferences do
@@ -2788,28 +2821,30 @@ module Watch =
                 directoryAddDifferences.Count > 0
                 || replacedTrackedFile.IsSome,
                 completedEnumeration,
-                true
-            | None -> false, true, false
-        | None -> false, false, false
+                true,
+                subtreeRoot
+            | None -> false, true, false, fullPath
+        | None -> false, false, false, fullPath
 
     /// Queues the final directory state and all retained descendants, transferring stale same-path file work before bounded enumeration.
     let private enqueueFinalDirectoryWork fullPath =
         transferFileWorkToDirectoryProcessing fullPath
 
-        let directoryStatusAddQueued, directoryStatusEnumerationComplete, requiresSubtreeEnumeration = tryEnqueueDirectoryStatusAdds fullPath
+        let directoryStatusAddQueued, directoryStatusEnumerationComplete, requiresSubtreeEnumeration, subtreeRoot =
+            tryEnqueueDirectoryStatusAdds fullPath
 
         let fileUploadWorkCountBefore = filesToProcess.Count
 
         let fileUploadEnumerationComplete =
             if directoryStatusEnumerationComplete
                && requiresSubtreeEnumeration then
-                tryEnqueueDirectoryContentsForUpload fullPath
+                tryEnqueueDirectoryContentsForUpload subtreeRoot
             else
                 directoryStatusEnumerationComplete
 
         if not directoryStatusEnumerationComplete
            || not fileUploadEnumerationComplete then
-            enqueueDirectoryUploadRetry fullPath
+            enqueueDirectoryUploadRetry subtreeRoot
 
         directoryStatusAddQueued
         || filesToProcess.Count > fileUploadWorkCountBefore
@@ -7282,12 +7317,13 @@ module Watch =
 
                 requestGraceWatchExplicitResync $"Watch directory inspection scope changed before bounded retry for {pendingDirectory.FullPath}."
             else
-                let _, directoryStatusEnumerationComplete, requiresSubtreeEnumeration = tryEnqueueDirectoryStatusAdds pendingDirectory.FullPath
+                let _, directoryStatusEnumerationComplete, requiresSubtreeEnumeration, subtreeRoot =
+                    tryEnqueueDirectoryStatusAdds pendingDirectory.FullPath
 
                 let fileUploadEnumerationComplete =
                     if directoryStatusEnumerationComplete then
                         if requiresSubtreeEnumeration then
-                            enqueueDirectoryContentsForUpload pendingDirectory.FullPath
+                            enqueueDirectoryContentsForUpload subtreeRoot
                         else
                             true
                     else
