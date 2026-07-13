@@ -703,6 +703,12 @@ module Watch =
                 else
                     pathComparer.Compare(left.FullPath, right.FullPath)
 
+        /// Retains create or rename intent when a trailing change callback describes the same final directory state.
+        let mergeObservationKind incomingKind existingCandidate =
+            match incomingKind, existingCandidate with
+            | Changed, Some existing when existing.Kind = CreatedOrChanged -> CreatedOrChanged
+            | _ -> incomingKind
+
         /// Records one local observation, replacing any older generation while retaining same-path delete proof for a final replacement.
         member _.Observe(origin: WatchObservationOrigin, kind: WatchObservationKind, fullPath: string, seenAt: DateTime) =
             lock gate (fun () ->
@@ -710,16 +716,22 @@ module Watch =
                 | LocalFileSystem, false, Some normalizedPath ->
                     let generation = Interlocked.Increment(&nextGeneration)
 
+                    let existingCandidate =
+                        match candidates.TryGetValue(normalizedPath) with
+                        | true, existing -> Some existing
+                        | false, _ -> None
+
+                    let mergedKind = mergeObservationKind kind existingCandidate
+
                     let requiresRemovalProof =
                         kind = Deleted
-                        || match candidates.TryGetValue(normalizedPath) with
-                           | true, existing -> existing.RequiresRemovalProof
-                           | false, _ -> false
+                        || existingCandidate
+                           |> Option.exists (fun existing -> existing.RequiresRemovalProof)
 
                     let candidate =
                         {
                             FullPath = normalizedPath
-                            Kind = kind
+                            Kind = mergedKind
                             RequiresRemovalProof = requiresRemovalProof
                             Generation = generation
                             LastSeenAt = seenAt
@@ -2479,27 +2491,21 @@ module Watch =
             | Some relativePath ->
                 let finalDirectoryRelativePath = RelativePath relativePath
 
-                let replacesTrackedFile =
-                    tryFindTrackedFile status finalDirectoryRelativePath
-                    |> Option.isSome
+                let replacedTrackedFile = tryFindTrackedFile status finalDirectoryRelativePath
 
-                let alreadyTrackedDirectory = isTrackedDirectory status finalDirectoryRelativePath
+                match replacedTrackedFile with
+                | Some trackedFile -> addPendingStatusDifference (FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
+                | None -> ()
 
-                if replacesTrackedFile then
-                    addPendingStatusDifference (FileSystemDifference.Create Delete FileSystemEntryType.File finalDirectoryRelativePath)
+                let directoryAddDifferences, completedEnumeration = tryDeriveDirectorySubtreeAddDifferences status fullPath
 
-                if alreadyTrackedDirectory && not replacesTrackedFile then
-                    false, true, false
-                else
-                    let directoryAddDifferences, completedEnumeration = tryDeriveDirectorySubtreeAddDifferences status fullPath
+                for difference in directoryAddDifferences do
+                    addPendingStatusDifference difference
 
-                    for difference in directoryAddDifferences do
-                        addPendingStatusDifference difference
-
-                    directoryAddDifferences.Count > 0
-                    || replacesTrackedFile,
-                    completedEnumeration,
-                    true
+                directoryAddDifferences.Count > 0
+                || replacedTrackedFile.IsSome,
+                completedEnumeration,
+                true
             | None -> false, true, false
         | None -> false, false, false
 
@@ -3419,16 +3425,23 @@ module Watch =
         else
             false
 
-    /// Applies a change-only candidate, allowing a directory only when GraceStatus proves it replaced a tracked file.
+    /// Applies a change-only candidate, retaining unreadable directory classification as scoped retry work while rejecting proven mtime-only noise.
     let private applyChangedLocalObservationCandidate fullPath observedAt =
         if Directory.Exists(fullPath) then
-            match readGraceStatusForDirectoryAddClassification (), repositoryRelativePath fullPath with
-            | Some status, Some relativePath when
-                tryFindTrackedFile status (RelativePath relativePath)
-                |> Option.isSome
-                ->
-                enqueueFinalDirectoryWork fullPath
-            | _ -> false
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                match readGraceStatusForDirectoryAddClassification () with
+                | Some status when
+                    tryFindTrackedFile status (RelativePath relativePath)
+                    |> Option.isSome
+                    ->
+                    enqueueFinalDirectoryWork fullPath
+                | Some _ -> false
+                | None ->
+                    transferFileWorkToDirectoryProcessing fullPath
+                    enqueueDirectoryUploadRetry fullPath
+                    true
+            | None -> false
         else
             applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
 
