@@ -14487,12 +14487,18 @@ module WatchTests =
         Services.isGraceWatchScanLegal Services.GraceWatchRuntimeMode.Stopping
         |> should equal false
 
-    /// Verifies that watcher overflow requests resync and quarantines previously queued observations.
+    /// Verifies that watcher overflow preserves current-scope file evidence for resync while quarantining stale incremental work.
     [<Test>]
-    let ``watcher error leaves healthy mode and quarantines pending observations`` () =
+    let ``watcher error leaves healthy mode, retains current-scope evidence, and quarantines pending observations`` () =
         withTempRepo (fun root ->
             Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
             let rootDirectoryId = Guid.NewGuid()
+            let relativePath = "queued-before-overflow.txt"
+            let discardedTriggerRelativePath = "discarded-before-overflow.txt"
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+            let mutable statusApplications = 0
+            let mutable incrementalApplications = 0
 
             let status =
                 { GraceStatus.Default with
@@ -14509,14 +14515,21 @@ module WatchTests =
             |> Option.isSome
             |> should equal true
 
-            let filePath = Path.Combine(root, "queued-before-overflow.txt")
+            let filePath = Path.Combine(root, relativePath)
+            let discardedTriggerPath = Path.Combine(root, discardedTriggerRelativePath)
             File.WriteAllText(filePath, "queued before overflow")
             Watch.OnChanged(changedEvent filePath)
+            Watch.OnDeleted(deletedEvent discardedTriggerPath)
 
             Watch
                 .pendingWatchWorkSnapshotForTests()
                 .FilesToProcess
             |> should equal [| filePath |]
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .StatusUpdateTriggers
+            |> should equal [| discardedTriggerRelativePath |]
 
             Watch.OnError(ErrorEventArgs(InternalBufferOverflowException("watch buffer overflow")))
 
@@ -14526,13 +14539,84 @@ module WatchTests =
             Watch
                 .pendingWatchWorkSnapshotForTests()
                 .FilesToProcess
+            |> should equal [| filePath |]
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal [| filePath |]
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .StatusUpdateTriggers
             |> should equal Array.empty<string>
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (true, true)
 
             Watch.quarantinedWatchObservationCountForWatchTests ()
             |> should equal 1
 
             Services.getGraceWatchStatus().Result
-            |> should equal None)
+            |> should equal None
+
+            /// Uploads the preserved final bytes so the resync pass can prove they were accounted for.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Supplies the scan-derived status difference that accounts for the retained file before clean recovery.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                let differences = List<FileSystemDifference>()
+                differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File relativePath)
+                Task.FromResult(differences)
+
+            /// Records the trusted scan-derived status boundary without allowing an incremental status path.
+            let updateGraceStatusFromDifferences status _ _ =
+                statusApplications <- statusApplications + 1
+                Task.FromResult(Some status)
+
+            /// Fails the test if preserved recovery evidence is routed through incremental status application.
+            let applyIncremental _ _ _ =
+                incrementalApplications <- incrementalApplications + 1
+                Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(status))
+                (fun () -> Task.FromResult(status))
+                upload
+                (fun updatedStatus _ -> Task.FromResult(Some updatedStatus))
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            scanCalls |> should equal 1
+            statusApplications |> should equal 1
+            incrementalApplications |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false)
+
+            Watch.lastPublishedHasPendingWatchWorkForWatchTests ()
+            |> should equal (Some false))
 
     /// Verifies that resync scans build fresh working-tree maps so stale cache entries cannot hide deletes.
     [<Test>]
