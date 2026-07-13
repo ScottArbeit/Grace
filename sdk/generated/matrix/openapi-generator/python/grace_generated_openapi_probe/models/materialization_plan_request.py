@@ -19,7 +19,8 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
+from grace_generated_openapi_probe.models.artifact_grant_holder_public_key import ArtifactGrantHolderPublicKey
 from grace_generated_openapi_probe.models.materialization_artifact_kind import MaterializationArtifactKind
 from grace_generated_openapi_probe.models.materialization_cache_selection import MaterializationCacheSelection
 from grace_generated_openapi_probe.models.materialization_execution_mode import MaterializationExecutionMode
@@ -37,7 +38,8 @@ class MaterializationPlanRequest(BaseModel):
     execution_mode: MaterializationExecutionMode = Field(alias="ExecutionMode")
     cache_selection: MaterializationCacheSelection = Field(alias="CacheSelection")
     requested_artifact_kinds: List[MaterializationArtifactKind] = Field(alias="RequestedArtifactKinds")
-    __properties: ClassVar[List[str]] = ["Class", "TargetSelector", "ExecutionMode", "CacheSelection", "RequestedArtifactKinds"]
+    holder_public_key: Optional[ArtifactGrantHolderPublicKey] = Field(default=None, alias="HolderPublicKey")
+    __properties: ClassVar[List[str]] = ["Class", "TargetSelector", "ExecutionMode", "CacheSelection", "RequestedArtifactKinds", "HolderPublicKey"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -84,6 +86,9 @@ class MaterializationPlanRequest(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of cache_selection
         if self.cache_selection:
             _dict['CacheSelection'] = self.cache_selection.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of holder_public_key
+        if self.holder_public_key:
+            _dict['HolderPublicKey'] = self.holder_public_key.to_dict()
         return _dict
 
     @classmethod
@@ -100,7 +105,8 @@ class MaterializationPlanRequest(BaseModel):
             "TargetSelector": MaterializationTargetSelector.from_dict(obj["TargetSelector"]) if obj.get("TargetSelector") is not None else None,
             "ExecutionMode": obj.get("ExecutionMode"),
             "CacheSelection": MaterializationCacheSelection.from_dict(obj["CacheSelection"]) if obj.get("CacheSelection") is not None else None,
-            "RequestedArtifactKinds": obj.get("RequestedArtifactKinds")
+            "RequestedArtifactKinds": obj.get("RequestedArtifactKinds"),
+            "HolderPublicKey": ArtifactGrantHolderPublicKey.from_dict(obj["HolderPublicKey"]) if obj.get("HolderPublicKey") is not None else None
         })
         return _obj
 

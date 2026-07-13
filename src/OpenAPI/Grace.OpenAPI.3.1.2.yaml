@@ -1674,7 +1674,7 @@ paths:
       tags:
         - Materialization
       summary: Create a Materialization Plan.
-      description: Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+      description: Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors. CachePreferred atomically falls back to Direct when a cache attempt fails. CacheRequired returns a 503 Grace error with `Properties.Code = cacheRequiredUnavailable` when no eligible Cache or grant capacity is available, and never falls back to Direct.
       operationId: CreateMaterializationPlan
       requestBody:
         required: true
@@ -1703,13 +1703,142 @@ paths:
                     CacheSelection:
                       Class: MaterializationCacheSelection
                       SelectionKind: bypassCache
-                      CacheScope: null
                     RequestedArtifactKinds:
                       - directoryVersionZip
                       - recursiveDirectoryMetadata
       responses:
         '200':
           $ref: '#/components/responses/MaterializationPlanResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+        '503':
+          $ref: '#/components/responses/503'
+  /cache/enroll:
+    post:
+      tags:
+        - Cache
+      summary: Enroll a Grace Cache with an administrator-authorized repository boundary.
+      operationId: EnrollCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheEnrollmentRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/refresh:
+    post:
+      tags:
+        - Cache
+      summary: Refresh Cache operational facts with a current identity-key proof.
+      operationId: RefreshCache
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheRegistrationRefreshRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/assign-repositories:
+    post:
+      tags:
+        - Cache
+      summary: Replace a Cache's exact repository assignments as a current administrator.
+      operationId: AssignCacheRepositories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheRepositoryAssignmentRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/revoke:
+    post:
+      tags:
+        - Cache
+      summary: Revoke a Cache registration as a current administrator.
+      operationId: RevokeCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheRevocationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '403':
+          $ref: '#/components/responses/403'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/rotate-key:
+    post:
+      tags:
+        - Cache
+      summary: Rotate a Cache identity key after proof by the currently accepted key.
+      operationId: RotateCacheKey
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheKeyRotationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/validation-keys:
+    get:
+      tags:
+        - Cache
+      summary: Publish artifact grant validation keys.
+      description: Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
+      operationId: GetArtifactGrantValidationKeys
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/ArtifactGrantValidationKeySetResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -3903,9 +4032,6 @@ components:
           example: MaterializationCacheSelection
         SelectionKind:
           $ref: '#/components/schemas/MaterializationCacheSelectionKind'
-        CacheScope:
-          type: string
-          nullable: true
       required:
         - Class
         - SelectionKind
@@ -3926,6 +4052,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MaterializationArtifactKind'
+        HolderPublicKey:
+          $ref: '#/components/schemas/ArtifactGrantHolderPublicKey'
+          nullable: true
       required:
         - Class
         - TargetSelector
@@ -3946,7 +4075,6 @@ components:
         CacheSelection:
           Class: MaterializationCacheSelection
           SelectionKind: bypassCache
-          CacheScope: null
         RequestedArtifactKinds:
           - directoryVersionZip
           - recursiveDirectoryMetadata
@@ -3995,7 +4123,6 @@ components:
           CacheSelection:
             Class: MaterializationCacheSelection
             SelectionKind: bypassCache
-            CacheScope: null
           RequestedArtifactKinds:
             - directoryVersionZip
             - recursiveDirectoryMetadata
@@ -4014,6 +4141,18 @@ components:
           nullable: true
         CacheKey:
           type: string
+          nullable: true
+        CacheEndpoint:
+          type: string
+          format: uri
+          nullable: true
+        CacheId:
+          type: string
+          format: uuid
+          nullable: true
+        DirectFallbackUri:
+          type: string
+          format: uri
           nullable: true
       required:
         - Class
@@ -4081,6 +4220,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MaterializationArtifactDescriptor'
+        ArtifactGrant:
+          $ref: '#/components/schemas/SignedArtifactGrant'
+          nullable: true
       required:
         - Class
         - TargetRootDirectoryVersionId
@@ -4106,6 +4248,608 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    CacheBoundaryKind:
+      type: string
+      enum:
+        - owner
+        - organization
+      x-enumNames:
+        - Owner
+        - Organization
+    CacheHealthStatus:
+      type: string
+      enum:
+        - healthy
+        - unhealthy
+      x-enumNames:
+        - Healthy
+        - Unhealthy
+    CacheIdentityPublicKey:
+      description: Canonical P-256 public key for a Cache identity. Private key material is never accepted or returned.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheIdentityPublicKey
+        Algorithm:
+          type: string
+          enum:
+            - ES256
+        Curve:
+          type: string
+          enum:
+            - P-256
+        PublicKeyX:
+          type: string
+        PublicKeyY:
+          type: string
+      required:
+        - Class
+        - Algorithm
+        - Curve
+        - PublicKeyX
+        - PublicKeyY
+    CacheRepositoryScope:
+      description: Explicit durable repository assignment with its organization needed for authoritative lookup.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRepositoryScope
+        OrganizationId:
+          type: string
+          format: uuid
+        RepositoryId:
+          type: string
+          format: uuid
+      required:
+        - Class
+        - OrganizationId
+        - RepositoryId
+    CacheRequestProofPayload:
+      description: Canonical Cache proof binding the cache id, operation, canonical request digest, and Unix-millisecond timestamp.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRequestProofPayload
+        CacheId:
+          type: string
+          format: uuid
+        Operation:
+          type: string
+        RequestDigest:
+          type: string
+        IssuedAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - Class
+        - CacheId
+        - Operation
+        - RequestDigest
+        - IssuedAt
+    SignedCacheRequestProof:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: SignedCacheRequestProof
+        Payload:
+          $ref: '#/components/schemas/CacheRequestProofPayload'
+        Signature:
+          type: string
+      required:
+        - Class
+        - Payload
+        - Signature
+    CacheEnrollmentRequest:
+      description: Administrator-authenticated enrollment for exactly one Owner or Organization and explicit repositories within it.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheEnrollmentRequest
+        DisplayName:
+          type: string
+        BoundaryKind:
+          $ref: '#/components/schemas/CacheBoundaryKind'
+        OwnerId:
+          type: string
+          format: uuid
+        OrganizationId:
+          type: string
+          format: uuid
+          nullable: true
+        RepositoryScopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CacheRepositoryScope'
+        PublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
+        Endpoint:
+          type: string
+          format: uri
+        AllowHttpEndpoint:
+          type: boolean
+          description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
+        Health:
+          $ref: '#/components/schemas/CacheHealthStatus'
+        SoftwareVersion:
+          type: string
+        ProtocolVersion:
+          type: string
+        PrefetchSupported:
+          type: boolean
+      required:
+        - Class
+        - DisplayName
+        - BoundaryKind
+        - OwnerId
+        - RepositoryScopes
+        - PublicKey
+        - Endpoint
+        - AllowHttpEndpoint
+        - Health
+        - SoftwareVersion
+        - ProtocolVersion
+        - PrefetchSupported
+    CacheRegistrationRefreshRequest:
+      description: Cache-authenticated refresh that may update operational facts only.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRegistrationRefreshRequest
+        CacheId:
+          type: string
+          format: uuid
+        Endpoint:
+          type: string
+          format: uri
+        Health:
+          $ref: '#/components/schemas/CacheHealthStatus'
+        SoftwareVersion:
+          type: string
+        ProtocolVersion:
+          type: string
+        PrefetchSupported:
+          type: boolean
+        ObservedAt:
+          $ref: '#/components/schemas/Instant'
+        Proof:
+          $ref: '#/components/schemas/SignedCacheRequestProof'
+      required:
+        - Class
+        - CacheId
+        - Endpoint
+        - Health
+        - SoftwareVersion
+        - ProtocolVersion
+        - PrefetchSupported
+        - ObservedAt
+        - Proof
+    CacheRepositoryAssignmentRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRepositoryAssignmentRequest
+        CacheId:
+          type: string
+          format: uuid
+        RepositoryScopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CacheRepositoryScope'
+      required:
+        - Class
+        - CacheId
+        - RepositoryScopes
+    CacheRevocationRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRevocationRequest
+        CacheId:
+          type: string
+          format: uuid
+      required:
+        - Class
+        - CacheId
+    CacheKeyRotationRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheKeyRotationRequest
+        CacheId:
+          type: string
+          format: uuid
+        NewPublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
+        Proof:
+          $ref: '#/components/schemas/SignedCacheRequestProof'
+      required:
+        - Class
+        - CacheId
+        - NewPublicKey
+        - Proof
+    CacheRegistrationRefreshStatus:
+      description: Result classification for Cache enrollment and lifecycle operations.
+      type: string
+      enum:
+        - enrolled
+        - refreshed
+        - refreshNotDue
+        - expired
+        - notFound
+        - revoked
+        - updated
+        - rotated
+        - endpointMismatch
+      x-enumNames:
+        - Enrolled
+        - Refreshed
+        - RefreshNotDue
+        - Expired
+        - NotFound
+        - Revoked
+        - Updated
+        - Rotated
+        - EndpointMismatch
+      example: enrolled
+    CacheRegistration:
+      description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRegistration
+        CacheId:
+          type: string
+          format: uuid
+        DisplayName:
+          type: string
+        BoundaryKind:
+          $ref: '#/components/schemas/CacheBoundaryKind'
+        OwnerId:
+          type: string
+          format: uuid
+        OrganizationId:
+          type: string
+          format: uuid
+          nullable: true
+        RepositoryScopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CacheRepositoryScope'
+        PublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
+        Endpoint:
+          type: string
+          format: uri
+        AllowHttpEndpoint:
+          type: boolean
+          description: Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
+        Health:
+          $ref: '#/components/schemas/CacheHealthStatus'
+        SoftwareVersion:
+          type: string
+        ProtocolVersion:
+          type: string
+        PrefetchSupported:
+          type: boolean
+        EnrolledBy:
+          type: string
+        EnrolledAt:
+          $ref: '#/components/schemas/Instant'
+        LastRefreshedAt:
+          $ref: '#/components/schemas/Instant'
+        RefreshAfter:
+          $ref: '#/components/schemas/Instant'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+        RotationDueAt:
+          $ref: '#/components/schemas/Instant'
+        RevokedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
+      required:
+        - Class
+        - CacheId
+        - DisplayName
+        - BoundaryKind
+        - OwnerId
+        - RepositoryScopes
+        - PublicKey
+        - Endpoint
+        - AllowHttpEndpoint
+        - Health
+        - SoftwareVersion
+        - ProtocolVersion
+        - PrefetchSupported
+        - EnrolledBy
+        - EnrolledAt
+        - LastRefreshedAt
+        - RefreshAfter
+        - ExpiresAt
+        - RotationDueAt
+    CacheRegistrationResult:
+      description: Result returned by Cache registration and refresh routes.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheRegistrationResult
+        Status:
+          $ref: '#/components/schemas/CacheRegistrationRefreshStatus'
+        Registration:
+          $ref: '#/components/schemas/CacheRegistration'
+          nullable: true
+        Message:
+          type: string
+          example: Cache registration is current.
+      required:
+        - Class
+        - Status
+        - Message
+    CacheRegistrationReturnValue:
+      description: Grace response envelope whose ReturnValue contains a Cache registration result.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/CacheRegistrationResult'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    ArtifactGrantValidationKey:
+      description: Public P-256 validation key used by Grace Cache to verify signed artifact grants.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactGrantValidationKey
+        KeyId:
+          type: string
+          example: agk-example
+        Algorithm:
+          type: string
+          enum:
+            - ES256
+          example: ES256
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        NotBefore:
+          $ref: '#/components/schemas/Instant'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+        PublicKeyX:
+          type: string
+          description: Base64url-encoded P-256 X coordinate.
+        PublicKeyY:
+          type: string
+          description: Base64url-encoded P-256 Y coordinate.
+      required:
+        - Class
+        - KeyId
+        - Algorithm
+        - CreatedAt
+        - NotBefore
+        - ExpiresAt
+        - PublicKeyX
+        - PublicKeyY
+    ArtifactGrantValidationKeySet:
+      description: Validation-key publication for local artifact grant verification by Grace Cache.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactGrantValidationKeySet
+        Issuer:
+          type: string
+          example: Grace.Server.ArtifactGrant.v1
+        PublishedAt:
+          $ref: '#/components/schemas/Instant'
+        CacheTtl:
+          type: string
+          description: Validation-key cache lifetime serialized as a NodaTime duration.
+          example: PT15M
+        Keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactGrantValidationKey'
+      required:
+        - Class
+        - Issuer
+        - PublishedAt
+        - CacheTtl
+        - Keys
+    ArtifactGrantRequesterPrincipalType:
+      description: Authenticated requester category bound into a V1 artifact grant.
+      type: string
+      enum:
+        - user
+      x-enumNames:
+        - User
+      example: user
+    ArtifactGrantHolderPublicKey:
+      description: Canonical public half of the client's ephemeral P-256 holder key.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactGrantHolderPublicKey
+        Algorithm:
+          type: string
+          enum:
+            - ES256
+        Curve:
+          type: string
+          enum:
+            - P-256
+        PublicKeyX:
+          type: string
+          description: Base64url-encoded 32-byte P-256 X coordinate.
+        PublicKeyY:
+          type: string
+          description: Base64url-encoded 32-byte P-256 Y coordinate.
+      required:
+        - Class
+        - Algorithm
+        - Curve
+        - PublicKeyX
+        - PublicKeyY
+    ArtifactGrantHeader:
+      description: Canonical header for one signed artifact grant.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactGrantHeader
+        Algorithm:
+          type: string
+          enum:
+            - ES256
+        KeyId:
+          type: string
+      required:
+        - Class
+        - Algorithm
+        - KeyId
+    ArtifactGrantPayload:
+      description: Requester-, holder-, cache-, root-, mode-, and artifact-bound authorization payload.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactGrantPayload
+        Issuer:
+          type: string
+          example: Grace.Server.ArtifactGrant.v1
+        RequesterPrincipalType:
+          $ref: '#/components/schemas/ArtifactGrantRequesterPrincipalType'
+        RequesterPrincipalId:
+          type: string
+          description: Stable authenticated grace_user_id supplied by Grace Server.
+        HolderKeyThumbprint:
+          type: string
+          description: Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.
+        CacheId:
+          type: string
+        CacheEndpoint:
+          type: string
+          format: uri
+          description: Exact selected Cache endpoint covered by this signature.
+        TargetRootDirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+        ExecutionMode:
+          $ref: '#/components/schemas/MaterializationExecutionMode'
+        ArtifactIdentities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        IssuedAt:
+          $ref: '#/components/schemas/Instant'
+        NotBefore:
+          $ref: '#/components/schemas/Instant'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - Class
+        - Issuer
+        - RequesterPrincipalType
+        - RequesterPrincipalId
+        - HolderKeyThumbprint
+        - CacheId
+        - CacheEndpoint
+        - TargetRootDirectoryVersionId
+        - ExecutionMode
+        - ArtifactIdentities
+        - IssuedAt
+        - NotBefore
+        - ExpiresAt
+    SignedArtifactGrant:
+      description: ES256 artifact grant envelope returned only for non-Direct materialization.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: SignedArtifactGrant
+        Header:
+          $ref: '#/components/schemas/ArtifactGrantHeader'
+        Payload:
+          $ref: '#/components/schemas/ArtifactGrantPayload'
+        Signature:
+          type: string
+          description: Base64url ECDSA signature over the canonical header and payload.
+      required:
+        - Class
+        - Header
+        - Payload
+        - Signature
+    ArtifactRequestProofPayload:
+      description: Canonical statement binding one short-lived holder proof to an exact artifact request.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ArtifactRequestProofPayload
+        GrantDigest:
+          type: string
+          description: Base64url SHA-256 digest of the complete signed grant envelope.
+        HttpMethod:
+          type: string
+          example: GET
+        NormalizedRoute:
+          type: string
+          example: /cache/artifacts/GraceZipFiles/root.zip
+        ArtifactIdentity:
+          type: string
+        IssuedAt:
+          $ref: '#/components/schemas/Instant'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+      required:
+        - Class
+        - GrantDigest
+        - HttpMethod
+        - NormalizedRoute
+        - ArtifactIdentity
+        - IssuedAt
+        - ExpiresAt
+    SignedArtifactRequestProof:
+      description: Request-specific proof signed by the private half of the grant-bound ephemeral holder key.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: SignedArtifactRequestProof
+        HolderPublicKey:
+          $ref: '#/components/schemas/ArtifactGrantHolderPublicKey'
+        Payload:
+          $ref: '#/components/schemas/ArtifactRequestProofPayload'
+        Signature:
+          type: string
+          description: Base64url ECDSA signature over the canonical proof payload.
+      required:
+        - Class
+        - HolderPublicKey
+        - Payload
+        - Signature
     BranchDto:
       description: (automatically generated)
       type: object
@@ -7332,6 +8076,32 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /owner/get
+    '401':
+      description: Unauthorized
+      headers:
+        WWW-Authenticate:
+          description: Authentication challenge emitted by the configured ASP.NET Core authentication handler.
+          schema:
+            type: string
+          example: Bearer
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            emptyChallenge:
+              summary: Framework authentication challenge
+              value: ''
+    '403':
+      description: Forbidden
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            forbidden:
+              summary: Framework authorization failure
+              value: Forbidden.
     '500':
       description: Internal Server Error
       content:
@@ -7346,6 +8116,21 @@ components:
                 EventTime: '2026-06-04T18:15:00Z'
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties: {}
+    '503':
+      description: Service Unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
+          examples:
+            cacheRequiredUnavailable:
+              summary: CacheRequired has no eligible cache or grant capacity
+              value:
+                Error: No eligible Cache registration is currently available.
+                EventTime: '2026-07-13T18:15:00Z'
+                CorrelationId: cli-20260713T181500Z-0001
+                Properties:
+                  Code: cacheRequiredUnavailable
     ApprovalPolicyResponse:
       description: OK
       content:
@@ -7619,6 +8404,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MaterializationPlanReturnValue'
+    CacheRegistrationResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CacheRegistrationReturnValue'
+    ArtifactGrantValidationKeySetResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ArtifactGrantValidationKeySet'
     OrganizationCommandResponse:
       description: OK
       content:

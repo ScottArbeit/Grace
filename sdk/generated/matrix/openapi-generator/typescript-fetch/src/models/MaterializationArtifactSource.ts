@@ -51,6 +51,24 @@ export interface MaterializationArtifactSource {
      * @memberof MaterializationArtifactSource
      */
     cacheKey?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof MaterializationArtifactSource
+     */
+    cacheEndpoint?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof MaterializationArtifactSource
+     */
+    cacheId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof MaterializationArtifactSource
+     */
+    directFallbackUri?: string;
 }
 
 
@@ -78,6 +96,9 @@ export function MaterializationArtifactSourceFromJSONTyped(json: any, ignoreDisc
         'sourceKind': MaterializationArtifactSourceKindFromJSON(json['SourceKind']),
         'directUri': json['DirectUri'] == null ? undefined : json['DirectUri'],
         'cacheKey': json['CacheKey'] == null ? undefined : json['CacheKey'],
+        'cacheEndpoint': json['CacheEndpoint'] == null ? undefined : json['CacheEndpoint'],
+        'cacheId': json['CacheId'] == null ? undefined : json['CacheId'],
+        'directFallbackUri': json['DirectFallbackUri'] == null ? undefined : json['DirectFallbackUri'],
     };
 }
 
@@ -96,6 +117,9 @@ export function MaterializationArtifactSourceToJSONTyped(value?: Materialization
         'SourceKind': MaterializationArtifactSourceKindToJSON(value['sourceKind']),
         'DirectUri': value['directUri'],
         'CacheKey': value['cacheKey'],
+        'CacheEndpoint': value['cacheEndpoint'],
+        'CacheId': value['cacheId'],
+        'DirectFallbackUri': value['directFallbackUri'],
     };
 }
 

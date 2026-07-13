@@ -19,11 +19,12 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 from grace_generated_openapi_probe.models.materialization_artifact_descriptor import MaterializationArtifactDescriptor
 from grace_generated_openapi_probe.models.materialization_cache_selection import MaterializationCacheSelection
 from grace_generated_openapi_probe.models.materialization_execution_mode import MaterializationExecutionMode
+from grace_generated_openapi_probe.models.signed_artifact_grant import SignedArtifactGrant
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -37,7 +38,8 @@ class MaterializationPlan(BaseModel):
     execution_mode: MaterializationExecutionMode = Field(alias="ExecutionMode")
     cache_selection: MaterializationCacheSelection = Field(alias="CacheSelection")
     required_artifacts: List[MaterializationArtifactDescriptor] = Field(alias="RequiredArtifacts")
-    __properties: ClassVar[List[str]] = ["Class", "TargetRootDirectoryVersionId", "ExecutionMode", "CacheSelection", "RequiredArtifacts"]
+    artifact_grant: Optional[SignedArtifactGrant] = Field(default=None, alias="ArtifactGrant")
+    __properties: ClassVar[List[str]] = ["Class", "TargetRootDirectoryVersionId", "ExecutionMode", "CacheSelection", "RequiredArtifacts", "ArtifactGrant"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -88,6 +90,9 @@ class MaterializationPlan(BaseModel):
                 if _item_required_artifacts:
                     _items.append(_item_required_artifacts.to_dict())
             _dict['RequiredArtifacts'] = _items
+        # override the default output from pydantic by calling `to_dict()` of artifact_grant
+        if self.artifact_grant:
+            _dict['ArtifactGrant'] = self.artifact_grant.to_dict()
         return _dict
 
     @classmethod
@@ -104,7 +109,8 @@ class MaterializationPlan(BaseModel):
             "TargetRootDirectoryVersionId": obj.get("TargetRootDirectoryVersionId"),
             "ExecutionMode": obj.get("ExecutionMode"),
             "CacheSelection": MaterializationCacheSelection.from_dict(obj["CacheSelection"]) if obj.get("CacheSelection") is not None else None,
-            "RequiredArtifacts": [MaterializationArtifactDescriptor.from_dict(_item) for _item in obj["RequiredArtifacts"]] if obj.get("RequiredArtifacts") is not None else None
+            "RequiredArtifacts": [MaterializationArtifactDescriptor.from_dict(_item) for _item in obj["RequiredArtifacts"]] if obj.get("RequiredArtifacts") is not None else None,
+            "ArtifactGrant": SignedArtifactGrant.from_dict(obj["ArtifactGrant"]) if obj.get("ArtifactGrant") is not None else None
         })
         return _obj
 

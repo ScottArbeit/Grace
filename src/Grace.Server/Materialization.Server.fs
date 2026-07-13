@@ -5,15 +5,21 @@ open Grace.Actors.DirectoryVersion
 open Grace.Actors.Extensions
 open Grace.Actors.Services
 open Grace.Server.Services
+open Grace.Server.Security
 open Grace.Shared
 open Grace.Shared.Parameters.Materialization
 open Grace.Types.Branch
+open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open Grace.Types.DirectoryVersion
 open Grace.Types.MaterializationPlan
 open Grace.Types.Reference
 open Grace.Types.Repository
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
+open NodaTime
+open Orleans
 open System
 open System.Collections.Generic
 open System.Text.Json
@@ -26,8 +32,40 @@ module Materialization =
         set [ MaterializationArtifactKind.DirectoryVersionZip
               MaterializationArtifactKind.RecursiveDirectoryMetadata ]
 
+    /// Carries the stable identity and immutable root that Grace Server has fully resolved and authorized for one plan request.
+    type internal ResolvedMaterializationTarget =
+        {
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            TargetRootDirectoryVersionId: DirectoryVersionId
+        }
+
     /// Builds a GraceError for Materialization Plan route validation failures.
     let private planError correlationId message = GraceError.Create message correlationId
+
+    /// Builds the stable retryable error envelope for CacheRequired availability or grant-capacity outcomes.
+    let private cacheRequiredUnavailableError correlationId message =
+        GraceError.Create message correlationId
+        |> fun error -> error.enhance ("Code", CacheRequiredAvailability.ErrorCode)
+
+    /// Returns true only for the explicit CacheRequired availability envelope that maps to HTTP 503.
+    let private isCacheRequiredUnavailable (error: GraceError) =
+        match error.Properties.TryGetValue "Code" with
+        | true, (:? string as code) -> code = CacheRequiredAvailability.ErrorCode
+        | _ -> false
+
+    /// Rejects artifact kinds that require path or content-address projection before a root-plan request can begin side effects.
+    let private validateRootArtifactKinds (request: MaterializationPlanRequest) correlationId =
+        let requestedKinds = set request.RequestedArtifactKinds
+        let pathScopedKinds = requestedKinds - rootArtifactKinds
+
+        if not pathScopedKinds.IsEmpty then
+            Error(planError correlationId "Requested path-scoped artifact kinds are not supported by /materialization/plan yet.")
+        elif not (Set.isSubset rootArtifactKinds requestedKinds) then
+            Error(planError correlationId "Materialization Plan requests must include DirectoryVersionZip and RecursiveDirectoryMetadata artifact kinds.")
+        else
+            Ok()
 
     /// Public-safe selector error used when a DirectoryVersionId is missing or outside the authorized repository.
     let directoryVersionSelectorNotFoundMessage = "DirectoryVersionId selector did not match an authorized directory version."
@@ -97,7 +135,10 @@ module Materialization =
         else
             match Validation.validateRequest parameters.Request with
             | Error errors -> Error(planError correlationId (String.concat " " errors))
-            | Ok () -> Ok parameters.Request
+            | Ok () ->
+                match validateRootArtifactKinds parameters.Request correlationId with
+                | Ok () -> Ok parameters.Request
+                | Error error -> Error error
 
     /// Validates that this tracer slice only plans Direct root artifacts and rejects cache/path expansion.
     let private validateDirectRootRequest (request: MaterializationPlanRequest) correlationId =
@@ -110,19 +151,7 @@ module Materialization =
                   <> MaterializationCacheSelectionKind.BypassCache then
                 Error(planError correlationId "Cache materialization plan selection is not implemented for /materialization/plan.")
             else
-                let requestedKinds = set request.RequestedArtifactKinds
-                let pathScopedKinds = requestedKinds - rootArtifactKinds
-
-                if not pathScopedKinds.IsEmpty then
-                    Error(planError correlationId "Requested path-scoped artifact kinds are not supported by /materialization/plan yet.")
-                elif not (Set.isSubset rootArtifactKinds requestedKinds) then
-                    Error(
-                        planError
-                            correlationId
-                            "Direct Materialization Plan requests must include DirectoryVersionZip and RecursiveDirectoryMetadata artifact kinds."
-                    )
-                else
-                    Ok()
+                validateRootArtifactKinds request correlationId
 
     /// Builds a Direct Materialization Plan with failure classification for the route status-code taxonomy.
     let internal createDirectPlanForResolvedRootWithFailureKind
@@ -173,6 +202,141 @@ module Materialization =
             | Ok plan -> return Ok plan
             | Error (ClientPlanValidation error)
             | Error (ServerProjectionFailure error) -> return Error error
+        }
+
+    /// Builds a cache-capable plan from exact projection artifacts and one server-selected current registration.
+    let internal createCachePlanForResolvedRoot
+        (request: MaterializationPlanRequest)
+        (target: ResolvedMaterializationTarget)
+        (ensureArtifacts: CorrelationId -> Task<Result<MaterializationArtifactDescriptor array, GraceError>>)
+        (getCurrentInstant: unit -> Instant)
+        (selectEligible: CacheRegistrationSelectionQuery -> Instant -> Task<CacheRegistration array>)
+        (issueGrant: Instant -> CacheRegistration -> string array -> Task<Result<Grace.Types.ArtifactGrant.SignedArtifactGrant, GraceError>>)
+        (recordCacheFailure: GraceError -> unit)
+        correlationId
+        =
+        task {
+            match Validation.validateRequest request with
+            | Error errors -> return Error(planError correlationId (String.concat " " errors))
+            | Ok () when request.ExecutionMode = MaterializationExecutionMode.Direct ->
+                return Error(planError correlationId "A cache-capable execution mode is required.")
+            | Ok () ->
+                match validateRootArtifactKinds request correlationId with
+                | Error error -> return Error error
+                | Ok () ->
+                    match request.HolderPublicKey with
+                    | None -> return Error(planError correlationId "HolderPublicKey is required for cache-capable Materialization Plans.")
+                    | Some holder when not (ArtifactGrant.isValidHolderPublicKey holder) ->
+                        return Error(planError correlationId "HolderPublicKey must be a canonical P-256 public key.")
+                    | Some _ ->
+                        let! artifactsResult =
+                            task {
+                                try
+                                    return! ensureArtifacts correlationId
+                                with
+                                | ex ->
+                                    return
+                                        Error(GraceError.CreateWithException ex "Materialization Plan projection artifacts could not be ensured." correlationId)
+                            }
+
+                        match artifactsResult with
+                        | Error error -> return Error error
+                        | Ok artifacts ->
+                            let directPlanResult =
+                                if request.ExecutionMode = MaterializationExecutionMode.CachePreferred then
+                                    let directPlan =
+                                        Grace.Types.MaterializationPlan.MaterializationPlan.Create(
+                                            target.TargetRootDirectoryVersionId,
+                                            request.ExecutionMode,
+                                            request.CacheSelection,
+                                            artifacts
+                                        )
+
+                                    match Validation.validatePlan directPlan with
+                                    | Ok () -> Ok(Some directPlan)
+                                    | Error errors -> Error(planError correlationId (String.concat " " errors))
+                                else
+                                    Ok None
+
+                            match directPlanResult with
+                            | Error error -> return Error error
+                            | Ok directPlan ->
+                                let now = getCurrentInstant ()
+
+                                let query = CacheRegistrationSelectionQuery.Create(Some target.RepositoryId, false)
+
+                                let! cachePlanResult =
+                                    task {
+                                        try
+                                            let! registrations = selectEligible query now
+
+                                            match registrations |> Array.tryHead with
+                                            | None ->
+                                                let message = "No eligible Cache registration is currently available."
+
+                                                if request.ExecutionMode = MaterializationExecutionMode.CacheRequired then
+                                                    return Error(cacheRequiredUnavailableError correlationId message)
+                                                else
+                                                    return Error(planError correlationId message)
+                                            | Some registration ->
+                                                let identities =
+                                                    artifacts
+                                                    |> Array.choose (fun artifact -> artifact.CanonicalArtifactIdentity)
+
+                                                match! issueGrant now registration identities with
+                                                | Error error -> return Error error
+                                                | Ok grant ->
+                                                    let cacheArtifacts =
+                                                        artifacts
+                                                        |> Array.map (fun artifact ->
+                                                            let fallback =
+                                                                if request.ExecutionMode = MaterializationExecutionMode.CachePreferred then
+                                                                    artifact.Source
+                                                                    |> Option.bind (fun source -> source.DirectUri)
+                                                                else
+                                                                    None
+
+                                                            { artifact with
+                                                                Source =
+                                                                    artifact.CanonicalArtifactIdentity
+                                                                    |> Option.map (fun identity ->
+                                                                        MaterializationArtifactSource.Cache(
+                                                                            identity,
+                                                                            registration.Endpoint,
+                                                                            registration.CacheId.ToString("D"),
+                                                                            fallback
+                                                                        ))
+                                                            })
+
+                                                    let cachePlan =
+                                                        Grace
+                                                            .Types
+                                                            .MaterializationPlan
+                                                            .MaterializationPlan
+                                                            .Create(
+                                                                target.TargetRootDirectoryVersionId,
+                                                                request.ExecutionMode,
+                                                                request.CacheSelection,
+                                                                cacheArtifacts
+                                                            )
+                                                            .WithArtifactGrant(grant)
+
+                                                    match Validation.validatePlan cachePlan with
+                                                    | Ok () -> return Ok cachePlan
+                                                    | Error errors -> return Error(planError correlationId (String.concat " " errors))
+                                        with
+                                        | ex -> return Error(GraceError.CreateWithException ex "Cache Materialization Plan issuance failed." correlationId)
+                                    }
+
+                                match cachePlanResult with
+                                | Ok plan -> return Ok plan
+                                | Error error when
+                                    request.ExecutionMode = MaterializationExecutionMode.CachePreferred
+                                    && directPlan.IsSome
+                                    ->
+                                    recordCacheFailure error
+                                    return Ok directPlan.Value
+                                | Error error -> return Error error
         }
 
     /// Validates that a resolved DirectoryVersion belongs to the authorized repository without leaking cross-scope state.
@@ -528,36 +692,49 @@ module Materialization =
             match! resolveRepositorySelector ownerId organizationId repositoryId correlationId with
             | Error error -> return Error error
             | Ok repositoryDto ->
-                match selector.SelectorKind with
-                | MaterializationTargetSelectorKind.DirectoryVersionId ->
-                    match selector.DirectoryVersionId with
-                    | Some directoryVersionId -> return! resolveDirectoryVersionSelector repositoryId directoryVersionId correlationId
-                    | None -> return Error(planError correlationId "DirectoryVersionId selector is required.")
-                | MaterializationTargetSelectorKind.ReferenceId ->
-                    match selector.ReferenceId with
-                    | Some referenceId -> return! resolveReferenceSelector repositoryId referenceId correlationId
-                    | None -> return Error(planError correlationId "ReferenceId selector is required.")
-                | MaterializationTargetSelectorKind.BranchName ->
-                    match selector.BranchName with
-                    | Some branchName ->
-                        let resolvedBranchName =
-                            if branchName = repositoryDto.DefaultBranchName then
-                                repositoryDto.DefaultBranchName
-                            else
-                                branchName
+                let! rootResult =
+                    match selector.SelectorKind with
+                    | MaterializationTargetSelectorKind.DirectoryVersionId ->
+                        match selector.DirectoryVersionId with
+                        | Some directoryVersionId -> resolveDirectoryVersionSelector repositoryId directoryVersionId correlationId
+                        | None -> Task.FromResult(Error(planError correlationId "DirectoryVersionId selector is required."))
+                    | MaterializationTargetSelectorKind.ReferenceId ->
+                        match selector.ReferenceId with
+                        | Some referenceId -> resolveReferenceSelector repositoryId referenceId correlationId
+                        | None -> Task.FromResult(Error(planError correlationId "ReferenceId selector is required."))
+                    | MaterializationTargetSelectorKind.BranchName ->
+                        match selector.BranchName with
+                        | Some branchName ->
+                            let resolvedBranchName =
+                                if branchName = repositoryDto.DefaultBranchName then
+                                    repositoryDto.DefaultBranchName
+                                else
+                                    branchName
 
-                        return! resolveBranchNameSelector ownerId organizationId repositoryId resolvedBranchName correlationId
-                    | None -> return Error(planError correlationId "BranchName selector is required.")
-                | MaterializationTargetSelectorKind.ReferenceType ->
-                    match selector.BranchId, selector.BranchName, selector.ReferenceType with
-                    | branchId, branchName, Some referenceType when
-                        ((branchId.IsSome && branchName.IsNone)
-                         || (branchId.IsNone && branchName.IsSome))
-                        ->
-                        return! resolveReferenceTypeSelector ownerId organizationId repositoryId branchId branchName referenceType correlationId
-                    | _, _, None -> return Error(planError correlationId "ReferenceType selector is required.")
-                    | _, _, _ -> return Error(planError correlationId "ReferenceType selector requires exactly one branch identity.")
-                | _ -> return Error(planError correlationId $"Target selector kind '{int selector.SelectorKind}' is not supported.")
+                            resolveBranchNameSelector ownerId organizationId repositoryId resolvedBranchName correlationId
+                        | None -> Task.FromResult(Error(planError correlationId "BranchName selector is required."))
+                    | MaterializationTargetSelectorKind.ReferenceType ->
+                        match selector.BranchId, selector.BranchName, selector.ReferenceType with
+                        | branchId, branchName, Some referenceType when
+                            ((branchId.IsSome && branchName.IsNone)
+                             || (branchId.IsNone && branchName.IsSome))
+                            ->
+                            resolveReferenceTypeSelector ownerId organizationId repositoryId branchId branchName referenceType correlationId
+                        | _, _, None -> Task.FromResult(Error(planError correlationId "ReferenceType selector is required."))
+                        | _, _, _ -> Task.FromResult(Error(planError correlationId "ReferenceType selector requires exactly one branch identity."))
+                    | _ -> Task.FromResult(Error(planError correlationId $"Target selector kind '{int selector.SelectorKind}' is not supported."))
+
+                match rootResult with
+                | Error error -> return Error error
+                | Ok targetRootDirectoryVersionId ->
+                    return
+                        Ok
+                            {
+                                OwnerId = repositoryDto.OwnerId
+                                OrganizationId = repositoryDto.OrganizationId
+                                RepositoryId = repositoryDto.RepositoryId
+                                TargetRootDirectoryVersionId = targetRootDirectoryVersionId
+                            }
         }
 
     /// Handles POST /materialization/plan.
@@ -578,24 +755,105 @@ module Materialization =
                         | Ok request ->
                             match! resolveTargetRoot graceIds.OwnerId graceIds.OrganizationId repositoryId request.TargetSelector correlationId with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok targetRootDirectoryVersionId ->
-                                let actorProxy = ActorProxy.DirectoryVersion.CreateActorProxy targetRootDirectoryVersionId repositoryId correlationId
+                            | Ok target ->
+                                let targetRootDirectoryVersionId = target.TargetRootDirectoryVersionId
+                                let actorProxy = ActorProxy.DirectoryVersion.CreateActorProxy targetRootDirectoryVersionId target.RepositoryId correlationId
+
+                                let ensureArtifacts artifactCorrelationId =
+                                    task {
+                                        match! Grace.Server.DirectoryVersion.ensureTargetRootProjectionArtifacts actorProxy artifactCorrelationId with
+                                        | Ok graceReturnValue -> return Ok graceReturnValue.ReturnValue
+                                        | Error error -> return Error error
+                                    }
 
                                 let! planResult =
-                                    createDirectPlanForResolvedRootWithFailureKind
-                                        request
-                                        targetRootDirectoryVersionId
-                                        (fun artifactCorrelationId ->
-                                            task {
-                                                match! Grace.Server.DirectoryVersion.ensureTargetRootProjectionArtifacts actorProxy artifactCorrelationId with
-                                                | Ok graceReturnValue -> return Ok graceReturnValue.ReturnValue
-                                                | Error error -> return Error error
-                                            })
-                                        correlationId
+                                    if request.ExecutionMode = MaterializationExecutionMode.Direct then
+                                        task {
+                                            match!
+                                                createDirectPlanForResolvedRootWithFailureKind
+                                                    request
+                                                    targetRootDirectoryVersionId
+                                                    ensureArtifacts
+                                                    correlationId
+                                                with
+                                            | Ok plan -> return Ok plan
+                                            | Error (ClientPlanValidation error) -> return Error(error, true)
+                                            | Error (ServerProjectionFailure error) -> return Error(error, false)
+                                        }
+                                    else
+                                        task {
+                                            match PrincipalMapper.tryGetUserId context.User, request.HolderPublicKey with
+                                            | None, _ -> return Error(planError correlationId "Authenticated grace_user_id is required.", true)
+                                            | _, None ->
+                                                return
+                                                    Error(planError correlationId "HolderPublicKey is required for cache-capable Materialization Plans.", true)
+                                            | Some userId, Some holderPublicKey when not (ArtifactGrant.isValidHolderPublicKey holderPublicKey) ->
+                                                return Error(planError correlationId "HolderPublicKey must be a canonical P-256 public key.", true)
+                                            | Some userId, Some holderPublicKey ->
+                                                let cacheActor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
+
+                                                let logger =
+                                                    context
+                                                        .RequestServices
+                                                        .GetRequiredService<ILoggerFactory>()
+                                                        .CreateLogger("Grace.Server.Materialization")
+
+                                                let keyRing =
+                                                    ArtifactGrantKeys.ArtifactGrantKeyRing(context.RequestServices.GetRequiredService<IGrainFactory>())
+
+                                                match!
+                                                    createCachePlanForResolvedRoot
+                                                        request
+                                                        target
+                                                        ensureArtifacts
+                                                        (fun () -> SystemClock.Instance.GetCurrentInstant())
+                                                        (fun query now -> cacheActor.SelectEligible(query, now, correlationId))
+                                                        (fun now registration identities ->
+                                                            task {
+                                                                match!
+                                                                    keyRing.IssueGrant
+                                                                        (
+                                                                            now,
+                                                                            {
+                                                                                AuthenticatedUserId = userId
+                                                                                HolderPublicKey = holderPublicKey
+                                                                                CacheId = registration.CacheId.ToString("D")
+                                                                                CacheEndpoint = registration.Endpoint
+                                                                                TargetRootDirectoryVersionId = targetRootDirectoryVersionId
+                                                                                ExecutionMode = request.ExecutionMode
+                                                                                ArtifactIdentities = identities
+                                                                                RequestedTtl = None
+                                                                            }
+                                                                        )
+                                                                    with
+                                                                | Ok grant -> return Ok grant
+                                                                | Error issueError ->
+                                                                    let message = Grace.Types.ArtifactGrant.ArtifactGrantIssueError.toMessage issueError
+
+                                                                    if request.ExecutionMode = MaterializationExecutionMode.CacheRequired then
+                                                                        return Error(cacheRequiredUnavailableError correlationId message)
+                                                                    else
+                                                                        return Error(planError correlationId message)
+                                                            })
+                                                        (fun error ->
+                                                            logger.LogWarning(
+                                                                "CachePreferred materialization plan fell back to Direct after a cache attempt failed. CorrelationId: {CorrelationId}; CacheError: {CacheError}",
+                                                                correlationId,
+                                                                error.Error
+                                                            ))
+                                                        correlationId
+                                                    with
+                                                | Ok plan -> return Ok plan
+                                                | Error error -> return Error(error, false)
+                                        }
 
                                 match planResult with
-                                | Error (ClientPlanValidation error) -> return! context |> result400BadRequest error
-                                | Error (ServerProjectionFailure error) -> return! context |> result500ServerError error
+                                | Error (error, true) -> return! context |> result400BadRequest error
+                                | Error (error, false) when isCacheRequiredUnavailable error ->
+                                    return!
+                                        context
+                                        |> returnResult StatusCodes.Status503ServiceUnavailable error
+                                | Error (error, false) -> return! context |> result500ServerError error
                                 | Ok plan ->
                                     let graceReturnValue = GraceReturnValue.Create plan correlationId
 

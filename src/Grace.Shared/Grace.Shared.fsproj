@@ -30,6 +30,8 @@
         <Compile Include="StoragePoolRouting.Shared.fs" />
         <Compile Include="ContentBlockFormat.Shared.fs" />
         <Compile Include="ManifestValidation.Shared.fs" />
+        <Compile Include="ArtifactGrant.Shared.fs" />
+        <Compile Include="CacheRegistration.Shared.fs" />
         <Compile Include="RabinChunking.Shared.fs" />
         <Compile Include="BuildInfo.Shared.fs" />
         <Compile Include="Authorization.Shared.fs" />

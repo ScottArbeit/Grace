@@ -169,6 +169,19 @@ paths:
 
   /materialization/plan:
     $ref: './Materialization.Paths.OpenAPI.yaml#/~1materialization~1plan'
+
+  /cache/enroll:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1enroll'
+  /cache/refresh:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1refresh'
+  /cache/assign-repositories:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1assign-repositories'
+  /cache/revoke:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1revoke'
+  /cache/rotate-key:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1rotate-key'
+  /cache/validation-keys:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1validation-keys'
       
   /organization/create:
     $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1create'
@@ -421,6 +434,55 @@ components:
       $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlan'
     MaterializationPlanReturnValue:
       $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlanReturnValue'
+
+    CacheBoundaryKind:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheBoundaryKind'
+    CacheHealthStatus:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheHealthStatus'
+    CacheIdentityPublicKey:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheIdentityPublicKey'
+    CacheRepositoryScope:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRepositoryScope'
+    CacheRequestProofPayload:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRequestProofPayload'
+    SignedCacheRequestProof:
+      $ref: 'Cache.Components.OpenAPI.yaml#/SignedCacheRequestProof'
+    CacheEnrollmentRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheEnrollmentRequest'
+    CacheRegistrationRefreshRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshRequest'
+    CacheRepositoryAssignmentRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRepositoryAssignmentRequest'
+    CacheRevocationRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRevocationRequest'
+    CacheKeyRotationRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheKeyRotationRequest'
+    CacheRegistrationRefreshStatus:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshStatus'
+    CacheRegistration:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistration'
+    CacheRegistrationResult:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationResult'
+    CacheRegistrationReturnValue:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationReturnValue'
+    ArtifactGrantValidationKey:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKey'
+    ArtifactGrantValidationKeySet:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKeySet'
+    ArtifactGrantRequesterPrincipalType:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantRequesterPrincipalType'
+    ArtifactGrantHolderPublicKey:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantHolderPublicKey'
+    ArtifactGrantHeader:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantHeader'
+    ArtifactGrantPayload:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantPayload'
+    SignedArtifactGrant:
+      $ref: 'Cache.Components.OpenAPI.yaml#/SignedArtifactGrant'
+    ArtifactRequestProofPayload:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactRequestProofPayload'
+    SignedArtifactRequestProof:
+      $ref: 'Cache.Components.OpenAPI.yaml#/SignedArtifactRequestProof'
 
     BranchDto:
       $ref: 'Dto.Components.OpenAPI.yaml#/BranchDto'

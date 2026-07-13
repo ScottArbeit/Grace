@@ -9,7 +9,6 @@ Name | Type
 ------------ | -------------
 `_class` | string
 `selectionKind` | [MaterializationCacheSelectionKind](MaterializationCacheSelectionKind.md)
-`cacheScope` | string
 
 ## Example
 
@@ -20,7 +19,6 @@ import type { MaterializationCacheSelection } from '@grace-vcs/generated-openapi
 const example = {
   "_class": MaterializationCacheSelection,
   "selectionKind": null,
-  "cacheScope": null,
 } satisfies MaterializationCacheSelection
 
 console.log(example)

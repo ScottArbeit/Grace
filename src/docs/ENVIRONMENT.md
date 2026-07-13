@@ -248,6 +248,18 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 - `grace__auth__pat__max_lifetime_days`
 - `grace__auth__pat__allow_no_expiry`
 
+### Grace Cache Registration
+
+Grace Cache enrollment has no installation-wide service-principal, scope, or capability allowlist settings. A currently
+authorized Grace administrator enrolls each cache for exactly one Owner or Organization and supplies one or more
+explicit repositories within that boundary. The cache creates and retains its private identity key locally; Grace Server
+stores only the corresponding public key for proof-validated runtime refresh and key rotation.
+
+Registered Grace Cache services use a server-owned active lifetime of 2 hours and a refresh-after interval of 1 hour.
+Administrators, not runtime cache refresh, manage repository assignments and other cache administration.
+HTTPS remains the default cache transport. An HTTP endpoint requires the administrator's explicit enrollment approval for
+that exact endpoint; the cache runtime cannot change it during refresh.
+
 ### Authorization (Bootstrap)
 
 - `grace__authz__bootstrap__system_admin_users`: semicolon-delimited user IDs to seed SystemAdmin at system

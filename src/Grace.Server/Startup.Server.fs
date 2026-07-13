@@ -1346,6 +1346,29 @@ module Application =
                         POST [ route "/plan" (composeHandlers requireRepositoryRead Materialization.Plan)
                                |> addMetadata typeof<Grace.Shared.Parameters.Materialization.PlanParameters> ]
                     ]
+                subRoute
+                    "/cache"
+                    [
+                        GET [ route "/validation-keys" CacheRegistration.GetValidationKeys
+                              |> addMetadata (AllowAnonymousAttribute()) ]
+
+                        POST [ route "/enroll" CacheRegistration.Enroll
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheEnrollmentRequest>
+
+                               route "/refresh" CacheRegistration.Refresh
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRefreshRequest>
+                               |> addMetadata (AllowAnonymousAttribute()) ]
+
+                        POST [ route "/assign-repositories" CacheRegistration.AssignRepositories
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRepositoryAssignmentRequest>
+
+                               route "/revoke" CacheRegistration.Revoke
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRevocationRequest>
+
+                               route "/rotate-key" CacheRegistration.RotateKey
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationRequest>
+                               |> addMetadata (AllowAnonymousAttribute()) ]
+                    ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute
                     "/organization"
@@ -2020,6 +2043,7 @@ module Application =
 
             services
                 .AddHostedService<CosmosWarmup>()
+                .AddSingleton<ArtifactGrantKeys.ArtifactGrantKeyRing>()
                 .AddGiraffe()
                 // Next line adds the Json serializer that Giraffe uses internally.
                 .AddSingleton<Json.ISerializer>(

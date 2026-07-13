@@ -12,6 +12,7 @@ Name | Type
 `executionMode` | [MaterializationExecutionMode](MaterializationExecutionMode.md)
 `cacheSelection` | [MaterializationCacheSelection](MaterializationCacheSelection.md)
 `requestedArtifactKinds` | [Array&lt;MaterializationArtifactKind&gt;](MaterializationArtifactKind.md)
+`holderPublicKey` | [ArtifactGrantHolderPublicKey](ArtifactGrantHolderPublicKey.md)
 
 ## Example
 
@@ -25,6 +26,7 @@ const example = {
   "executionMode": null,
   "cacheSelection": null,
   "requestedArtifactKinds": null,
+  "holderPublicKey": null,
 } satisfies MaterializationPlanRequest
 
 console.log(example)

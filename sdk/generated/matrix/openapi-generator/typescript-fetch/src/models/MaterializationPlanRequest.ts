@@ -41,6 +41,13 @@ import {
     MaterializationExecutionModeToJSON,
     MaterializationExecutionModeToJSONTyped,
 } from './MaterializationExecutionMode';
+import type { ArtifactGrantHolderPublicKey } from './ArtifactGrantHolderPublicKey';
+import {
+    ArtifactGrantHolderPublicKeyFromJSON,
+    ArtifactGrantHolderPublicKeyFromJSONTyped,
+    ArtifactGrantHolderPublicKeyToJSON,
+    ArtifactGrantHolderPublicKeyToJSONTyped,
+} from './ArtifactGrantHolderPublicKey';
 
 /**
  * Request contract for server-side Materialization Plan creation.
@@ -78,6 +85,12 @@ export interface MaterializationPlanRequest {
      * @memberof MaterializationPlanRequest
      */
     requestedArtifactKinds: Array<MaterializationArtifactKind>;
+    /**
+     * 
+     * @type {ArtifactGrantHolderPublicKey}
+     * @memberof MaterializationPlanRequest
+     */
+    holderPublicKey?: ArtifactGrantHolderPublicKey;
 }
 
 
@@ -109,6 +122,7 @@ export function MaterializationPlanRequestFromJSONTyped(json: any, ignoreDiscrim
         'executionMode': MaterializationExecutionModeFromJSON(json['ExecutionMode']),
         'cacheSelection': MaterializationCacheSelectionFromJSON(json['CacheSelection']),
         'requestedArtifactKinds': ((json['RequestedArtifactKinds'] as Array<any>).map(MaterializationArtifactKindFromJSON)),
+        'holderPublicKey': json['HolderPublicKey'] == null ? undefined : ArtifactGrantHolderPublicKeyFromJSON(json['HolderPublicKey']),
     };
 }
 
@@ -128,6 +142,7 @@ export function MaterializationPlanRequestToJSONTyped(value?: MaterializationPla
         'ExecutionMode': MaterializationExecutionModeToJSON(value['executionMode']),
         'CacheSelection': MaterializationCacheSelectionToJSON(value['cacheSelection']),
         'RequestedArtifactKinds': ((value['requestedArtifactKinds'] as Array<any>).map(MaterializationArtifactKindToJSON)),
+        'HolderPublicKey': ArtifactGrantHolderPublicKeyToJSON(value['holderPublicKey']),
     };
 }
 

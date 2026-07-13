@@ -1,9 +1,11 @@
 namespace Grace.Types.Tests
 
 open Grace.Shared.Utilities
+open Grace.Types.ArtifactGrant
 open Grace.Types.Common
 open Grace.Types.MaterializationPlan
 open Grace.Types.Reference
+open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -35,6 +37,9 @@ module MaterializationPlanTestData =
 
     /// Provides a deterministic cache entry key that does not imply a direct source URL.
     let cacheKey = "cache/materialization/11111111/root.zip"
+
+    /// Provides the selected Cache identity used by plans that include an artifact grant.
+    let cacheId = "33333333-3333-3333-3333-333333333333"
 
     /// Provides the canonical identity used by existing directory-version zip storage.
     let directoryVersionZipIdentity = "Grace-ZipFiles/11111111-1111-1111-1111-111111111111.zip"
@@ -94,8 +99,40 @@ module MaterializationPlanTestData =
     let directRootArtifacts targetRoot =
         [
             directoryVersionZip targetRoot (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip"))
-            recursiveDirectoryMetadata targetRoot (Some MaterializationArtifactSource.Deferred)
+            recursiveDirectoryMetadata targetRoot (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/metadata.msgpack"))
         ]
+
+    /// Binds every CacheEntry in a plan to one selected Cache and attaches the exact matching artifact grant payload.
+    let withMatchingCacheGrant (plan: MaterializationPlan) =
+        let requiredArtifacts =
+            plan.RequiredArtifacts
+            |> Seq.map (fun artifact ->
+                match artifact.Source with
+                | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                    { artifact with Source = Some { source with CacheEndpoint = Some "https://cache.example.test"; CacheId = Some cacheId } }
+                | _ -> artifact)
+            |> List<MaterializationArtifactDescriptor>
+
+        let boundPlan = { plan with RequiredArtifacts = requiredArtifacts }
+
+        let artifactIdentities =
+            boundPlan.RequiredArtifacts
+            |> Seq.choose (fun artifact -> artifact.CanonicalArtifactIdentity)
+
+        let payload =
+            ArtifactGrantPayload.Create(
+                "user-11111111-1111-1111-1111-111111111111",
+                "holder-thumbprint",
+                cacheId,
+                "https://cache.example.test",
+                boundPlan.TargetRootDirectoryVersionId,
+                boundPlan.ExecutionMode,
+                artifactIdentities,
+                Instant.FromUnixTimeMilliseconds 0L,
+                ArtifactGrantContract.DefaultGrantTtl
+            )
+
+        boundPlan.WithArtifactGrant(SignedArtifactGrant.Create(ArtifactGrantHeader.Create "test-key", payload, "test-signature"))
 
     /// Builds a valid Materialization Plan with all current artifact descriptor kinds represented.
     let validPlan () =
@@ -126,6 +163,7 @@ module MaterializationPlanTestData =
                 )
             ]
         )
+        |> withMatchingCacheGrant
 
 /// Contains tests covering Materialization Plan contract serialization and validation.
 [<Parallelizable(ParallelScope.All)>]
@@ -225,7 +263,7 @@ type MaterializationPlanContractTests() =
 
         Assert.That(plan.ExecutionMode, Is.EqualTo(MaterializationExecutionMode.CacheRequired))
         Assert.That(plan.CacheSelection.SelectionKind, Is.EqualTo(MaterializationCacheSelectionKind.RequireCache))
-        assertValid (Validation.validatePlan plan)
+        assertValid (Validation.validatePlan (MaterializationPlanTestData.withMatchingCacheGrant plan))
 
         for descriptor in plan.RequiredArtifacts do
             match descriptor.Source with
@@ -233,6 +271,114 @@ type MaterializationPlanContractTests() =
                 Assert.That(source.DirectUri.IsNone, Is.True)
                 assertValid (Validation.validateArtifactSource source)
             | _ -> Assert.Fail("CacheRequired test plan should require cache-entry artifact sources.")
+
+    /// Verifies that CacheRequired plans cannot reach runtime without an exact artifact grant.
+    [<Test>]
+    member _.CacheRequiredPlanRejectsMissingArtifactGrant() =
+        let plan = { MaterializationPlanTestData.validPlan () with ArtifactGrant = None }
+
+        assertInvalid
+            "ArtifactGrant is required for CacheRequired plans, CacheEntry sources, and plans that are not entirely Direct."
+            (Validation.validatePlan plan)
+
+    /// Verifies that CachePreferred plans also require a grant when any source is a CacheEntry.
+    [<Test>]
+    member _.CachePreferredPlanWithCacheEntryRejectsMissingArtifactGrant() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                MaterializationCacheSelection.Preferred,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertInvalid
+            "ArtifactGrant is required for CacheRequired plans, CacheEntry sources, and plans that are not entirely Direct."
+            (Validation.validatePlan plan)
+
+    /// Verifies that a direct-only CachePreferred plan remains deliberately grant-free.
+    [<Test>]
+    member _.CachePreferredPlanWithOnlyDirectSourcesAllowsNoArtifactGrant() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                MaterializationCacheSelection.Preferred,
+                MaterializationPlanTestData.directRootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertValid (Validation.validatePlan plan)
+
+    /// Verifies CachePreferred plans never publish a partial cache fallback, regardless of grant presence.
+    [<Test>]
+    member _.CachePreferredPlanRejectsMixedCacheEntryAndDirectUriSourcesWithOrWithoutGrant() =
+        let allCachePlan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                MaterializationCacheSelection.Preferred,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+            |> MaterializationPlanTestData.withMatchingCacheGrant
+
+        assertValid (Validation.validatePlan allCachePlan)
+
+        let mixedArtifacts = List<MaterializationArtifactDescriptor>(allCachePlan.RequiredArtifacts)
+
+        let firstArtifact = mixedArtifacts[0]
+
+        mixedArtifacts[0] <- { firstArtifact with Source = Some(MaterializationArtifactSource.Direct "https://direct.example.test/artifacts/root.zip") }
+
+        let mixedPlan = { allCachePlan with RequiredArtifacts = mixedArtifacts }
+
+        for plan in
+            [
+                mixedPlan
+                { mixedPlan with ArtifactGrant = None }
+            ] do
+            assertInvalid "CachePreferred plans must be entirely CacheEntry or entirely DirectUri." (Validation.validatePlan plan)
+
+        let directArtifacts =
+            allCachePlan.RequiredArtifacts
+            |> Seq.map (fun artifact -> { artifact with Source = Some(MaterializationArtifactSource.Direct "https://direct.example.test/artifacts/value") })
+            |> List<MaterializationArtifactDescriptor>
+
+        assertInvalid
+            "CachePreferred Direct fallback plans must not contain an ArtifactGrant."
+            (Validation.validatePlan { allCachePlan with RequiredArtifacts = directArtifacts })
+
+    /// Verifies that a null artifact descriptor is reported without breaking source or grant aggregation.
+    [<Test>]
+    member _.PlanRejectsNullArtifactDescriptorWithoutThrowing() =
+        let validPlan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+            |> MaterializationPlanTestData.withMatchingCacheGrant
+
+        let requiredArtifacts = List<MaterializationArtifactDescriptor>(validPlan.RequiredArtifacts)
+        requiredArtifacts.Add(Unchecked.defaultof<MaterializationArtifactDescriptor>)
+
+        let plan = { validPlan with RequiredArtifacts = requiredArtifacts }
+
+        assertInvalid "Artifact descriptor is required." (Validation.validatePlan plan)
+
+    /// Verifies that a Cache plan rejects a grant whose artifact identity set differs from the exact plan identities.
+    [<Test>]
+    member _.CachePlanRejectsArtifactGrantIdentityMismatch() =
+        let plan = MaterializationPlanTestData.validPlan ()
+
+        let grant =
+            plan.ArtifactGrant
+            |> Option.defaultWith (fun () -> failwith "The test plan must include an artifact grant.")
+
+        let mismatchedPlan =
+            { plan with ArtifactGrant = Some { grant with Payload = { grant.Payload with ArtifactIdentities = List<string>([ "not-the-planned-artifact" ]) } } }
+
+        assertInvalid "ArtifactGrant artifact identities must exactly match the Materialization Plan artifacts." (Validation.validatePlan mismatchedPlan)
 
     /// Verifies that CacheRequired plans fail closed when a direct source URI is present.
     [<Test>]
@@ -865,92 +1011,20 @@ type MaterializationPlanContractTests() =
 
             assertInvalid expected (Validation.validateArtifactSource source)
 
-    /// Verifies that cache-scope identity is either absent or a non-blank value.
-    [<TestCase("")>]
-    [<TestCase("   ")>]
-    member _.CacheSelectionRejectsBlankCacheScope(cacheScope: string) =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some cacheScope }
-
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateCacheSelection cacheSelection)
-
-    /// Verifies that blank optional cache-scope identity fails before request and plan contracts validate.
-    [<TestCase("")>]
-    [<TestCase("   ")>]
-    member _.RequestAndPlanRejectBlankCacheScope(cacheScope: string) =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some cacheScope }
-
-        let request =
-            MaterializationPlanRequest.Create(
-                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                [
-                    MaterializationArtifactKind.DirectoryVersionZip
-                ]
-            )
-
-        let plan =
-            MaterializationPlan.Create(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
-            )
-
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateRequest request)
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validatePlan plan)
-
-    /// Verifies that null optional cache-scope identity fails before request and plan contracts validate.
+    /// Verifies that cache registration scope is server-owned and cannot be supplied through the public selection contract.
     [<Test>]
-    member _.RequestAndPlanRejectNullCacheScope() =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some Unchecked.defaultof<string> }
+    member _.CacheSelectionDoesNotSerializeCallerSuppliedScope() =
+        let callerSuppliedJson = """{"Class":"MaterializationCacheSelection","SelectionKind":"requireCache","CacheScope":"storage-pool:caller-supplied"}"""
 
-        let request =
-            MaterializationPlanRequest.Create(
-                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                [
-                    MaterializationArtifactKind.DirectoryVersionZip
-                ]
-            )
+        let selection = JsonSerializer.Deserialize<MaterializationCacheSelection>(callerSuppliedJson, Grace.Shared.Constants.JsonSerializerOptions)
 
-        let plan =
-            MaterializationPlan.Create(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
-            )
+        let json: string = JsonSerializer.Serialize<MaterializationCacheSelection>(selection, Grace.Shared.Constants.JsonSerializerOptions)
 
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateRequest request)
-        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validatePlan plan)
+        use document = JsonDocument.Parse(json)
+        let mutable cacheScope = Unchecked.defaultof<JsonElement>
 
-    /// Verifies that a non-blank cache-scope identity remains valid at request and plan seams.
-    [<Test>]
-    member _.RequestAndPlanAllowNonBlankCacheScope() =
-        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some "scope/materialization-main" }
-
-        let request =
-            MaterializationPlanRequest.Create(
-                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                [
-                    MaterializationArtifactKind.DirectoryVersionZip
-                ]
-            )
-
-        let plan =
-            MaterializationPlan.Create(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                MaterializationExecutionMode.CachePreferred,
-                cacheSelection,
-                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
-            )
-
-        assertValid (Validation.validateRequest request)
-        assertValid (Validation.validatePlan plan)
+        Assert.That(selection.SelectionKind, Is.EqualTo(MaterializationCacheSelectionKind.RequireCache))
+        Assert.That(document.RootElement.TryGetProperty("CacheScope", &cacheScope), Is.False)
 
     /// Verifies that all current artifact kinds are accepted in request artifact selection.
     [<Test>]
@@ -1080,6 +1154,12 @@ type MaterializationPlanContractTests() =
                 { MaterializationCacheSelection.Preferred with SelectionKind = selectionKind },
                 rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
             )
+
+        let plan =
+            if mode = MaterializationExecutionMode.Direct then
+                plan
+            else
+                MaterializationPlanTestData.withMatchingCacheGrant plan
 
         assertValid (Validation.validatePlan plan)
 
@@ -1278,7 +1358,7 @@ type MaterializationPlanContractTests() =
                 ]
             )
 
-        assertValid (Validation.validatePlan plan)
+        assertValid (Validation.validatePlan (MaterializationPlanTestData.withMatchingCacheGrant plan))
 
     /// Verifies that whole-file descriptors reject blank hash fields even when the other hash is valid.
     [<TestCase(true)>]
@@ -1476,7 +1556,7 @@ type MaterializationPlanContractTests() =
                 ]
             )
 
-        assertValid (Validation.validatePlan plan)
+        assertValid (Validation.validatePlan (MaterializationPlanTestData.withMatchingCacheGrant plan))
 
     /// Verifies that CAS uniqueness includes storage pool, allowing same addresses in distinct pools.
     [<Test>]
@@ -1517,7 +1597,7 @@ type MaterializationPlanContractTests() =
                 ]
             )
 
-        assertValid (Validation.validatePlan plan)
+        assertValid (Validation.validatePlan (MaterializationPlanTestData.withMatchingCacheGrant plan))
 
     /// Verifies that V1 plans reject duplicate singleton root artifact descriptors.
     [<Test>]
@@ -1591,6 +1671,94 @@ type MaterializationPlanContractTests() =
         let source = MaterializationArtifactSource.Direct uri
 
         assertInvalid "Artifact DirectUri must be an absolute http or https URI for DirectUri sources." (Validation.validateArtifactSource source)
+
+    /// Verifies malformed null cache sources remain validation failures when grant matching also runs.
+    [<Test>]
+    member _.PlanWithNullArtifactSourceAndGrantReturnsValidationErrorsWithoutThrowing() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+
+        let malformedArtifacts =
+            validPlan.RequiredArtifacts
+            |> Seq.mapi (fun index artifact ->
+                if index = 0 then
+                    { artifact with Source = Some Unchecked.defaultof<MaterializationArtifactSource> }
+                else
+                    artifact)
+            |> List<MaterializationArtifactDescriptor>
+
+        let malformedPlan = { validPlan with RequiredArtifacts = malformedArtifacts }
+
+        Assert.DoesNotThrow(Action(fun () -> Validation.validatePlan malformedPlan |> ignore))
+        assertInvalid "Artifact Source is required." (Validation.validatePlan malformedPlan)
+
+    /// Verifies cache-backed plans require the complete signed-grant envelope before client use.
+    [<Test>]
+    member _.CacheBackedPlanRejectsMissingGrantHeaderAndBlankSignature() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+        let validGrant = validPlan.ArtifactGrant.Value
+        let missingHeaderPlan = { validPlan with ArtifactGrant = Some { validGrant with Header = Unchecked.defaultof<ArtifactGrantHeader> } }
+        let blankSignaturePlan = { validPlan with ArtifactGrant = Some { validGrant with Signature = " " } }
+
+        assertInvalid "ArtifactGrant must contain a complete signed envelope." (Validation.validatePlan missingHeaderPlan)
+        assertInvalid "ArtifactGrant must contain a complete signed envelope." (Validation.validatePlan blankSignaturePlan)
+
+    /// Verifies plan validation rejects every signed-envelope field that offline cache verification requires structurally.
+    [<Test>]
+    member _.CacheBackedPlanRejectsIncompleteOrUnsupportedSignedEnvelopeStructure() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+        let validGrant = validPlan.ArtifactGrant.Value
+
+        let malformedGrants =
+            [
+                { validGrant with Class = "WrongSignedArtifactGrant" }
+                { validGrant with Header = { validGrant.Header with Class = "WrongArtifactGrantHeader" } }
+                { validGrant with Header = { validGrant.Header with Algorithm = "HS256" } }
+                { validGrant with Header = { validGrant.Header with KeyId = " " } }
+                { validGrant with Payload = { validGrant.Payload with Class = "WrongArtifactGrantPayload" } }
+            ]
+
+        for malformedGrant in malformedGrants do
+            assertInvalid
+                "ArtifactGrant must contain a complete signed envelope."
+                (Validation.validatePlan { validPlan with ArtifactGrant = Some malformedGrant })
+
+    /// Verifies cache-plan endpoint substitution is rejected before a client can present its grant or holder proof.
+    [<Test>]
+    member _.CacheBackedPlanRejectsSignedGrantEndpointSubstitution() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+
+        let substitutedArtifacts =
+            validPlan.RequiredArtifacts
+            |> Seq.map (fun artifact ->
+                match artifact.Source with
+                | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                    { artifact with Source = Some { source with CacheEndpoint = Some "https://other-cache.example.test" } }
+                | _ -> artifact)
+            |> List<MaterializationArtifactDescriptor>
+
+        let substitutedPlan = { validPlan with RequiredArtifacts = substitutedArtifacts }
+
+        assertInvalid "ArtifactGrant CacheEndpoint must match every Cache source exactly." (Validation.validatePlan substitutedPlan)
+
+    /// Verifies an HTTP cache source remains valid only when the complete grant binds that exact approved endpoint.
+    [<Test>]
+    member _.CacheBackedPlanAllowsGrantBoundHttpEndpoint() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+        let httpEndpoint = "http://cache.example.test:8080/artifacts"
+
+        let httpArtifacts =
+            validPlan.RequiredArtifacts
+            |> Seq.map (fun artifact ->
+                match artifact.Source with
+                | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                    { artifact with Source = Some { source with CacheEndpoint = Some httpEndpoint } }
+                | _ -> artifact)
+            |> List<MaterializationArtifactDescriptor>
+
+        let httpGrant = { validPlan.ArtifactGrant.Value with Payload = { validPlan.ArtifactGrant.Value.Payload with CacheEndpoint = httpEndpoint } }
+        let httpPlan = { validPlan with RequiredArtifacts = httpArtifacts; ArtifactGrant = Some httpGrant }
+
+        assertValid (Validation.validatePlan httpPlan)
 
     /// Verifies that each selector kind rejects identity fields owned by other selector kinds.
     [<Test>]

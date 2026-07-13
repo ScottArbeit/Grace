@@ -93,6 +93,12 @@ module Constants =
         let ApprovalRequestIndex = "ApprovalRequestIndexActor"
 
         [<Literal>]
+        let CacheRegistration = "CacheRegistrationActor"
+
+        [<Literal>]
+        let ArtifactGrantSigningKey = "ArtifactGrantSigningKeyActor"
+
+        [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadataActor"
 
         [<Literal>]
@@ -189,6 +195,12 @@ module Constants =
 
         [<Literal>]
         let ApprovalRequestIndex = "ApprovalRequestIndex"
+
+        [<Literal>]
+        let CacheRegistration = "CacheRegistration"
+
+        [<Literal>]
+        let ArtifactGrantSigningKey = "ArtifactGrantSigningKey"
 
         [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadata"

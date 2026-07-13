@@ -13,6 +13,13 @@
  */
 
 import { mapValues } from '../runtime';
+import type { SignedArtifactGrant } from './SignedArtifactGrant';
+import {
+    SignedArtifactGrantFromJSON,
+    SignedArtifactGrantFromJSONTyped,
+    SignedArtifactGrantToJSON,
+    SignedArtifactGrantToJSONTyped,
+} from './SignedArtifactGrant';
 import type { MaterializationCacheSelection } from './MaterializationCacheSelection';
 import {
     MaterializationCacheSelectionFromJSON,
@@ -71,6 +78,12 @@ export interface MaterializationPlan {
      * @memberof MaterializationPlan
      */
     requiredArtifacts: Array<MaterializationArtifactDescriptor>;
+    /**
+     * 
+     * @type {SignedArtifactGrant}
+     * @memberof MaterializationPlan
+     */
+    artifactGrant?: SignedArtifactGrant;
 }
 
 
@@ -102,6 +115,7 @@ export function MaterializationPlanFromJSONTyped(json: any, ignoreDiscriminator:
         'executionMode': MaterializationExecutionModeFromJSON(json['ExecutionMode']),
         'cacheSelection': MaterializationCacheSelectionFromJSON(json['CacheSelection']),
         'requiredArtifacts': ((json['RequiredArtifacts'] as Array<any>).map(MaterializationArtifactDescriptorFromJSON)),
+        'artifactGrant': json['ArtifactGrant'] == null ? undefined : SignedArtifactGrantFromJSON(json['ArtifactGrant']),
     };
 }
 
@@ -121,6 +135,7 @@ export function MaterializationPlanToJSONTyped(value?: MaterializationPlan | nul
         'ExecutionMode': MaterializationExecutionModeToJSON(value['executionMode']),
         'CacheSelection': MaterializationCacheSelectionToJSON(value['cacheSelection']),
         'RequiredArtifacts': ((value['requiredArtifacts'] as Array<any>).map(MaterializationArtifactDescriptorToJSON)),
+        'ArtifactGrant': SignedArtifactGrantToJSON(value['artifactGrant']),
     };
 }
 

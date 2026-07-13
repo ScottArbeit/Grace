@@ -1179,12 +1179,14 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Branch
+open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Net
 open System.Net.Http
 open System.Net.Http.Json
+open System.Text
 
 /// Covers endpoint authorization scenarios.
 [<Parallelizable(ParallelScope.All)>]
@@ -1202,6 +1204,25 @@ type EndpointAuthorizationTests() =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client
+
+    /// Builds a syntactically complete but invalid Cache proof so runtime routes must reach their proof-handling boundary.
+    let invalidCacheProof cacheId operation requestDigest =
+        CacheRequestProofPayload.Create(cacheId, operation, requestDigest, getCurrentInstant ())
+        |> fun payload -> SignedCacheRequestProof.Create(payload, "invalid-signature")
+
+    /// Builds a valid serialized refresh body whose health field is replaced with an undefined numeric value for route-boundary validation.
+    let numericHealthRefreshContent request health =
+        task {
+            use typedContent = createJsonContent request
+            let! typedBody = typedContent.ReadAsStringAsync()
+
+            let numericBody = System.Text.RegularExpressions.Regex.Replace(typedBody, "\\\"Health\\\"\\s*:\\s*\\\"[^\\\"]+\\\"", $"\"Health\":{health}")
+
+            if typedBody = numericBody then
+                invalidOp "Typed Cache refresh JSON did not include a Health field to replace."
+
+            return new StringContent(numericBody, Encoding.UTF8, "application/json")
+        }
 
     /// Grants role needed by authorization-sensitive tests.
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
@@ -1430,6 +1451,73 @@ type EndpointAuthorizationTests() =
 
             let! providerLoginResponse = client.GetAsync("/authenticate/login/test")
             Assert.That(providerLoginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect, HttpStatusCode.NotFound))
+        }
+
+    /// Verifies proof-only Cache runtime routes reach validation without a Grace user while administrative routes retain fallback authentication.
+    [<Test>]
+    member _.CacheProofRoutesReachValidationWithoutGraceUserAndAdministrativeRoutesRemainProtected() =
+        task {
+            let cacheId = Guid.NewGuid()
+            use unauthenticatedClient = createUnauthenticatedClient ()
+
+            let refreshRequest =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = "https://cache.example.test"
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.0.0"
+                    ProtocolVersion = "1"
+                    PrefetchSupported = false
+                    ObservedAt = getCurrentInstant ()
+                    Proof = invalidCacheProof cacheId CacheRegistrationProof.RefreshOperation "invalid-refresh-digest"
+                }
+
+            let! refreshResponse = unauthenticatedClient.PostAsync("/cache/refresh", createJsonContent refreshRequest)
+            Assert.That(refreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! unhealthyRefreshResponse =
+                unauthenticatedClient.PostAsync("/cache/refresh", createJsonContent { refreshRequest with Health = CacheHealthStatus.Unhealthy })
+
+            Assert.That(unhealthyRefreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            for unsupportedHealth in [ 0; 999 ] do
+                let! unsupportedHealthContent = numericHealthRefreshContent refreshRequest unsupportedHealth
+                let! unsupportedHealthResponse = unauthenticatedClient.PostAsync("/cache/refresh", unsupportedHealthContent)
+
+                let! unsupportedHealthBody = unsupportedHealthResponse.Content.ReadAsStringAsync()
+                Assert.That(unsupportedHealthResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+                Assert.That(unsupportedHealthBody, Does.Contain "Health must be Healthy or Unhealthy.")
+
+            let invalidKey = { Class = nameof CacheIdentityPublicKey; Algorithm = "ES256"; Curve = "P-256"; PublicKeyX = "invalid"; PublicKeyY = "invalid" }
+
+            let rotationRequest =
+                {
+                    Class = nameof CacheKeyRotationRequest
+                    CacheId = cacheId
+                    NewPublicKey = invalidKey
+                    Proof = invalidCacheProof cacheId CacheRegistrationProof.RotateKeyOperation "invalid-rotation-digest"
+                }
+
+            let! rotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent rotationRequest)
+            Assert.That(rotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let missingKeyRotationRequest = { rotationRequest with NewPublicKey = Unchecked.defaultof<CacheIdentityPublicKey> }
+
+            let! missingKeyRotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent missingKeyRotationRequest)
+
+            Assert.That(missingKeyRotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
+            Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! assignmentResponse =
+                unauthenticatedClient.PostAsync("/cache/assign-repositories", createJsonContent Unchecked.defaultof<CacheRepositoryAssignmentRequest>)
+
+            Assert.That(assignmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! revocationResponse = unauthenticatedClient.PostAsync("/cache/revoke", createJsonContent Unchecked.defaultof<CacheRevocationRequest>)
+            Assert.That(revocationResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }
 
     /// Verifies the metrics endpoint requires system admin scenario.

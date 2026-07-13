@@ -24,6 +24,8 @@ pub struct MaterializationPlanRequest {
     pub cache_selection: Box<models::MaterializationCacheSelection>,
     #[serde(rename = "RequestedArtifactKinds")]
     pub requested_artifact_kinds: Vec<models::MaterializationArtifactKind>,
+    #[serde(rename = "HolderPublicKey", skip_serializing_if = "Option::is_none")]
+    pub holder_public_key: Option<Box<models::ArtifactGrantHolderPublicKey>>,
 }
 
 impl MaterializationPlanRequest {
@@ -35,6 +37,7 @@ impl MaterializationPlanRequest {
             execution_mode,
             cache_selection: Box::new(cache_selection),
             requested_artifact_kinds,
+            holder_public_key: None,
         }
     }
 }

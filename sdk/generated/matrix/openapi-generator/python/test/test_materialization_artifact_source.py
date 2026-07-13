@@ -39,7 +39,10 @@ class TestMaterializationArtifactSource(unittest.TestCase):
                 var_class = 'MaterializationArtifactSource',
                 source_kind = 'directUri',
                 direct_uri = '',
-                cache_key = ''
+                cache_key = '',
+                cache_endpoint = '',
+                cache_id = '',
+                direct_fallback_uri = ''
             )
         else:
             return MaterializationArtifactSource(

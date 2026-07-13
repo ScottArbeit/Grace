@@ -56,6 +56,7 @@
 		<Compile Include="Security\PrincipalMapper.Server.fs" />
 		<Compile Include="Security\TelemetryEnrichment.Server.fs" />
 		<Compile Include="Security\ExternalAuthConfig.Server.fs" />
+		<Compile Include="Security\ArtifactGrantKeys.Server.fs" />
                 <Compile Include="Security\ClaimMapping.Server.fs" />
                 <Compile Include="Security\ClaimsTransformation.Server.fs" />
                 <Compile Include="Security\TestAuth.Server.fs" />
@@ -102,6 +103,7 @@
                 <Compile Include="ReviewAnalysis.Server.fs" />
                 <Compile Include="Eventing.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
+		<Compile Include="CacheRegistration.Server.fs" />
 		<Compile Include="Materialization.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="NormalFileMaterialization.Server.fs" />

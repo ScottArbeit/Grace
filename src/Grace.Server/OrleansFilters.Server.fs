@@ -73,6 +73,8 @@ module Orleans =
                             | StateName.Artifact -> repositoryId ()
                             | StateName.ApprovalRequest -> repositoryId ()
                             | StateName.ApprovalRequestIndex -> repositoryId ()
+                            | StateName.ArtifactGrantSigningKey -> StateName.ArtifactGrantSigningKey
+                            | StateName.CacheRegistration -> StateName.CacheRegistration
                             | StateName.ContentBlockMetadata -> firstGrainKeySegment ()
                             | StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()
                             | StateName.Reference -> repositoryId ()
@@ -166,6 +168,8 @@ module Orleans =
                             context.InterfaceMethod.Name,
                             grainId
                         )
+
+                        return raise ex
 
                     let command = getCurrentCommand ()
 

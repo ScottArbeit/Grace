@@ -74,8 +74,9 @@ Future implementation PRs must preserve these V1 guardrails when updating any au
   immutable target identity is necessary, but it is not an authorization scope by itself.
 - Narrowed path-scope grants must be rejected for V1 full-root artifacts until Grace accepts a
   path-scoped artifact shape and proof obligation.
-- Cache Service Identity authorizes configured cache operations only. It must not become a global
-  artifact reader or bypass per-call artifact grant validation.
+- A Cache identity is a server-assigned `CacheId` and canonical P-256 public key bound to one explicit
+  Owner or Organization repository boundary. It cannot become a global artifact reader or bypass per-call
+  artifact grant validation.
 
 ## Requirement Group Scaffold
 
@@ -103,24 +104,34 @@ docs-only classification with current evidence for the behavior they own.
 ### CachePreferred Materialization
 
 - Implementation seam: mode selection and materialization path that tries Grace Cache first and can
-  fall back to Direct only when the accepted contract allows it.
+  fall back to Direct only when the accepted contract allows it. Grace Server selects only a current,
+  healthy Cache with an exact explicit repository assignment for the fully resolved target. Callers
+  cannot supply a cache scope; repository names, wildcard scopes, and storage-pool assignments do not
+  participate in selection.
 - Proof seam: positive and negative tests for cache hit, cache miss, grant failure, cache outage,
-  and fallback observability.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; the owning implementation issue or PR must add
-  current behavior and validation evidence.
-- Residual risk or rationale: do not claim CachePreferred support unless fallback rules and
-  user-visible status are proven together.
+  fallback observability, exact stable-ID scope matching, and exclusion of missing, unrelated,
+  malformed, name-like, wrong-case, storage-pool-only, and unlisted multi-repository registrations.
+- Status classification: `implemented and proven` for server-side plan selection and source shape.
+- Issue or PR evidence: #620 owns current-registration selection, ordinary-absence Direct fallback,
+  holder-bound grant issuance, complete-plan validation, generated contracts, and Fast validation.
+- Residual risk or rationale: #629 and #630 still own client private-key lifetime and cache execution.
 
 ### CacheRequired Materialization
 
 - Implementation seam: mode selection and materialization path that fails closed when Grace Cache
-  cannot serve the authorized content.
+  cannot serve the authorized content. Direct, CachePreferred, and CacheRequired root plans reject
+  `WholeFileContent`, `FileManifest`, and `ContentBlock` requests before projection, registration
+  selection, grant issuance, or partial plan publication.
 - Proof seam: tests proving no Direct source is used when CacheRequired cannot satisfy the request,
-  including cache miss, stale grant, malformed grant, and unavailable cache cases.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; the owning implementation issue or PR must add
-  current proof before any CacheRequired support claim.
+  including cache miss, stale grant, malformed grant, and unavailable cache cases. Expected cache or grant-capacity
+  unavailability returns HTTP `503` in Grace's error envelope with `Properties.Code = cacheRequiredUnavailable` and a
+  correlation ID; projection, persistence, and signing faults remain 5xx.
+- Status classification: `implemented and proven` for server-side plan selection and source shape.
+- Issue or PR evidence: #620 proves selected-cache plans and retryable failure on ordinary absence,
+  selection failure, or post-selection grant failure without Direct retrieval details.
+- Generated-client surface: regenerated TypeScript, Python, and Rust raw-client materialization methods now include
+  the `503` response alongside the existing generic `GraceError` model; generated SDK metadata is refreshed against
+  the final OpenAPI projection.
 - Residual risk or rationale: CacheRequired is a high-risk trust contract because a silent Direct
   fallback would violate the mode name and caller expectations.
 
@@ -142,30 +153,68 @@ docs-only classification with current evidence for the behavior they own.
 
 ### ContentAccessGrant Issuance And Validation
 
-- Implementation seam: Grace Server grant issuance, grant binding, grant expiry, resolved content
-  scope, resolved path scope, and Grace Cache local validation.
-- Proof seam: tests for caller binding, cache audience binding, expired grants, wrong repository,
-  wrong reference or DirectoryVersion, artifact completeness, whole-target-root authorization,
-  narrowed path-scope rejection, and malformed grant data.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; later grant work must cite the issue or PR that
-  owns the current grant contract.
-- Residual risk or rationale: ContentAccessGrant proof must pair complete Materialization Plan
-  artifacts with current whole-target-root authorization and per-call artifact grant validation; a
-  complete local artifact or bearer-like token is never enough to serve content.
+- Implementation seam: #619 defines `Grace.Types.ArtifactGrant`, `Grace.Shared.ArtifactGrant`,
+  `Grace.Actors.ArtifactGrantSigningKeyActor`, and `Grace.Server.Security.ArtifactGrantKeys` as the
+  signed artifact grant contract. One fixed-key Orleans actor backed by `GraceActorStorage` persists
+  P-256 private keys before use and owns rotation for every Grace Server instance. Grants bind the
+  authenticated `grace_user_id` as a `User` requester, the canonical ephemeral holder-key
+  thumbprint, selected CacheId, immutable target root, non-Direct execution mode,
+  and explicit artifact identities. Each cache artifact request carries a stateless holder proof
+  over the grant digest, normalized method and route, artifact identity, and a presentation window
+  of at most 30 seconds with at most 30 seconds of clock-skew tolerance. Canonical request encoding
+  uppercases and trims the HTTP method; it trims the route, excludes query and fragment text, adds a
+  leading slash when absent, and otherwise preserves path case and trailing-slash meaning.
+- Lifecycle seam: the default grant TTL is 5 minutes, the maximum accepted grant TTL is 15 minutes,
+  signing keys are active for 2 hours, old validation keys remain published through the final grant
+  overlap window, and `/cache/validation-keys` advertises a 15-minute cache TTL. Grant and proof
+  expiry are checked when a request is admitted; #625 owns allowing an admitted response to stream
+  to completion and requiring fresh proof for every retry, resume, range, parallel, or later request.
+- Proof seam: `ArtifactGrantValidationTests` covers valid grants, Direct mode skipping grant
+  validation, unsigned grants, missing key ids, unsupported algorithms, wrong cache, wrong target
+  root, wrong execution mode, wrong artifact, wrong signatures, expired grants, overlong TTLs,
+  expired keys, current/overlap key validation, and one-attempt unknown-key refresh fail-closed
+  behavior. `ArtifactRequestProofValidationTests` covers matching holder proof, copied-grant use with
+  another key, exact grant/method/route/artifact binding, tampering, proof lifetime and skew
+  boundaries, and explicit Direct bypass. `ArtifactGrantSigningKeyActorTests` covers
+  persist-before-use, activation recovery, storage-write failure without local fallback, 2-hour
+  rotation, overlap retirement, concurrent signing/publication, and malformed issuance boundaries.
+  `ArtifactGrantKeysIntegrationTests` proves the HTTP publication route resolves stable actor-backed
+  keys through the Aspire-hosted server.
+- Status classification: `implemented and proven`.
+- Issue or PR evidence: #619 and PR #697 own the grant/key contract, validation-key publication
+  route, generated OpenAPI/SDK artifacts, focused proof, and passing `validate.ps1 -Full` evidence.
+- Residual risk or rationale: #620 derives `RequesterPrincipalId` from authenticated server context
+  and adds the holder public key and grant to cache-mode Materialization Plans. #625 owns request
+  admission and stream behavior; #629 and #630 own ephemeral private-key lifetime
+  and just-in-time proof generation. V1 intentionally has no nonce store, so replay of a captured
+  complete request remains possible inside the narrow proof window; TLS protects it in transit.
 
-### Cache Service Registration And Identity
+### Cache Registration And Identity
 
-- Implementation seam: cache service registration, health or capability publication, configured
-  cache audience, and Cache Service Identity for prefetch subscriptions.
-- Proof seam: tests or static validation for unregistered cache rejection, wrong audience rejection,
-  duplicate registration handling, identity rotation, disabled-cache behavior, and rejection of
-  per-call artifact grant bypass attempts.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; registration work must cite its owning issue or
-  PR and validation.
-- Residual risk or rationale: Cache Service Identity authorizes configured cache behavior only; it
-  must not become a global artifact reader or bypass per-call artifact grants.
+- Implementation seam: an authenticated Grace administrator enrolls one Cache under a server-assigned
+  `CacheId`, one Owner or Organization boundary, and exact explicit repository assignments. Enrollment
+  stores only a canonical P-256 public key and the enrollment audit identity. The singleton
+  `CacheRegistrationActor` persists registration lifecycle state through `GraceActorStorage`; refresh
+  and rotation prove possession of the current private key but never store it. Refresh updates only
+  operational facts and liveness. Dedicated administrator routes replace assignments or revoke; key
+  rotation accepts the new public key before retiring the old key.
+- Lifecycle seam: selection is the eligibility cutoff for a materialization request. A registration revoked or
+  de-assigned after selection prevents later plans, but the in-flight request keeps its selected snapshot and may
+  complete with its short-lived grant. A signed `Unhealthy` refresh is persisted immediately without extending other
+  operational facts; healthy recovery remains throttled. Administrators of the stored Owner or Organization can revoke
+  or replace assignments even when a historical assignment was deleted, while every replacement repository must still
+  resolve live and pass the current boundary checks.
+- Proof seam: `CacheRegistrationLifecycleTests` covers immutable enrollment facts, restricted refresh,
+  revocation, exact healthy repository selection, malformed/duplicate boundaries, and canonical proof
+  verification. The Orleans partition-key test proves the singleton `CacheRegistration` Cosmos mapping,
+  persistent-state activation, durable writes, and Cosmos provider selection.
+- Status classification: `implemented and proven` for the server foundation; Cache host scheduling,
+  local private-key storage, and artifact-serving behavior remain out of scope.
+- Issue or PR evidence: #600 and PR #706 own the administrator authorization, durable registration,
+  proof, key-rotation, route, OpenAPI, generated-client, and validation evidence.
+- Residual risk or rationale: every current healthy Cache is inherently read-through eligible for its
+  exact assignments. Read-through is mandatory, not an advertised capability. `PrefetchSupported` is
+  the sole optional capability and does not authorize artifact access.
 
 ### Read-Through Behavior
 

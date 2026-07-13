@@ -21,6 +21,7 @@ __version__ = "0.0.0"
 __all__ = [
     "ApprovalsApi",
     "BranchesApi",
+    "CacheApi",
     "DiffsApi",
     "DirectoriesApi",
     "MaterializationApi",
@@ -56,6 +57,13 @@ __all__ = [
     "ApprovalScope",
     "ApprovalTimeoutAction",
     "ApproveApprovalRequestParameters",
+    "ArtifactGrantHeader",
+    "ArtifactGrantHolderPublicKey",
+    "ArtifactGrantPayload",
+    "ArtifactGrantRequesterPrincipalType",
+    "ArtifactGrantValidationKey",
+    "ArtifactGrantValidationKeySet",
+    "ArtifactRequestProofPayload",
     "BlockUploadIntent",
     "BranchAnnotationApiDto",
     "BranchAnnotationReturnValue",
@@ -67,6 +75,20 @@ __all__ = [
     "BranchParameters",
     "BranchQueryParameters",
     "BranchReturnValue",
+    "CacheBoundaryKind",
+    "CacheEnrollmentRequest",
+    "CacheHealthStatus",
+    "CacheIdentityPublicKey",
+    "CacheKeyRotationRequest",
+    "CacheRegistration",
+    "CacheRegistrationRefreshRequest",
+    "CacheRegistrationRefreshStatus",
+    "CacheRegistrationResult",
+    "CacheRegistrationReturnValue",
+    "CacheRepositoryAssignmentRequest",
+    "CacheRepositoryScope",
+    "CacheRequestProofPayload",
+    "CacheRevocationRequest",
     "ChangeType",
     "ClaimReuseRangesParameters",
     "ClaimedReuseRange",
@@ -234,6 +256,9 @@ __all__ = [
     "SetRepositoryStatusParameters",
     "SetRepositoryVisibilityParameters",
     "SetSaveDaysParameters",
+    "SignedArtifactGrant",
+    "SignedArtifactRequestProof",
+    "SignedCacheRequestProof",
     "StartManifestUploadSessionParameters",
     "StartUploadSession",
     "StorageParameters",
@@ -278,6 +303,7 @@ __all__ = [
 # import apis into sdk package
 from grace_generated_openapi_probe.api.approvals_api import ApprovalsApi as ApprovalsApi
 from grace_generated_openapi_probe.api.branches_api import BranchesApi as BranchesApi
+from grace_generated_openapi_probe.api.cache_api import CacheApi as CacheApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi as DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi as DirectoriesApi
 from grace_generated_openapi_probe.api.materialization_api import MaterializationApi as MaterializationApi
@@ -317,6 +343,13 @@ from grace_generated_openapi_probe.models.approval_request_status import Approva
 from grace_generated_openapi_probe.models.approval_scope import ApprovalScope as ApprovalScope
 from grace_generated_openapi_probe.models.approval_timeout_action import ApprovalTimeoutAction as ApprovalTimeoutAction
 from grace_generated_openapi_probe.models.approve_approval_request_parameters import ApproveApprovalRequestParameters as ApproveApprovalRequestParameters
+from grace_generated_openapi_probe.models.artifact_grant_header import ArtifactGrantHeader as ArtifactGrantHeader
+from grace_generated_openapi_probe.models.artifact_grant_holder_public_key import ArtifactGrantHolderPublicKey as ArtifactGrantHolderPublicKey
+from grace_generated_openapi_probe.models.artifact_grant_payload import ArtifactGrantPayload as ArtifactGrantPayload
+from grace_generated_openapi_probe.models.artifact_grant_requester_principal_type import ArtifactGrantRequesterPrincipalType as ArtifactGrantRequesterPrincipalType
+from grace_generated_openapi_probe.models.artifact_grant_validation_key import ArtifactGrantValidationKey as ArtifactGrantValidationKey
+from grace_generated_openapi_probe.models.artifact_grant_validation_key_set import ArtifactGrantValidationKeySet as ArtifactGrantValidationKeySet
+from grace_generated_openapi_probe.models.artifact_request_proof_payload import ArtifactRequestProofPayload as ArtifactRequestProofPayload
 from grace_generated_openapi_probe.models.block_upload_intent import BlockUploadIntent as BlockUploadIntent
 from grace_generated_openapi_probe.models.branch_annotation_api_dto import BranchAnnotationApiDto as BranchAnnotationApiDto
 from grace_generated_openapi_probe.models.branch_annotation_return_value import BranchAnnotationReturnValue as BranchAnnotationReturnValue
@@ -328,6 +361,20 @@ from grace_generated_openapi_probe.models.branch_hash_query_parameters import Br
 from grace_generated_openapi_probe.models.branch_parameters import BranchParameters as BranchParameters
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
+from grace_generated_openapi_probe.models.cache_boundary_kind import CacheBoundaryKind as CacheBoundaryKind
+from grace_generated_openapi_probe.models.cache_enrollment_request import CacheEnrollmentRequest as CacheEnrollmentRequest
+from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus as CacheHealthStatus
+from grace_generated_openapi_probe.models.cache_identity_public_key import CacheIdentityPublicKey as CacheIdentityPublicKey
+from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest as CacheKeyRotationRequest
+from grace_generated_openapi_probe.models.cache_registration import CacheRegistration as CacheRegistration
+from grace_generated_openapi_probe.models.cache_registration_refresh_request import CacheRegistrationRefreshRequest as CacheRegistrationRefreshRequest
+from grace_generated_openapi_probe.models.cache_registration_refresh_status import CacheRegistrationRefreshStatus as CacheRegistrationRefreshStatus
+from grace_generated_openapi_probe.models.cache_registration_result import CacheRegistrationResult as CacheRegistrationResult
+from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue as CacheRegistrationReturnValue
+from grace_generated_openapi_probe.models.cache_repository_assignment_request import CacheRepositoryAssignmentRequest as CacheRepositoryAssignmentRequest
+from grace_generated_openapi_probe.models.cache_repository_scope import CacheRepositoryScope as CacheRepositoryScope
+from grace_generated_openapi_probe.models.cache_request_proof_payload import CacheRequestProofPayload as CacheRequestProofPayload
+from grace_generated_openapi_probe.models.cache_revocation_request import CacheRevocationRequest as CacheRevocationRequest
 from grace_generated_openapi_probe.models.change_type import ChangeType as ChangeType
 from grace_generated_openapi_probe.models.claim_reuse_ranges_parameters import ClaimReuseRangesParameters as ClaimReuseRangesParameters
 from grace_generated_openapi_probe.models.claimed_reuse_range import ClaimedReuseRange as ClaimedReuseRange
@@ -495,6 +542,9 @@ from grace_generated_openapi_probe.models.set_repository_name_parameters import 
 from grace_generated_openapi_probe.models.set_repository_status_parameters import SetRepositoryStatusParameters as SetRepositoryStatusParameters
 from grace_generated_openapi_probe.models.set_repository_visibility_parameters import SetRepositoryVisibilityParameters as SetRepositoryVisibilityParameters
 from grace_generated_openapi_probe.models.set_save_days_parameters import SetSaveDaysParameters as SetSaveDaysParameters
+from grace_generated_openapi_probe.models.signed_artifact_grant import SignedArtifactGrant as SignedArtifactGrant
+from grace_generated_openapi_probe.models.signed_artifact_request_proof import SignedArtifactRequestProof as SignedArtifactRequestProof
+from grace_generated_openapi_probe.models.signed_cache_request_proof import SignedCacheRequestProof as SignedCacheRequestProof
 from grace_generated_openapi_probe.models.start_manifest_upload_session_parameters import StartManifestUploadSessionParameters as StartManifestUploadSessionParameters
 from grace_generated_openapi_probe.models.start_upload_session import StartUploadSession as StartUploadSession
 from grace_generated_openapi_probe.models.storage_parameters import StorageParameters as StorageParameters

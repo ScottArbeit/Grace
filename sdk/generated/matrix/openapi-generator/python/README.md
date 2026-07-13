@@ -142,6 +142,12 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
+*CacheApi* | [**assign_cache_repositories**](docs/CacheApi.md#assign_cache_repositories) | **POST** /cache/assign-repositories | Replace a Cache&#39;s exact repository assignments as a current administrator.
+*CacheApi* | [**enroll_cache**](docs/CacheApi.md#enroll_cache) | **POST** /cache/enroll | Enroll a Grace Cache with an administrator-authorized repository boundary.
+*CacheApi* | [**get_artifact_grant_validation_keys**](docs/CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
+*CacheApi* | [**refresh_cache**](docs/CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
+*CacheApi* | [**revoke_cache**](docs/CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
+*CacheApi* | [**rotate_cache_key**](docs/CacheApi.md#rotate_cache_key) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
 *DiffsApi* | [**get_diff**](docs/DiffsApi.md#get_diff) | **POST** /diff/getDiff | Get a diff.
 *DiffsApi* | [**get_diff_by_blake3_hash**](docs/DiffsApi.md#get_diff_by_blake3_hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 *DiffsApi* | [**get_diff_by_sha256_hash**](docs/DiffsApi.md#get_diff_by_sha256_hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
@@ -234,6 +240,13 @@ Class | Method | HTTP request | Description
  - [ApprovalScope](docs/ApprovalScope.md)
  - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
  - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
+ - [ArtifactGrantHeader](docs/ArtifactGrantHeader.md)
+ - [ArtifactGrantHolderPublicKey](docs/ArtifactGrantHolderPublicKey.md)
+ - [ArtifactGrantPayload](docs/ArtifactGrantPayload.md)
+ - [ArtifactGrantRequesterPrincipalType](docs/ArtifactGrantRequesterPrincipalType.md)
+ - [ArtifactGrantValidationKey](docs/ArtifactGrantValidationKey.md)
+ - [ArtifactGrantValidationKeySet](docs/ArtifactGrantValidationKeySet.md)
+ - [ArtifactRequestProofPayload](docs/ArtifactRequestProofPayload.md)
  - [BlockUploadIntent](docs/BlockUploadIntent.md)
  - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
  - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)
@@ -245,6 +258,20 @@ Class | Method | HTTP request | Description
  - [BranchParameters](docs/BranchParameters.md)
  - [BranchQueryParameters](docs/BranchQueryParameters.md)
  - [BranchReturnValue](docs/BranchReturnValue.md)
+ - [CacheBoundaryKind](docs/CacheBoundaryKind.md)
+ - [CacheEnrollmentRequest](docs/CacheEnrollmentRequest.md)
+ - [CacheHealthStatus](docs/CacheHealthStatus.md)
+ - [CacheIdentityPublicKey](docs/CacheIdentityPublicKey.md)
+ - [CacheKeyRotationRequest](docs/CacheKeyRotationRequest.md)
+ - [CacheRegistration](docs/CacheRegistration.md)
+ - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
+ - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)
+ - [CacheRegistrationResult](docs/CacheRegistrationResult.md)
+ - [CacheRegistrationReturnValue](docs/CacheRegistrationReturnValue.md)
+ - [CacheRepositoryAssignmentRequest](docs/CacheRepositoryAssignmentRequest.md)
+ - [CacheRepositoryScope](docs/CacheRepositoryScope.md)
+ - [CacheRequestProofPayload](docs/CacheRequestProofPayload.md)
+ - [CacheRevocationRequest](docs/CacheRevocationRequest.md)
  - [ChangeType](docs/ChangeType.md)
  - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
  - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
@@ -412,6 +439,9 @@ Class | Method | HTTP request | Description
  - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
  - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
  - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
+ - [SignedArtifactGrant](docs/SignedArtifactGrant.md)
+ - [SignedArtifactRequestProof](docs/SignedArtifactRequestProof.md)
+ - [SignedCacheRequestProof](docs/SignedCacheRequestProof.md)
  - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
  - [StartUploadSession](docs/StartUploadSession.md)
  - [StorageParameters](docs/StorageParameters.md)

@@ -21,10 +21,12 @@ open Grace.Types.Review
 open Grace.Types.Queue
 open Grace.Types.Validation
 open Grace.Types.Artifact
+open Grace.Types.ArtifactGrant
 open Grace.Types.UploadSession
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
 open Grace.Types.MaterializationPlan
+open Grace.Types.CacheRegistration
 open Grace.Types.Common
 open Grace.Shared.Utilities
 open NodaTime
@@ -597,6 +599,50 @@ module Interfaces =
 
         /// Returns the request ids currently indexed for the scope.
         abstract member List: correlationId: CorrelationId -> Task<ApprovalRequestId array>
+
+    /// Defines the operations for the server-owned Cache registration actor.
+    [<Interface>]
+    type ICacheRegistrationActor =
+        inherit IGrainWithStringKey
+
+        /// Enrolls one administrator-authorized Cache identity under its immutable server-assigned CacheId.
+        abstract member Enroll:
+            cacheId: Guid * request: CacheEnrollmentRequest * enrolledBy: string * now: Instant * correlationId: CorrelationId ->
+                Task<GraceResult<CacheRegistrationResult>>
+
+        /// Refreshes only operational facts after the actor validates possession of the currently accepted Cache identity key.
+        abstract member Refresh:
+            request: CacheRegistrationRefreshRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Replaces explicit repository assignments after server-side administrator authorization.
+        abstract member UpdateAssignments:
+            request: CacheRepositoryAssignmentRequest * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Revokes one Cache identity after server-side administrator authorization.
+        abstract member Revoke: request: CacheRevocationRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Rotates an identity key only after the actor validates a proof from the currently accepted key.
+        abstract member RotateKey: request: CacheKeyRotationRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Returns one stored registration, including terminal lifecycle state, for administrator authorization preflight.
+        abstract member Get: cacheId: Guid * correlationId: CorrelationId -> Task<CacheRegistration option>
+
+        /// Returns current registrations that match the server-owned selection query.
+        abstract member SelectEligible: query: CacheRegistrationSelectionQuery * now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>
+
+        /// Returns all current registrations without granting artifact access or generating a plan.
+        abstract member Current: now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>
+
+    /// Defines the single deployment-wide owner of artifact-grant signing keys.
+    [<Interface>]
+    type IArtifactGrantSigningKeyActor =
+        inherit IGrainWithStringKey
+
+        /// Issues one requester- and holder-bound grant after durable key rotation completes.
+        abstract member IssueGrant: request: ArtifactGrantSigningRequest * now: Instant -> Task<Result<SignedArtifactGrant, ArtifactGrantIssueError>>
+
+        /// Publishes current and overlap public validation keys after durable rotation completes.
+        abstract member PublishValidationKeys: now: Instant -> Task<ArtifactGrantValidationKeySet>
 
     /// Defines the operations for the StoragePool-scoped ContentBlock metadata actor.
     [<Interface>]

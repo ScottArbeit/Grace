@@ -10,6 +10,9 @@ Name | Type | Description | Notes
 **source_kind** | [**MaterializationArtifactSourceKind**](MaterializationArtifactSourceKind.md) |  | 
 **direct_uri** | **str** |  | [optional] 
 **cache_key** | **str** |  | [optional] 
+**cache_endpoint** | **str** |  | [optional] 
+**cache_id** | **UUID** |  | [optional] 
+**direct_fallback_uri** | **str** |  | [optional] 
 
 ## Example
 

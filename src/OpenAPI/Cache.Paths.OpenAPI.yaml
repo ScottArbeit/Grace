@@ -1,0 +1,114 @@
+  /cache/enroll:
+    post:
+      tags:
+        - Cache
+      summary: Enroll a Grace Cache with an administrator-authorized repository boundary.
+      operationId: EnrollCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheEnrollmentRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/refresh:
+    post:
+      tags:
+        - Cache
+      summary: Refresh Cache operational facts with a current identity-key proof.
+      operationId: RefreshCache
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/assign-repositories:
+    post:
+      tags:
+        - Cache
+      summary: Replace a Cache's exact repository assignments as a current administrator.
+      operationId: AssignCacheRepositories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheRepositoryAssignmentRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/revoke:
+    post:
+      tags:
+        - Cache
+      summary: Revoke a Cache registration as a current administrator.
+      operationId: RevokeCache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheRevocationRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '403': { $ref: './Responses.OpenAPI.yaml#/403' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/rotate-key:
+    post:
+      tags:
+        - Cache
+      summary: Rotate a Cache identity key after proof by the currently accepted key.
+      operationId: RotateCacheKey
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheKeyRotationRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/validation-keys:
+    get:
+      tags:
+        - Cache
+      summary: Publish artifact grant validation keys.
+      description: Public verification material for Grace Cache artifact-grant validation. This operation does not require a Grace user session.
+      operationId: GetArtifactGrantValidationKeys
+      security: []
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKeySetResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'

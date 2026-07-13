@@ -3,6 +3,7 @@
 # import apis into api package
 from grace_generated_openapi_probe.api.approvals_api import ApprovalsApi
 from grace_generated_openapi_probe.api.branches_api import BranchesApi
+from grace_generated_openapi_probe.api.cache_api import CacheApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi
 from grace_generated_openapi_probe.api.materialization_api import MaterializationApi

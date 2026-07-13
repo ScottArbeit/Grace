@@ -39,12 +39,6 @@ export interface MaterializationCacheSelection {
      * @memberof MaterializationCacheSelection
      */
     selectionKind: MaterializationCacheSelectionKind;
-    /**
-     * 
-     * @type {string}
-     * @memberof MaterializationCacheSelection
-     */
-    cacheScope?: string;
 }
 
 
@@ -70,7 +64,6 @@ export function MaterializationCacheSelectionFromJSONTyped(json: any, ignoreDisc
         
         '_class': json['Class'],
         'selectionKind': MaterializationCacheSelectionKindFromJSON(json['SelectionKind']),
-        'cacheScope': json['CacheScope'] == null ? undefined : json['CacheScope'],
     };
 }
 
@@ -87,7 +80,6 @@ export function MaterializationCacheSelectionToJSONTyped(value?: Materialization
         
         'Class': value['_class'],
         'SelectionKind': MaterializationCacheSelectionKindToJSON(value['selectionKind']),
-        'CacheScope': value['cacheScope'],
     };
 }
 

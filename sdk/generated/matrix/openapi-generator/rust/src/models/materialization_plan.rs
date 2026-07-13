@@ -24,6 +24,8 @@ pub struct MaterializationPlan {
     pub cache_selection: Box<models::MaterializationCacheSelection>,
     #[serde(rename = "RequiredArtifacts")]
     pub required_artifacts: Vec<models::MaterializationArtifactDescriptor>,
+    #[serde(rename = "ArtifactGrant", skip_serializing_if = "Option::is_none")]
+    pub artifact_grant: Option<Box<models::SignedArtifactGrant>>,
 }
 
 impl MaterializationPlan {
@@ -35,6 +37,7 @@ impl MaterializationPlan {
             execution_mode,
             cache_selection: Box::new(cache_selection),
             required_artifacts,
+            artifact_grant: None,
         }
     }
 }

@@ -42,8 +42,7 @@ class TestMaterializationPlanReturnValue(unittest.TestCase):
                     execution_mode = 'direct', 
                     cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                         class = 'MaterializationCacheSelection', 
-                        selection_kind = 'bypassCache', 
-                        cache_scope = '', ), 
+                        selection_kind = 'bypassCache', ), 
                     required_artifacts = [
                         grace_generated_openapi_probe.models.materialization_artifact_descriptor.MaterializationArtifactDescriptor(
                             class = 'MaterializationArtifactDescriptor', 
@@ -59,7 +58,8 @@ class TestMaterializationPlanReturnValue(unittest.TestCase):
                             content_block_address = null, 
                             storage_pool_id = null, 
                             source = null, )
-                        ], ),
+                        ], 
+                    artifact_grant = null, ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
@@ -74,8 +74,7 @@ class TestMaterializationPlanReturnValue(unittest.TestCase):
                     execution_mode = 'direct', 
                     cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                         class = 'MaterializationCacheSelection', 
-                        selection_kind = 'bypassCache', 
-                        cache_scope = '', ), 
+                        selection_kind = 'bypassCache', ), 
                     required_artifacts = [
                         grace_generated_openapi_probe.models.materialization_artifact_descriptor.MaterializationArtifactDescriptor(
                             class = 'MaterializationArtifactDescriptor', 
@@ -91,7 +90,8 @@ class TestMaterializationPlanReturnValue(unittest.TestCase):
                             content_block_address = null, 
                             storage_pool_id = null, 
                             source = null, )
-                        ], ),
+                        ], 
+                    artifact_grant = null, ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
