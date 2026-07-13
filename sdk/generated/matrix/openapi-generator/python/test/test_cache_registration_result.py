@@ -58,6 +58,7 @@ class TestCacheRegistrationResult(unittest.TestCase):
                         public_key_x = '', 
                         public_key_y = '', ), 
                     endpoint = '', 
+                    allow_http_endpoint = True, 
                     health = 'healthy', 
                     software_version = '', 
                     protocol_version = '', 

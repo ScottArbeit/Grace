@@ -124,6 +124,7 @@ module MaterializationPlanTestData =
                 "user-11111111-1111-1111-1111-111111111111",
                 "holder-thumbprint",
                 cacheId,
+                "https://cache.example.test",
                 boundPlan.TargetRootDirectoryVersionId,
                 boundPlan.ExecutionMode,
                 artifactIdentities,
@@ -1632,6 +1633,74 @@ type MaterializationPlanContractTests() =
         let source = MaterializationArtifactSource.Direct uri
 
         assertInvalid "Artifact DirectUri must be an absolute http or https URI for DirectUri sources." (Validation.validateArtifactSource source)
+
+    /// Verifies malformed null cache sources remain validation failures when grant matching also runs.
+    [<Test>]
+    member _.PlanWithNullArtifactSourceAndGrantReturnsValidationErrorsWithoutThrowing() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+
+        let malformedArtifacts =
+            validPlan.RequiredArtifacts
+            |> Seq.mapi (fun index artifact ->
+                if index = 0 then
+                    { artifact with Source = Some Unchecked.defaultof<MaterializationArtifactSource> }
+                else
+                    artifact)
+            |> List<MaterializationArtifactDescriptor>
+
+        let malformedPlan = { validPlan with RequiredArtifacts = malformedArtifacts }
+
+        Assert.DoesNotThrow(Action(fun () -> Validation.validatePlan malformedPlan |> ignore))
+        assertInvalid "Artifact Source is required." (Validation.validatePlan malformedPlan)
+
+    /// Verifies cache-backed plans require the complete signed-grant envelope before client use.
+    [<Test>]
+    member _.CacheBackedPlanRejectsMissingGrantHeaderAndBlankSignature() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+        let validGrant = validPlan.ArtifactGrant.Value
+        let missingHeaderPlan = { validPlan with ArtifactGrant = Some { validGrant with Header = Unchecked.defaultof<ArtifactGrantHeader> } }
+        let blankSignaturePlan = { validPlan with ArtifactGrant = Some { validGrant with Signature = " " } }
+
+        assertInvalid "ArtifactGrant must contain a complete signed envelope." (Validation.validatePlan missingHeaderPlan)
+        assertInvalid "ArtifactGrant must contain a complete signed envelope." (Validation.validatePlan blankSignaturePlan)
+
+    /// Verifies cache-plan endpoint substitution is rejected before a client can present its grant or holder proof.
+    [<Test>]
+    member _.CacheBackedPlanRejectsSignedGrantEndpointSubstitution() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+
+        let substitutedArtifacts =
+            validPlan.RequiredArtifacts
+            |> Seq.map (fun artifact ->
+                match artifact.Source with
+                | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                    { artifact with Source = Some { source with CacheEndpoint = Some "https://other-cache.example.test" } }
+                | _ -> artifact)
+            |> List<MaterializationArtifactDescriptor>
+
+        let substitutedPlan = { validPlan with RequiredArtifacts = substitutedArtifacts }
+
+        assertInvalid "ArtifactGrant CacheEndpoint must match every Cache source exactly." (Validation.validatePlan substitutedPlan)
+
+    /// Verifies an HTTP cache source remains valid only when the complete grant binds that exact approved endpoint.
+    [<Test>]
+    member _.CacheBackedPlanAllowsGrantBoundHttpEndpoint() =
+        let validPlan = MaterializationPlanTestData.validPlan ()
+        let httpEndpoint = "http://cache.example.test:8080/artifacts"
+
+        let httpArtifacts =
+            validPlan.RequiredArtifacts
+            |> Seq.map (fun artifact ->
+                match artifact.Source with
+                | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                    { artifact with Source = Some { source with CacheEndpoint = Some httpEndpoint } }
+                | _ -> artifact)
+            |> List<MaterializationArtifactDescriptor>
+
+        let httpGrant = { validPlan.ArtifactGrant.Value with Payload = { validPlan.ArtifactGrant.Value.Payload with CacheEndpoint = httpEndpoint } }
+        let httpPlan = { validPlan with RequiredArtifacts = httpArtifacts; ArtifactGrant = Some httpGrant }
+
+        assertValid (Validation.validatePlan httpPlan)
 
     /// Verifies that each selector kind rejects identity fields owned by other selector kinds.
     [<Test>]

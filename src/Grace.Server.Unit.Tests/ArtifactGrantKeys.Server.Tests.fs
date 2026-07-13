@@ -83,6 +83,7 @@ type ArtifactGrantSigningKeyActorTests() =
 
     let now = Instant.FromUtc(2026, 7, 9, 12, 0)
     let cacheId = "cache-service-client"
+    let cacheEndpoint = "https://cache.example.test"
     let targetRoot = DirectoryVersionId.Parse "11111111-1111-1111-1111-111111111111"
     let artifactIdentity = "GraceZipFiles/11111111-1111-1111-1111-111111111111.zip"
 
@@ -98,6 +99,7 @@ type ArtifactGrantSigningKeyActorTests() =
             RequesterPrincipalId = "user-11111111-1111-1111-1111-111111111111"
             HolderPublicKey = holderPublicKey ()
             CacheId = cacheId
+            CacheEndpoint = cacheEndpoint
             TargetRootDirectoryVersionId = targetRoot
             ExecutionMode = MaterializationExecutionMode.CacheRequired
             ArtifactIdentities = [| artifactIdentity |]
@@ -129,7 +131,8 @@ type ArtifactGrantSigningKeyActorTests() =
         | Error error -> failwith (ArtifactGrantIssueError.toMessage error)
 
     /// Builds the grant-only validation request used to prove recovered key publication.
-    let validationRequest () = ArtifactGrantValidationRequest.Create(cacheId, targetRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
+    let validationRequest () =
+        ArtifactGrantValidationRequest.Create(cacheId, cacheEndpoint, targetRoot, MaterializationExecutionMode.CacheRequired, artifactIdentity)
 
     [<Test>]
     member _.``store construction waits for Orleans persistent state loading``() =

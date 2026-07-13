@@ -818,6 +818,7 @@ module Materialization =
                                                                                 AuthenticatedUserId = userId
                                                                                 HolderPublicKey = holderPublicKey
                                                                                 CacheId = registration.CacheId.ToString("D")
+                                                                                CacheEndpoint = registration.Endpoint
                                                                                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                                                                                 ExecutionMode = request.ExecutionMode
                                                                                 ArtifactIdentities = identities

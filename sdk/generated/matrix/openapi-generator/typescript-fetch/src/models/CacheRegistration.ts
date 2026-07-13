@@ -103,6 +103,12 @@ export interface CacheRegistration {
      */
     endpoint: string;
     /**
+     * Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
+     * @type {boolean}
+     * @memberof CacheRegistration
+     */
+    allowHttpEndpoint: boolean;
+    /**
      * 
      * @type {CacheHealthStatus}
      * @memberof CacheRegistration
@@ -184,6 +190,7 @@ export function instanceOfCacheRegistration(value: object): value is CacheRegist
     if (!('repositoryScopes' in value) || value['repositoryScopes'] === undefined) return false;
     if (!('publicKey' in value) || value['publicKey'] === undefined) return false;
     if (!('endpoint' in value) || value['endpoint'] === undefined) return false;
+    if (!('allowHttpEndpoint' in value) || value['allowHttpEndpoint'] === undefined) return false;
     if (!('health' in value) || value['health'] === undefined) return false;
     if (!('softwareVersion' in value) || value['softwareVersion'] === undefined) return false;
     if (!('protocolVersion' in value) || value['protocolVersion'] === undefined) return false;
@@ -216,6 +223,7 @@ export function CacheRegistrationFromJSONTyped(json: any, ignoreDiscriminator: b
         'repositoryScopes': ((json['RepositoryScopes'] as Array<any>).map(CacheRepositoryScopeFromJSON)),
         'publicKey': CacheIdentityPublicKeyFromJSON(json['PublicKey']),
         'endpoint': json['Endpoint'],
+        'allowHttpEndpoint': json['AllowHttpEndpoint'],
         'health': CacheHealthStatusFromJSON(json['Health']),
         'softwareVersion': json['SoftwareVersion'],
         'protocolVersion': json['ProtocolVersion'],
@@ -250,6 +258,7 @@ export function CacheRegistrationToJSONTyped(value?: CacheRegistration | null, i
         'RepositoryScopes': ((value['repositoryScopes'] as Array<any>).map(CacheRepositoryScopeToJSON)),
         'PublicKey': CacheIdentityPublicKeyToJSON(value['publicKey']),
         'Endpoint': value['endpoint'],
+        'AllowHttpEndpoint': value['allowHttpEndpoint'],
         'Health': CacheHealthStatusToJSON(value['health']),
         'SoftwareVersion': value['softwareVersion'],
         'ProtocolVersion': value['protocolVersion'],

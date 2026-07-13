@@ -29,6 +29,7 @@ module ArtifactGrant =
         | ValidationKeyNotYetValid
         | InvalidValidationKeySet
         | WrongCacheService
+        | WrongCacheEndpoint
         | WrongTargetRoot
         | WrongExecutionMode
         | WrongArtifact
@@ -78,6 +79,7 @@ module ArtifactGrant =
             | ValidationKeyNotYetValid -> "Artifact grant validation key is not valid yet."
             | InvalidValidationKeySet -> "Artifact grant validation-key set is malformed."
             | WrongCacheService -> "Artifact grant is not bound to this Cache service."
+            | WrongCacheEndpoint -> "Artifact grant is not bound to this Cache endpoint."
             | WrongTargetRoot -> "Artifact grant is not bound to the requested target root."
             | WrongExecutionMode -> "Artifact grant is not bound to the requested execution mode."
             | WrongArtifact -> "Artifact grant is not bound to the requested artifact."
@@ -196,6 +198,7 @@ module ArtifactGrant =
             writeStringArray writer "artifacts" payload.ArtifactIdentities
             writer.WriteString("cache", payload.CacheId)
             writer.WriteString("class", payload.Class)
+            writer.WriteString("endpoint", payload.CacheEndpoint)
             writer.WriteNumber("exp", instantMilliseconds payload.ExpiresAt)
             writer.WriteString("holder", payload.HolderKeyThumbprint)
             writer.WriteString("issuer", payload.Issuer)
@@ -420,6 +423,7 @@ module ArtifactGrant =
              || request.Class
                 <> nameof ArtifactGrantValidationRequest
              || String.IsNullOrWhiteSpace request.CacheId
+             || String.IsNullOrWhiteSpace request.CacheEndpoint
              || request.TargetRootDirectoryVersionId = Guid.Empty
              || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
              || String.IsNullOrWhiteSpace request.ArtifactIdentity then
@@ -454,6 +458,8 @@ module ArtifactGrant =
             Error GrantTtlTooLong
         elif not (String.Equals(grant.Payload.CacheId, request.CacheId, StringComparison.Ordinal)) then
             Error WrongCacheService
+        elif not (String.Equals(grant.Payload.CacheEndpoint, request.CacheEndpoint, StringComparison.Ordinal)) then
+            Error WrongCacheEndpoint
         elif grant.Payload.TargetRootDirectoryVersionId
              <> request.TargetRootDirectoryVersionId then
             Error WrongTargetRoot
@@ -511,6 +517,8 @@ module ArtifactGrant =
             Error InvalidClass
         elif request.ExecutionMode = MaterializationExecutionMode.Direct then
             Ok()
+        elif String.IsNullOrWhiteSpace request.CacheEndpoint then
+            Error WrongCacheEndpoint
         elif not (isValidValidationKeySet keySet) then
             Error InvalidValidationKeySet
         else
@@ -523,6 +531,7 @@ module ArtifactGrant =
                 let grantRequest =
                     ArtifactGrantValidationRequest.Create(
                         request.CacheId,
+                        request.CacheEndpoint,
                         request.TargetRootDirectoryVersionId,
                         request.ExecutionMode,
                         request.ArtifactIdentity

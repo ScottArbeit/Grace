@@ -28,6 +28,9 @@ pub struct ArtifactGrantPayload {
     pub holder_key_thumbprint: String,
     #[serde(rename = "CacheId")]
     pub cache_id: String,
+    /// Exact selected Cache endpoint covered by this signature.
+    #[serde(rename = "CacheEndpoint")]
+    pub cache_endpoint: String,
     #[serde(rename = "TargetRootDirectoryVersionId")]
     pub target_root_directory_version_id: uuid::Uuid,
     #[serde(rename = "ExecutionMode")]
@@ -44,7 +47,7 @@ pub struct ArtifactGrantPayload {
 
 impl ArtifactGrantPayload {
     /// Requester-, holder-, cache-, root-, mode-, and artifact-bound authorization payload.
-    pub fn new(class: String, issuer: String, requester_principal_type: models::ArtifactGrantRequesterPrincipalType, requester_principal_id: String, holder_key_thumbprint: String, cache_id: String, target_root_directory_version_id: uuid::Uuid, execution_mode: models::MaterializationExecutionMode, artifact_identities: Vec<String>, issued_at: chrono::DateTime<chrono::FixedOffset>, not_before: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>) -> ArtifactGrantPayload {
+    pub fn new(class: String, issuer: String, requester_principal_type: models::ArtifactGrantRequesterPrincipalType, requester_principal_id: String, holder_key_thumbprint: String, cache_id: String, cache_endpoint: String, target_root_directory_version_id: uuid::Uuid, execution_mode: models::MaterializationExecutionMode, artifact_identities: Vec<String>, issued_at: chrono::DateTime<chrono::FixedOffset>, not_before: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>) -> ArtifactGrantPayload {
         ArtifactGrantPayload {
             class,
             issuer,
@@ -52,6 +55,7 @@ impl ArtifactGrantPayload {
             requester_principal_id,
             holder_key_thumbprint,
             cache_id,
+            cache_endpoint,
             target_root_directory_version_id,
             execution_mode,
             artifact_identities,

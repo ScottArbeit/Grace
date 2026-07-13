@@ -43,6 +43,7 @@ class CacheRegistration(BaseModel):
     repository_scopes: List[CacheRepositoryScope] = Field(alias="RepositoryScopes")
     public_key: CacheIdentityPublicKey = Field(alias="PublicKey")
     endpoint: StrictStr = Field(alias="Endpoint")
+    allow_http_endpoint: StrictBool = Field(description="Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.", alias="AllowHttpEndpoint")
     health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")
     protocol_version: StrictStr = Field(alias="ProtocolVersion")
@@ -54,7 +55,7 @@ class CacheRegistration(BaseModel):
     expires_at: datetime = Field(alias="ExpiresAt")
     rotation_due_at: datetime = Field(alias="RotationDueAt")
     revoked_at: Optional[datetime] = Field(default=None, alias="RevokedAt")
-    __properties: ClassVar[List[str]] = ["Class", "CacheId", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "EnrolledBy", "EnrolledAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "RotationDueAt", "RevokedAt"]
+    __properties: ClassVar[List[str]] = ["Class", "CacheId", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "EnrolledBy", "EnrolledAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "RotationDueAt", "RevokedAt"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -126,6 +127,7 @@ class CacheRegistration(BaseModel):
             "RepositoryScopes": [CacheRepositoryScope.from_dict(_item) for _item in obj["RepositoryScopes"]] if obj.get("RepositoryScopes") is not None else None,
             "PublicKey": CacheIdentityPublicKey.from_dict(obj["PublicKey"]) if obj.get("PublicKey") is not None else None,
             "Endpoint": obj.get("Endpoint"),
+            "AllowHttpEndpoint": obj.get("AllowHttpEndpoint"),
             "Health": obj.get("Health"),
             "SoftwareVersion": obj.get("SoftwareVersion"),
             "ProtocolVersion": obj.get("ProtocolVersion"),

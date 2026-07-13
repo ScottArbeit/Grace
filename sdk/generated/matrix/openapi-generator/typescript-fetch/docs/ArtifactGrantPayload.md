@@ -13,6 +13,7 @@ Name | Type
 `requesterPrincipalId` | string
 `holderKeyThumbprint` | string
 `cacheId` | string
+`cacheEndpoint` | string
 `targetRootDirectoryVersionId` | string
 `executionMode` | [MaterializationExecutionMode](MaterializationExecutionMode.md)
 `artifactIdentities` | Array&lt;string&gt;
@@ -33,6 +34,7 @@ const example = {
   "requesterPrincipalId": null,
   "holderKeyThumbprint": null,
   "cacheId": null,
+  "cacheEndpoint": null,
   "targetRootDirectoryVersionId": 33a4e36b-828f-4fae-9343-50b6560dc842,
   "executionMode": null,
   "artifactIdentities": null,

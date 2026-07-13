@@ -4,6 +4,7 @@ open Grace.Types.Common
 open Grace.Types
 open NodaTime
 open Orleans
+open System
 open System.Collections.Generic
 
 /// Contains signed artifact grant contracts shared by Grace Server and Grace Cache validators.
@@ -109,16 +110,18 @@ module ArtifactGrant =
             [<Id(5u)>]
             CacheId: string
             [<Id(6u)>]
-            TargetRootDirectoryVersionId: DirectoryVersionId
+            CacheEndpoint: string
             [<Id(7u)>]
-            ExecutionMode: MaterializationExecutionMode
+            TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(8u)>]
-            ArtifactIdentities: List<string>
+            ExecutionMode: MaterializationExecutionMode
             [<Id(9u)>]
-            IssuedAt: Instant
+            ArtifactIdentities: List<string>
             [<Id(10u)>]
-            NotBefore: Instant
+            IssuedAt: Instant
             [<Id(11u)>]
+            NotBefore: Instant
+            [<Id(12u)>]
             ExpiresAt: Instant
         }
 
@@ -128,6 +131,7 @@ module ArtifactGrant =
                 requesterPrincipalId: string,
                 holderKeyThumbprint: string,
                 cacheId: string,
+                cacheEndpoint: string,
                 targetRootDirectoryVersionId: DirectoryVersionId,
                 executionMode: MaterializationExecutionMode,
                 artifactIdentities: string seq,
@@ -143,6 +147,7 @@ module ArtifactGrant =
                 RequesterPrincipalId = requesterPrincipalId
                 HolderKeyThumbprint = holderKeyThumbprint
                 CacheId = cacheId
+                CacheEndpoint = cacheEndpoint
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                 ExecutionMode = executionMode
                 ArtifactIdentities = List<string>(artifactIdentities)
@@ -193,12 +198,14 @@ module ArtifactGrant =
             [<Id(3u)>]
             CacheId: string
             [<Id(4u)>]
-            TargetRootDirectoryVersionId: DirectoryVersionId
+            CacheEndpoint: string
             [<Id(5u)>]
-            ExecutionMode: MaterializationExecutionMode
+            TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(6u)>]
-            ArtifactIdentities: string array
+            ExecutionMode: MaterializationExecutionMode
             [<Id(7u)>]
+            ArtifactIdentities: string array
+            [<Id(8u)>]
             RequestedTtl: Duration option
         }
 
@@ -208,6 +215,7 @@ module ArtifactGrant =
         | InvalidRequesterPrincipal
         | InvalidHolderKeyThumbprint
         | InvalidCacheId
+        | InvalidCacheEndpoint
         | InvalidTargetRoot
         | InvalidExecutionMode
         | InvalidArtifactIdentities
@@ -223,6 +231,7 @@ module ArtifactGrant =
             | InvalidRequesterPrincipal -> "An authenticated user requester is required."
             | InvalidHolderKeyThumbprint -> "A canonical holder-key thumbprint is required."
             | InvalidCacheId -> "CacheId is required."
+            | InvalidCacheEndpoint -> "CacheEndpoint is required."
             | InvalidTargetRoot -> "Target root DirectoryVersionId is required."
             | InvalidExecutionMode -> "Artifact grant execution mode is not supported."
             | InvalidArtifactIdentities -> "Artifact grants must bind at least one explicit artifact identity."
@@ -245,6 +254,13 @@ module ArtifactGrant =
         /// Builds a signed artifact grant envelope from a canonical header, payload, and base64url signature.
         static member Create(header: ArtifactGrantHeader, payload: ArtifactGrantPayload, signature: string) =
             { Class = nameof SignedArtifactGrant; Header = header; Payload = payload; Signature = signature }
+
+    /// Returns true only when a grant has the complete structural envelope required before offline signature verification.
+    let hasCompleteSignedEnvelope (grant: SignedArtifactGrant) =
+        not (isNull (box grant))
+        && not (isNull (box grant.Header))
+        && not (isNull (box grant.Payload))
+        && not (String.IsNullOrWhiteSpace grant.Signature)
 
     /// Describes one published public validation key for artifact grant verification.
     [<CLIMutable; GenerateSerializer>]
@@ -319,10 +335,12 @@ module ArtifactGrant =
             [<Id(1u)>]
             CacheId: string
             [<Id(2u)>]
-            TargetRootDirectoryVersionId: DirectoryVersionId
+            CacheEndpoint: string
             [<Id(3u)>]
-            ExecutionMode: MaterializationExecutionMode
+            TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(4u)>]
+            ExecutionMode: MaterializationExecutionMode
+            [<Id(5u)>]
             ArtifactIdentity: string
         }
 
@@ -330,6 +348,7 @@ module ArtifactGrant =
         static member Create
             (
                 cacheId: string,
+                cacheEndpoint: string,
                 targetRootDirectoryVersionId: DirectoryVersionId,
                 executionMode: MaterializationExecutionMode,
                 artifactIdentity: string
@@ -337,6 +356,7 @@ module ArtifactGrant =
             {
                 Class = nameof ArtifactGrantValidationRequest
                 CacheId = cacheId
+                CacheEndpoint = cacheEndpoint
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                 ExecutionMode = executionMode
                 ArtifactIdentity = artifactIdentity
@@ -351,14 +371,16 @@ module ArtifactGrant =
             [<Id(1u)>]
             CacheId: string
             [<Id(2u)>]
-            TargetRootDirectoryVersionId: DirectoryVersionId
+            CacheEndpoint: string
             [<Id(3u)>]
-            ExecutionMode: MaterializationExecutionMode
+            TargetRootDirectoryVersionId: DirectoryVersionId
             [<Id(4u)>]
-            ArtifactIdentity: string
+            ExecutionMode: MaterializationExecutionMode
             [<Id(5u)>]
-            HttpMethod: string
+            ArtifactIdentity: string
             [<Id(6u)>]
+            HttpMethod: string
+            [<Id(7u)>]
             Route: string
         }
 
@@ -366,6 +388,7 @@ module ArtifactGrant =
         static member Create
             (
                 cacheId: string,
+                cacheEndpoint: string,
                 targetRootDirectoryVersionId: DirectoryVersionId,
                 executionMode: MaterializationExecutionMode,
                 artifactIdentity: string,
@@ -375,6 +398,7 @@ module ArtifactGrant =
             {
                 Class = nameof ArtifactRequestValidationRequest
                 CacheId = cacheId
+                CacheEndpoint = cacheEndpoint
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
                 ExecutionMode = executionMode
                 ArtifactIdentity = artifactIdentity

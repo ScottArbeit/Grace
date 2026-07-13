@@ -483,6 +483,9 @@ module MaterializationPlan =
             && (parsedUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
                 || parsedUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
 
+        /// Returns true when a cache endpoint has an HTTP(S) transport shape before its signed grant binds the exact endpoint.
+        let isAllowedCacheEndpoint (endpoint: string) = isAllowedDirectUri endpoint
+
         /// Returns true when a whole-file artifact path is normalized for repository-relative materialization.
         let isNormalizedRepositoryRelativePath (relativePath: string) =
             not (String.IsNullOrWhiteSpace relativePath)
@@ -680,7 +683,7 @@ module MaterializationPlan =
                         match source.CacheEndpoint, source.CacheId with
                         | None, None -> ()
                         | Some endpoint, Some principal when
-                            isAllowedDirectUri endpoint
+                            isAllowedCacheEndpoint endpoint
                             && not (String.IsNullOrWhiteSpace principal)
                             ->
                             ()
@@ -1096,7 +1099,8 @@ module MaterializationPlan =
                         ->
                         errors.Add("ArtifactGrant is required for CacheRequired plans, CacheEntry sources, and plans that are not entirely Direct.")
                     | None -> ()
-                    | Some grant when isNull (box grant) || isNull (box grant.Payload) -> errors.Add("ArtifactGrant must contain a signed payload.")
+                    | Some grant when not (Grace.Types.ArtifactGrant.hasCompleteSignedEnvelope grant) ->
+                        errors.Add("ArtifactGrant must contain a complete signed envelope.")
                     | Some grant ->
                         let payload = grant.Payload
 
@@ -1121,13 +1125,23 @@ module MaterializationPlan =
                         if grantedIdentities <> plannedIdentities then
                             errors.Add("ArtifactGrant artifact identities must exactly match the Materialization Plan artifacts.")
 
+                        if String.IsNullOrWhiteSpace payload.CacheEndpoint then
+                            errors.Add("ArtifactGrant CacheEndpoint is required for Cache-backed plans.")
+
                         for artifact in plan.RequiredArtifacts do
                             if not (isNull (box artifact)) then
                                 match artifact.Source with
-                                | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
+                                | Some source when
+                                    not (isNull (box source))
+                                    && source.SourceKind = MaterializationArtifactSourceKind.CacheEntry
+                                    ->
                                     match source.CacheId with
                                     | Some principal when principal = payload.CacheId -> ()
                                     | _ -> errors.Add("ArtifactGrant CacheId must match every Cache source.")
+
+                                    match source.CacheEndpoint with
+                                    | Some endpoint when String.Equals(endpoint, payload.CacheEndpoint, StringComparison.Ordinal) -> ()
+                                    | _ -> errors.Add("ArtifactGrant CacheEndpoint must match every Cache source exactly.")
                                 | _ -> ()
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)

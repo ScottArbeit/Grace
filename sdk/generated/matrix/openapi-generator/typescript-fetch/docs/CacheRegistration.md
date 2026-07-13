@@ -16,6 +16,7 @@ Name | Type
 `repositoryScopes` | [Array&lt;CacheRepositoryScope&gt;](CacheRepositoryScope.md)
 `publicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
 `endpoint` | string
+`allowHttpEndpoint` | boolean
 `health` | [CacheHealthStatus](CacheHealthStatus.md)
 `softwareVersion` | string
 `protocolVersion` | string
@@ -44,6 +45,7 @@ const example = {
   "repositoryScopes": null,
   "publicKey": null,
   "endpoint": null,
+  "allowHttpEndpoint": null,
   "health": null,
   "softwareVersion": null,
   "protocolVersion": null,

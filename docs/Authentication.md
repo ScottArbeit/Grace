@@ -760,6 +760,13 @@ It never receives or stores the private key. A refresh or key rotation proves po
 signing the canonical request payload that binds `CacheId`, operation, request digest, and Unix-millisecond timestamp.
 Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration state.
 
+Cache endpoints use HTTPS by default. An administrator may explicitly approve one exact HTTP endpoint during enrollment
+when the future `grace cache --allow-http` host is deliberately configured for it. Grace persists that approval with the
+exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
+transport choice. Server-issued cache plans and their signed artifact grants bind the exact endpoint, so clients reject
+scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI behavior is
+unchanged.
+
 Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
 negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this
 foundation. Refresh may update only endpoint, health, software/protocol version, Prefetch support, and liveness timestamps;

@@ -37,6 +37,7 @@ type CacheRegistrationLifecycleTests() =
                 )
             PublicKey = publicKey ()
             Endpoint = "https://cache.example.test"
+            AllowHttpEndpoint = false
             Health = CacheHealthStatus.Healthy
             SoftwareVersion = "1.0.0"
             ProtocolVersion = "v1"
@@ -61,15 +62,77 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.PrefetchSupported, Is.True)
         Assert.That(registration.RotationDueAt, Is.EqualTo(now.Plus RegistrationLifetime.KeyRotationInterval))
 
+    /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact endpoint.
     [<Test>]
-    member _.``refresh updates only allowed operational facts and preserves administrator owned identity state``() =
+    member _.``enrollment accepts only coherent explicit HTTP endpoint approval``() =
+        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080/artifacts"; AllowHttpEndpoint = true }
+
+        let state, result = Lifecycle.enroll CacheRegistrationState.Empty cacheId httpEnrollment "admin-user" now
+        let registration = state.Registrations[0]
+
+        Assert.That(
+            Lifecycle.validateEnrollmentRequest httpEnrollment
+            |> Result.isOk,
+            Is.True
+        )
+
+        Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.Enrolled)
+        Assert.That(registration.Endpoint, Is.EqualTo httpEnrollment.Endpoint)
+        Assert.That(registration.AllowHttpEndpoint, Is.True)
+
+        let missingApproval = { httpEnrollment with AllowHttpEndpoint = false }
+        let incoherentApproval = { enrollment [ repositoryId ] with AllowHttpEndpoint = true }
+
+        match Lifecycle.validateEnrollmentRequest missingApproval with
+        | Ok () -> Assert.Fail("Expected HTTP enrollment without administrator approval to fail.")
+        | Error errors -> Assert.That(errors, Does.Contain "Endpoint must be an absolute HTTPS URI unless AllowHttpEndpoint is explicitly selected.")
+
+        match Lifecycle.validateEnrollmentRequest incoherentApproval with
+        | Ok () -> Assert.Fail("Expected HTTP approval on an HTTPS endpoint to fail.")
+        | Error errors -> Assert.That(errors, Does.Contain "AllowHttpEndpoint may be selected only for an HTTP Endpoint.")
+
+    /// Verifies cache-authenticated refresh cannot substitute the scheme, host, port, or path of the stored endpoint.
+    [<Test>]
+    member _.``refresh rejects every endpoint substitution before durable mutation``() =
+        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080/artifacts"; AllowHttpEndpoint = true }
+
+        let state, _ = Lifecycle.enroll CacheRegistrationState.Empty cacheId httpEnrollment "admin-user" now
+
+        let substitutions =
+            [
+                "https://cache.example.test:8080/artifacts"
+                "http://other-cache.example.test:8080/artifacts"
+                "http://cache.example.test:8081/artifacts"
+                "http://cache.example.test:8080/other-artifacts"
+            ]
+
+        for endpoint in substitutions do
+            let request =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.1.0"
+                    ProtocolVersion = "v2"
+                    PrefetchSupported = false
+                    ObservedAt = now.Plus(Duration.FromMinutes 90L)
+                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                }
+
+            let next, result = Lifecycle.refresh state request (now.Plus(Duration.FromMinutes 90L))
+            Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.EndpointMismatch)
+            Assert.That(next, Is.EqualTo state)
+
+    [<Test>]
+    member _.``refresh updates only allowed operational facts and preserves administrator owned endpoint identity``() =
         let state, _ = enrolled ()
 
         let request =
             {
                 Class = nameof CacheRegistrationRefreshRequest
                 CacheId = cacheId
-                Endpoint = "https://cache-two.example.test"
+                Endpoint = "https://cache.example.test"
                 Health = CacheHealthStatus.Unhealthy
                 SoftwareVersion = "1.1.0"
                 ProtocolVersion = "v2"
@@ -86,7 +149,7 @@ type CacheRegistrationLifecycleTests() =
         let next, result = Lifecycle.refresh state request refreshedAt
         let registration = next.Registrations[0]
         Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
-        Assert.That(registration.Endpoint, Is.EqualTo "https://cache-two.example.test")
+        Assert.That(registration.Endpoint, Is.EqualTo "https://cache.example.test")
         Assert.That(registration.Health, Is.EqualTo CacheHealthStatus.Unhealthy)
         Assert.That(registration.SoftwareVersion, Is.EqualTo "1.1.0")
         Assert.That(registration.RepositoryScopes, Has.Length.EqualTo 1)
@@ -104,7 +167,7 @@ type CacheRegistrationLifecycleTests() =
             {
                 Class = nameof CacheRegistrationRefreshRequest
                 CacheId = cacheId
-                Endpoint = "https://ignored-by-early-downgrade.example.test"
+                Endpoint = "https://cache.example.test"
                 Health = CacheHealthStatus.Unhealthy
                 SoftwareVersion = "ignored"
                 ProtocolVersion = "ignored"
@@ -152,11 +215,7 @@ type CacheRegistrationLifecycleTests() =
         let unhealthyState, _ = Lifecycle.refresh state unhealthy (now.Plus(Duration.FromMinutes 1L))
 
         let earlyHealthy =
-            { unhealthy with
-                Health = CacheHealthStatus.Healthy
-                Endpoint = "https://ignored-by-throttle.example.test"
-                ObservedAt = now.Plus(Duration.FromMinutes 2L)
-            }
+            { unhealthy with Health = CacheHealthStatus.Healthy; Endpoint = "https://cache.example.test"; ObservedAt = now.Plus(Duration.FromMinutes 2L) }
 
         let throttledState, throttledResult = Lifecycle.refresh unhealthyState earlyHealthy (now.Plus(Duration.FromMinutes 2L))
 

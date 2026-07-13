@@ -206,6 +206,10 @@ module CacheRegistration =
                         let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
 
                         match! actor.Refresh(request, getCurrentInstant (), correlationId) with
+                        | Ok result when result.ReturnValue.Status = CacheRegistrationRefreshStatus.EndpointMismatch ->
+                            return!
+                                context
+                                |> result400BadRequest (cacheError correlationId result.ReturnValue.Message)
                         | Ok result -> return! context |> result200Ok result
                         | Error error -> return! context |> result400BadRequest error
             }

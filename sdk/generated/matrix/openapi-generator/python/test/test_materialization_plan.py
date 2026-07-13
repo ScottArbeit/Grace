@@ -71,6 +71,7 @@ class TestMaterializationPlan(unittest.TestCase):
                         requester_principal_id = '', 
                         holder_key_thumbprint = '', 
                         cache_id = '', 
+                        cache_endpoint = '', 
                         target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
                         execution_mode = 'direct', 
                         artifact_identities = [

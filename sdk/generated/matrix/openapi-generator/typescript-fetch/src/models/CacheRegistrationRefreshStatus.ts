@@ -25,7 +25,8 @@ export const CacheRegistrationRefreshStatus = {
     NotFound: 'notFound',
     Revoked: 'revoked',
     Updated: 'updated',
-    Rotated: 'rotated'
+    Rotated: 'rotated',
+    EndpointMismatch: 'endpointMismatch'
 } as const;
 export type CacheRegistrationRefreshStatus = typeof CacheRegistrationRefreshStatus[keyof typeof CacheRegistrationRefreshStatus];
 

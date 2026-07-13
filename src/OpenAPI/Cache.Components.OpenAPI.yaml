@@ -56,11 +56,14 @@ CacheEnrollmentRequest:
       items: { $ref: '#/CacheRepositoryScope' }
     PublicKey: { $ref: '#/CacheIdentityPublicKey' }
     Endpoint: { type: string, format: uri }
+    AllowHttpEndpoint:
+      type: boolean
+      description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
     Health: { $ref: '#/CacheHealthStatus' }
     SoftwareVersion: { type: string }
     ProtocolVersion: { type: string }
     PrefetchSupported: { type: boolean }
-  required: [Class, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported]
+  required: [Class, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, AllowHttpEndpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported]
 CacheRegistrationRefreshRequest:
   description: Cache-authenticated refresh that may update operational facts only.
   type: object
@@ -102,8 +105,8 @@ CacheKeyRotationRequest:
 CacheRegistrationRefreshStatus:
   description: Result classification for Cache enrollment and lifecycle operations.
   type: string
-  enum: [enrolled, refreshed, refreshNotDue, expired, notFound, revoked, updated, rotated]
-  x-enumNames: [Enrolled, Refreshed, RefreshNotDue, Expired, NotFound, Revoked, Updated, Rotated]
+  enum: [enrolled, refreshed, refreshNotDue, expired, notFound, revoked, updated, rotated, endpointMismatch]
+  x-enumNames: [Enrolled, Refreshed, RefreshNotDue, Expired, NotFound, Revoked, Updated, Rotated, EndpointMismatch]
   example: enrolled
 CacheRegistration:
   description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
@@ -118,6 +121,9 @@ CacheRegistration:
     RepositoryScopes: { type: array, items: { $ref: '#/CacheRepositoryScope' } }
     PublicKey: { $ref: '#/CacheIdentityPublicKey' }
     Endpoint: { type: string, format: uri }
+    AllowHttpEndpoint:
+      type: boolean
+      description: Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
     Health: { $ref: '#/CacheHealthStatus' }
     SoftwareVersion: { type: string }
     ProtocolVersion: { type: string }
@@ -129,7 +135,7 @@ CacheRegistration:
     ExpiresAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
     RotationDueAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
     RevokedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant', nullable: true }
-  required: [Class, CacheId, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported, EnrolledBy, EnrolledAt, LastRefreshedAt, RefreshAfter, ExpiresAt, RotationDueAt]
+  required: [Class, CacheId, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, AllowHttpEndpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported, EnrolledBy, EnrolledAt, LastRefreshedAt, RefreshAfter, ExpiresAt, RotationDueAt]
 CacheRegistrationResult:
   description: Result returned by Cache registration and refresh routes.
   type: object
@@ -268,6 +274,10 @@ ArtifactGrantPayload:
       description: Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.
     CacheId:
       type: string
+    CacheEndpoint:
+      type: string
+      format: uri
+      description: Exact selected Cache endpoint covered by this signature.
     TargetRootDirectoryVersionId:
       $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
     ExecutionMode:
@@ -290,6 +300,7 @@ ArtifactGrantPayload:
     - RequesterPrincipalId
     - HolderKeyThumbprint
     - CacheId
+    - CacheEndpoint
     - TargetRootDirectoryVersionId
     - ExecutionMode
     - ArtifactIdentities

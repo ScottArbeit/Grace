@@ -106,6 +106,7 @@ module CacheRegistration =
             RepositoryScopes: List<CacheRepositoryScope>
             PublicKey: CacheIdentityPublicKey
             Endpoint: string
+            AllowHttpEndpoint: bool
             Health: CacheHealthStatus
             SoftwareVersion: string
             ProtocolVersion: string
@@ -152,6 +153,7 @@ module CacheRegistration =
             RepositoryScopes: CacheRepositoryScope array
             PublicKey: CacheIdentityPublicKey
             Endpoint: string
+            AllowHttpEndpoint: bool
             Health: CacheHealthStatus
             SoftwareVersion: string
             ProtocolVersion: string
@@ -175,6 +177,7 @@ module CacheRegistration =
         | Revoked = 6
         | Updated = 7
         | Rotated = 8
+        | EndpointMismatch = 9
 
     /// Represents a server response for Cache enrollment and lifecycle operations.
     [<CLIMutable; GenerateSerializer>]
@@ -221,6 +224,10 @@ module CacheRegistration =
             not (isNull (box registration))
             && registration.RevokedAt.IsNone
             && registration.Health = CacheHealthStatus.Healthy
+            && match Uri.TryCreate(registration.Endpoint, UriKind.Absolute) with
+               | true, endpoint when endpoint.Scheme = Uri.UriSchemeHttps -> not registration.AllowHttpEndpoint
+               | true, endpoint when endpoint.Scheme = Uri.UriSchemeHttp -> registration.AllowHttpEndpoint
+               | _ -> false
             && now < registration.ExpiresAt
 
         /// Validates an exact, non-empty, canonical, and duplicate-free Cache repository assignment set before authorization or mutation.
@@ -290,8 +297,20 @@ module CacheRegistration =
                     errors.Add("Endpoint is required.")
                 else
                     match Uri.TryCreate(request.Endpoint, UriKind.Absolute) with
-                    | true, uri when uri.Scheme = Uri.UriSchemeHttps -> ()
-                    | _ -> errors.Add("Endpoint must be an absolute HTTPS URI.")
+                    | true, uri when
+                        uri.Scheme = Uri.UriSchemeHttps
+                        && not request.AllowHttpEndpoint
+                        ->
+                        ()
+                    | true, uri when
+                        uri.Scheme = Uri.UriSchemeHttp
+                        && request.AllowHttpEndpoint
+                        ->
+                        ()
+                    | true, uri when uri.Scheme = Uri.UriSchemeHttps -> errors.Add("AllowHttpEndpoint may be selected only for an HTTP Endpoint.")
+                    | true, uri when uri.Scheme = Uri.UriSchemeHttp ->
+                        errors.Add("Endpoint must be an absolute HTTPS URI unless AllowHttpEndpoint is explicitly selected.")
+                    | _ -> errors.Add("Endpoint must be an absolute HTTP or HTTPS URI.")
 
                 if String.IsNullOrWhiteSpace request.SoftwareVersion then
                     errors.Add("SoftwareVersion is required.")
@@ -322,8 +341,12 @@ module CacheRegistration =
                     errors.Add("Endpoint is required.")
                 else
                     match Uri.TryCreate(request.Endpoint, UriKind.Absolute) with
-                    | true, uri when uri.Scheme = Uri.UriSchemeHttps -> ()
-                    | _ -> errors.Add("Endpoint must be an absolute HTTPS URI.")
+                    | true, uri when
+                        uri.Scheme = Uri.UriSchemeHttps
+                        || uri.Scheme = Uri.UriSchemeHttp
+                        ->
+                        ()
+                    | _ -> errors.Add("Endpoint must be an absolute HTTP or HTTPS URI.")
 
                 if String.IsNullOrWhiteSpace request.SoftwareVersion then
                     errors.Add("SoftwareVersion is required.")
@@ -348,6 +371,7 @@ module CacheRegistration =
                     RepositoryScopes = request.RepositoryScopes |> Seq.toArray
                     PublicKey = request.PublicKey
                     Endpoint = request.Endpoint.Trim()
+                    AllowHttpEndpoint = request.AllowHttpEndpoint
                     Health = request.Health
                     SoftwareVersion = request.SoftwareVersion.Trim()
                     ProtocolVersion = request.ProtocolVersion.Trim()
@@ -392,6 +416,13 @@ module CacheRegistration =
                     Some registration,
                     "Cache refresh is stale and must not update registration state."
                 )
+            | Some registration when not (String.Equals(registration.Endpoint, request.Endpoint.Trim(), StringComparison.Ordinal)) ->
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.EndpointMismatch,
+                    Some registration,
+                    "Cache refresh Endpoint must exactly match the registered endpoint."
+                )
             | Some registration when
                 now < registration.RefreshAfter
                 && request.Health = CacheHealthStatus.Unhealthy
@@ -419,7 +450,6 @@ module CacheRegistration =
             | Some registration ->
                 let refreshed =
                     { registration with
-                        Endpoint = request.Endpoint.Trim()
                         Health = request.Health
                         SoftwareVersion = request.SoftwareVersion.Trim()
                         ProtocolVersion = request.ProtocolVersion.Trim()

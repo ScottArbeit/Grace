@@ -257,6 +257,8 @@ stores only the corresponding public key for proof-validated runtime refresh and
 
 Registered Grace Cache services use a server-owned active lifetime of 2 hours and a refresh-after interval of 1 hour.
 Administrators, not runtime cache refresh, manage repository assignments and other cache administration.
+HTTPS remains the default cache transport. An HTTP endpoint requires the administrator's explicit enrollment approval for
+that exact endpoint; the cache runtime cannot change it during refresh.
 
 ### Authorization (Bootstrap)
 

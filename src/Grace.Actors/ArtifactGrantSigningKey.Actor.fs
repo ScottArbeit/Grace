@@ -187,6 +187,8 @@ module ArtifactGrantSigningKeyActor =
                 Error InvalidHolderKeyThumbprint
             elif String.IsNullOrWhiteSpace request.CacheId then
                 Error InvalidCacheId
+            elif String.IsNullOrWhiteSpace request.CacheEndpoint then
+                Error InvalidCacheEndpoint
             elif request.TargetRootDirectoryVersionId = Guid.Empty then
                 Error InvalidTargetRoot
             elif
@@ -231,6 +233,7 @@ module ArtifactGrantSigningKeyActor =
                             request.RequesterPrincipalId.Trim(),
                             ArtifactGrant.holderKeyThumbprint request.HolderPublicKey,
                             request.CacheId.Trim(),
+                            request.CacheEndpoint.Trim(),
                             request.TargetRootDirectoryVersionId,
                             request.ExecutionMode,
                             artifactIdentities,

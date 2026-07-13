@@ -31,6 +31,8 @@ pub enum CacheRegistrationRefreshStatus {
     Updated,
     #[serde(rename = "rotated")]
     Rotated,
+    #[serde(rename = "endpointMismatch")]
+    EndpointMismatch,
 
 }
 
@@ -45,6 +47,7 @@ impl std::fmt::Display for CacheRegistrationRefreshStatus {
             Self::Revoked => write!(f, "revoked"),
             Self::Updated => write!(f, "updated"),
             Self::Rotated => write!(f, "rotated"),
+            Self::EndpointMismatch => write!(f, "endpointMismatch"),
         }
     }
 }

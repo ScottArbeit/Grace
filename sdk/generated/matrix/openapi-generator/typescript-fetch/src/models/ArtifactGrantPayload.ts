@@ -71,6 +71,12 @@ export interface ArtifactGrantPayload {
      */
     cacheId: string;
     /**
+     * Exact selected Cache endpoint covered by this signature.
+     * @type {string}
+     * @memberof ArtifactGrantPayload
+     */
+    cacheEndpoint: string;
+    /**
      * 
      * @type {string}
      * @memberof ArtifactGrantPayload
@@ -120,6 +126,7 @@ export function instanceOfArtifactGrantPayload(value: object): value is Artifact
     if (!('requesterPrincipalId' in value) || value['requesterPrincipalId'] === undefined) return false;
     if (!('holderKeyThumbprint' in value) || value['holderKeyThumbprint'] === undefined) return false;
     if (!('cacheId' in value) || value['cacheId'] === undefined) return false;
+    if (!('cacheEndpoint' in value) || value['cacheEndpoint'] === undefined) return false;
     if (!('targetRootDirectoryVersionId' in value) || value['targetRootDirectoryVersionId'] === undefined) return false;
     if (!('executionMode' in value) || value['executionMode'] === undefined) return false;
     if (!('artifactIdentities' in value) || value['artifactIdentities'] === undefined) return false;
@@ -145,6 +152,7 @@ export function ArtifactGrantPayloadFromJSONTyped(json: any, ignoreDiscriminator
         'requesterPrincipalId': json['RequesterPrincipalId'],
         'holderKeyThumbprint': json['HolderKeyThumbprint'],
         'cacheId': json['CacheId'],
+        'cacheEndpoint': json['CacheEndpoint'],
         'targetRootDirectoryVersionId': json['TargetRootDirectoryVersionId'],
         'executionMode': MaterializationExecutionModeFromJSON(json['ExecutionMode']),
         'artifactIdentities': json['ArtifactIdentities'],
@@ -171,6 +179,7 @@ export function ArtifactGrantPayloadToJSONTyped(value?: ArtifactGrantPayload | n
         'RequesterPrincipalId': value['requesterPrincipalId'],
         'HolderKeyThumbprint': value['holderKeyThumbprint'],
         'CacheId': value['cacheId'],
+        'CacheEndpoint': value['cacheEndpoint'],
         'TargetRootDirectoryVersionId': value['targetRootDirectoryVersionId'],
         'ExecutionMode': MaterializationExecutionModeToJSON(value['executionMode']),
         'ArtifactIdentities': value['artifactIdentities'],

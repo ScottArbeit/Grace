@@ -42,11 +42,12 @@ class CacheEnrollmentRequest(BaseModel):
     repository_scopes: Annotated[List[CacheRepositoryScope], Field(min_length=1)] = Field(alias="RepositoryScopes")
     public_key: CacheIdentityPublicKey = Field(alias="PublicKey")
     endpoint: StrictStr = Field(alias="Endpoint")
+    allow_http_endpoint: StrictBool = Field(description="Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.", alias="AllowHttpEndpoint")
     health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")
     protocol_version: StrictStr = Field(alias="ProtocolVersion")
     prefetch_supported: StrictBool = Field(alias="PrefetchSupported")
-    __properties: ClassVar[List[str]] = ["Class", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported"]
+    __properties: ClassVar[List[str]] = ["Class", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -117,6 +118,7 @@ class CacheEnrollmentRequest(BaseModel):
             "RepositoryScopes": [CacheRepositoryScope.from_dict(_item) for _item in obj["RepositoryScopes"]] if obj.get("RepositoryScopes") is not None else None,
             "PublicKey": CacheIdentityPublicKey.from_dict(obj["PublicKey"]) if obj.get("PublicKey") is not None else None,
             "Endpoint": obj.get("Endpoint"),
+            "AllowHttpEndpoint": obj.get("AllowHttpEndpoint"),
             "Health": obj.get("Health"),
             "SoftwareVersion": obj.get("SoftwareVersion"),
             "ProtocolVersion": obj.get("ProtocolVersion"),

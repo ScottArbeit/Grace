@@ -55,6 +55,7 @@ type MaterializationPlanRouteTests() =
                 |]
             PublicKey = CacheIdentityPublicKey.Create("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
             Endpoint = "https://cache.example.test"
+            AllowHttpEndpoint = false
             Health = CacheHealthStatus.Healthy
             SoftwareVersion = "1.0.0"
             ProtocolVersion = "v1"
@@ -76,6 +77,7 @@ type MaterializationPlanRouteTests() =
                 "authenticated-user",
                 "holder-thumbprint",
                 (cacheRegistration mode).CacheId.ToString("D"),
+                (cacheRegistration mode).Endpoint,
                 targetRootDirectoryVersionId,
                 mode,
                 identities,
@@ -92,6 +94,7 @@ type MaterializationPlanRouteTests() =
                 "authenticated-user",
                 "holder-thumbprint",
                 (cacheRegistration mode).CacheId.ToString("D"),
+                (cacheRegistration mode).Endpoint,
                 targetRootDirectoryVersionId,
                 mode,
                 identities,
@@ -1193,11 +1196,13 @@ type MaterializationPlanRouteTests() =
             | Error error -> Assert.Fail(error.Error)
             | Ok plan ->
                 Assert.That(plan.ArtifactGrant.IsSome, Is.True)
+                Assert.That(plan.ArtifactGrant.Value.Payload.CacheEndpoint, Is.EqualTo((cacheRegistration mode).Endpoint))
 
                 for artifact in plan.RequiredArtifacts do
                     Assert.That(artifact.Source.Value.SourceKind, Is.EqualTo(MaterializationArtifactSourceKind.CacheEntry))
                     Assert.That(artifact.Source.Value.DirectUri.IsNone, Is.True)
                     Assert.That(artifact.Source.Value.DirectFallbackUri.IsNone, Is.True)
+                    Assert.That(artifact.Source.Value.CacheEndpoint, Is.EqualTo(Some((cacheRegistration mode).Endpoint)))
         }
 
     /// Verifies the selected registration is the single eligibility cutoff: a later revocation blocks later selection but not the in-flight grant.

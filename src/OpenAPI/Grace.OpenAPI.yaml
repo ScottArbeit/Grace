@@ -4370,6 +4370,9 @@ components:
         Endpoint:
           type: string
           format: uri
+        AllowHttpEndpoint:
+          type: boolean
+          description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
         Health:
           $ref: '#/components/schemas/CacheHealthStatus'
         SoftwareVersion:
@@ -4386,6 +4389,7 @@ components:
         - RepositoryScopes
         - PublicKey
         - Endpoint
+        - AllowHttpEndpoint
         - Health
         - SoftwareVersion
         - ProtocolVersion
@@ -4485,6 +4489,7 @@ components:
         - revoked
         - updated
         - rotated
+        - endpointMismatch
       x-enumNames:
         - Enrolled
         - Refreshed
@@ -4494,6 +4499,7 @@ components:
         - Revoked
         - Updated
         - Rotated
+        - EndpointMismatch
       example: enrolled
     CacheRegistration:
       description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
@@ -4525,6 +4531,9 @@ components:
         Endpoint:
           type: string
           format: uri
+        AllowHttpEndpoint:
+          type: boolean
+          description: Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
         Health:
           $ref: '#/components/schemas/CacheHealthStatus'
         SoftwareVersion:
@@ -4557,6 +4566,7 @@ components:
         - RepositoryScopes
         - PublicKey
         - Endpoint
+        - AllowHttpEndpoint
         - Health
         - SoftwareVersion
         - ProtocolVersion
@@ -4739,6 +4749,10 @@ components:
           description: Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.
         CacheId:
           type: string
+        CacheEndpoint:
+          type: string
+          format: uri
+          description: Exact selected Cache endpoint covered by this signature.
         TargetRootDirectoryVersionId:
           $ref: '#/components/schemas/DirectoryVersionId'
         ExecutionMode:
@@ -4761,6 +4775,7 @@ components:
         - RequesterPrincipalId
         - HolderKeyThumbprint
         - CacheId
+        - CacheEndpoint
         - TargetRootDirectoryVersionId
         - ExecutionMode
         - ArtifactIdentities

@@ -32,6 +32,9 @@ pub struct CacheRegistration {
     pub public_key: Box<models::CacheIdentityPublicKey>,
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
+    /// Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
+    #[serde(rename = "AllowHttpEndpoint")]
+    pub allow_http_endpoint: bool,
     #[serde(rename = "Health")]
     pub health: models::CacheHealthStatus,
     #[serde(rename = "SoftwareVersion")]
@@ -58,7 +61,7 @@ pub struct CacheRegistration {
 
 impl CacheRegistration {
     /// Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
-    pub fn new(class: String, cache_id: uuid::Uuid, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, enrolled_by: String, enrolled_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>, rotation_due_at: chrono::DateTime<chrono::FixedOffset>) -> CacheRegistration {
+    pub fn new(class: String, cache_id: uuid::Uuid, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, enrolled_by: String, enrolled_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>, rotation_due_at: chrono::DateTime<chrono::FixedOffset>) -> CacheRegistration {
         CacheRegistration {
             class,
             cache_id,
@@ -69,6 +72,7 @@ impl CacheRegistration {
             repository_scopes,
             public_key: Box::new(public_key),
             endpoint,
+            allow_http_endpoint,
             health,
             software_version,
             protocol_version,
