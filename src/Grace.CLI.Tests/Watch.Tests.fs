@@ -3646,12 +3646,59 @@ module WatchTests =
                 .FilesToProcess
             |> should equal Array.empty<string>)
 
-    /// Verifies file-triggered retention cannot revive an unreadable file accepted by a stale branch scope.
+    /// Verifies retained current-scope evidence cannot copy or upload while its resync attempt is suspended.
     [<Test>]
-    let ``watch stable identity retains only current scope blocked files during resync`` () =
+    let ``suspended resync retains file recovery evidence without upload side effects`` () =
         withTempRepo (fun root ->
-            let currentFilePath = Path.Combine(root, "a-current-scope-blocked-file.txt")
-            let staleFilePath = Path.Combine(root, "z-stale-scope-blocked-file.txt")
+            let filePath = Path.Combine(root, "suspended-retained-evidence.txt")
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+
+            File.WriteAllText(filePath, "retained bytes")
+            Watch.OnChanged(changedEvent filePath)
+            Watch.requestGraceWatchExplicitResyncForWatchTests "test suspended retained evidence"
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.Suspended
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(GraceStatus.Default))
+                (fun () -> Task.FromResult(GraceStatus.Default))
+                upload
+                (fun status _ -> Task.FromResult(Some status))
+                scanForDifferences
+                (fun status _ _ -> Task.FromResult(Some status))
+                (fun _ _ _ -> Task.FromResult(()))
+                (fun _ _ -> Task.FromResult(())))
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 0
+            scanCalls |> should equal 0
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal [| filePath |]
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |]
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true)
+
+    /// Verifies a stale candidate sorted before a current locked file quarantines only the stale scope during resync.
+    [<Test>]
+    let ``watch stable identity retains current blocker after sorted stale candidate triggers resync`` () =
+        withTempRepo (fun root ->
+            let currentFilePath = Path.Combine(root, "z-current-scope-blocked-file.txt")
+            let staleFilePath = Path.Combine(root, "a-stale-scope-blocked-file.txt")
             let mutable now = DateTime(2026, 7, 13, 0, 20, 0, DateTimeKind.Utc)
             let uploadCalls = Dictionary<string, int>(StringComparer.Ordinal)
             let configuration = Current()
@@ -3695,6 +3742,111 @@ module WatchTests =
 
             Watch.quarantinedWatchObservationCountForWatchTests ()
             |> should equal 1)
+
+    /// Verifies an uploaded file remains recovery evidence when a later file exhausts and becomes unreadable before scan.
+    [<Test>]
+    let ``mixed batch uploaded evidence blocks resync scan until reread and status accounting succeed`` () =
+        withTempRepo (fun root ->
+            let earlierFilePath = Path.Combine(root, "a-earlier-uploaded-file.txt")
+            let laterFilePath = Path.Combine(root, "b-later-exhausted-file.txt")
+            let mutable laterFileLocked = true
+            let mutable earlierFileUnreadable = false
+            let mutable earlierUploadCalls = 0
+            let mutable laterUploadCalls = 0
+            let mutable scanCalls = 0
+
+            File.WriteAllText(earlierFilePath, "earlier final bytes")
+            File.WriteAllText(laterFilePath, "later final bytes")
+            Watch.OnChanged(changedEvent earlierFilePath)
+            Watch.OnChanged(changedEvent laterFilePath)
+
+            let upload _ pendingFilePath =
+                let fullPath = $"{pendingFilePath}"
+
+                if String.Equals(fullPath, laterFilePath, StringComparison.Ordinal) then
+                    laterUploadCalls <- laterUploadCalls + 1
+
+                    if laterFileLocked then
+                        Task.FromException<unit>(IOException("later file remains locked"))
+                    else
+                        recordUploadedFileVersion fullPath
+                        Task.FromResult(())
+                else
+                    earlierUploadCalls <- earlierUploadCalls + 1
+                    recordUploadedFileVersion fullPath
+                    Task.FromResult(())
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            let processWatchPass () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    (fun () -> Task.FromResult(GraceStatus.Default))
+                    upload
+                    (fun status _ -> Task.FromResult(Some status))
+                    scanForDifferences
+                    (fun status _ _ -> Task.FromResult(Some status))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            processWatchPass ()
+            processWatchPass ()
+            processWatchPass ()
+
+            earlierUploadCalls |> should equal 1
+            laterUploadCalls |> should equal 3
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal [| earlierFilePath; laterFilePath |]
+
+            laterFileLocked <- false
+            earlierFileUnreadable <- true
+
+            Watch.setCreateLocalFileVersionForWatchTests (fun fileInfo ->
+                if
+                    String.Equals(fileInfo.FullName, earlierFilePath, StringComparison.Ordinal)
+                    && earlierFileUnreadable
+                then
+                    Task.FromResult<LocalFileVersion option>(None)
+                else
+                    Services.createLocalFileVersion fileInfo)
+
+            processWatchPass ()
+
+            laterUploadCalls |> should equal 4
+            earlierUploadCalls |> should equal 1
+            scanCalls |> should equal 0
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| earlierFilePath |]
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal [| earlierFilePath; laterFilePath |]
+
+            earlierFileUnreadable <- false
+            Watch.setCreateLocalFileVersionForWatchTests Services.createLocalFileVersion
+            processWatchPass ()
+
+            earlierUploadCalls |> should equal 2
+            scanCalls |> should equal 1
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.uploadedFileVersionRelativePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
 
     /// Verifies that a missing final path does not invoke file-content work and can stabilize after the path returns.
     [<Test>]
