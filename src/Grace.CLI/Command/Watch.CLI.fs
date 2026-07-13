@@ -380,6 +380,7 @@ module Watch =
     let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
     let private recentGraceUpdateMarkerCompletedUtc = List<DateTime>()
     let private observedGraceUpdateMarkerLastWriteUtc = Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+    let mutable private markerCompletionConfidenceLossActive = 0
 
     /// Gets the completion sidecar written before the Grace update marker is removed.
     let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
@@ -648,6 +649,20 @@ module Watch =
         | Deleted
         | GraceStatusArtifact
 
+    /// Captures the immutable repository and root identity that owned a raw local observation at admission.
+    type internal WatchObservationScope =
+        {
+            RepositoryId: RepositoryId
+            RepositoryName: string
+            BranchId: BranchId
+            BranchName: string
+            RootDirectory: string
+            PathComparison: StringComparison
+            RootDirectoryId: DirectoryVersionId
+            RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
+        }
+
     /// Captures one coalesced local filesystem observation and the generation that owns its due work.
     type internal WatchObservationCandidate =
         {
@@ -657,6 +672,7 @@ module Watch =
             Generation: int64
             LastSeenAt: DateTime
             DueAt: DateTime
+            Scope: WatchObservationScope option
         }
 
     /// Coalesces local filesystem observations until their deterministic quiet window has elapsed.
@@ -710,7 +726,14 @@ module Watch =
             | _ -> incomingKind
 
         /// Records one local observation, replacing any older generation while retaining same-path delete proof for a final replacement.
-        member _.Observe(origin: WatchObservationOrigin, kind: WatchObservationKind, fullPath: string, seenAt: DateTime) =
+        member _.ObserveScoped
+            (
+                origin: WatchObservationOrigin,
+                kind: WatchObservationKind,
+                fullPath: string,
+                seenAt: DateTime,
+                scope: WatchObservationScope option
+            ) =
             lock gate (fun () ->
                 match origin, disposed, tryNormalizeCandidatePath fullPath with
                 | LocalFileSystem, false, Some normalizedPath ->
@@ -736,11 +759,16 @@ module Watch =
                             Generation = generation
                             LastSeenAt = seenAt
                             DueAt = seenAt + quietWindow
+                            Scope = scope
                         }
 
                     candidates[normalizedPath] <- candidate
                     Some candidate
                 | _ -> None)
+
+        /// Records a scheduler-only observation for tests that do not own a live repository scope.
+        member this.Observe(origin: WatchObservationOrigin, kind: WatchObservationKind, fullPath: string, seenAt: DateTime) =
+            this.ObserveScoped(origin, kind, fullPath, seenAt, None)
 
         /// Returns the current due snapshot without consuming it so a newer generation can still supersede it before dispatch.
         member _.SnapshotDue(now: DateTime) =
@@ -790,6 +818,21 @@ module Watch =
     let mutable private localObservationCandidateScheduler = new WatchObservationCandidateScheduler(TimeSpan.Zero, watchPathComparison)
     let mutable private localObservationCandidateSchedulingActive = 0
     let mutable private immediateLocalObservationProcessingForWatchTests = 0
+    let private localObservationConfidenceLossLock = obj ()
+    let mutable private localObservationConfidenceLossReason: string option = None
+
+    /// Records one non-replayable raw-observation confidence loss for the timer path that owns resync transitions.
+    let private recordLocalObservationConfidenceLoss reason =
+        lock localObservationConfidenceLossLock (fun () ->
+            if localObservationConfidenceLossReason.IsNone then
+                localObservationConfidenceLossReason <- Some reason)
+
+    /// Takes the oldest pending raw-observation confidence loss without allowing it to be rebound as local work.
+    let private takeLocalObservationConfidenceLoss () =
+        lock localObservationConfidenceLossLock (fun () ->
+            let pendingReason = localObservationConfidenceLossReason
+            localObservationConfidenceLossReason <- None
+            pendingReason)
 
     /// Reports whether a live Watch lifetime has activated quiet-window candidate scheduling for raw callbacks.
     let private isLocalObservationCandidateSchedulingActive () =
@@ -818,9 +861,44 @@ module Watch =
                 localObservationCandidateScheduler.Dispose()
                 localObservationCandidateScheduler <- new WatchObservationCandidateScheduler(quietWindow, watchPathComparison))
 
+    /// Captures the current repository and exact root identity before a raw callback can be coalesced.
+    let private currentWatchObservationScope () =
+        let current = Current()
+
+        {
+            RepositoryId = current.RepositoryId
+            RepositoryName = current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = current.BranchName
+            RootDirectory =
+                Path.GetFullPath(current.RootDirectory)
+                |> Path.TrimEndingDirectorySeparator
+            PathComparison = watchPathComparison
+            RootDirectoryId = graceStatus.RootDirectoryId
+            RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = graceStatus.RootDirectoryBlake3Hash
+        }
+
+    /// Checks that a due raw candidate still belongs to its admission repository, branch, root, and exact root content.
+    let private watchObservationScopeMatchesCurrent (scope: WatchObservationScope) =
+        let currentScope = currentWatchObservationScope ()
+
+        scope.RepositoryId = currentScope.RepositoryId
+        && String.Equals(scope.RepositoryName, currentScope.RepositoryName, StringComparison.Ordinal)
+        && scope.BranchId = currentScope.BranchId
+        && String.Equals(scope.BranchName, currentScope.BranchName, StringComparison.Ordinal)
+        && String.Equals(scope.RootDirectory, currentScope.RootDirectory, scope.PathComparison)
+        && scope.PathComparison = currentScope.PathComparison
+        && scope.RootDirectoryId = currentScope.RootDirectoryId
+        && scope.RootDirectorySha256Hash = currentScope.RootDirectorySha256Hash
+        && scope.RootDirectoryBlake3Hash = currentScope.RootDirectoryBlake3Hash
+
     /// Records a raw local event without reading content, enumerating paths, or scheduling remote Reference work.
     let private recordLocalObservationCandidate kind fullPath seenAt =
-        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Observe(LocalFileSystem, kind, fullPath, seenAt))
+        let scope = currentWatchObservationScope ()
+
+        lock localObservationCandidateSchedulerLock (fun () ->
+            localObservationCandidateScheduler.ObserveScoped(LocalFileSystem, kind, fullPath, seenAt, Some scope))
 
     /// Records a timestamped local candidate for deterministic Watch scheduler tests.
     let internal recordLocalObservationCandidateForWatchTests kind fullPath seenAt = recordLocalObservationCandidate kind fullPath seenAt
@@ -848,18 +926,24 @@ module Watch =
     /// Claims a due candidate only if no newer same-path raw event has superseded it.
     let private tryClaimLocalObservationCandidate (scheduler: WatchObservationCandidateScheduler) candidate now = scheduler.TryClaim(candidate, now)
 
+    /// Classifies whether a due candidate can trust the active update marker observation boundary.
+    type private GraceUpdateMarkerObservationBoundary =
+        | NoActiveMarker
+        | ActiveMarker of DateTime
+        | AmbiguousMarkerBoundary of string
+
     /// Reads the active Grace update marker observation boundary used to classify a due candidate before it is retired.
     let private tryGetActiveGraceUpdateMarkerObservationBoundary () =
         try
             let markerFileName = updateInProgressFileName ()
 
             if File.Exists(markerFileName) then
-                Some(File.GetLastWriteTimeUtc(markerFileName))
+                ActiveMarker(File.GetLastWriteTimeUtc(markerFileName))
             else
-                None
+                NoActiveMarker
         with
-        | :? IOException -> None
-        | :? UnauthorizedAccessException -> None
+        | :? IOException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
+        | :? UnauthorizedAccessException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
 
     /// Evaluates is grace status artifact against parsed options and command state.
     let private isGraceStatusArtifact (fullPath: string) =
@@ -1763,9 +1847,21 @@ module Watch =
             WatchRoot = Path.GetFullPath(Current().RootDirectory)
             PathComparison = watchPathComparison
             RootDirectoryId = status.RootDirectoryId
+            RootDirectorySha256Hash = status.RootDirectorySha256Hash
             RootDirectoryBlake3Hash = rootDirectoryBlake3HashForWatchJournal status
             WatchMode = "repository-root"
         }
+
+    /// Persists a terminal Watch boundary diagnostic without creating replayable local work.
+    let private recordWatchBoundaryDiagnostic eventType message =
+        try
+            (recordWatchLifecycleEventForWatch (
+                { Scope = currentWatchJournalScope graceStatus; EventType = eventType; Message = message }: Grace.CLI.LocalStateDb.WatchLifecycleEvent
+            ))
+                .GetAwaiter()
+                .GetResult()
+        with
+        | ex -> logToAnsiConsole Colors.Error $"Grace Watch could not record boundary diagnostic: {ex.Message}"
 
     /// Converts an already-normalized status difference into the replay payload owned by the local Watch journal.
     let private journalObservationForDifference (difference: FileSystemDifference) : Grace.CLI.LocalStateDb.WatchJournalObservation =
@@ -2737,6 +2833,15 @@ module Watch =
 
     let private graceWatchResyncTransitionLock = obj ()
 
+    /// Clears the direct-callback marker-completion block only after this exact resync attempt reached a clean recovery boundary.
+    let private tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss attempt =
+        lock graceWatchResyncTransitionLock (fun () ->
+            if tryClearGraceWatchResyncAttempt attempt then
+                Volatile.Write(&markerCompletionConfidenceLossActive, 0)
+                true
+            else
+                false)
+
     let mutable private beforeGraceWatchResyncEvidenceRetirementProbe = fun () -> ()
 
     /// Overrides the evidence-retirement interleaving probe for deterministic Watch resync transition tests.
@@ -3485,53 +3590,60 @@ module Watch =
     let private processDueLocalObservationCandidates now =
         let scheduler, dueCandidates = dueLocalObservationCandidates now
         let mutable queuedPendingWork = false
-        let mutable candidateConsumed = false
 
         for dueCandidate in dueCandidates do
             match tryGetActiveGraceUpdateMarkerObservationBoundary () with
-            | Some markerObservedAt when dueCandidate.LastSeenAt < markerObservedAt -> logObservationSuppressed dueCandidate.FullPath
-            | activeMarkerBoundary ->
+            | ActiveMarker markerObservedAt when dueCandidate.LastSeenAt < markerObservedAt -> logObservationSuppressed dueCandidate.FullPath
+            | markerBoundary ->
                 match tryClaimLocalObservationCandidate scheduler dueCandidate now with
                 | Some candidate ->
-                    candidateConsumed <- true
-
                     let candidateQueuedWork =
-                        match activeMarkerBoundary with
-                        | Some _ ->
+                        match markerBoundary with
+                        | AmbiguousMarkerBoundary reason ->
+                            recordLocalObservationConfidenceLoss reason
                             logObservationSuppressed candidate.FullPath
                             false
-                        | None ->
-                            match candidate.Kind with
-                            | CreatedOrChanged ->
-                                let removalQueuedWork =
-                                    if candidate.RequiresRemovalProof then
-                                        applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                                    else
-                                        false
+                        | ActiveMarker _ ->
+                            logObservationSuppressed candidate.FullPath
+                            false
+                        | NoActiveMarker ->
+                            match candidate.Scope with
+                            | Some scope when not (watchObservationScopeMatchesCurrent scope) ->
+                                recordLocalObservationConfidenceLoss
+                                    $"raw local observation scope changed before claim for {candidate.FullPath}; incremental work was rejected."
 
-                                let finalQueuedWork = applyCreatedOrChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-
-                                removalQueuedWork || finalQueuedWork
-                            | Changed ->
-                                let removalQueuedWork =
-                                    if candidate.RequiresRemovalProof then
-                                        applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                                    else
-                                        false
-
-                                let finalQueuedWork = applyChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-
-                                removalQueuedWork || finalQueuedWork
-                            | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                            | GraceStatusArtifact ->
-                                markGraceStatusChangedAndPublishPendingWorkTransition ()
                                 false
+                            | _ ->
+                                match candidate.Kind with
+                                | CreatedOrChanged ->
+                                    let removalQueuedWork =
+                                        if candidate.RequiresRemovalProof then
+                                            applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                        else
+                                            false
+
+                                    let finalQueuedWork = applyCreatedOrChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                                    removalQueuedWork || finalQueuedWork
+                                | Changed ->
+                                    let removalQueuedWork =
+                                        if candidate.RequiresRemovalProof then
+                                            applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                        else
+                                            false
+
+                                    let finalQueuedWork = applyChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                                    removalQueuedWork || finalQueuedWork
+                                | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                | GraceStatusArtifact ->
+                                    markGraceStatusChangedAndPublishPendingWorkTransition ()
+                                    false
 
                     queuedPendingWork <- queuedPendingWork || candidateQueuedWork
                 | None -> ()
 
-        if candidateConsumed
-           || queuedPendingWork
+        if queuedPendingWork
            || hasPendingLocalObservationCandidates () then
             publishPendingWatchWorkTransitionIfNeeded ()
 
@@ -3540,22 +3652,28 @@ module Watch =
 
     /// Applies an observation immediately only for direct callback harnesses that did not start the Watch lifetime.
     let private processLocalObservationImmediately kind fullPath =
-        let observedAt = DateTime.UtcNow
+        if
+            Volatile.Read(&markerCompletionConfidenceLossActive)
+            <> 0
+        then
+            logObservationSuppressed fullPath
+        else
+            let observedAt = DateTime.UtcNow
 
-        let queuedPendingWork =
-            match kind with
-            | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
-            | Changed -> applyChangedLocalObservationCandidate fullPath observedAt
-            | Deleted -> applyDeletedLocalObservationCandidate fullPath observedAt
-            | GraceStatusArtifact ->
-                if updateNotInProgress () then
-                    markGraceStatusChangedAndPublishPendingWorkTransition ()
-                else
-                    logObservationSuppressed fullPath
+            let queuedPendingWork =
+                match kind with
+                | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
+                | Changed -> applyChangedLocalObservationCandidate fullPath observedAt
+                | Deleted -> applyDeletedLocalObservationCandidate fullPath observedAt
+                | GraceStatusArtifact ->
+                    if updateNotInProgress () then
+                        markGraceStatusChangedAndPublishPendingWorkTransition ()
+                    else
+                        logObservationSuppressed fullPath
 
-                false
+                    false
 
-        if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
+            if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
 
     /// Drains zero-window test candidates before reporting whether Watch still owes a Grace Status refresh pass.
     let internal graceStatusHasChangedForWatchTests () =
@@ -3649,6 +3767,12 @@ module Watch =
 
     /// Requests a scan-derived resync and quarantines stale observations while retaining current-scope file evidence through recovery.
     let private requestGraceWatchExplicitResync reason = requestGraceWatchExplicitResyncCore reason pendingFileWorkMatchesCurrentScope
+
+    /// Blocks direct callbacks and requests exact resync after marker completion can no longer prove the source of a filesystem observation.
+    let private requestGraceWatchMarkerCompletionConfidenceLossResync reason =
+        lock graceWatchResyncTransitionLock (fun () ->
+            Volatile.Write(&markerCompletionConfidenceLossActive, 1)
+            requestGraceWatchExplicitResync reason)
 
     /// Requests a scan-derived resync while retaining every current-scope file whose final bytes still block clean recovery.
     let private requestGraceWatchExplicitResyncRetainingPendingFiles reason = requestGraceWatchExplicitResyncCore reason pendingFileWorkMatchesCurrentScope
@@ -3991,6 +4115,7 @@ module Watch =
     let internal clearPendingWatchWorkForTests () =
         clearLocalObservationCandidateScheduler ()
         setLocalObservationCandidateSchedulingActive false
+        Volatile.Write(&markerCompletionConfidenceLossActive, 0)
         filesToProcess.Clear()
         fileRecoveryEvidence.Clear()
         directoriesToProcess.Clear()
@@ -6901,16 +7026,26 @@ module Watch =
                             logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
                         else
                             recordGraceUpdateMarkerCompletedUtc completedUtc
+                            let reason = $"stale branch-transition marker deletion for {args.FullPath} could not complete the current transition."
+
+                            recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                            requestGraceWatchMarkerCompletionConfidenceLossResync reason
 
                             logToAnsiConsole
                                 Colors.Important
-                                $"Ignored stale update marker deletion for {args.FullPath}; current marker {updateInProgressFileName ()} is still live."
+                                $"Ignored stale update marker deletion for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
                     | UnobservedMarker when
                         deletedMarkerIsCurrentMarker args.FullPath
                         && isRecentGraceUpdateMarkerCompletion completedUtc
                         && persistedConfigurationChangedSinceWatchCached ()
                         ->
-                        requestGraceWatchExplicitResync "branch transition marker deletion had a fresh completion sidecar but no observed marker creation"
+                        requestGraceWatchMarkerCompletionConfidenceLossResync
+                            "branch transition marker deletion had a fresh completion sidecar but no observed marker creation"
+
+                        recordWatchBoundaryDiagnostic
+                            "marker-completion-confidence-loss"
+                            $"branch-transition marker deletion had a fresh completion sidecar but no observed marker creation for {args.FullPath}."
+
                         completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
 
                         logToAnsiConsole
@@ -6918,17 +7053,35 @@ module Watch =
                             $"Update marker ended with an unobserved fresh completed sidecar for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
                     | ObservedStaleMarker
                     | UnobservedMarker ->
+                        let reason = $"branch-transition marker deletion did not provide current observed completion evidence for {args.FullPath}."
+
+                        recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                        requestGraceWatchMarkerCompletionConfidenceLossResync reason
+
                         logToAnsiConsole
                             Colors.Important
-                            $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
+                            $"Update marker ended with incomplete completion evidence for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
                 | Some (GraceUpdateMarkerPurpose.ReferenceMaterialization, completedUtc) ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
-                    recordGraceUpdateMarkerCompletedUtc completedUtc
-                    requestCurrentBranchReferenceCatchUp "current-branch reference materialization marker deletion"
-                    logToAnsiConsole Colors.Important $"Reference materialization update has finished."
+
+                    if isRecentGraceUpdateMarkerCompletion completedUtc then
+                        recordGraceUpdateMarkerCompletedUtc completedUtc
+                        requestCurrentBranchReferenceCatchUp "current-branch reference materialization marker deletion"
+                        logToAnsiConsole Colors.Important $"Reference materialization update has finished."
+                    else
+                        let reason = $"reference-materialization marker deletion had stale completion evidence for {args.FullPath}."
+
+                        recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                        requestGraceWatchMarkerCompletionConfidenceLossResync reason
                 | None ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
-                    logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
+                    let reason = $"update marker deletion had missing or malformed completion evidence for {args.FullPath}."
+                    recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                    requestGraceWatchMarkerCompletionConfidenceLossResync reason
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Update marker ended without trustworthy completion evidence; grace watch is resynchronizing before incremental work resumes."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
 
@@ -7594,6 +7747,12 @@ module Watch =
             configureWatchPathComparisonForCurrentRepository ()
             processDueLocalObservationCandidates DateTime.UtcNow
 
+            match takeLocalObservationConfidenceLoss () with
+            | Some reason ->
+                recordWatchBoundaryDiagnostic "local-observation-confidence-loss" reason
+                requestGraceWatchExplicitResync reason
+            | None -> ()
+
             // First, check if there's anything to process.
             if isGraceWatchResyncPending () then
                 let resyncAttempt = currentGraceWatchResyncAttempt ()
@@ -7705,7 +7864,7 @@ module Watch =
                                         | VerifiedCleanRecoveryPublication ->
                                             beforeGraceWatchResyncAttemptRetirementProbe ()
 
-                                            if tryClearGraceWatchResyncAttempt resyncAttempt then
+                                            if tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss resyncAttempt then
                                                 setGraceWatchPendingWorkStatusFlag false
 
                                                 if signalRBranchSubscriptionRefreshNeededForTransition () then
@@ -7749,7 +7908,7 @@ module Watch =
                                                 (if dirtyPublicationVerified then Colors.Important else Colors.Error)
                                                 $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
                                     else
-                                        let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
+                                        let clearedResyncAttempt = tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss resyncAttempt
 
                                         if clearedResyncAttempt then
                                             setGraceWatchPendingWorkStatusFlag false
