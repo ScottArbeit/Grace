@@ -5345,6 +5345,147 @@ module WatchTests =
                     DifferenceType.Add, FileSystemEntryType.File, createdDuringApplyRelativePath
                 |])
 
+    /// Verifies a durable old status result retires only its generation when a newer same-path event arrives before local commit bookkeeping.
+    [<Test; Category("GenerationHandoff")>]
+    let ``GenerationHandoffDurable: status result hands same-path evidence to newer generation before commit`` () =
+        withTempRepo (fun root ->
+            let relativePath = "status-generation-handoff.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let mutable uploadCalls = 0
+            let mutable statusApplications = 0
+            let mutable commitProbeCalls = 0
+
+            File.WriteAllText(filePath, "first generation")
+            Watch.OnChanged(changedEvent filePath)
+
+            /// Reads a stable status so each generation's upload can derive one status difference.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Records each uploaded final file version so the status path can account for its exact generation.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented status update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Completes the durable status side effect once for each queued generation.
+            let updateGraceStatusFromDifferences status _ _ =
+                statusApplications <- statusApplications + 1
+                Task.FromResult(Some status)
+
+            /// Runs one watch pass with the generation handoff test clients.
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForNoDifferences
+                    updateGraceStatusFromDifferences
+                    (fun _ _ _ -> Task.FromResult(()))
+                    Services.updateGraceWatchInterprocessFile)
+                    .GetAwaiter()
+                    .GetResult()
+
+            Watch.setBeforeWatchStatusCommitProbeForWatchTests (fun () ->
+                commitProbeCalls <- commitProbeCalls + 1
+
+                if commitProbeCalls = 1 then
+                    File.WriteAllText(filePath, "second generation")
+                    Watch.OnChanged(changedEvent filePath))
+
+            try
+                processPendingWork ()
+
+                uploadCalls |> should equal 1
+                statusApplications |> should equal 1
+                commitProbeCalls |> should equal 1
+
+                Watch.fileRecoveryEvidencePathsForWatchTests ()
+                |> should equal Array.empty<string>
+
+                Watch.processedFileRelativePathsPendingStatusForWatchTests ()
+                |> should equal Array.empty<string>
+
+                Watch
+                    .pendingWatchWorkSnapshotForTests()
+                    .FilesToProcess
+                |> should equal [| filePath |]
+
+                processPendingWork ()
+            finally
+                Watch.resetBeforeWatchStatusCommitProbeForWatchTests ()
+
+            uploadCalls |> should equal 2
+            statusApplications |> should equal 2
+            commitProbeCalls |> should equal 2
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.processedFileRelativePathsPendingStatusForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.uploadedFileVersionRelativePathsForWatchTests ()
+            |> should equal Array.empty<string>
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false))
+
+    /// Verifies an untrusted status result leaves the matching evidence and status generation pending for retry.
+    [<Test; Category("GenerationHandoff")>]
+    let ``GenerationHandoffUntrusted: status result retains same-path evidence generation`` () =
+        withTempRepo (fun root ->
+            let relativePath = "untrusted-status-generation.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let mutable uploadCalls = 0
+            let mutable statusApplications = 0
+
+            File.WriteAllText(filePath, "retryable generation")
+            Watch.OnChanged(changedEvent filePath)
+
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            let updateGraceStatusFromDifferences _ _ _ =
+                statusApplications <- statusApplications + 1
+                Task.FromResult(None)
+
+            (Watch.processChangedFilesWithClients
+                (fun () -> Task.FromResult(GraceStatus.Default))
+                (fun () -> Task.FromResult(GraceStatus.Default))
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                (fun _ _ _ -> Task.FromResult(()))
+                (fun _ _ -> Task.FromResult(())))
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            statusApplications |> should equal 1
+
+            Watch.fileRecoveryEvidencePathsForWatchTests ()
+            |> should equal [| filePath |]
+
+            Watch.processedFileRelativePathsPendingStatusForWatchTests ()
+            |> should equal [| relativePath |]
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (true, true))
+
     /// Verifies that deleted file cancels same path pending upload work before status rescan.
     [<Test>]
     let ``deleted file cancels same-path pending upload work before status rescan`` () =

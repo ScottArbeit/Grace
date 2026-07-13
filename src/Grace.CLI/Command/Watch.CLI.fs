@@ -147,9 +147,12 @@ module Watch =
     /// Reads uploaded file version identity data needed by the command workflow without changing remote state.
     let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
+    /// Couples an uploaded file path with the exact observation generation whose content still needs status accounting.
+    type private ProcessedFileStatusSnapshot = { RelativePath: RelativePath; Generation: int64 }
+
     let private processedFileRelativePathsPendingStatusLock = obj ()
 
-    let private processedFileRelativePathsPendingStatus = List<RelativePath>()
+    let private processedFileRelativePathsPendingStatus = List<ProcessedFileStatusSnapshot>()
 
     let private canceledFileUploadDeleteRelativePathsLock = obj ()
 
@@ -1176,31 +1179,47 @@ module Watch =
 
     let mutable private enumerateDirectoriesForDirectoryStatusAdd = enumerateDirectoriesForDirectoryStatusAddWithPruning
 
-    /// Records an uploaded watch path until the status update pass drains every file upload batch.
-    let private addProcessedFileRelativePathPendingStatus (relativePath: RelativePath) =
+    /// Records an uploaded file generation until the matching status boundary accounts for that exact observation.
+    let private addProcessedFileRelativePathPendingStatus (processedFile: ProcessedFileStatusSnapshot) =
         lock processedFileRelativePathsPendingStatusLock (fun () ->
-            let normalizedRelativePath = normalizeRelativePath relativePath
+            let normalizedRelativePath = normalizeRelativePath processedFile.RelativePath
 
             let alreadyRecorded =
                 processedFileRelativePathsPendingStatus
-                |> Seq.exists (fun existing -> String.Equals(normalizeRelativePath existing, normalizedRelativePath, watchPathComparison))
+                |> Seq.exists (fun existing ->
+                    existing.Generation = processedFile.Generation
+                    && String.Equals(normalizeRelativePath existing.RelativePath, normalizedRelativePath, watchPathComparison))
 
             if not alreadyRecorded then
-                processedFileRelativePathsPendingStatus.Add(relativePath))
+                processedFileRelativePathsPendingStatus.Add(processedFile))
 
     /// Captures uploaded watch paths that still need status application.
     let private processedFileRelativePathsPendingStatusSnapshot () =
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.ToList())
 
-    /// Clears uploaded watch paths after their status effects have been applied or proven unnecessary.
-    let private clearProcessedFileRelativePathsPendingStatus (relativePaths: seq<RelativePath>) =
+    /// Clears only uploaded file generations whose matching status boundary has completed or transferred responsibility.
+    let private clearProcessedFileRelativePathsPendingStatus (processedFiles: seq<ProcessedFileStatusSnapshot>) =
         lock processedFileRelativePathsPendingStatusLock (fun () ->
-            for relativePath in relativePaths do
-                let normalizedRelativePath = normalizeRelativePath relativePath
+            for processedFile in processedFiles do
+                let normalizedRelativePath = normalizeRelativePath processedFile.RelativePath
 
                 processedFileRelativePathsPendingStatus.RemoveAll (fun existing ->
-                    String.Equals(normalizeRelativePath existing, normalizedRelativePath, watchPathComparison))
+                    existing.Generation = processedFile.Generation
+                    && String.Equals(normalizeRelativePath existing.RelativePath, normalizedRelativePath, watchPathComparison))
                 |> ignore)
+
+    /// Clears every processed generation for paths whose upload proof was invalidated before a status boundary.
+    let private clearProcessedFileRelativePathsPendingStatusForPaths (relativePaths: seq<RelativePath>) =
+        let normalizedRelativePaths =
+            relativePaths
+            |> Seq.map normalizeRelativePath
+            |> Seq.toArray
+
+        lock processedFileRelativePathsPendingStatusLock (fun () ->
+            processedFileRelativePathsPendingStatus.RemoveAll (fun existing ->
+                normalizedRelativePaths
+                |> Array.exists (fun relativePath -> String.Equals(normalizeRelativePath existing.RelativePath, relativePath, watchPathComparison)))
+            |> ignore)
 
     /// Reads tracked deleted path kind data needed by the CLI workflow.
     let private readTrackedDeletedPathKind (relativePath: string) =
@@ -1982,6 +2001,24 @@ module Watch =
                 fileRecoveryEvidence.TryRemove(evidence.Key, &retiredEvidence)
                 |> ignore
 
+    /// Retires only the recovery evidence generation that a completed file status boundary actually accounted for.
+    let private retireFileRecoveryEvidenceForProcessedStatusFiles (processedFiles: seq<ProcessedFileStatusSnapshot>) =
+        let processedFileSnapshots = processedFiles |> Seq.toArray
+
+        for evidence in fileRecoveryEvidence.ToArray() do
+            let evidenceRelativePath = relativePathForPendingFileWork evidence.Value
+
+            let accountedFor =
+                processedFileSnapshots
+                |> Array.exists (fun processedFile ->
+                    evidence.Value.Generation = processedFile.Generation
+                    && String.Equals(normalizeRelativePath evidenceRelativePath, normalizeRelativePath processedFile.RelativePath, watchPathComparison))
+
+            if accountedFor then
+                (fileRecoveryEvidence :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                    .Remove(KeyValuePair(evidence.Key, evidence.Value))
+                |> ignore
+
     /// Removes stale-scope recovery state for a path after an upload completes outside its accepted branch and root scope.
     let private discardStaleFileRecoveryStateForScopeChangedPath (pendingFile: PendingFileWorkSnapshot) =
         let staleRelativePath = relativePathForPendingFileWork pendingFile
@@ -2496,6 +2533,14 @@ module Watch =
         && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Resynchronizing
 
     let mutable private statusSideEffectTrustPredicate = fun () -> true
+
+    let mutable private beforeWatchStatusCommitProbe = fun () -> ()
+
+    /// Overrides the local status-commit interleaving probe for deterministic generation handoff tests.
+    let internal setBeforeWatchStatusCommitProbeForWatchTests probe = beforeWatchStatusCommitProbe <- probe
+
+    /// Restores the local status-commit interleaving probe after deterministic generation handoff tests.
+    let internal resetBeforeWatchStatusCommitProbeForWatchTests () = beforeWatchStatusCommitProbe <- fun () -> ()
 
     /// Reports whether Watch still trusts the current status update enough to write remote or local side effects.
     let private statusSideEffectsStillTrusted () = statusSideEffectTrustPredicate ()
@@ -3245,7 +3290,7 @@ module Watch =
                         canceledFileUpload
                         || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
                     then
-                        clearProcessedFileRelativePathsPendingStatus [ invalidatedRelativePath ]
+                        clearProcessedFileRelativePathsPendingStatusForPaths [ invalidatedRelativePath ]
                         removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
                 | None -> ()
 
@@ -3769,6 +3814,7 @@ module Watch =
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
         readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
         clearShouldIgnoreCache ()
+        resetBeforeWatchStatusCommitProbeForWatchTests ()
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests ()
         resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests ()
@@ -3810,7 +3856,7 @@ module Watch =
     /// Lists processed upload paths that are waiting for GraceStatus application in watch tests.
     let internal processedFileRelativePathsPendingStatusForWatchTests () =
         processedFileRelativePathsPendingStatusSnapshot ()
-        |> Seq.map string
+        |> Seq.map (fun processedFile -> string processedFile.RelativePath)
         |> Seq.sort
         |> Seq.toArray
 
@@ -7202,7 +7248,9 @@ module Watch =
 
                                 if recordProcessedPaths then
                                     match repositoryRelativePath pendingFile.FullPath with
-                                    | Some relativePath -> addProcessedFileRelativePathPendingStatus (RelativePath relativePath)
+                                    | Some relativePath ->
+                                        addProcessedFileRelativePathPendingStatus
+                                            { RelativePath = RelativePath relativePath; Generation = pendingFile.Generation }
                                     | None -> ()
 
                                 processedAnyFile <- true
@@ -7589,7 +7637,18 @@ module Watch =
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
                         let canceledFileUploadDeleteRelativePathsForStatus = canceledFileUploadDeleteRelativePathsSnapshot ()
-                        let processedFileRelativePathsForStatus = processedFileRelativePathsPendingStatusSnapshot ()
+                        let processedFileStatusSnapshotsForStatus = processedFileRelativePathsPendingStatusSnapshot ()
+
+                        let processedFileRelativePathsForStatus = List<RelativePath>()
+
+                        for processedFile in processedFileStatusSnapshotsForStatus do
+                            let alreadyCaptured =
+                                processedFileRelativePathsForStatus.Exists (fun relativePath ->
+                                    String.Equals(normalizeRelativePath relativePath, normalizeRelativePath processedFile.RelativePath, watchPathComparison))
+
+                            if not alreadyCaptured then
+                                processedFileRelativePathsForStatus.Add(processedFile.RelativePath)
+
                         let startupPendingDifferences = pendingStatusDifferencesSnapshot ()
 
                         let! requeuedResolvedFileDeletePaths =
@@ -7743,6 +7802,8 @@ module Watch =
 
                         match statusUpdateResult with
                         | Some newGraceStatus ->
+                            beforeWatchStatusCommitProbe ()
+
                             let commitRuntimeMode = currentGraceWatchRuntimeMode ()
 
                             let resolvedStartupReplaySequences =
@@ -7782,11 +7843,10 @@ module Watch =
 
                                     clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
                                     clearStartupReplaySequences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
-                                    clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
+                                    clearProcessedFileRelativePathsPendingStatus processedFileStatusSnapshotsForStatus
 
                                     let trustedFileStatusPaths =
                                         seq {
-                                            yield! processedFileRelativePathsForStatus
                                             yield! canceledFileUploadDeletePathsToClear
 
                                             yield!
@@ -7795,12 +7855,20 @@ module Watch =
                                                 |> Seq.map (fun difference -> difference.RelativePath)
                                         }
 
+                                    retireFileRecoveryEvidenceForProcessedStatusFiles processedFileStatusSnapshotsForStatus
                                     retireFileRecoveryEvidenceForPaths trustedFileStatusPaths
-                                    removeUploadedFileVersionsForPaths trustedFileStatusPaths
+
+                                    removeUploadedFileVersionsForPaths (
+                                        seq {
+                                            yield! processedFileRelativePathsForStatus
+                                            yield! trustedFileStatusPaths
+                                        }
+                                    )
                             else
                                 clearPendingStatusDifferences pendingDifferencesToClear
                                 clearStartupReplaySequences pendingDifferencesToClear
-                                clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
+                                clearProcessedFileRelativePathsPendingStatus processedFileStatusSnapshotsForStatus
+                                retireFileRecoveryEvidenceForProcessedStatusFiles processedFileStatusSnapshotsForStatus
 
                                 logToAnsiConsole
                                     Colors.Important
