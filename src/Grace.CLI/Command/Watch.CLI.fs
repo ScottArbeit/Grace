@@ -4029,39 +4029,92 @@ module Watch =
 
     let private pendingTransitionConfigurationReloadLock = obj ()
     let mutable private pendingTransitionConfigurationReloadReason: string option = None
+    /// Advances whenever a newer branch transition supersedes an in-flight configuration retry.
+    let mutable private pendingTransitionConfigurationReloadGeneration = 0L
+    /// Prevents concurrent timer passes from activating the same pending branch configuration twice.
+    let mutable private pendingTransitionConfigurationReloadInProgress = false
+    let private pendingTransitionConfigurationReloadStatusPublicationProbeLock = obj ()
+    /// Holds the deterministic test probe that pauses a claimed retry after target activation and before IPC publication.
+    let mutable private pendingTransitionConfigurationReloadStatusPublicationProbe = ignore
+
+    /// Runs the deterministic test probe after the target configuration is active but before its required non-incremental IPC publication.
+    let private runPendingTransitionConfigurationReloadStatusPublicationProbe () =
+        let probe = lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe)
+
+        probe ()
+
+    /// Installs a deterministic retry/publication interleaving probe for Watch tests.
+    let internal setPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests probe =
+        lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe <- probe)
+
+    /// Restores the production no-op retry/publication probe after Watch tests.
+    let internal resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests () =
+        lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe <- ignore)
+
+    /// Reports whether a target configuration retry remains pending after a deterministic Watch test interleaving.
+    let internal hasPendingTransitionConfigurationReloadForWatchTests () =
+        lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadReason.IsSome)
 
     /// Defers target-branch configuration activation until the existing resync loop can retry it without trusting the source snapshot.
     let private deferTransitionConfigurationReload reason =
-        lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadReason <- Some reason)
+        lock pendingTransitionConfigurationReloadLock (fun () ->
+            pendingTransitionConfigurationReloadGeneration <-
+                pendingTransitionConfigurationReloadGeneration
+                + 1L
+
+            pendingTransitionConfigurationReloadReason <- Some reason)
+
         requestGraceWatchExplicitResync reason
 
-    /// Retries a failed target-branch configuration activation before resync scans can use the previous branch snapshot.
+    /// Retries one claimed target-branch activation without holding the pending-reload monitor across IPC publication or other side effects.
     let private tryReloadPendingTransitionConfiguration () =
-        lock pendingTransitionConfigurationReloadLock (fun () ->
-            match pendingTransitionConfigurationReloadReason with
-            | None -> true
-            | Some reason ->
-                let wasSuspended = currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Suspended
+        let mutable claimedReload: (int64 * string) option = None
 
-                try
-                    reloadConfigurationForTransitionCompletion ()
-                    rebindUpdateMarkerWatcherAfterTransitionCompletion ()
-                    // Current now identifies the target branch. Publish its existing non-incremental contract before recovery can block.
-                    publishGraceWatchResyncRequired ()
-                    pendingTransitionConfigurationReloadReason <- None
-                    true
-                with
-                | ex ->
-                    if wasSuspended then
-                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
-                    else
-                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-
-                    logToAnsiConsole
-                        Colors.Important
-                        $"Grace Watch retained degraded recovery because target branch configuration reload is still unavailable: {Markup.Escape(ex.Message)}. {Markup.Escape(reason)}"
-
+        let noReloadWasPending =
+            lock pendingTransitionConfigurationReloadLock (fun () ->
+                match pendingTransitionConfigurationReloadReason with
+                | None -> true
+                | Some _ when pendingTransitionConfigurationReloadInProgress -> false
+                | Some reason ->
+                    pendingTransitionConfigurationReloadInProgress <- true
+                    claimedReload <- Some(pendingTransitionConfigurationReloadGeneration, reason)
                     false)
+
+        match claimedReload with
+        | None -> noReloadWasPending
+        | Some (generation, reason) ->
+            let wasSuspended = currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Suspended
+
+            try
+                reloadConfigurationForTransitionCompletion ()
+                rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                runPendingTransitionConfigurationReloadStatusPublicationProbe ()
+                // Current now identifies the target branch. Publish its existing non-incremental contract before recovery can block.
+                publishGraceWatchResyncRequired ()
+
+                lock pendingTransitionConfigurationReloadLock (fun () ->
+                    pendingTransitionConfigurationReloadInProgress <- false
+
+                    if pendingTransitionConfigurationReloadGeneration = generation then
+                        pendingTransitionConfigurationReloadReason <- None
+                        true
+                    else
+                        // A marker-deletion failure arrived while this retry was outside the lock; preserve its newer retry.
+                        false)
+            with
+            | ex ->
+                lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadInProgress <- false)
+
+                if wasSuspended then
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+                else
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch retained degraded recovery because target branch configuration reload is still unavailable: {Markup.Escape(ex.Message)}. {Markup.Escape(reason)}"
+
+                false
 
     /// Schedules the next timer-driven identity attempt or classifies the final path before bounded exhaustion selects resync recovery.
     let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
@@ -4229,7 +4282,7 @@ module Watch =
 
         verified
 
-    /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
+    /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked and returns any deferred reload reason.
     let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
         clearSignalRBranchSubscriptionForTransition ()
         let previousIpcFileName = IpcFileName()
@@ -4243,101 +4296,114 @@ module Watch =
                 reloadConfigurationForTransitionCompletion ()
                 rebindUpdateMarkerWatcherAfterTransitionCompletion ()
                 publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
+                None
             with
             | ex ->
-                deferTransitionConfigurationReload
-                    $"branch transition completion could not reload target configuration after previous branch IPC retirement failed: {ex.Message}"
+                let reason = $"branch transition completion could not reload target configuration after previous branch IPC retirement failed: {ex.Message}"
 
                 logToAnsiConsole
                     Colors.Error
                     $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
 
-    /// Completes a Grace-owned branch transition inside the serialized Watch publication boundary.
+                Some reason
+        else
+            None
+
+    /// Completes a Grace-owned branch transition, then records any failed target activation after releasing the status publication monitor.
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
-        lock watchStatusPublishLock (fun () ->
-            recordGraceUpdateMarkerCompletedUtc completedUtc
-            clearSignalRBranchSubscriptionForTransition ()
-            let previousIpcFileName = IpcFileName()
+        let deferredTransitionConfigurationReloadReason =
+            lock watchStatusPublishLock (fun () ->
+                let mutable deferredConfigurationReloadReason = None
 
-            let previousIpcRetired =
-                try
-                    let retired = retirePreviousBranchWatchIpc previousIpcFileName
+                recordGraceUpdateMarkerCompletedUtc completedUtc
+                clearSignalRBranchSubscriptionForTransition ()
+                let previousIpcFileName = IpcFileName()
 
-                    if not retired then
-                        publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc "previous branch IPC still existed after delete"
-
-                    retired
-                with
-                | ex ->
-                    publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
-                    false
-
-            if previousIpcRetired then
-                runBranchTransitionCompletionAfterRetireProbe ()
-
-                let reloadedConfiguration =
+                let previousIpcRetired =
                     try
-                        reloadConfigurationForTransitionCompletion ()
-                        rebindUpdateMarkerWatcherAfterTransitionCompletion ()
-                        true
+                        let retired = retirePreviousBranchWatchIpc previousIpcFileName
+
+                        if not retired then
+                            deferredConfigurationReloadReason <-
+                                publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc "previous branch IPC still existed after delete"
+
+                        retired
                     with
                     | ex ->
-                        graceStatusHasChanged <- true
-
-                        lastPublishedHasPendingWatchWork <- None
-
-                        deferTransitionConfigurationReload
-                            $"branch transition completion could not reload target configuration after marker deletion: {ex.Message}"
-
-                        logToAnsiConsole
-                            Colors.Error
-                            $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
-
+                        deferredConfigurationReloadReason <- publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
                         false
 
-                if reloadedConfiguration then
-                    try
-                        let refreshedStatus =
-                            readGraceStatusFileForTransitionCompletion()
-                                .GetAwaiter()
-                                .GetResult()
+                if previousIpcRetired then
+                    runBranchTransitionCompletionAfterRetireProbe ()
 
-                        graceStatus <- refreshedStatus
-                        updateGraceStatusDirectoryIds graceStatus
+                    let reloadedConfiguration =
+                        try
+                            reloadConfigurationForTransitionCompletion ()
+                            rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                            true
+                        with
+                        | ex ->
+                            graceStatusHasChanged <- true
 
-                        if isTransitionCompletionConfigurationCoherent ()
-                           && isTransitionCompletionGraceStatusCoherent graceStatus then
-                            if
-                                currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
-                                && not (isGraceWatchResyncPending ())
-                            then
-                                let transitionPublicationVerified =
-                                    tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
-                                        updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+                            lastPublishedHasPendingWatchWork <- None
 
-                                if transitionPublicationVerified then
-                                    try
-                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                            deferredConfigurationReloadReason <-
+                                Some $"branch transition completion could not reload target configuration after marker deletion: {ex.Message}"
 
-                                        logToAnsiConsole
-                                            Colors.Important
-                                            $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
-                                    with
-                                    | ex ->
-                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                            logToAnsiConsole
+                                Colors.Error
+                                $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
 
-                                        logToAnsiConsole
-                                            Colors.Error
-                                            $"Grace Watch completed branch transition but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+                            false
+
+                    if reloadedConfiguration then
+                        try
+                            let refreshedStatus =
+                                readGraceStatusFileForTransitionCompletion()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            graceStatus <- refreshedStatus
+                            updateGraceStatusDirectoryIds graceStatus
+
+                            if isTransitionCompletionConfigurationCoherent ()
+                               && isTransitionCompletionGraceStatusCoherent graceStatus then
+                                if
+                                    currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                                    && not (isGraceWatchResyncPending ())
+                                then
+                                    let transitionPublicationVerified =
+                                        tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                            updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+
+                                    if transitionPublicationVerified then
+                                        try
+                                            refreshSignalRSubscriptionsAfterTransitionCompletion ()
+
+                                            logToAnsiConsole
+                                                Colors.Important
+                                                $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                                        with
+                                        | ex ->
+                                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch completed branch transition but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+                                    else
+                                        requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
                                 else
-                                    requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
+                                    publishNonIncrementalTransitionCompletionStatus
+                                        $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
                             else
-                                publishNonIncrementalTransitionCompletionStatus
-                                    $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
-                        else
-                            requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
-                    with
-                    | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}")
+                                requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
+                        with
+                        | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}"
+
+                deferredConfigurationReloadReason)
+
+        deferredTransitionConfigurationReloadReason
+        |> Option.iter deferTransitionConfigurationReload
 
     /// Combines status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
@@ -4417,7 +4483,11 @@ module Watch =
         clearPendingStatusDifferencesForTests ()
         lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
         clearGraceWatchResyncPending ()
-        lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadReason <- None)
+
+        lock pendingTransitionConfigurationReloadLock (fun () ->
+            pendingTransitionConfigurationReloadReason <- None
+            pendingTransitionConfigurationReloadGeneration <- 0L
+            pendingTransitionConfigurationReloadInProgress <- false)
 
         Interlocked.Exchange(&quarantinedWatchObservationCount, 0)
         |> ignore
@@ -4452,6 +4522,7 @@ module Watch =
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests ()
         resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests ()
+        resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests ()
         resetSignalRSubscriptionRefreshForWatchTests ()
         resetWatchJournalClientsForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)

@@ -4003,6 +4003,161 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false)
 
+    /// Proves a timer retry and marker-deletion failure complete without inverted locks, retain the newer retry, and publish only after target activation.
+    [<Test>]
+    let ``timer retry and marker deletion failure retain target reload without deadlock`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-lock-order-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let candidatePath = Path.Combine(root, "candidate-before-target-activation.txt")
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let mutable scanCalls = 0
+            let mutable rebindAttempts = 0
+            let mutable successfulRebinds = 0
+            let mutable failMarkerRebind = false
+            let mutable targetBranchAtPublication = BranchId.Empty
+            use retryReadyForPublication = new ManualResetEventSlim(false)
+            use releaseRetryPublication = new ManualResetEventSlim(false)
+            let mutable firstTimerRetry = Task.CompletedTask
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            let processRecovery () =
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ -> Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    scanForDifferences
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun _ _ -> Task.FromResult(())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            try
+                writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+                resetConfiguration ()
+                activateWatchIgnoreSnapshot ()
+
+                File.WriteAllText(candidatePath, "candidate admitted under the source snapshot")
+                File.WriteAllText(graceIgnorePath, "target-only.tmp")
+                writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+                // The first marker failure creates the timer-owned pending retry while the target ignore file is inaccessible.
+                use lockedIgnore = new FileStream(graceIgnorePath, FileMode.Open, FileAccess.Read, FileShare.None)
+                recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+                lockedIgnore.Dispose()
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+                Watch.recordLocalObservationCandidateForWatchTests Watch.CreatedOrChanged candidatePath (DateTime.UtcNow.AddSeconds(-1.0))
+                |> Option.isSome
+                |> should equal true
+
+                Watch.setUpdateMarkerWatcherRebindForWatchTests (fun () ->
+                    rebindAttempts <- rebindAttempts + 1
+
+                    if failMarkerRebind then
+                        invalidOp "deterministic marker-deletion rebind failure"
+
+                    successfulRebinds <- successfulRebinds + 1)
+
+                Watch.setPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests (fun () ->
+                    targetBranchAtPublication <- Current().BranchId
+                    retryReadyForPublication.Set()
+
+                    if not (releaseRetryPublication.Wait(TimeSpan.FromSeconds(5.0))) then
+                        invalidOp "timer retry publication was not released by the overlap proof")
+
+                firstTimerRetry <- Task.Run(Action processRecovery)
+
+                retryReadyForPublication.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                targetBranchAtPublication
+                |> should equal branchBId
+
+                successfulRebinds |> should equal 1
+
+                let competingTimerRetry = Task.Run(Action processRecovery)
+
+                competingTimerRetry.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                // The competing timer cannot perform a duplicate activation while the first retry owns the claim.
+                successfulRebinds |> should equal 1
+                scanCalls |> should equal 0
+
+                failMarkerRebind <- true
+
+                let markerDeletionFailure =
+                    Task.Run(Action(fun () -> recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow))
+
+                // This completion would block here with the prior status-lock then pending-lock acquisition order.
+                markerDeletionFailure.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                Watch
+                    .localObservationCandidateSnapshotForWatchTests()
+                    .Length
+                |> should equal 1
+
+                releaseRetryPublication.Set()
+
+                firstTimerRetry.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                // The first target publication cannot erase the newer marker-deletion retry or drain candidates under an incomplete transition.
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                successfulRebinds |> should equal 1
+                scanCalls |> should equal 0
+
+                readWatchStatusJsonStringProperty "BranchId"
+                |> should equal $"{branchBId}"
+
+                // A persistent failure keeps the same retry pending and still blocks scan recovery.
+                processRecovery ()
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal true
+
+                scanCalls |> should equal 0
+
+                failMarkerRebind <- false
+                processRecovery ()
+
+                Watch.hasPendingTransitionConfigurationReloadForWatchTests ()
+                |> should equal false
+
+                Current().BranchId |> should equal branchBId
+                successfulRebinds |> should equal 2
+                scanCalls |> should equal 1
+            finally
+                releaseRetryPublication.Set()
+
+                firstTimerRetry.Wait(TimeSpan.FromSeconds(5.0))
+                |> ignore
+
+                Watch.resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests ()
+                Watch.resetUpdateMarkerWatcherRebindForWatchTests ())
+
     /// Verifies a deferred target reload cannot weaken durable replay suspension before the retry reaches a clean recovery boundary.
     [<Test>]
     let ``suspended Watch remains suspended when deferred target ignore reload fails`` () =
