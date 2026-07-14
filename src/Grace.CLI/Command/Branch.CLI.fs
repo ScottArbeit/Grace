@@ -2961,10 +2961,19 @@ module Branch =
                     )
         }
 
-    /// Runs the branch-switch Watch-clean preflight without suppressing later filesystem observations.
-    let internal runBranchSwitchWatchCleanPreflight (operations: BranchSwitchWatchCleanPreflightOperations) correlationId =
+    /// Runs the branch-switch Watch-clean preflight while permitting only the marker written by this invocation.
+    let private runBranchSwitchWatchCleanPreflightWithOwnedMarker
+        (operations: BranchSwitchWatchCleanPreflightOperations)
+        correlationId
+        (ownedMarker: (unit -> bool) option)
+        (durablePendingWorkBoundary: string)
+        =
         task {
-            if operations.UpdateMarkerExists() then
+            if operations.UpdateMarkerExists()
+               && (ownedMarker
+                   |> Option.map (fun ownsMarker -> ownsMarker ())
+                   |> Option.defaultValue false
+                   |> not) then
                 return
                     Error(
                         GraceError.Create
@@ -2976,8 +2985,30 @@ module Branch =
 
                 match validateBranchSwitchWatchCleanPreflight false inspection with
                 | Error reason -> return Error(GraceError.Create $"Branch switch refused before mutation: {reason}" correlationId)
-                | Ok () -> return! validateBranchSwitchDurablePendingWorkSummary operations correlationId ""
+                | Ok () -> return! validateBranchSwitchDurablePendingWorkSummary operations correlationId durablePendingWorkBoundary
         }
+
+    /// Runs the branch-switch Watch-clean preflight without suppressing later filesystem observations.
+    let internal runBranchSwitchWatchCleanPreflight (operations: BranchSwitchWatchCleanPreflightOperations) correlationId =
+        runBranchSwitchWatchCleanPreflightWithOwnedMarker operations correlationId None ""
+
+    /// Reruns the complete branch-switch Watch-clean preflight after this invocation created its update marker.
+    let private runBranchSwitchWatchCleanPreflightAfterOwnedMarker
+        (operations: BranchSwitchWatchCleanPreflightOperations)
+        correlationId
+        (updateMarkerFileName: string)
+        (markerText: string)
+        =
+        runBranchSwitchWatchCleanPreflightWithOwnedMarker
+            operations
+            correlationId
+            (Some (fun () ->
+                try
+                    File.Exists(updateMarkerFileName)
+                    && String.Equals(File.ReadAllText(updateMarkerFileName), markerText, StringComparison.Ordinal)
+                with
+                | _ -> false))
+            " after update marker creation"
 
     /// Writes branch-switch marker content through an injectable writer so failure cleanup can be tested deterministically.
     let internal createBranchSwitchUpdateMarkerWithWriter
@@ -3170,7 +3201,7 @@ module Branch =
                 | Error error -> return Error error
                 | Ok () ->
                     try
-                        match! validateBranchSwitchDurablePendingWorkSummary operations correlationId " after update marker creation" with
+                        match! runBranchSwitchWatchCleanPreflightAfterOwnedMarker operations correlationId updateMarkerFileName markerText with
                         | Error error -> return Error error
                         | Ok () ->
                             let! result = operation ()

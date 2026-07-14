@@ -2612,6 +2612,7 @@ module WatchTests =
     [<Test>]
     let ``update marker deletion reloads branch config and publishes new branch ipc`` () =
         withTempRepo (fun root ->
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             let repositoryId = Guid.NewGuid()
             let branchAId = Guid.NewGuid()
             let branchBId = Guid.NewGuid()
@@ -2646,6 +2647,9 @@ module WatchTests =
             Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
 
             recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+            |> should equal (Some 1L)
 
             Services.IpcFileName() |> should equal branchBIpc
 
@@ -2683,7 +2687,9 @@ module WatchTests =
             branchAInspection.Exists |> should equal false
 
             Services.getGraceWatchStatus().Result
-            |> should equal None)
+            |> should equal None
+
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
     /// Verifies that branch transition completion refreshes SignalR parent identity before auto-rebase events resume.
     [<Test>]
@@ -2699,6 +2705,7 @@ module WatchTests =
             let branchBName = "branch-b"
 
             try
+                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
                 writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
                 resetConfiguration ()
                 Current() |> ignore
@@ -2744,7 +2751,10 @@ module WatchTests =
                 |> should equal [| branchBId, parentBId |]
 
                 refreshObservedStatusRoots.ToArray()
-                |> should equal [| Some statusB.RootDirectoryId |]
+                |> should equal [| None |]
+
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal (Some 1L)
 
                 let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
                 subscription.BranchId |> should equal branchBId
@@ -2777,7 +2787,8 @@ module WatchTests =
                         statusB.RootDirectoryId
                     |]
             finally
-                Watch.resetSignalRSubscriptionRefreshForWatchTests ())
+                Watch.resetSignalRSubscriptionRefreshForWatchTests ()
+                Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
     /// Verifies that stale parent events cannot auto-rebase after target branch config reload begins.
     [<Test>]
@@ -3702,6 +3713,38 @@ module WatchTests =
             |> should equal true
 
             Watch.shouldIgnoreFileForWatchTests filePath
+            |> should equal true)
+
+    /// Verifies Watch treats only the `.grace` directory and its descendants as internal while ordinary similarly prefixed paths retain normal ignore behavior.
+    [<Test>]
+    let ``Watch ignores only separator bounded grace directory paths`` () =
+        withTempRepo (fun root ->
+            let gracePath = Path.Combine(root, Constants.GraceConfigDirectory, "objects", "cache.bin")
+            let graceNotesPath = Path.Combine(root, ".grace-notes", "todo.md")
+            let gracefulPath = Path.Combine(root, ".graceful")
+
+            Directory.CreateDirectory(Path.GetDirectoryName(graceNotesPath))
+            |> ignore
+
+            File.WriteAllText(graceNotesPath, "ordinary repository note")
+            File.WriteAllText(gracefulPath, "ordinary repository file")
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests gracePath
+            |> should equal true
+
+            Watch.shouldIgnoreFileForWatchTests (graceNotesPath.Replace(string Path.DirectorySeparatorChar, string Path.AltDirectorySeparatorChar))
+            |> should equal false
+
+            Watch.shouldIgnoreFileForWatchTests (Path.Combine(root, ".GRACEFUL"))
+            |> should equal false
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), ".graceful")
+            Watch.resetWatchIgnoreSnapshotForWatchTests ()
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+
+            Watch.shouldIgnoreFileForWatchTests gracefulPath
             |> should equal true)
 
     /// Verifies that ordinary ignore-file edits wait for a new Watch lifetime while configured project noise applies after restart.
@@ -21401,8 +21444,10 @@ module WatchTests =
                         (acceptedMaterializationStatus acceptedStatus))
                     :> Task)
 
-            Assert.ThrowsAsync<InvalidOperationException>(operation)
-            |> ignore
+            let error = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+            error.Message
+            |> should startWith "Remote materialization persisted status no longer matches the clean snapshot accepted by the coordinator gate"
 
             File.ReadAllText(targetPath)
             |> should equal "local"
@@ -22598,6 +22643,190 @@ module WatchTests =
             |> should equal true
 
             resyncRequests.Count |> should equal 0)
+
+    /// Verifies a retained tracked parent must remain the accepted directory until exact remote child materialization starts.
+    [<TestCase("intact")>]
+    [<TestCase("deleted")>]
+    [<TestCase("replaced")>]
+    [<Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization revalidates retained tracked parent before remote child write`` mutation =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let retainedParent = "retained-parent"
+            let targetPath = Path.Combine(root, retainedParent, "remote-child.txt")
+
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
+            |> ignore
+
+            let remoteFile = cacheRemoteFileVersion root $"{retainedParent}/remote-child.txt" "remote payload"
+            File.Delete(targetPath)
+
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> [| retainedParent |]
+            let remoteDirectoryId = Guid.NewGuid()
+            let remoteDirectory = remoteDirectoryVersion remoteDirectoryId retainedParent Array.empty [| remoteFile |]
+            let remoteRootId = Guid.NewGuid()
+            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| remoteDirectoryId |] Array.empty<FileVersion>
+
+            setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
+            |> ignore
+
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+
+            let clients =
+                { remoteMaterializationClients [| remoteRoot; remoteDirectory |] currentStatus writtenStatuses resyncRequests with
+                    BeforeFinalVerification =
+                        fun () ->
+                            match mutation with
+                            | "deleted" -> Directory.Delete(Path.Combine(root, retainedParent), true)
+                            | "replaced" ->
+                                Directory.Delete(Path.Combine(root, retainedParent), true)
+                                File.WriteAllText(Path.Combine(root, retainedParent), "local replacement")
+                            | "intact" -> ()
+                            | unexpected -> failwith $"Unexpected retained parent mutation: {unexpected}"
+
+                            Task.FromResult(())
+                }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            match mutation with
+            | "intact" ->
+                operation.Invoke().GetAwaiter().GetResult()
+
+                File.ReadAllText(targetPath)
+                |> should equal "remote payload"
+
+                writtenStatuses.Count |> should equal 1
+                resyncRequests.Count |> should equal 0
+            | "deleted"
+            | "replaced" ->
+                Assert.ThrowsAsync<InvalidOperationException>(operation)
+                |> ignore
+
+                File.Exists(targetPath) |> should equal false
+                writtenStatuses.Count |> should equal 0
+                resyncRequests.Count |> should equal 1
+            | _ -> ())
+
+    /// Verifies a parent directory explicitly created by the remote materialization plan remains eligible for child file creation.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization permits planned remote created parent`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let createdParent = "remote-created-parent"
+            let targetPath = Path.Combine(root, createdParent, "remote-child.txt")
+            let remoteFile = cacheRemoteFileVersion root $"{createdParent}/remote-child.txt" "remote payload"
+
+            Directory.Delete(Path.Combine(root, createdParent), true)
+
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> Array.empty<string>
+            let remoteDirectoryId = Guid.NewGuid()
+            let remoteDirectory = remoteDirectoryVersion remoteDirectoryId createdParent Array.empty [| remoteFile |]
+            let remoteRootId = Guid.NewGuid()
+            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| remoteDirectoryId |] Array.empty<FileVersion>
+
+            setCanonicalRemoteDirectoryHashes remoteRoot [| remoteDirectory |]
+            |> ignore
+
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let clients = remoteMaterializationClients [| remoteRoot; remoteDirectory |] currentStatus writtenStatuses resyncRequests
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification)
+                .GetAwaiter()
+                .GetResult()
+
+            File.ReadAllText(targetPath)
+            |> should equal "remote payload"
+
+            writtenStatuses.Count |> should equal 1
+            resyncRequests.Count |> should equal 0)
+
+    /// Verifies a planned remote child cannot recreate a retained tracked ancestor deleted after the clean snapshot.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization blocks planned parent beneath deleted retained ancestor`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let retainedParent = "retained-parent"
+            let createdParent = $"{retainedParent}/remote-created-parent"
+            let targetPath = Path.Combine(root, retainedParent, "remote-created-parent", "remote-child.txt")
+
+            Directory.CreateDirectory(Path.Combine(root, retainedParent))
+            |> ignore
+
+            let remoteFile = cacheRemoteFileVersion root $"{createdParent}/remote-child.txt" "remote payload"
+
+            Directory.Delete(Path.Combine(root, retainedParent, "remote-created-parent"), true)
+
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty<string> [| retainedParent |]
+            let createdDirectoryId = Guid.NewGuid()
+            let createdDirectory = remoteDirectoryVersion createdDirectoryId createdParent Array.empty [| remoteFile |]
+            let retainedDirectoryId = Guid.NewGuid()
+
+            let retainedDirectory =
+                remoteDirectoryVersion retainedDirectoryId retainedParent [| createdDirectoryId |] Array.empty<FileVersion>
+
+            let remoteRootId = Guid.NewGuid()
+            let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| retainedDirectoryId |] Array.empty<FileVersion>
+
+            setCanonicalRemoteDirectoryHashes retainedDirectory [| createdDirectory |]
+            |> ignore
+
+            setCanonicalRemoteDirectoryHashes remoteRoot [| retainedDirectory |]
+            |> ignore
+
+            let writtenStatuses = ResizeArray<GraceStatus>()
+            let resyncRequests = ResizeArray<string>()
+            let targetMutations = ResizeArray<string>()
+
+            let clients =
+                { remoteMaterializationClients [| remoteRoot; retainedDirectory; createdDirectory |] currentStatus writtenStatuses resyncRequests with
+                    BeforeFinalVerification =
+                        fun () ->
+                            Directory.Delete(Path.Combine(root, retainedParent), true)
+                            Task.FromResult(())
+                    BeforeTargetMutation = targetMutations.Add
+                }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    remoteRootId
+                    remoteRoot.Sha256Hash
+                    remoteRoot.Blake3Hash
+
+            let operation = Func<Task>(fun () -> (Watch.applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients notification) :> Task)
+
+            let error = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+            error.Message
+            |> should startWith "Remote materialization retained directory changed before apply"
+
+            File.Exists(targetPath) |> should equal false
+            targetMutations |> should equal [| "final verification" |]
+            writtenStatuses.Count |> should equal 0
+            resyncRequests.Count |> should equal 1)
 
     /// Verifies a target edited after the clean gate fails closed before remote bytes overwrite it.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]

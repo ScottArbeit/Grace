@@ -123,12 +123,31 @@ module Watch =
     /// Loads the current repository snapshot for focused Watch tests that prove restart and invalid-file behavior.
     let internal tryActivateWatchIgnoreSnapshotForWatchTests () = tryActivateWatchIgnoreSnapshot ()
 
+    /// Reports whether a candidate path is the Grace internal directory itself or belongs to its descendant namespace.
+    let private isPathWithinDirectoryForWatch (directoryPath: string) (candidatePath: string) =
+        let normalizedDirectory =
+            directoryPath
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        let normalizedCandidate =
+            candidatePath
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        String.Equals(normalizedCandidate, normalizedDirectory, StringComparison.InvariantCultureIgnoreCase)
+        || normalizedCandidate.StartsWith(
+            normalizedDirectory
+            + string Path.DirectorySeparatorChar,
+            StringComparison.InvariantCultureIgnoreCase
+        )
+
     /// Checks a file path against the copied Watch-lifetime ignore snapshot.
     let private shouldIgnoreFileForWatch fullPath =
         let snapshot = currentWatchIgnoreSnapshot ()
         let fileInfo = FileInfo(fullPath)
 
-        fullPath.StartsWith(snapshot.GraceDirectory, StringComparison.InvariantCultureIgnoreCase)
+        isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
         || fullPath.Equals(snapshot.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
         || fullPath.Equals(snapshot.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
         || fullPath.Equals(snapshot.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
@@ -148,7 +167,7 @@ module Watch =
         let snapshot = currentWatchIgnoreSnapshot ()
         let directoryInfo = DirectoryInfo(directoryPath)
 
-        directoryInfo.FullName.StartsWith(snapshot.GraceDirectory, StringComparison.InvariantCultureIgnoreCase)
+        isPathWithinDirectoryForWatch snapshot.GraceDirectory directoryInfo.FullName
         || snapshot.DirectoryEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
 
     /// Checks whether a directory remains eligible under the copied Watch-lifetime ignore snapshot.
@@ -1185,6 +1204,13 @@ module Watch =
     let private signalRSubscriptionRefreshLock = obj ()
     let private signalRBranchSubscriptionRefreshSemaphore = new SemaphoreSlim(1, 1)
     let mutable private refreshSignalRBranchSubscriptionsForTransitionCompletion = ignore
+    let private transitionCatchUpRequestLock = obj ()
+    let mutable private requestCurrentBranchReferenceCatchUpAfterTransitionCompletion = ignore
+
+    /// Queues the current target branch's BranchDto catch-up only after its SignalR subscriptions are current.
+    let private requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh () =
+        let request = lock transitionCatchUpRequestLock (fun () -> requestCurrentBranchReferenceCatchUpAfterTransitionCompletion)
+        request ()
 
     /// Clears branch-scoped SignalR trust while preserving whether transition recovery still owes a refresh attempt.
     let private clearSignalRBranchSubscriptionWithRefreshFlag refreshNeededAfterTransition =
@@ -4414,26 +4440,30 @@ module Watch =
                                     currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
                                     && not (isGraceWatchResyncPending ())
                                 then
-                                    let transitionPublicationVerified =
-                                        tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
-                                            updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+                                    try
+                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                        requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
 
-                                    if transitionPublicationVerified then
-                                        try
-                                            refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                        let transitionPublicationVerified =
+                                            tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
 
+                                        if transitionPublicationVerified then
                                             logToAnsiConsole
                                                 Colors.Important
                                                 $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
-                                        with
-                                        | ex ->
-                                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                                        else
+                                            requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
+                                    with
+                                    | ex ->
+                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
 
-                                            logToAnsiConsole
-                                                Colors.Error
-                                                $"Grace Watch completed branch transition but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
-                                    else
-                                        requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
+                                        requestGraceWatchExplicitResync
+                                            "branch transition completion could not refresh SignalR subscriptions and queue BranchDto catch-up"
+
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"Grace Watch completed branch transition but could not refresh SignalR subscriptions and queue current-branch catch-up before healthy target IPC publication: {Markup.Escape(ex.Message)}."
                                 else
                                     publishNonIncrementalTransitionCompletionStatus
                                         $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
@@ -5008,6 +5038,7 @@ module Watch =
             DirectoryCreates: RelativePath array
             FileWrites: LocalFileVersion array
             RetainedFiles: LocalFileVersion array
+            RetainedDirectories: LocalDirectoryVersion array
         }
 
     /// Converts the active repository path comparison into dictionary lookup semantics.
@@ -5361,6 +5392,28 @@ module Watch =
                     && materializationPathIsUnder other candidate)
             ))
 
+    /// Gets the normalized repository-relative parent directory for a materialization target.
+    let private materializationParentDirectoryPath (relativePath: RelativePath) =
+        let path = normalizedMaterializationPath relativePath
+        let separatorIndex = path.LastIndexOf('/')
+
+        if separatorIndex < 0 then
+            Constants.RootDirectoryPath
+        else
+            path.Substring(0, separatorIndex)
+
+    /// Enumerates every non-root parent directory that would be recreated while materializing a target.
+    let private materializationAncestorDirectoryPaths (relativePath: RelativePath) =
+        Seq.unfold
+            (fun path ->
+                let parentPath = materializationParentDirectoryPath path
+
+                if parentPath = Constants.RootDirectoryPath then
+                    None
+                else
+                    Some(parentPath, parentPath))
+            relativePath
+
     /// Computes the exact target set that differs between local status and the remote Reference tree.
     let internal buildCurrentBranchRemoteMaterializationPlanForWatchTests (currentStatus: GraceStatus) (remoteStatus: GraceStatus) =
         let currentDirectories = materializationDirectoriesByPath currentStatus
@@ -5445,12 +5498,35 @@ module Watch =
                     currentFile.Blake3Hash)
             |> Seq.toArray
 
+        let retainedDirectories =
+            seq {
+                yield! directoryCreates
+
+                yield!
+                    fileWrites
+                    |> Seq.map (fun fileVersion -> fileVersion.RelativePath)
+            }
+            |> Seq.collect materializationAncestorDirectoryPaths
+            |> Seq.distinct
+            |> Seq.choose (fun path ->
+                let mutable currentDirectory = Unchecked.defaultof<LocalDirectoryVersion>
+
+                if
+                    currentDirectories.TryGetValue(path, &currentDirectory)
+                    && remoteDirectories.ContainsKey(path)
+                then
+                    Some currentDirectory
+                else
+                    None)
+            |> Seq.toArray
+
         {
             FileDeletes = fileDeletes
             DirectoryDeletes = directoryDeletes
             DirectoryCreates = directoryCreates
             FileWrites = fileWrites
             RetainedFiles = retainedFiles
+            RetainedDirectories = retainedDirectories
         }
 
     /// Verifies a tracked target file still matches the local status snapshot.
@@ -5554,6 +5630,25 @@ module Watch =
 
                     return allTrackedFilesMatch
         }
+
+    /// Fails before exact target mutation when a tracked parent directory no longer matches the accepted clean snapshot.
+    let private verifyCurrentBranchMaterializationRetainedDirectories (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for directoryVersion in plan.RetainedDirectories do
+                let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus directoryVersion.RelativePath
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization retained directory changed before apply: {directoryVersion.RelativePath}."
+        }
+
+    /// Fails immediately before parent creation when a retained tracked ancestor was deleted or replaced after the final clean proof.
+    let private verifyCurrentBranchMaterializationRetainedAncestorsForTarget (plan: CurrentBranchRemoteMaterializationPlan) (relativePath: RelativePath) =
+        for directoryVersion in plan.RetainedDirectories do
+            if materializationPathIsUnder directoryVersion.RelativePath relativePath then
+                let fullPath = materializationTargetFullPath directoryVersion.RelativePath
+
+                if not (Directory.Exists(fullPath)) then
+                    invalidOp $"Remote materialization retained ancestor directory changed at mutation boundary: {directoryVersion.RelativePath}."
 
     /// Fails before target mutation when a changed target no longer matches the trusted local status.
     let private verifyCurrentBranchMaterializationTargetsUnchanged (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
@@ -5850,6 +5945,7 @@ module Watch =
                     do! verifyCurrentBranchMaterializationObjectCache plan
                     do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
                     do! verifyCurrentBranchMaterializationRetainedFiles plan
+                    do! verifyCurrentBranchMaterializationRetainedDirectories currentStatus plan
                     do! verifyCurrentBranchMaterializationBinaryClassifications plan
                     let currentFiles = materializationFilesByPath currentStatus
 
@@ -5883,6 +5979,8 @@ module Watch =
 
                     for relativePath in plan.DirectoryCreates do
                         let fullPath = materializationTargetFullPath relativePath
+
+                        verifyCurrentBranchMaterializationRetainedAncestorsForTarget plan relativePath
 
                         if
                             File.Exists(fullPath)
@@ -5920,6 +6018,8 @@ module Watch =
                             invalidOp $"Remote materialization write target appeared at mutation boundary: {fileVersion.RelativePath}."
 
                         do! verifyCurrentBranchMaterializationObjectCache { plan with FileWrites = [| fileVersion |] }
+
+                        verifyCurrentBranchMaterializationRetainedAncestorsForTarget plan fileVersion.RelativePath
 
                         ensureMarkerOwned $"create parent directory {fileVersion.RelativePath}"
 
@@ -6983,6 +7083,11 @@ module Watch =
         |> ignore
 
         logToAnsiConsole Colors.Verbose $"Current-branch Watch catch-up requested after {reason}."
+
+    do
+        lock transitionCatchUpRequestLock (fun () ->
+            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
+                fun () -> requestCurrentBranchReferenceCatchUp "branch transition SignalR subscription refresh")
 
     /// Completes a claimed lifecycle request and deliberately leaves later requests pending.
     let private completeCurrentBranchReferenceCatchUp (scheduler: CurrentBranchReferenceCatchUpScheduler) (claim: CurrentBranchReferenceCatchUpClaim) =
@@ -8300,6 +8405,7 @@ module Watch =
                                                 if signalRBranchSubscriptionRefreshNeededForTransition () then
                                                     try
                                                         refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                                        requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
                                                     with
                                                     | ex ->
                                                         completeSignalRBranchSubscriptionRefreshWithoutTrust ()
@@ -8349,6 +8455,7 @@ module Watch =
                                             if signalRBranchSubscriptionRefreshNeededForTransition () then
                                                 try
                                                     refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                                    requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
                                                 with
                                                 | ex ->
                                                     completeSignalRBranchSubscriptionRefreshWithoutTrust ()
