@@ -5,9 +5,13 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Globalization
 open System.IO
+open System.Runtime.CompilerServices
 open System.Threading
 open Microsoft.Data.Sqlite
 open SQLitePCL
+
+[<assembly: InternalsVisibleTo("Grace.Cache.Tests")>]
+do ()
 
 /// Identifies immutable promoted content and the root whose metadata will retain it.
 type CacheArtifactDescriptor = { ArtifactId: string; Digest: string; UncompressedSize: int64; RootDirectoryVersionId: string; FillToken: string }
@@ -29,6 +33,7 @@ type private CacheStoreShared =
         OwnershipLock: FileStream
         LifecycleGate: obj
         mutable ReferenceCount: int
+        mutable ActiveOperationCount: int
     }
 
 /// Represents the private cache database handle used only by the cache runtime's narrow store API.
@@ -82,9 +87,16 @@ module CacheStore =
             (Batteries_V2.Init()
              true)
 
-    let private initializationLocks = ConcurrentDictionary<string, obj>(StringComparer.OrdinalIgnoreCase)
+    /// Compares canonical cache paths according to the runtime platform's path case behavior.
+    let private cachePathComparer =
+        if OperatingSystem.IsWindows() then
+            StringComparer.OrdinalIgnoreCase
+        else
+            StringComparer.Ordinal
 
-    let private sharedStores = ConcurrentDictionary<string, CacheStoreShared>(StringComparer.OrdinalIgnoreCase)
+    let private initializationLocks = ConcurrentDictionary<string, obj>(cachePathComparer)
+
+    let private sharedStores = ConcurrentDictionary<string, CacheStoreShared>(cachePathComparer)
 
     let private schemaTables =
         [|
@@ -197,18 +209,58 @@ module CacheStore =
     /// Creates a caller lease over a live shared process owner without rerunning startup recovery.
     let private createStoreLease (sharedStore: CacheStoreShared) =
         lock sharedStore.LifecycleGate (fun () ->
-            if sharedStore.ReferenceCount <= 0 then
-                invalidOp "Cache database ownership ended before a new store lease could be created."
+            if sharedStore.ReferenceCount < 0 then
+                invalidOp "Cache database ownership reference count became negative before a new store lease could be created."
 
             sharedStore.ReferenceCount <- sharedStore.ReferenceCount + 1
             { Shared = sharedStore; Released = 0 })
 
-    /// Rejects use of a store handle after that caller has released its shared ownership lease.
-    let private requireLiveStore (store: CacheStore) =
-        if Volatile.Read(&store.Released) <> 0 then
-            invalidOp "Cache store lease has already been released."
+    /// Removes and unlocks an unused shared owner while the initialization and lifecycle gates are both held.
+    let private releaseSharedStoreIfUnused (sharedStore: CacheStoreShared) =
+        if sharedStore.ReferenceCount = 0
+           && sharedStore.ActiveOperationCount = 0 then
+            let mutable removed = Unchecked.defaultof<CacheStoreShared>
 
-        store.Shared
+            if sharedStores.TryRemove(sharedStore.DatabasePath, &removed) then
+                if not (Object.ReferenceEquals(removed, sharedStore)) then
+                    invalidOp "Cache database ownership registry removed a different shared store."
+
+                sharedStore.OwnershipLock.Dispose()
+
+    /// Starts one store operation only while its caller lease remains live and retains process ownership until completion.
+    let private beginStoreOperation (store: CacheStore) =
+        let sharedStore = store.Shared
+
+        lock sharedStore.LifecycleGate (fun () ->
+            if Volatile.Read(&store.Released) <> 0 then
+                invalidOp "Cache store lease has already been released."
+
+            if sharedStore.ReferenceCount <= 0 then
+                invalidOp "Cache database ownership ended before a store operation could begin."
+
+            sharedStore.ActiveOperationCount <- sharedStore.ActiveOperationCount + 1
+            sharedStore)
+
+    /// Ends one store operation and releases process ownership only after its last caller lease and operation exit.
+    let private endStoreOperation (sharedStore: CacheStoreShared) =
+        let initializationLock = initializationLocks.GetOrAdd(sharedStore.DatabasePath, (fun _ -> obj ()))
+
+        lock initializationLock (fun () ->
+            lock sharedStore.LifecycleGate (fun () ->
+                if sharedStore.ActiveOperationCount <= 0 then
+                    invalidOp "Cache store operation count became negative."
+
+                sharedStore.ActiveOperationCount <- sharedStore.ActiveOperationCount - 1
+                releaseSharedStoreIfUnused sharedStore))
+
+    /// Runs a cache store action while holding process ownership through every success and exception path.
+    let private withStoreOperation (store: CacheStore) operation =
+        let sharedStore = beginStoreOperation store
+
+        try
+            operation sharedStore
+        finally
+            endStoreOperation sharedStore
 
     /// Opens a cache-local connection and verifies every required SQLite setting instead of inheriting process defaults.
     let private openConnection (databasePath: string) =
@@ -405,18 +457,22 @@ module CacheStore =
 
         count |> Option.defaultValue 0 > 0
 
+    /// Recognizes Grace's canonical lowercase hexadecimal SHA-256 text before it becomes durable artifact identity.
+    let private isCanonicalSha256Digest (value: string) =
+        not (isNull value)
+        && value.Length = 64
+        && (value
+            |> Seq.forall (fun character ->
+                (character >= '0' && character <= '9')
+                || (character >= 'a' && character <= 'f')))
+
     /// Validates source identity before it can become either pending state or a valid artifact row.
     let private validateDescriptor (descriptor: CacheArtifactDescriptor) =
-        let hasSha256Shape (value: string) =
-            not (isNull value)
-            && value.Length = 64
-            && value
-               |> Seq.forall (fun character -> Uri.IsHexDigit(character))
 
         if String.IsNullOrWhiteSpace descriptor.ArtifactId then
             Error "Artifact id is required."
-        elif not (hasSha256Shape descriptor.Digest) then
-            Error "Artifact digest must be a 64-character hexadecimal SHA-256 value."
+        elif not (isCanonicalSha256Digest descriptor.Digest) then
+            Error "Artifact digest must be a canonical lowercase 64-character hexadecimal SHA-256 value."
         elif descriptor.UncompressedSize < 0L then
             Error "Artifact uncompressed size cannot be negative."
         elif String.IsNullOrWhiteSpace descriptor.RootDirectoryVersionId then
@@ -751,6 +807,7 @@ module CacheStore =
                                 OwnershipLock = ownershipLock
                                 LifecycleGate = obj ()
                                 ReferenceCount = 1
+                                ActiveOperationCount = 0
                             }
 
                         if not (sharedStores.TryAdd(canonicalPath, sharedStore)) then
@@ -776,84 +833,94 @@ module CacheStore =
                     if sharedStore.ReferenceCount < 0 then
                         invalidOp "Cache store ownership reference count became negative."
 
-                    if sharedStore.ReferenceCount = 0 then
-                        let mutable removed = Unchecked.defaultof<CacheStoreShared>
-
-                        sharedStores.TryRemove(sharedStore.DatabasePath, &removed)
-                        |> ignore
-
-                        sharedStore.OwnershipLock.Dispose()))
+                    releaseSharedStoreIfUnused sharedStore))
 
     /// Returns the verified connection settings captured while the shared store owner was opened.
-    let getDiagnostics (store: CacheStore) =
-        let sharedStore = requireLiveStore store
-        sharedStore.Diagnostics
+    let getDiagnostics (store: CacheStore) = withStoreOperation store (fun sharedStore -> sharedStore.Diagnostics)
 
     /// Records a valid source descriptor as pending while rejecting malformed or stale identities before persistence.
     let beginIngest (store: CacheStore) (descriptor: CacheArtifactDescriptor) : CacheIngestBeginResult =
-        let sharedStore = requireLiveStore store
+        withStoreOperation store (fun sharedStore ->
+            match validateDescriptor descriptor with
+            | Error reason -> CacheIngestBeginResult.Rejected reason
+            | Ok () ->
+                withBusyRetry (fun () ->
+                    use connection = openConnection sharedStore.DatabasePath
+                    use transaction = connection.BeginTransaction()
 
-        match validateDescriptor descriptor with
-        | Error reason -> CacheIngestBeginResult.Rejected reason
-        | Ok () ->
-            withBusyRetry (fun () ->
-                use connection = openConnection sharedStore.DatabasePath
-                use transaction = connection.BeginTransaction()
-
-                match tryReadDescriptor connection (Some transaction) "artifacts" descriptor.ArtifactId "" with
-                | Some valid when
-                    descriptorMatches descriptor valid
-                    && isArtifactRetainedByRoot connection (Some transaction) descriptor.ArtifactId descriptor.RootDirectoryVersionId
-                    ->
-                    transaction.Commit()
-                    CacheIngestBeginResult.AlreadyValid
-                | Some valid when descriptorMatches descriptor valid ->
-                    match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
-                    | Some pending when descriptorMatches descriptor pending ->
+                    match tryReadDescriptor connection (Some transaction) "artifacts" descriptor.ArtifactId "" with
+                    | Some valid when
+                        descriptorMatches descriptor valid
+                        && isArtifactRetainedByRoot connection (Some transaction) descriptor.ArtifactId descriptor.RootDirectoryVersionId
+                        ->
                         transaction.Commit()
-                        CacheIngestBeginResult.Pending
+                        CacheIngestBeginResult.AlreadyValid
+                    | Some valid when descriptorMatches descriptor valid ->
+                        match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
+                        | Some pending when descriptorMatches descriptor pending ->
+                            transaction.Commit()
+                            CacheIngestBeginResult.Pending
+                        | Some _ ->
+                            transaction.Rollback()
+                            CacheIngestBeginResult.Rejected "Artifact/root pair already has a pending ingest with a different stale-sensitive identity."
+                        | None ->
+                            insertPendingIngest connection (Some transaction) descriptor
+                            transaction.Commit()
+                            CacheIngestBeginResult.Pending
                     | Some _ ->
                         transaction.Rollback()
-                        CacheIngestBeginResult.Rejected "Artifact/root pair already has a pending ingest with a different stale-sensitive identity."
-                    | None ->
-                        insertPendingIngest connection (Some transaction) descriptor
-                        transaction.Commit()
-                        CacheIngestBeginResult.Pending
-                | Some _ ->
-                    transaction.Rollback()
-                    CacheIngestBeginResult.Rejected "Artifact id already belongs to a different valid immutable descriptor."
-                | None when hasPendingArtifactIdentityConflict connection (Some transaction) descriptor ->
-                    transaction.Rollback()
-                    CacheIngestBeginResult.Rejected "Artifact id already has a cross-root pending ingest with a different immutable identity."
-                | None ->
-                    match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
-                    | Some pending when descriptorMatches descriptor pending ->
-                        transaction.Commit()
-                        CacheIngestBeginResult.Pending
-                    | Some _ ->
+                        CacheIngestBeginResult.Rejected "Artifact id already belongs to a different valid immutable descriptor."
+                    | None when hasPendingArtifactIdentityConflict connection (Some transaction) descriptor ->
                         transaction.Rollback()
-                        CacheIngestBeginResult.Rejected "Artifact/root pair already has a pending ingest with a different stale-sensitive identity."
+                        CacheIngestBeginResult.Rejected "Artifact id already has a cross-root pending ingest with a different immutable identity."
                     | None ->
-                        insertPendingIngest connection (Some transaction) descriptor
-                        transaction.Commit()
-                        CacheIngestBeginResult.Pending)
+                        match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
+                        | Some pending when descriptorMatches descriptor pending ->
+                            transaction.Commit()
+                            CacheIngestBeginResult.Pending
+                        | Some _ ->
+                            transaction.Rollback()
+                            CacheIngestBeginResult.Rejected "Artifact/root pair already has a pending ingest with a different stale-sensitive identity."
+                        | None ->
+                            insertPendingIngest connection (Some transaction) descriptor
+                            transaction.Commit()
+                            CacheIngestBeginResult.Pending))
 
     /// Atomically publishes one confirmed artifact and its complete recursive metadata only while the original pending identity remains current.
     let commitPromotedIngest (store: CacheStore) (descriptor: CacheArtifactDescriptor) (metadata: CacheRecursiveMetadata) : CacheIngestCommitResult =
-        let sharedStore = requireLiveStore store
+        withStoreOperation store (fun sharedStore ->
+            match validateDescriptor descriptor, validateMetadata descriptor metadata with
+            | Error reason, _
+            | _, Error reason -> CacheIngestCommitResult.Rejected reason
+            | Ok (), Ok () ->
+                withBusyRetry (fun () ->
+                    use connection = openConnection sharedStore.DatabasePath
+                    use transaction = connection.BeginTransaction()
 
-        match validateDescriptor descriptor, validateMetadata descriptor metadata with
-        | Error reason, _
-        | _, Error reason -> CacheIngestCommitResult.Rejected reason
-        | Ok (), Ok () ->
-            withBusyRetry (fun () ->
-                use connection = openConnection sharedStore.DatabasePath
-                use transaction = connection.BeginTransaction()
+                    match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
+                    | None ->
+                        match tryReadDescriptor connection (Some transaction) "artifacts" descriptor.ArtifactId "" with
+                        | Some valid when descriptorMatches descriptor valid ->
+                            match validateCanonicalDirectoryMetadata connection (Some transaction) metadata with
+                            | Error reason ->
+                                transaction.Rollback()
+                                CacheIngestCommitResult.Rejected reason
+                            | Ok () ->
+                                insertMetadata connection (Some transaction) descriptor metadata
 
-                match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
-                | None ->
-                    match tryReadDescriptor connection (Some transaction) "artifacts" descriptor.ArtifactId "" with
-                    | Some valid when descriptorMatches descriptor valid ->
+                                if isArtifactRetainedByRoot connection (Some transaction) descriptor.ArtifactId descriptor.RootDirectoryVersionId then
+                                    transaction.Commit()
+                                    CacheIngestCommitResult.AlreadyPublished
+                                else
+                                    transaction.Rollback()
+                                    CacheIngestCommitResult.Rejected "Existing artifact publication could not establish the requested root membership."
+                        | _ ->
+                            transaction.Rollback()
+                            CacheIngestCommitResult.Rejected "No current pending ingest exists for the promoted artifact."
+                    | Some pending when not (descriptorMatches descriptor pending) ->
+                        transaction.Rollback()
+                        CacheIngestCommitResult.Rejected "Pending ingest identity changed before promoted publication."
+                    | Some _ ->
                         match validateCanonicalDirectoryMetadata connection (Some transaction) metadata with
                         | Error reason ->
                             transaction.Rollback()
@@ -861,68 +928,59 @@ module CacheStore =
                         | Ok () ->
                             insertMetadata connection (Some transaction) descriptor metadata
 
-                            if isArtifactRetainedByRoot connection (Some transaction) descriptor.ArtifactId descriptor.RootDirectoryVersionId then
+                            match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
+                            | Some current when descriptorMatches descriptor current ->
+                                executeNonQuery
+                                    connection
+                                    (Some transaction)
+                                    "DELETE FROM pending_ingests WHERE artifact_id = @artifactId AND root_directory_version_id = @rootDirectoryVersionId;"
+                                    (fun parameters ->
+                                        parameters.AddWithValue("@artifactId", descriptor.ArtifactId)
+                                        |> ignore
+
+                                        parameters.AddWithValue("@rootDirectoryVersionId", descriptor.RootDirectoryVersionId)
+                                        |> ignore)
+
                                 transaction.Commit()
-                                CacheIngestCommitResult.AlreadyPublished
-                            else
+                                CacheIngestCommitResult.Published
+                            | _ ->
                                 transaction.Rollback()
-                                CacheIngestCommitResult.Rejected "Existing artifact publication could not establish the requested root membership."
-                    | _ ->
-                        transaction.Rollback()
-                        CacheIngestCommitResult.Rejected "No current pending ingest exists for the promoted artifact."
-                | Some pending when not (descriptorMatches descriptor pending) ->
-                    transaction.Rollback()
-                    CacheIngestCommitResult.Rejected "Pending ingest identity changed before promoted publication."
-                | Some _ ->
-                    match validateCanonicalDirectoryMetadata connection (Some transaction) metadata with
-                    | Error reason ->
-                        transaction.Rollback()
-                        CacheIngestCommitResult.Rejected reason
-                    | Ok () ->
-                        insertMetadata connection (Some transaction) descriptor metadata
-
-                        match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
-                        | Some current when descriptorMatches descriptor current ->
-                            executeNonQuery
-                                connection
-                                (Some transaction)
-                                "DELETE FROM pending_ingests WHERE artifact_id = @artifactId AND root_directory_version_id = @rootDirectoryVersionId;"
-                                (fun parameters ->
-                                    parameters.AddWithValue("@artifactId", descriptor.ArtifactId)
-                                    |> ignore
-
-                                    parameters.AddWithValue("@rootDirectoryVersionId", descriptor.RootDirectoryVersionId)
-                                    |> ignore)
-
-                            transaction.Commit()
-                            CacheIngestCommitResult.Published
-                        | _ ->
-                            transaction.Rollback()
-                            CacheIngestCommitResult.Rejected "Pending ingest identity changed before valid publication.")
+                                CacheIngestCommitResult.Rejected "Pending ingest identity changed before valid publication."))
 
     /// Lists only artifact rows committed as valid; pending and rejected state never crosses this query boundary.
     let getValidArtifacts (store: CacheStore) : CacheValidArtifact array =
-        let sharedStore = requireLiveStore store
-        use connection = openConnection sharedStore.DatabasePath
+        withStoreOperation store (fun sharedStore ->
+            use connection = openConnection sharedStore.DatabasePath
 
-        use command =
-            createCommand
-                connection
-                None
-                "SELECT artifacts.artifact_id, artifacts.digest, artifacts.uncompressed_size, roots.root_directory_version_id FROM artifacts INNER JOIN root_artifact_memberships AS roots ON roots.artifact_id = artifacts.artifact_id WHERE artifacts.lifecycle_state = 'Valid' ORDER BY artifacts.artifact_id, roots.root_directory_version_id;"
-                ignore
+            use command =
+                createCommand
+                    connection
+                    None
+                    "SELECT artifacts.artifact_id, artifacts.digest, artifacts.uncompressed_size, roots.root_directory_version_id FROM artifacts INNER JOIN root_artifact_memberships AS roots ON roots.artifact_id = artifacts.artifact_id WHERE artifacts.lifecycle_state = 'Valid' ORDER BY artifacts.artifact_id, roots.root_directory_version_id;"
+                    ignore
 
-        use reader = command.ExecuteReader()
-        let artifacts = List<CacheValidArtifact>()
+            use reader = command.ExecuteReader()
+            let artifacts = List<CacheValidArtifact>()
 
-        while reader.Read() do
-            artifacts.Add(
-                {
-                    ArtifactId = reader.GetString(0)
-                    Digest = reader.GetString(1)
-                    UncompressedSize = reader.GetInt64(2)
-                    RootDirectoryVersionId = reader.GetString(3)
-                }
-            )
+            while reader.Read() do
+                artifacts.Add(
+                    {
+                        ArtifactId = reader.GetString(0)
+                        Digest = reader.GetString(1)
+                        UncompressedSize = reader.GetInt64(2)
+                        RootDirectoryVersionId = reader.GetString(3)
+                    }
+                )
 
-        artifacts.ToArray()
+            artifacts.ToArray())
+
+    /// Holds a deterministic in-flight operation for lifecycle tests without exposing cache persistence internals.
+    let internal runBlockedOperationForTest (store: CacheStore) (entered: ManualResetEventSlim) (release: ManualResetEventSlim) failAfterRelease =
+        withStoreOperation store (fun _ ->
+            entered.Set()
+
+            if not (release.Wait(TimeSpan.FromSeconds(10.0))) then
+                invalidOp "The cache store lifecycle test operation was not released within ten seconds."
+
+            if failAfterRelease then
+                invalidOp "The cache store lifecycle test operation failed after release.")

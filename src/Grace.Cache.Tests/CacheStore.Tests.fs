@@ -5,6 +5,7 @@ open System.Collections.Concurrent
 open System.Diagnostics
 open System.IO
 open System.Reflection
+open System.Threading
 open System.Threading.Tasks
 open Grace.Cache
 open Microsoft.Data.Sqlite
@@ -560,6 +561,72 @@ type CacheStoreTests() =
         finally
             CacheStoreTestSupport.deleteDatabasePath databasePath
 
+    /// Verifies non-lowercase SHA-256 text cannot create durable identity and a canonical retry remains publishable.
+    [<Test>]
+    member _.NonCanonicalDigestIsRejectedBeforePersistenceAndCanonicalRetrySucceeds() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+
+        let canonical = { CacheStoreTestSupport.descriptor "artifact-a" "root-a" 27 with Digest = String.replicate 64 "a" }
+
+        let uppercase = { canonical with Digest = canonical.Digest.ToUpperInvariant() }
+        let mixedCase = { canonical with Digest = canonical.Digest.Substring(0, 63) + "A" }
+
+        try
+            let opened = CacheStoreTestSupport.openStore databasePath
+
+            Assert.That(CacheStoreTestSupport.isBeginRejected (CacheStore.beginIngest opened.Store uppercase), Is.True)
+
+            Assert.That(
+                CacheStoreTestSupport.isCommitRejected (
+                    CacheStore.commitPromotedIngest opened.Store mixedCase (CacheStoreTestSupport.metadata "root-a" "child-a" "artifact-a")
+                ),
+                Is.True
+            )
+
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(0))
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM artifacts;", Is.EqualTo(0))
+            Assert.That(CacheStore.beginIngest opened.Store canonical, Is.EqualTo(CacheIngestBeginResult.Pending))
+
+            Assert.That(
+                CacheStore.commitPromotedIngest opened.Store canonical (CacheStoreTestSupport.metadata "root-a" "child-a" "artifact-a"),
+                Is.EqualTo(CacheIngestCommitResult.Published)
+            )
+
+            let artifacts = CacheStore.getValidArtifacts opened.Store
+            Assert.That(artifacts, Has.Length.EqualTo(1))
+            Assert.That(artifacts[0].Digest, Is.EqualTo(canonical.Digest))
+        finally
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
+    /// Verifies cache ownership registry keys follow the runtime platform's case-sensitive path behavior.
+    [<Test>]
+    member _.CanonicalPathRegistryUsesPlatformCaseSemantics() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+        let caseVariant = Path.Combine(Path.GetDirectoryName(databasePath), "CACHE-STATE.DB")
+        let first = CacheStoreTestSupport.openStore databasePath
+
+        try
+            let second = CacheStoreTestSupport.openStore caseVariant
+
+            try
+                if OperatingSystem.IsWindows() then
+                    let source = CacheStoreTestSupport.descriptor "artifact-a" "root-a" 28
+                    Assert.That(CacheStore.beginIngest first.Store source, Is.EqualTo(CacheIngestBeginResult.Pending))
+                    Assert.That(CacheStore.beginIngest second.Store source, Is.EqualTo(CacheIngestBeginResult.Pending))
+                    Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(1))
+                else
+                    let firstSource = CacheStoreTestSupport.descriptor "artifact-a" "root-a" 28
+                    let secondSource = CacheStoreTestSupport.descriptor "artifact-b" "root-b" 29
+                    Assert.That(CacheStore.beginIngest first.Store firstSource, Is.EqualTo(CacheIngestBeginResult.Pending))
+                    Assert.That(CacheStore.beginIngest second.Store secondSource, Is.EqualTo(CacheIngestBeginResult.Pending))
+                    Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(1))
+                    Assert.That(CacheStoreTestSupport.readScalarInt caseVariant "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(1))
+            finally
+                CacheStore.disposeStore second.Store
+        finally
+            CacheStore.disposeStore first.Store
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
     /// Verifies canonical aliases share one in-process owner, skip recovery, and survive another caller's disposal.
     [<Test>]
     member _.SameProcessReopenReusesOwnershipAndPreservesLivePendingIngest() =
@@ -608,6 +675,67 @@ type CacheStoreTests() =
             Assert.That(competingProcess.WaitForExit(10000), Is.True)
             Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(1))
             Assert.That(CacheStore.getValidArtifacts owner.Store, Is.Empty)
+        finally
+            CacheStore.disposeStore owner.Store
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
+    /// Verifies final lease disposal retains process ownership through an in-flight exception before recovery may run.
+    [<Test>]
+    member _.FinalLeaseDisposalWaitsForInFlightOperationAndExceptionReleasesOwnership() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+        let source = CacheStoreTestSupport.descriptor "artifact-a" "root-a" 31
+        let owner = CacheStoreTestSupport.openStore databasePath
+        use entered = new ManualResetEventSlim(false)
+        use release = new ManualResetEventSlim(false)
+
+        try
+            Assert.That(CacheStore.beginIngest owner.Store source, Is.EqualTo(CacheIngestBeginResult.Pending))
+
+            let operation = Task.Run(fun () -> CacheStore.runBlockedOperationForTest owner.Store entered release true)
+
+            Assert.That(entered.Wait(TimeSpan.FromSeconds(10.0)), Is.True)
+            CacheStore.disposeStore owner.Store
+
+            use competingProcess = CacheStoreTestSupport.startStoreProcess "--attempt-store-open" databasePath
+            Assert.That(CacheStoreTestSupport.readProcessLine competingProcess, Is.EqualTo("DATABASE-IN-USE"))
+            Assert.That(competingProcess.WaitForExit(10000), Is.True)
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(1))
+
+            release.Set()
+
+            Assert.That(
+                Action (fun () ->
+                    operation.Wait(TimeSpan.FromSeconds(10.0))
+                    |> ignore),
+                Throws.TypeOf<AggregateException>()
+            )
+
+            Assert.That(operation.IsFaulted, Is.True)
+
+            use recoveredProcess = CacheStoreTestSupport.startStoreProcess "--attempt-store-open" databasePath
+            Assert.That(CacheStoreTestSupport.readProcessLine recoveredProcess, Is.EqualTo("OPENED"))
+            Assert.That(recoveredProcess.WaitForExit(10000), Is.True)
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(0))
+        finally
+            release.Set()
+            CacheStore.disposeStore owner.Store
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
+    /// Verifies a released caller lease stays unusable while repeated disposal leaves the ownership lifecycle stable.
+    [<Test>]
+    member _.DisposedLeaseRejectsNewOperationsAndDisposalIsIdempotent() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+        let owner = CacheStoreTestSupport.openStore databasePath
+
+        try
+            CacheStore.disposeStore owner.Store
+            CacheStore.disposeStore owner.Store
+
+            Assert.That(Action(fun () -> CacheStore.getValidArtifacts owner.Store |> ignore), Throws.TypeOf<InvalidOperationException>())
+
+            use reopenedProcess = CacheStoreTestSupport.startStoreProcess "--attempt-store-open" databasePath
+            Assert.That(CacheStoreTestSupport.readProcessLine reopenedProcess, Is.EqualTo("OPENED"))
+            Assert.That(reopenedProcess.WaitForExit(10000), Is.True)
         finally
             CacheStore.disposeStore owner.Store
             CacheStoreTestSupport.deleteDatabasePath databasePath
