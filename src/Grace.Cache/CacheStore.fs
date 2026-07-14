@@ -158,31 +158,51 @@ module CacheStore =
         executeScalarString connection transaction sql configure
         |> Option.map (fun value -> Int32.Parse(value, CultureInfo.InvariantCulture))
 
-    /// Resolves a cache database path to one registry key so relative and link aliases cannot obtain separate owners.
+    /// Resolves every existing path component before preserving a non-existent suffix so one physical database always has one registry key.
     let private canonicalizeDatabasePath (databasePath: string) =
         if String.IsNullOrWhiteSpace databasePath then
             invalidArg (nameof databasePath) "Cache database path is required."
 
         let fullPath = Path.GetFullPath(databasePath)
-        let file = FileInfo(fullPath)
+        let root = Path.GetPathRoot(fullPath)
 
-        if file.Exists then
-            match file.ResolveLinkTarget(true) with
-            | null -> file.FullName
-            | target -> target.FullName
-        else
-            let directoryPath = Path.GetDirectoryName(fullPath)
-            let directory = DirectoryInfo(directoryPath)
+        if String.IsNullOrWhiteSpace root then
+            invalidOp "Cache database path did not resolve to a rooted path."
 
-            let resolvedDirectory =
-                if directory.Exists then
-                    match directory.ResolveLinkTarget(true) with
-                    | :? DirectoryInfo as target -> target.FullName
-                    | _ -> directory.FullName
+        let components =
+            fullPath[root.Length ..]
+                .Split(
+                    [|
+                        Path.DirectorySeparatorChar
+                        Path.AltDirectorySeparatorChar
+                    |],
+                    StringSplitOptions.RemoveEmptyEntries
+                )
+
+        let mutable canonicalPath = root
+        let mutable preservesNonExistentSuffix = false
+
+        for index in 0 .. components.Length - 1 do
+            let candidate = Path.Combine(canonicalPath, components[index])
+
+            if preservesNonExistentSuffix then
+                canonicalPath <- candidate
+            else
+                let pathInfo: FileSystemInfo =
+                    if index = components.Length - 1 then
+                        FileInfo(candidate) :> FileSystemInfo
+                    else
+                        DirectoryInfo(candidate) :> FileSystemInfo
+
+                if pathInfo.Exists then
+                    match pathInfo.ResolveLinkTarget(true) with
+                    | null -> canonicalPath <- pathInfo.FullName
+                    | target -> canonicalPath <- target.FullName
                 else
-                    directory.FullName
+                    canonicalPath <- candidate
+                    preservesNonExistentSuffix <- true
 
-            Path.Combine(resolvedDirectory, file.Name)
+        canonicalPath
 
     /// Acquires the sidecar byte-range lock that proves this process exclusively owns a canonical cache database path.
     let private tryAcquireOwnershipLock (databasePath: string) =
@@ -468,8 +488,9 @@ module CacheStore =
 
     /// Validates source identity before it can become either pending state or a valid artifact row.
     let private validateDescriptor (descriptor: CacheArtifactDescriptor) =
-
-        if String.IsNullOrWhiteSpace descriptor.ArtifactId then
+        if obj.ReferenceEquals(descriptor, null) then
+            Error "Artifact descriptor is required."
+        elif String.IsNullOrWhiteSpace descriptor.ArtifactId then
             Error "Artifact id is required."
         elif not (isCanonicalSha256Digest descriptor.Digest) then
             Error "Artifact digest must be a canonical lowercase 64-character hexadecimal SHA-256 value."
@@ -484,14 +505,20 @@ module CacheStore =
 
     /// Validates that recursive metadata is non-empty, canonical, root-reachable, and tied only to the promoted artifact.
     let private validateMetadata (descriptor: CacheArtifactDescriptor) (metadata: CacheRecursiveMetadata) =
-        if List.isEmpty metadata.Directories then
+        if obj.ReferenceEquals(metadata, null) then
+            Error "Recursive metadata is required."
+        elif obj.ReferenceEquals(metadata.Directories, null) then
+            Error "Recursive metadata directories are required."
+        elif List.isEmpty metadata.Directories then
             Error "Recursive metadata must contain the promoted root directory."
         else
             let directories = Dictionary<string, CacheDirectoryMetadata>(StringComparer.Ordinal)
             let mutable error = None
 
             for directory in metadata.Directories do
-                if String.IsNullOrWhiteSpace directory.DirectoryVersionId then
+                if obj.ReferenceEquals(directory, null) then
+                    error <- Some "Recursive metadata directory entries are required."
+                elif String.IsNullOrWhiteSpace directory.DirectoryVersionId then
                     error <- Some "Directory version ids are required."
                 elif directories.ContainsKey(directory.DirectoryVersionId) then
                     error <- Some "Recursive metadata cannot repeat a directory version id."
@@ -509,24 +536,30 @@ module CacheStore =
                     let childIds = HashSet<string>(StringComparer.Ordinal)
                     let artifactIds = HashSet<string>(StringComparer.Ordinal)
 
-                    for childId in directory.ChildDirectoryVersionIds do
-                        if
-                            String.IsNullOrWhiteSpace childId
-                            || not (directories.ContainsKey(childId))
-                        then
-                            error <- Some "Every child directory membership must reference supplied recursive metadata."
-                        elif not (childIds.Add(childId)) then
-                            error <- Some "Recursive metadata cannot repeat a child directory membership."
-                        elif childId = directory.DirectoryVersionId then
-                            error <- Some "A directory cannot be its own child."
+                    if obj.ReferenceEquals(directory.ChildDirectoryVersionIds, null) then
+                        error <- Some "Recursive metadata child directory collections are required."
+                    elif obj.ReferenceEquals(directory.ArtifactIds, null) then
+                        error <- Some "Recursive metadata artifact collections are required."
+                    else
+                        for childId in directory.ChildDirectoryVersionIds do
+                            if
+                                String.IsNullOrWhiteSpace childId
+                                || not (directories.ContainsKey(childId))
+                            then
+                                error <- Some "Every child directory membership must reference supplied recursive metadata."
+                            elif not (childIds.Add(childId)) then
+                                error <- Some "Recursive metadata cannot repeat a child directory membership."
+                            elif childId = directory.DirectoryVersionId then
+                                error <- Some "A directory cannot be its own child."
 
-                    for artifactId in directory.ArtifactIds do
-                        if artifactId <> descriptor.ArtifactId then
-                            error <- Some "Recursive metadata cannot reference an artifact that was not confirmed for this ingest."
-                        elif not (artifactIds.Add(artifactId)) then
-                            error <- Some "Recursive metadata cannot repeat an artifact membership."
-                        else
-                            hasPromotedArtifact <- true
+                        for artifactId in directory.ArtifactIds do
+                            if String.IsNullOrWhiteSpace artifactId
+                               || artifactId <> descriptor.ArtifactId then
+                                error <- Some "Recursive metadata cannot reference an artifact that was not confirmed for this ingest."
+                            elif not (artifactIds.Add(artifactId)) then
+                                error <- Some "Recursive metadata cannot repeat an artifact membership."
+                            else
+                                hasPromotedArtifact <- true
 
                 if error.IsSome then
                     Error error.Value
@@ -889,18 +922,40 @@ module CacheStore =
     /// Atomically publishes one confirmed artifact and its complete recursive metadata only while the original pending identity remains current.
     let commitPromotedIngest (store: CacheStore) (descriptor: CacheArtifactDescriptor) (metadata: CacheRecursiveMetadata) : CacheIngestCommitResult =
         withStoreOperation store (fun sharedStore ->
-            match validateDescriptor descriptor, validateMetadata descriptor metadata with
-            | Error reason, _
-            | _, Error reason -> CacheIngestCommitResult.Rejected reason
-            | Ok (), Ok () ->
-                withBusyRetry (fun () ->
-                    use connection = openConnection sharedStore.DatabasePath
-                    use transaction = connection.BeginTransaction()
+            match validateDescriptor descriptor with
+            | Error reason -> CacheIngestCommitResult.Rejected reason
+            | Ok () ->
+                match validateMetadata descriptor metadata with
+                | Error reason -> CacheIngestCommitResult.Rejected reason
+                | Ok () ->
+                    withBusyRetry (fun () ->
+                        use connection = openConnection sharedStore.DatabasePath
+                        use transaction = connection.BeginTransaction()
 
-                    match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
-                    | None ->
-                        match tryReadDescriptor connection (Some transaction) "artifacts" descriptor.ArtifactId "" with
-                        | Some valid when descriptorMatches descriptor valid ->
+                        match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
+                        | None ->
+                            match tryReadDescriptor connection (Some transaction) "artifacts" descriptor.ArtifactId "" with
+                            | Some valid when descriptorMatches descriptor valid ->
+                                match validateCanonicalDirectoryMetadata connection (Some transaction) metadata with
+                                | Error reason ->
+                                    transaction.Rollback()
+                                    CacheIngestCommitResult.Rejected reason
+                                | Ok () ->
+                                    insertMetadata connection (Some transaction) descriptor metadata
+
+                                    if isArtifactRetainedByRoot connection (Some transaction) descriptor.ArtifactId descriptor.RootDirectoryVersionId then
+                                        transaction.Commit()
+                                        CacheIngestCommitResult.AlreadyPublished
+                                    else
+                                        transaction.Rollback()
+                                        CacheIngestCommitResult.Rejected "Existing artifact publication could not establish the requested root membership."
+                            | _ ->
+                                transaction.Rollback()
+                                CacheIngestCommitResult.Rejected "No current pending ingest exists for the promoted artifact."
+                        | Some pending when not (descriptorMatches descriptor pending) ->
+                            transaction.Rollback()
+                            CacheIngestCommitResult.Rejected "Pending ingest identity changed before promoted publication."
+                        | Some _ ->
                             match validateCanonicalDirectoryMetadata connection (Some transaction) metadata with
                             | Error reason ->
                                 transaction.Rollback()
@@ -908,44 +963,25 @@ module CacheStore =
                             | Ok () ->
                                 insertMetadata connection (Some transaction) descriptor metadata
 
-                                if isArtifactRetainedByRoot connection (Some transaction) descriptor.ArtifactId descriptor.RootDirectoryVersionId then
+                                match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId
+                                    with
+                                | Some current when descriptorMatches descriptor current ->
+                                    executeNonQuery
+                                        connection
+                                        (Some transaction)
+                                        "DELETE FROM pending_ingests WHERE artifact_id = @artifactId AND root_directory_version_id = @rootDirectoryVersionId;"
+                                        (fun parameters ->
+                                            parameters.AddWithValue("@artifactId", descriptor.ArtifactId)
+                                            |> ignore
+
+                                            parameters.AddWithValue("@rootDirectoryVersionId", descriptor.RootDirectoryVersionId)
+                                            |> ignore)
+
                                     transaction.Commit()
-                                    CacheIngestCommitResult.AlreadyPublished
-                                else
+                                    CacheIngestCommitResult.Published
+                                | _ ->
                                     transaction.Rollback()
-                                    CacheIngestCommitResult.Rejected "Existing artifact publication could not establish the requested root membership."
-                        | _ ->
-                            transaction.Rollback()
-                            CacheIngestCommitResult.Rejected "No current pending ingest exists for the promoted artifact."
-                    | Some pending when not (descriptorMatches descriptor pending) ->
-                        transaction.Rollback()
-                        CacheIngestCommitResult.Rejected "Pending ingest identity changed before promoted publication."
-                    | Some _ ->
-                        match validateCanonicalDirectoryMetadata connection (Some transaction) metadata with
-                        | Error reason ->
-                            transaction.Rollback()
-                            CacheIngestCommitResult.Rejected reason
-                        | Ok () ->
-                            insertMetadata connection (Some transaction) descriptor metadata
-
-                            match tryReadDescriptor connection (Some transaction) "pending_ingests" descriptor.ArtifactId descriptor.RootDirectoryVersionId with
-                            | Some current when descriptorMatches descriptor current ->
-                                executeNonQuery
-                                    connection
-                                    (Some transaction)
-                                    "DELETE FROM pending_ingests WHERE artifact_id = @artifactId AND root_directory_version_id = @rootDirectoryVersionId;"
-                                    (fun parameters ->
-                                        parameters.AddWithValue("@artifactId", descriptor.ArtifactId)
-                                        |> ignore
-
-                                        parameters.AddWithValue("@rootDirectoryVersionId", descriptor.RootDirectoryVersionId)
-                                        |> ignore)
-
-                                transaction.Commit()
-                                CacheIngestCommitResult.Published
-                            | _ ->
-                                transaction.Rollback()
-                                CacheIngestCommitResult.Rejected "Pending ingest identity changed before valid publication."))
+                                    CacheIngestCommitResult.Rejected "Pending ingest identity changed before valid publication."))
 
     /// Lists only artifact rows committed as valid; pending and rejected state never crosses this query boundary.
     let getValidArtifacts (store: CacheStore) : CacheValidArtifact array =

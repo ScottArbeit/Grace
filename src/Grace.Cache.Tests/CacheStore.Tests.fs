@@ -561,6 +561,123 @@ type CacheStoreTests() =
         finally
             CacheStoreTestSupport.deleteDatabasePath databasePath
 
+    /// Verifies a null descriptor and each nullable descriptor identity field reject through both write boundaries without state changes.
+    [<Test>]
+    member _.NullDescriptorAndFieldsAreRejectedWithoutMutation() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+        let canonical = CacheStoreTestSupport.descriptor "artifact-a" "root-a" 32
+
+        let malformedDescriptors: CacheArtifactDescriptor list =
+            [
+                Unchecked.defaultof<CacheArtifactDescriptor>
+                { canonical with ArtifactId = null }
+                { canonical with Digest = null }
+                { canonical with RootDirectoryVersionId = null }
+                { canonical with FillToken = null }
+            ]
+
+        try
+            let opened = CacheStoreTestSupport.openStore databasePath
+
+            for malformed in malformedDescriptors do
+                Assert.That(CacheStoreTestSupport.isBeginRejected (CacheStore.beginIngest opened.Store malformed), Is.True)
+
+                Assert.That(
+                    CacheStoreTestSupport.isCommitRejected (
+                        CacheStore.commitPromotedIngest opened.Store malformed (CacheStoreTestSupport.metadata "root-a" "child-a" "artifact-a")
+                    ),
+                    Is.True
+                )
+
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(0))
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM artifacts;", Is.EqualTo(0))
+            Assert.That(CacheStore.getValidArtifacts opened.Store, Is.Empty)
+        finally
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
+    /// Verifies malformed source identity rejects before a hostile metadata graph can be traversed or mutate cache state.
+    [<Test>]
+    member _.DescriptorValidationShortCircuitsHostileMetadataWithoutMutation() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+        let malformed = { CacheStoreTestSupport.descriptor "artifact-a" "root-a" 33 with RootDirectoryVersionId = null }
+        let hostile: CacheRecursiveMetadata = { Directories = Unchecked.defaultof<CacheDirectoryMetadata list> }
+
+        try
+            let opened = CacheStoreTestSupport.openStore databasePath
+
+            Assert.That(CacheStoreTestSupport.isCommitRejected (CacheStore.commitPromotedIngest opened.Store malformed hostile), Is.True)
+
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(0))
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM artifacts;", Is.EqualTo(0))
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM directory_versions;", Is.EqualTo(0))
+            Assert.That(CacheStore.getValidArtifacts opened.Store, Is.Empty)
+        finally
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
+    /// Verifies every nullable recursive metadata collection, entry, and identifier rejects without publishing metadata.
+    [<Test>]
+    member _.NullRecursiveMetadataShapesAreRejectedWithoutMetadataMutation() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+        let source = CacheStoreTestSupport.descriptor "artifact-a" "root-a" 34
+
+        let root: CacheDirectoryMetadata = { DirectoryVersionId = "root-a"; ChildDirectoryVersionIds = []; ArtifactIds = [ "artifact-a" ] }
+
+        let malformedMetadata: CacheRecursiveMetadata list =
+            [
+                Unchecked.defaultof<CacheRecursiveMetadata>
+                { Directories = Unchecked.defaultof<CacheDirectoryMetadata list> }
+                {
+                    Directories =
+                        [
+                            Unchecked.defaultof<CacheDirectoryMetadata>
+                        ]
+                }
+                {
+                    Directories =
+                        [
+                            { root with DirectoryVersionId = null }
+                        ]
+                }
+                {
+                    Directories =
+                        [
+                            { root with ChildDirectoryVersionIds = Unchecked.defaultof<string list> }
+                        ]
+                }
+                {
+                    Directories =
+                        [
+                            { root with ArtifactIds = Unchecked.defaultof<string list> }
+                        ]
+                }
+                {
+                    Directories =
+                        [
+                            { root with ChildDirectoryVersionIds = [ Unchecked.defaultof<string> ] }
+                        ]
+                }
+                {
+                    Directories =
+                        [
+                            { root with ArtifactIds = [ Unchecked.defaultof<string> ] }
+                        ]
+                }
+            ]
+
+        try
+            let opened = CacheStoreTestSupport.openStore databasePath
+            Assert.That(CacheStore.beginIngest opened.Store source, Is.EqualTo(CacheIngestBeginResult.Pending))
+
+            for metadata in malformedMetadata do
+                Assert.That(CacheStoreTestSupport.isCommitRejected (CacheStore.commitPromotedIngest opened.Store source metadata), Is.True)
+
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(1))
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM artifacts;", Is.EqualTo(0))
+            Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM directory_versions;", Is.EqualTo(0))
+            Assert.That(CacheStore.getValidArtifacts opened.Store, Is.Empty)
+        finally
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
     /// Verifies non-lowercase SHA-256 text cannot create durable identity and a canonical retry remains publishable.
     [<Test>]
     member _.NonCanonicalDigestIsRejectedBeforePersistenceAndCanonicalRetrySucceeds() =
@@ -659,6 +776,53 @@ type CacheStoreTests() =
                 CacheStore.disposeStore second.Store
         finally
             CacheStore.disposeStore first.Store
+            CacheStoreTestSupport.deleteDatabasePath databasePath
+
+    /// Verifies parent-directory symlink aliases retain one physical database owner before and after SQLite creates the database file.
+    [<Test>]
+    member _.SymlinkedParentAliasSharesStablePreAndPostCreationOwnership() =
+        let databasePath = CacheStoreTestSupport.createDatabasePath ()
+        let physicalDirectory = Path.GetDirectoryName(databasePath)
+        let aliasDirectory = physicalDirectory + "-alias"
+        let aliasDatabasePath = Path.Combine(aliasDirectory, Path.GetFileName(databasePath))
+        let source = CacheStoreTestSupport.descriptor "artifact-a" "root-a" 35
+
+        try
+            Directory.CreateSymbolicLink(aliasDirectory, physicalDirectory)
+            |> ignore
+
+            let beforeCreation = CacheStoreTestSupport.openStore aliasDatabasePath
+
+            try
+                Assert.That(CacheStore.beginIngest beforeCreation.Store source, Is.EqualTo(CacheIngestBeginResult.Pending))
+
+                let resolvedPath = CacheStoreTestSupport.openStore databasePath
+
+                try
+                    Assert.That(resolvedPath.RecoveredIncomplete, Is.Empty)
+
+                    let afterCreation = CacheStoreTestSupport.openStore aliasDatabasePath
+
+                    try
+                        Assert.That(afterCreation.RecoveredIncomplete, Is.Empty)
+                        Assert.That(CacheStore.beginIngest afterCreation.Store source, Is.EqualTo(CacheIngestBeginResult.Pending))
+                        Assert.That(CacheStoreTestSupport.readScalarInt databasePath "SELECT COUNT(*) FROM pending_ingests;", Is.EqualTo(1))
+
+                        CacheStore.disposeStore beforeCreation.Store
+                        CacheStore.disposeStore resolvedPath.Store
+
+                        Assert.That(
+                            CacheStore.commitPromotedIngest afterCreation.Store source (CacheStoreTestSupport.metadata "root-a" "child-a" "artifact-a"),
+                            Is.EqualTo(CacheIngestCommitResult.Published)
+                        )
+                    finally
+                        CacheStore.disposeStore afterCreation.Store
+                finally
+                    CacheStore.disposeStore resolvedPath.Store
+            finally
+                CacheStore.disposeStore beforeCreation.Store
+        finally
+            if Directory.Exists(aliasDirectory) then Directory.Delete(aliasDirectory)
             CacheStoreTestSupport.deleteDatabasePath databasePath
 
     /// Verifies a competing process receives the stable in-use result before it can clean or mutate live pending state.
