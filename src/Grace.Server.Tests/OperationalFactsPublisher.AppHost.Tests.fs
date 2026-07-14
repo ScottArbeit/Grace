@@ -42,7 +42,7 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Contain("let OperationalFactsProcessorSubscription = \"operational-facts-processor\""))
                 Assert.That(appHostSource, Does.Not.Contain("operationalFactsTopicName}-processor"))
                 Assert.That(appHostSource, Does.Contain("topic.RequiresDuplicateDetection <- true"))
-                Assert.That(appHostSource, Does.Contain("topic operationalFactsTopicName \"PT5M\" true"))
+                Assert.That(appHostSource, Does.Match("topic\\s+operationalFactsTopicName\\s+\"PT5M\"\\s+true"))
 
                 Assert.That(appHostSource, Does.Contain("ResourceNames.OperationalFactsProcessorSubscription"))
                 Assert.That(appHostSource, Does.Contain("subscription ResourceNames.OperationalFactsProcessorSubscription")))
@@ -64,9 +64,12 @@ type OperationalFactsPublisherAppHostTests() =
                     Does.Contain("let OperationalFactsProcessorSubscriptionResource = \"grace-operational-facts-processor-subscription\"")
                 )
 
-                Assert.That(appHostSource, Does.Contain("serviceBus.AddServiceBusTopic(ResourceNames.GraceEventTopic, serviceBusTopicName)"))
-
-                Assert.That(appHostSource, Does.Contain(".AddServiceBusSubscription(ResourceNames.GraceEventSubscription, graceEventSubscriptionName)"))
+                Assert.That(
+                    appHostSource,
+                    Does.Match(
+                        "serviceBus\\s+\\.AddServiceBusTopic\\(ResourceNames\\.GraceEventTopic,\\s*serviceBusTopicName\\)\\s+\\.AddServiceBusSubscription\\(ResourceNames\\.GraceEventSubscription,\\s*graceEventSubscriptionName\\)"
+                    )
+                )
 
                 Assert.That(appHostSource, Does.Contain("ResourceNames.OperationalFactsTopic, operationalFactsTopicName"))
 
@@ -141,8 +144,8 @@ type OperationalFactsPublisherAppHostTests() =
 
                 Assert.That(appHostSource, Does.Contain("serviceBusConnectionBuilder.AppendValueProvider(serviceBusHostAndPort, null)"))
 
-                Assert.That(appHostSource, Does.Contain("let azuriteConnection =\n                    azuriteConnectionBuilder.Build()"))
-                Assert.That(appHostSource, Does.Contain("let serviceBusConnection =\n                        serviceBusConnectionBuilder.Build()"))
+                Assert.That(appHostSource, Does.Match("let\\s+azuriteConnection\\s+=\\s+azuriteConnectionBuilder\\.Build\\(\\)"))
+                Assert.That(appHostSource, Does.Match("let\\s+serviceBusConnection\\s+=\\s+serviceBusConnectionBuilder\\.Build\\(\\)"))
                 Assert.That(appHostSource, Does.Not.Contain("$\"DefaultEndpointsProtocol"))
                 Assert.That(appHostSource, Does.Not.Contain("$\"Endpoint=sb://")))
         )
