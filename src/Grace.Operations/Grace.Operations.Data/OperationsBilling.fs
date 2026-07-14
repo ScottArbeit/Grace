@@ -772,7 +772,7 @@ BEGIN
           AND
           (
               terminalPeriod.State=4
-              OR CONVERT(nvarchar(36),SESSION_CONTEXT(N'Grace.Operations.TrustedRawUsageFactInsert'))<>CONVERT(nvarchar(36),i.UsageFactId)
+              OR ISNULL(CONVERT(nvarchar(36),SESSION_CONTEXT(N'Grace.Operations.TrustedRawUsageFactInsert')),N'')<>CONVERT(nvarchar(36),i.UsageFactId)
           )
     )
         THROW 51010, 'Terminal billing raw fact inserts require trusted application routing.', 1;

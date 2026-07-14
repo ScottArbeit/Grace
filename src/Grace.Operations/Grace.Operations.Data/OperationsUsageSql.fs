@@ -98,10 +98,11 @@ END;
     let TryInsertRawUsageFact =
         """
 DECLARE @LockResult int;
+DECLARE @TrustedRawUsageFactInsertMarker nvarchar(36)=CONVERT(nvarchar(36),@UsageFactId);
 EXEC @LockResult = sys.sp_getapplock @Resource=@LockResource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=60000;
 IF @LockResult < 0 THROW 51000, 'Could not serialize accepted usage against billing close scope.', 1;
 BEGIN TRY
-EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=CONVERT(nvarchar(36),@UsageFactId);
+EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=@TrustedRawUsageFactInsertMarker;
 INSERT INTO ops.RawUsageFact
 (
     UsageFactId,
@@ -218,10 +219,11 @@ ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
     let TryInsertReplayedArchivedRawUsageFact =
         """
 DECLARE @LockResult int;
+DECLARE @TrustedRawUsageFactInsertMarker nvarchar(36)=CONVERT(nvarchar(36),@UsageFactId);
 EXEC @LockResult = sys.sp_getapplock @Resource=@LockResource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=60000;
 IF @LockResult < 0 THROW 51000, 'Could not serialize accepted archive replay against billing close scope.', 1;
 BEGIN TRY
-EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=CONVERT(nvarchar(36),@UsageFactId);
+EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=@TrustedRawUsageFactInsertMarker;
 INSERT INTO ops.RawUsageFact
 (
     UsageFactId,
