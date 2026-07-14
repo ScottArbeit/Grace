@@ -29,7 +29,7 @@ type IBillingPeriodService =
         scope: BillingPeriodScope * nowUtc: DateTime * provenance: BillingOperationProvenance * cancellationToken: CancellationToken ->
             Task<BillingCloseOutcome>
 
-    /// Appends a validated manual adjustment or reversal and transitions a terminal period to Corrected.
+    /// Appends a validated manual Adjustment and transitions a terminal period to Corrected.
     abstract ApplyManualCorrectionAsync:
         correction: ManualBillingCorrection * provenance: BillingOperationProvenance * cancellationToken: CancellationToken -> Task
 
@@ -629,49 +629,6 @@ SELECT CASE WHEN EXISTS(
                 invalidArg "correction" "Manual correction pricing grain is not applicable to the locked owner period."
         }
 
-    /// Verifies that an explicit manual predecessor belongs to the same period and immutable pricing grain.
-    let validateManualPrior
-        (connection: SqlConnection)
-        (transaction: SqlTransaction)
-        (correction: ManualBillingCorrection)
-        (cancellationToken: CancellationToken)
-        =
-        task {
-            match correction.PriorChargeLedgerEntryId with
-            | None -> ()
-            | Some priorId ->
-                use command = connection.CreateCommand()
-                command.Transaction <- transaction
-
-                command.CommandText <-
-                    "SELECT BillingPeriodId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE ChargeLedgerEntryId=@PriorId;"
-
-                add command "@PriorId" SqlDbType.UniqueIdentifier priorId
-                use! reader = command.ExecuteReaderAsync(cancellationToken)
-                let! found = reader.ReadAsync(cancellationToken)
-
-                if not found then
-                    invalidArg "PriorChargeLedgerEntryId" "Manual correction predecessor does not exist."
-
-                let matches =
-                    reader.GetGuid(0) = correction.BillingPeriodId
-                    && reader.GetInt32(1) = correction.FactKind
-                    && reader.GetGuid(2) = correction.BillableUsageKindMappingId
-                    && reader.GetInt32(3) = correction.BillableUsageKind
-                    && reader.GetGuid(4) = correction.PricingAssignmentId
-                    && reader.GetGuid(5) = correction.PricingPlanId
-                    && reader.GetGuid(6) = correction.PricingRateId
-                    && reader.GetString(7) = correction.CurrencyCode
-                    && reader.GetString(8) = correction.UnitName
-                    && reader.GetInt64(9) = correction.UnitQuantity
-                    && reader.GetInt64(10) = correction.UnitPriceMicros
-                    && utcFromSql (reader.GetDateTime(11)) = correction.EffectiveFromUtc
-                    && utcFromSql (reader.GetDateTime(12)) = correction.EffectiveToUtc
-
-                if not matches then
-                    invalidArg "PriorChargeLedgerEntryId" "Manual correction predecessor has an incompatible period or pricing grain."
-        }
-
     /// Finds a previously posted manual correction under the same immutable period and operator correlation.
     let existingManualCorrectionEntry
         (connection: SqlConnection)
@@ -685,7 +642,7 @@ SELECT CASE WHEN EXISTS(
             command.Transaction <- transaction
 
             command.CommandText <-
-                "SELECT ChargeLedgerEntryId FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingPeriodId=@BillingPeriodId AND CorrelationId=@Correlation AND SourceChargePreviewLineId IS NULL AND BillingCorrectionWorkId IS NULL AND EntryKind IN(1,2);"
+                "SELECT ChargeLedgerEntryId FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingPeriodId=@BillingPeriodId AND CorrelationId=@Correlation AND SourceChargePreviewLineId IS NULL AND BillingCorrectionWorkId IS NULL AND EntryKind=1;"
 
             add command "@BillingPeriodId" SqlDbType.UniqueIdentifier billingPeriodId
             add command "@Correlation" SqlDbType.NVarChar correlationId
@@ -1441,27 +1398,19 @@ END;
                     | Some _ -> invalidArg "CorrelationId" "CorrelationId is already assigned to a different manual correction."
                     | None ->
                         do! validateManualPricingGrain connection transaction scope correction cancellationToken
-                        do! validateManualPrior connection transaction correction cancellationToken
                         use insert = connection.CreateCommand()
                         insert.Transaction <- transaction
 
                         insert.CommandText <-
                             """
-INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,PriorChargeLedgerEntryId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId)
-VALUES(@Id,@BillingPeriodId,@EntryKind,@PriorId,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,@Principal,@ReasonCode,@ReasonText,@Correlation);
+INSERT INTO ops.ChargeLedgerEntry(ChargeLedgerEntryId,BillingPeriodId,EntryKind,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,Quantity,ChargeMicros,InitiatedByPrincipalId,ReasonCode,ReasonText,CorrelationId)
+VALUES(@Id,@BillingPeriodId,@EntryKind,@FactKind,@MappingId,@BillableKind,@AssignmentId,@PlanId,@RateId,@Currency,@UnitName,@UnitQuantity,@UnitPrice,@EffectiveFrom,@EffectiveTo,@Quantity,@Charge,@Principal,@ReasonCode,@ReasonText,@Correlation);
 UPDATE ops.BillingPeriod SET State=3 WHERE BillingPeriodId=@BillingPeriodId AND State=2;
 """
 
                         add insert "@Id" SqlDbType.UniqueIdentifier entryId
                         add insert "@BillingPeriodId" SqlDbType.UniqueIdentifier correction.BillingPeriodId
                         add insert "@EntryKind" SqlDbType.Int (int correction.EntryKind)
-                        let prior = insert.Parameters.Add("@PriorId", SqlDbType.UniqueIdentifier)
-
-                        prior.Value <-
-                            correction.PriorChargeLedgerEntryId
-                            |> Option.map box
-                            |> Option.defaultValue DBNull.Value
-
                         add insert "@FactKind" SqlDbType.Int correction.FactKind
                         add insert "@MappingId" SqlDbType.UniqueIdentifier correction.BillableUsageKindMappingId
                         add insert "@BillableKind" SqlDbType.Int correction.BillableUsageKind

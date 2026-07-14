@@ -48,7 +48,6 @@ type OperationsBillingTests() =
             {
                 BillingPeriodId = Guid.NewGuid()
                 EntryKind = ChargeLedgerEntryKind.Adjustment
-                PriorChargeLedgerEntryId = None
                 FactKind = 1
                 BillableUsageKindMappingId = Guid.NewGuid()
                 BillableUsageKind = 1
@@ -75,44 +74,6 @@ type OperationsBillingTests() =
                 ManualBillingCorrectionValidation.validateApplicability (utc 2028 1 1 0) (utc 2028 2 1 0) { correction with EffectiveToUtc = utc 2028 2 1 1 })
         )
         |> ignore
-
-    /// Proves reversals retain immutable predecessor provenance while independent adjustments remain supported.
-    [<Test>]
-    member _.ReversalsRequirePredecessorButAdjustmentsDoNot() =
-        let correction: ManualBillingCorrection =
-            {
-                BillingPeriodId = Guid.NewGuid()
-                EntryKind = ChargeLedgerEntryKind.Adjustment
-                PriorChargeLedgerEntryId = None
-                FactKind = 1
-                BillableUsageKindMappingId = Guid.NewGuid()
-                BillableUsageKind = 1
-                PricingAssignmentId = Guid.NewGuid()
-                PricingPlanId = Guid.NewGuid()
-                PricingRateId = Guid.NewGuid()
-                CurrencyCode = "USD"
-                UnitName = "byte-minute"
-                UnitQuantity = 1L
-                UnitPriceMicros = 5L
-                EffectiveFromUtc = utc 2028 1 1 0
-                EffectiveToUtc = utc 2028 2 1 0
-                QuantityDelta = -1L
-                ChargeMicrosDelta = -5L
-            }
-
-        let reversalWithoutPrior = { correction with EntryKind = ChargeLedgerEntryKind.Reversal }
-
-        let reversalWithPrior = { reversalWithoutPrior with PriorChargeLedgerEntryId = Some(Guid.NewGuid()) }
-
-        Assert.Multiple(
-            Action (fun () ->
-                Assert.DoesNotThrow(Action(fun () -> ManualBillingCorrectionValidation.validatePricingGrain correction))
-
-                Assert.Throws<ArgumentException>(Action(fun () -> ManualBillingCorrectionValidation.validatePricingGrain reversalWithoutPrior))
-                |> ignore
-
-                Assert.DoesNotThrow(Action(fun () -> ManualBillingCorrectionValidation.validatePricingGrain reversalWithPrior)))
-        )
 
     /// Proves each late correction posts the once-rounded cumulative charge delta at its immutable pricing grain.
     [<Test>]
@@ -148,7 +109,6 @@ type OperationsBillingTests() =
             {
                 BillingPeriodId = Guid.Parse("01010101-0101-0101-0101-010101010101")
                 EntryKind = ChargeLedgerEntryKind.Adjustment
-                PriorChargeLedgerEntryId = None
                 FactKind = 1
                 BillableUsageKindMappingId = Guid.Parse("02020202-0202-0202-0202-020202020202")
                 BillableUsageKind = 1
@@ -313,7 +273,7 @@ type OperationsBillingTests() =
                 Assert.That(testHost, Does.Contain("20260713130000_StabilizeBillingCorrectionWorkFailure")))
         )
 
-    /// Verifies canonical failure handling and owner-period repair validation are not bypassed by conflicting retries or no-prior manual writes.
+    /// Verifies canonical failure handling and owner-period Adjustment validation are not bypassed by conflicting retries.
     [<Test>]
     member _.FailureAndManualCorrectionGuardsCoverHistoricalReviewEdges() =
         let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
@@ -324,7 +284,6 @@ type OperationsBillingTests() =
                 Assert.That(source, Does.Contain("UsageFactId=@UsageFactId AND ResolvedAtUtc IS NULL"))
                 Assert.That(source, Does.Contain("Trace.TraceWarning"))
                 Assert.That(source, Does.Contain("let validateManualPricingGrain"))
-                Assert.That(source, Does.Contain("let validateManualPrior"))
                 Assert.That(source, Does.Contain("existingManualCorrectionEntry"))
                 Assert.That(source, Does.Contain("CorrelationId is already assigned to a different manual correction."))
                 Assert.That(source, Does.Contain("Manual correction pricing grain is not applicable to the locked owner period."))
@@ -421,7 +380,7 @@ type OperationsBillingTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(billingSource, Does.Contain("TR_ops_RawUsageFact_TerminalBillingProtection"))
-                Assert.That(billingSource, Does.Contain("AFTER UPDATE, DELETE"))
+                Assert.That(billingSource, Does.Contain("AFTER INSERT, UPDATE, DELETE"))
                 Assert.That(billingSource, Does.Contain("SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId"))
                 Assert.That(billingSource, Does.Contain("SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId"))
                 Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
@@ -511,7 +470,7 @@ type OperationsBillingTests() =
                 Assert.That(billingSource, Does.Contain("d.State IN (2,3)"))
                 Assert.That(billingSource, Does.Contain("d.State=4"))
                 Assert.That(billingSource, Does.Contain("d.State=2 AND i.State=3"))
-                Assert.That(billingSource, Does.Contain("e.EntryKind IN (1,2) AND e.SourceChargePreviewLineId IS NULL"))
+                Assert.That(billingSource, Does.Contain("e.EntryKind=1 AND e.SourceChargePreviewLineId IS NULL"))
                 Assert.That(billingSource, Does.Contain("d.PeriodFromUtc"))
                 Assert.That(billingSource, Does.Contain("d.PeriodToUtc"))
 
@@ -637,46 +596,61 @@ type OperationsBillingTests() =
                 Assert.That(migrationScript, Does.Contain("p.State IN (2,3,4)")))
         )
 
-    /// Proves session-seven close evidence and reversal provenance guards reject direct SQL bypasses.
+    /// Proves session-eight terminal insertion guards, immutable final evidence, trusted late ingestion, and Adjustment-only corrections remain durable.
     [<Test>]
-    member _.SessionSevenCloseEvidenceAndReversalProvenanceGuardsAreDurable() =
+    member _.SessionEightTerminalIntegrityAndAdjustmentOnlyContractsAreDurable() =
         let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
         let billingSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBilling.fs"))
+        let usageSqlSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsUsageSql.fs"))
+        let usageDataSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsData.fs"))
+        let entitySource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsEntities.fs"))
+        let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
 
-        let migrationSource =
-            File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260713130000_StabilizeBillingCorrectionWorkFailure.fs"))
+        let initialMigrationSource =
+            File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260711140000_AddBillingPeriodCloseLedger.fs"))
+
+        let migrationPath = Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260713140000_StabilizeBillingTerminalInsertProtection.fs")
 
         use context =
-            OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingSessionSevenModel;Integrated Security=true;"
+            OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingSessionEightModel;Integrated Security=true;"
 
         let migrationScript = (context.GetService<IMigrator>()).GenerateScript()
 
         Assert.Multiple(
             Action (fun () ->
-                // A preview-line identifier alone cannot close a Provisional period: the complete posted tuple must match.
-                Assert.That(billingSource, Does.Contain("e.FactKind=l.FactKind"))
-                Assert.That(billingSource, Does.Contain("e.BillableUsageKindMappingId=l.BillableUsageKindMappingId"))
-                Assert.That(billingSource, Does.Contain("e.BillableUsageKind=l.BillableUsageKind"))
-                Assert.That(billingSource, Does.Contain("e.PricingAssignmentId=l.PricingAssignmentId"))
-                Assert.That(billingSource, Does.Contain("e.PricingPlanId=l.PricingPlanId"))
-                Assert.That(billingSource, Does.Contain("e.PricingRateId=l.PricingRateId"))
-                Assert.That(billingSource, Does.Contain("e.CurrencyCode=l.CurrencyCode"))
-                Assert.That(billingSource, Does.Contain("e.UnitName=l.UnitName"))
-                Assert.That(billingSource, Does.Contain("e.UnitQuantity=l.UnitQuantity"))
-                Assert.That(billingSource, Does.Contain("e.UnitPriceMicros=l.UnitPriceMicros"))
-                Assert.That(billingSource, Does.Contain("e.EffectiveFromUtc=l.EffectiveFromUtc"))
-                Assert.That(billingSource, Does.Contain("e.EffectiveToUtc=l.EffectiveToUtc"))
-                Assert.That(billingSource, Does.Contain("e.Quantity=l.TotalQuantity"))
-                Assert.That(billingSource, Does.Contain("e.ChargeMicros=l.ChargeMicros"))
+                // Every active product contract has one correction kind. The predecessor link remains automatic-correction evidence, not a second entry kind.
+                Assert.That(billingSource, Does.Contain("| Adjustment = 1"))
+                Assert.That(entitySource, Does.Contain("Stores Charge or Adjustment kind."))
+                Assert.That(initialMigrationSource, Does.Contain("CK_ops_ChargeLedgerEntry_Kind CHECK (EntryKind BETWEEN 0 AND 1)"))
+                Assert.That(initialMigrationSource, Does.Contain("EntryKind=1 AND SourceChargePreviewLineId IS NULL"))
 
-                // A reversal needs a real, immutable predecessor; predecessor-free adjustments are not constrained.
-                Assert.That(billingSource, Does.Contain("e.EntryKind=2"))
-                Assert.That(billingSource, Does.Contain("e.PriorChargeLedgerEntryId IS NULL"))
-                Assert.That(billingSource, Does.Contain("p.ChargeLedgerEntryId=e.PriorChargeLedgerEntryId"))
-                Assert.That(billingSource, Does.Contain("p.BillingPeriodId=e.BillingPeriodId"))
-                Assert.That(billingSource, Does.Not.Contain("e.EntryKind=1 AND e.PriorChargeLedgerEntryId IS NULL"))
-                Assert.That(migrationSource, Does.Contain("migrationBuilder.Sql(OperationsBillingSql.CreateLedgerImmutabilityTrigger)"))
-                Assert.That(migrationScript, Does.Contain("e.FactKind=l.FactKind"))
-                Assert.That(migrationScript, Does.Contain("e.Quantity=l.TotalQuantity"))
-                Assert.That(migrationScript, Does.Contain("Reversal ledger entries require an existing prior charge ledger entry.")))
+                // Terminal period INSERTs, corrections, and permanent failure evidence must all be protected at the database boundary.
+                Assert.That(billingSource, Does.Contain("AFTER INSERT, UPDATE, DELETE AS"))
+                Assert.That(billingSource, Does.Contain("i.State IN (2,3,4)"))
+                Assert.That(billingSource, Does.Contain("e.EntryKind=1 AND p.State NOT IN (2,3)"))
+                Assert.That(billingSource, Does.Contain("TR_ops_ChargePreviewLine_TerminalBillingProtection"))
+                Assert.That(billingSource, Does.Contain("TR_ops_ChargePreviewFreshness_TerminalBillingProtection"))
+                Assert.That(billingSource, Does.Contain("d.State=4"))
+                Assert.That(billingSource, Does.Contain("i.CreatedAtUtc<>d.CreatedAtUtc"))
+                Assert.That(billingSource, Does.Contain("i.CloseCorrelationId"))
+                Assert.That(billingSource, Does.Contain("i.ConsecutiveCloseFailureCount<>d.ConsecutiveCloseFailureCount"))
+
+                // Direct terminal raw inserts are untrusted, while only the live/replay commands establish and clear exact transaction-scoped trust.
+                Assert.That(billingSource, Does.Contain("TR_ops_RawUsageFact_TerminalBillingProtection ON ops.RawUsageFact\nAFTER INSERT, UPDATE, DELETE AS"))
+                Assert.That(billingSource, Does.Contain("SESSION_CONTEXT(N'Grace.Operations.TrustedRawUsageFactInsert')"))
+                Assert.That(billingSource, Does.Contain("terminalPeriod.State=4"))
+                Assert.That(billingSource, Does.Contain("IF EXISTS(SELECT 1 FROM deleted)\n       AND (UPDATE(UsageFactId)"))
+                Assert.That(billingSource, Does.Contain("WHERE EXISTS(SELECT 1 FROM deleted)"))
+                Assert.That(usageSqlSource, Does.Contain("sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert'"))
+                Assert.That(usageSqlSource, Does.Contain("@value=NULL"))
+                Assert.That(usageDataSource, Does.Contain("clearTrustedRawUsageFactInsertAsync"))
+                Assert.That(usageDataSource, Does.Contain("CancellationToken.None"))
+                Assert.That(closeSource, Does.Contain("fact.AcceptedAtUtc > period.ClosedAtUtc"))
+                Assert.That(closeSource, Does.Not.Contain("fact.AcceptedAtUtc >= period.ClosedAtUtc"))
+
+                // The upgrade migration refreshes every changed guard for existing development databases without changing the EF shape.
+                Assert.That(File.Exists(migrationPath), Is.True)
+                Assert.That(migrationScript, Does.Contain("TR_ops_ChargePreviewLine_TerminalBillingProtection"))
+                Assert.That(migrationScript, Does.Contain("TR_ops_ChargePreviewFreshness_TerminalBillingProtection"))
+                Assert.That(migrationScript, Does.Contain("Terminal billing raw fact inserts require trusted application routing.")))
         )

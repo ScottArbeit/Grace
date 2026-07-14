@@ -348,18 +348,18 @@ type ChargePreviewFreshnessEntity() =
     /// Stores when the preview and digests committed together.
     member val PreviewCommittedAtUtc = DateTime.MinValue with get, set
 
-/// Represents one immutable initial charge, automatic correction, or manual adjustment.
+/// Represents one immutable initial charge or Adjustment correction.
 [<AllowNullLiteral>]
 type ChargeLedgerEntryEntity() =
     /// Stores the immutable entry identity.
     member val ChargeLedgerEntryId = Guid.Empty with get, set
     /// Stores the owning billing period.
     member val BillingPeriodId = Guid.Empty with get, set
-    /// Stores charge, adjustment, or reversal kind.
+    /// Stores Charge or Adjustment kind.
     member val EntryKind = 0 with get, set
     /// Links initial charges to a final preview line.
     member val SourceChargePreviewLineId = Nullable<Guid>() with get, set
-    /// Links a correction to its immediately preceding compatible entry when applicable.
+    /// Links an automatic correction to its immediately preceding compatible entry.
     member val PriorChargeLedgerEntryId = Nullable<Guid>() with get, set
     /// Stores automatic correction work identity for exact retry isolation.
     member val BillingCorrectionWorkId = Nullable<Guid>() with get, set

@@ -27,7 +27,7 @@ The ingestion hot path still uses reviewed raw SQL for the durable insert and ag
   It re-reads state and completeness evidence in a serializable transaction, rebuilds the final preview, writes its fact
   and pricing digests, posts immutable ledger entries, and commits `Closed` as one transaction. Empty previews may close
   with explicit zero totals and zero ledger entries.
-- `ChargeLedgerEntry` is append-only. Corrections append signed adjustments or reversals with complete assignment, plan,
+- `ChargeLedgerEntry` is append-only. Corrections append signed Adjustments with complete assignment, plan,
   mapping, rate, unit, effective-window, correlation, and prior-entry provenance. Automatic late-fact work is uniquely
   identified by period and `UsageFactId`, so repeated delivery is isolated and idempotent.
 - The schema blocks direct `UPDATE` or `DELETE` of ledger entries and rejects new initial-charge entries after a period
@@ -42,7 +42,7 @@ The ingestion hot path still uses reviewed raw SQL for the durable insert and ag
   durable work is unique by period and `UsageFactId`, posts one isolated adjustment linked to its work and immediately
   preceding automatic pricing-grain entry, and remains visibly pending and ineligible for automatic polling when pricing
   is missing. An explicit internal operator repair with durable provenance may re-enable only that exact blocked row;
-  Grace never inserts or mutates historical pricing to settle it. Manual adjustments and reversals validate their complete
+  Grace never inserts or mutates historical pricing to settle it. Manual Adjustments validate their complete
   owner-scoped pricing grain and any requested predecessor before appending immutable history.
 - `20260713120000_StabilizeBillingPeriodCloseLedger` protects the raw billing source and evidence fields of every
   terminal period at the SQL boundary. Key-changing direct SQL cannot move a fact into terminal history, and direct

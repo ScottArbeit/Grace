@@ -21,7 +21,6 @@ type BillingPeriodState =
 type ChargeLedgerEntryKind =
     | Charge = 0
     | Adjustment = 1
-    | Reversal = 2
 
 /// Carries complete provenance for an operator or automatic billing mutation.
 type BillingOperationProvenance = { InitiatedByPrincipalId: string; ReasonCode: string; ReasonText: string; CorrelationId: string }
@@ -112,12 +111,11 @@ module BillingProvenance =
         required "ReasonText" 1024 provenance.ReasonText
         required "CorrelationId" OperationsUsageSql.CorrelationIdMaxLength provenance.CorrelationId
 
-/// Defines a manual immutable adjustment or reversal under one billing period.
+/// Defines a manual immutable adjustment under one billing period.
 type ManualBillingCorrection =
     {
         BillingPeriodId: Guid
         EntryKind: ChargeLedgerEntryKind
-        PriorChargeLedgerEntryId: Guid option
         FactKind: int
         BillableUsageKindMappingId: Guid
         BillableUsageKind: int
@@ -139,12 +137,12 @@ type ManualBillingCorrection =
 module ManualBillingCorrectionIdentity =
     /// Derives one stable identity for an exact manual retry.
     let entryId (correction: ManualBillingCorrection) correlationId =
+        let entryKind =
+            (int correction.EntryKind)
+                .ToString(CultureInfo.InvariantCulture)
+
         BillingPeriodRules.deterministicId [ correction.BillingPeriodId.ToString("D")
-                                             (int correction.EntryKind)
-                                                 .ToString(CultureInfo.InvariantCulture)
-                                             (correction.PriorChargeLedgerEntryId
-                                              |> Option.map (fun value -> value.ToString("D"))
-                                              |> Option.defaultValue "")
+                                             entryKind
                                              correction.FactKind.ToString(CultureInfo.InvariantCulture)
                                              correction.BillableUsageKindMappingId.ToString("D")
                                              correction.BillableUsageKind.ToString(CultureInfo.InvariantCulture)
@@ -166,12 +164,9 @@ module ManualBillingCorrectionIdentity =
 module ManualBillingCorrectionValidation =
     /// Rejects pricing dimensions that cannot represent an immutable posted amount.
     let validatePricingGrain (correction: ManualBillingCorrection) =
-        if correction.EntryKind = ChargeLedgerEntryKind.Charge then
-            invalidArg "EntryKind" "Manual corrections must be adjustments or reversals."
-
-        if correction.EntryKind = ChargeLedgerEntryKind.Reversal
-           && correction.PriorChargeLedgerEntryId.IsNone then
-            invalidArg "PriorChargeLedgerEntryId" "Manual reversals require an immutable predecessor."
+        if correction.EntryKind
+           <> ChargeLedgerEntryKind.Adjustment then
+            invalidArg "EntryKind" "Manual corrections must be adjustments."
 
         if correction.UnitQuantity <= 0L then
             invalidArg "UnitQuantity" "UnitQuantity must be positive."
@@ -731,7 +726,7 @@ module OperationsBillingSql =
     /// Uses the same owner/month lock semantics as preview replacement.
     let AcquireScopeLock = OperationsChargePreviewSql.AcquireScopeLock
 
-    /// Rejects mutation of posted entries and initial charge inserts after a period has reached a terminal state.
+    /// Rejects non-Adjustment corrections outside closed history, posted-entry mutation, and initial charges after terminal close.
     let CreateLedgerImmutabilityTrigger =
         """
 CREATE TRIGGER ops.TR_ops_ChargeLedgerEntry_Immutable ON ops.ChargeLedgerEntry
@@ -741,32 +736,10 @@ BEGIN
     (
         SELECT 1
         FROM inserted e
-        WHERE e.EntryKind=2
-          AND
-          (
-              e.PriorChargeLedgerEntryId IS NULL
-              OR NOT EXISTS
-              (
-                  SELECT 1
-                  FROM ops.ChargeLedgerEntry p
-                  WHERE p.ChargeLedgerEntryId=e.PriorChargeLedgerEntryId
-                    AND p.BillingPeriodId=e.BillingPeriodId
-                    AND p.FactKind=e.FactKind
-                    AND p.BillableUsageKindMappingId=e.BillableUsageKindMappingId
-                    AND p.BillableUsageKind=e.BillableUsageKind
-                    AND p.PricingAssignmentId=e.PricingAssignmentId
-                    AND p.PricingPlanId=e.PricingPlanId
-                    AND p.PricingRateId=e.PricingRateId
-                    AND p.CurrencyCode=e.CurrencyCode
-                    AND p.UnitName=e.UnitName
-                    AND p.UnitQuantity=e.UnitQuantity
-                    AND p.UnitPriceMicros=e.UnitPriceMicros
-                    AND p.EffectiveFromUtc=e.EffectiveFromUtc
-                    AND p.EffectiveToUtc=e.EffectiveToUtc
-              )
-          )
+        JOIN ops.BillingPeriod p ON p.BillingPeriodId=e.BillingPeriodId
+        WHERE e.EntryKind=1 AND p.State NOT IN (2,3)
     )
-        THROW 51009, 'Reversal ledger entries require an existing prior charge ledger entry.', 1;
+        THROW 51009, 'Adjustment entries require a closed or corrected billing period.', 1;
 
     IF EXISTS
     (
@@ -782,14 +755,31 @@ BEGIN
 END;
 """
 
-    /// Freezes billing source and evidence fields when either side of an update belongs to a terminal period while allowing raw-payload archive lifecycle updates.
+    /// Freezes billing source and evidence fields in terminal scopes and admits raw inserts there only from trusted owner-month ingestion.
     let CreateTerminalRawUsageFactProtectionTrigger =
         """
 CREATE TRIGGER ops.TR_ops_RawUsageFact_TerminalBillingProtection ON ops.RawUsageFact
-AFTER UPDATE, DELETE AS
+AFTER INSERT, UPDATE, DELETE AS
 BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted i
+        JOIN ops.BillingPeriod terminalPeriod ON terminalPeriod.OwnerId=i.OwnerId AND terminalPeriod.OrganizationId=i.OrganizationId AND terminalPeriod.RepositoryId=i.RepositoryId
+          AND i.ObservedAtUtc>=terminalPeriod.PeriodFromUtc AND i.ObservedAtUtc<terminalPeriod.PeriodToUtc AND terminalPeriod.State IN (2,3,4)
+        LEFT JOIN deleted d ON d.UsageFactId=i.UsageFactId
+        WHERE d.UsageFactId IS NULL
+          AND
+          (
+              terminalPeriod.State=4
+              OR CONVERT(nvarchar(36),SESSION_CONTEXT(N'Grace.Operations.TrustedRawUsageFactInsert'))<>CONVERT(nvarchar(36),i.UsageFactId)
+          )
+    )
+        THROW 51010, 'Terminal billing raw fact inserts require trusted application routing.', 1;
+
     -- UPDATE(column) closes the multi-row swap bypass that set comparison alone cannot distinguish.
-    IF (UPDATE(UsageFactId) OR UPDATE(OwnerId) OR UPDATE(OrganizationId) OR UPDATE(RepositoryId) OR UPDATE(ObservedAtUtc))
+    IF EXISTS(SELECT 1 FROM deleted)
+       AND (UPDATE(UsageFactId) OR UPDATE(OwnerId) OR UPDATE(OrganizationId) OR UPDATE(RepositoryId) OR UPDATE(ObservedAtUtc))
        AND EXISTS
        (
            SELECT 1
@@ -821,7 +811,8 @@ BEGIN
         FROM inserted i
         JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
           AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3,4)
-        WHERE EXISTS
+        WHERE EXISTS(SELECT 1 FROM deleted)
+          AND EXISTS
         (
             SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId,i.StoragePoolId,i.Quantity,i.ObservedAtUtc,i.AcceptedAtUtc,i.CreatedAtUtc
             EXCEPT
@@ -833,12 +824,21 @@ BEGIN
 END;
 """
 
-    /// Freezes terminal close evidence, allowing Closed-to-Corrected only after an immutable correction entry posts and preserving permanently failed periods in their original owner scope.
+    /// Freezes terminal close evidence, rejects terminal row inserts, and preserves permanently failed periods with every supporting field unchanged.
     let CreatePermanentBillingFailureProtectionTrigger =
         """
 CREATE TRIGGER ops.TR_ops_BillingPeriod_PermanentFailureProtection ON ops.BillingPeriod
-AFTER UPDATE, DELETE AS
+AFTER INSERT, UPDATE, DELETE AS
 BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted i
+        LEFT JOIN deleted d ON d.BillingPeriodId=i.BillingPeriodId
+        WHERE d.BillingPeriodId IS NULL AND i.State IN (2,3,4)
+    )
+        THROW 51011, 'Terminal billing periods must be established by the supported lifecycle.', 1;
+
     IF EXISTS
     (
         SELECT 1
@@ -976,7 +976,7 @@ BEGIN
                           (
                               SELECT 1
                               FROM ops.ChargeLedgerEntry e
-                              WHERE e.BillingPeriodId=d.BillingPeriodId AND e.EntryKind IN (1,2) AND e.SourceChargePreviewLineId IS NULL
+                              WHERE e.BillingPeriodId=d.BillingPeriodId AND e.EntryKind=1 AND e.SourceChargePreviewLineId IS NULL
                           )
                       )
                       OR i.OwnerId<>d.OwnerId
@@ -1021,11 +1021,64 @@ BEGIN
                       OR ISNULL(i.PermanentFailureReasonCode,N'')<>ISNULL(d.PermanentFailureReasonCode,N'')
                       OR ISNULL(i.PermanentFailureReasonText,N'')<>ISNULL(d.PermanentFailureReasonText,N'')
                       OR ISNULL(i.PermanentFailureCorrelationId,N'')<>ISNULL(d.PermanentFailureCorrelationId,N'')
+                      OR ISNULL(i.ClosedAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.ClosedAtUtc,CONVERT(datetime2(7),'19000101'))
+                      OR ISNULL(i.CloseInitiatedByPrincipalId,N'')<>ISNULL(d.CloseInitiatedByPrincipalId,N'')
+                      OR ISNULL(i.CloseReasonCode,N'')<>ISNULL(d.CloseReasonCode,N'')
+                      OR ISNULL(i.CloseReasonText,N'')<>ISNULL(d.CloseReasonText,N'')
+                      OR ISNULL(i.CloseCorrelationId,N'')<>ISNULL(d.CloseCorrelationId,N'')
+                      OR ISNULL(i.CloseBlockedCode,N'')<>ISNULL(d.CloseBlockedCode,N'')
+                      OR ISNULL(i.CloseBlockedDetail,N'')<>ISNULL(d.CloseBlockedDetail,N'')
+                      OR ISNULL(i.LastCloseAttemptAtUtc,CONVERT(datetime2(7),'19000101'))<>ISNULL(d.LastCloseAttemptAtUtc,CONVERT(datetime2(7),'19000101'))
+                      OR i.ConsecutiveCloseFailureCount<>d.ConsecutiveCloseFailureCount
+                      OR i.CreatedAtUtc<>d.CreatedAtUtc
                   )
               )
           )
     )
         THROW 51006, 'Terminal billing periods cannot be deleted or lose immutable scope and provenance evidence.', 1;
+    END;
+"""
+
+    /// Freezes complete final preview lines once their owner scope reaches a terminal billing period.
+    let CreateTerminalChargePreviewLineProtectionTrigger =
+        """
+CREATE TRIGGER ops.TR_ops_ChargePreviewLine_TerminalBillingProtection ON ops.ChargePreviewLine
+AFTER INSERT, UPDATE, DELETE AS
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM
+        (
+            SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM inserted
+            UNION ALL
+            SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM deleted
+        ) line
+        JOIN ops.BillingPeriod period ON period.OwnerId=line.OwnerId AND period.OrganizationId=line.OrganizationId AND period.RepositoryId=line.RepositoryId
+          AND period.PeriodFromUtc=line.PeriodFromUtc AND period.PeriodToUtc=line.PeriodToUtc AND period.State IN (2,3,4)
+    )
+        THROW 51012, 'Final charge preview lines are immutable after billing close.', 1;
+END;
+"""
+
+    /// Freezes the final preview digests and commit time after the related billing period becomes terminal.
+    let CreateTerminalChargePreviewFreshnessProtectionTrigger =
+        """
+CREATE TRIGGER ops.TR_ops_ChargePreviewFreshness_TerminalBillingProtection ON ops.ChargePreviewFreshness
+AFTER INSERT, UPDATE, DELETE AS
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM
+        (
+            SELECT BillingPeriodId FROM inserted
+            UNION ALL
+            SELECT BillingPeriodId FROM deleted
+        ) freshness
+        JOIN ops.BillingPeriod period ON period.BillingPeriodId=freshness.BillingPeriodId AND period.State IN (2,3,4)
+    )
+        THROW 51013, 'Final charge preview freshness is immutable after billing close.', 1;
 END;
 """
 

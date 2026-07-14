@@ -573,6 +573,15 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         command.CommandText <- commandText
         command
 
+    /// Clears terminal raw-insert trust on this physical SQL session so pooled connections cannot retain an insertion capability.
+    let clearTrustedRawUsageFactInsertAsync cancellationToken =
+        task {
+            use command = createCommand "EXEC sys.sp_set_session_context @key=@Key, @value=NULL;"
+            command.Parameters.Add("@Key", SqlDbType.NVarChar, 128).Value <- OperationsUsageSql.TrustedRawUsageFactInsertSessionKey
+            let! _ = command.ExecuteNonQueryAsync(cancellationToken)
+            return ()
+        }
+
     /// Converts a NodaTime instant to the UTC SQL timestamp shape used by operations usage tables.
     let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
 
@@ -636,19 +645,39 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
 
         member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) =
             task {
-                use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
-                addRawUsageFactParameters command rawFact
-                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
-                return rowsAffected = 1
+                try
+                    use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
+                    addRawUsageFactParameters command rawFact
+                    let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
+                    do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    return rowsAffected = 1
+                with
+                | ex ->
+                    try
+                        do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    with
+                    | _ -> ()
+
+                    return raise ex
             }
 
         member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
             task {
-                use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
-                addReplayedRawUsageFactParameters command rawFact
-                addReplayedArchivePointerParameters command pointer
-                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
-                return rowsAffected = 1
+                try
+                    use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
+                    addReplayedRawUsageFactParameters command rawFact
+                    addReplayedArchivePointerParameters command pointer
+                    let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
+                    do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    return rowsAffected = 1
+                with
+                | ex ->
+                    try
+                        do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    with
+                    | _ -> ()
+
+                    return raise ex
             }
 
         member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) =
