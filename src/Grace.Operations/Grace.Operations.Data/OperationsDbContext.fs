@@ -598,10 +598,28 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     [<DefaultValue>]
     val mutable private chargePreviewLines: DbSet<ChargePreviewLineEntity>
 
+    /// Exposes owner-scoped billing periods for migrations and internal repair operations.
+    [<DefaultValue>]
+    val mutable private billingPeriods: DbSet<BillingPeriodEntity>
+
+    /// Exposes immutable posted ledger rows for migrations and inspection.
+    [<DefaultValue>]
+    val mutable private chargeLedgerEntries: DbSet<ChargeLedgerEntryEntity>
+
     /// Provides the EF set for immutable usage fact rows.
     member this.RawUsageFacts
         with get () = this.rawUsageFacts
         and set value = this.rawUsageFacts <- value
+
+    /// Provides EF access to owner-scoped billing periods.
+    member this.BillingPeriods
+        with get () = this.billingPeriods
+        and set value = this.billingPeriods <- value
+
+    /// Provides EF access to immutable charge-ledger entries.
+    member this.ChargeLedgerEntries
+        with get () = this.chargeLedgerEntries
+        and set value = this.chargeLedgerEntries <- value
 
     /// Provides the EF set for repository resource minute aggregate rows.
     member this.UsageAggregateMinutes
@@ -634,7 +652,19 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
         and set value = this.chargePreviewLines <- value
 
     /// Configures the Operations SQL Server schema shape that migrations must preserve.
-    override _.OnModelCreating(modelBuilder: ModelBuilder) = OperationsModel.configure modelBuilder
+    override _.OnModelCreating(modelBuilder: ModelBuilder) =
+        OperationsModel.configure modelBuilder
+
+        let rawFact = modelBuilder.Entity<RawUsageFactEntity>()
+
+        rawFact
+            .Property<System.DateTime>("AcceptedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        OperationsBillingModel.configure modelBuilder
 
 /// Ensures EF-generated scripts create the Operations schema before SQL Server receives history-table DDL.
 type OperationsSqlServerHistoryRepository(dependencies: HistoryRepositoryDependencies) =

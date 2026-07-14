@@ -8,6 +8,7 @@ open NodaTime
 open System
 open System.Data
 open System.Runtime.ExceptionServices
+open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -572,8 +573,26 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         command.CommandText <- commandText
         command
 
+    /// Clears terminal raw-insert trust on this physical SQL session so pooled connections cannot retain an insertion capability.
+    let clearTrustedRawUsageFactInsertAsync cancellationToken =
+        task {
+            use command = createCommand "EXEC sys.sp_set_session_context @key=@Key, @value=NULL;"
+            command.Parameters.Add("@Key", SqlDbType.NVarChar, 128).Value <- OperationsUsageSql.TrustedRawUsageFactInsertSessionKey
+            let! _ = command.ExecuteNonQueryAsync(cancellationToken)
+            return ()
+        }
+
     /// Converts a NodaTime instant to the UTC SQL timestamp shape used by operations usage tables.
     let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
+
+    /// Adds the owner, organization, repository, and month lock shared by accepted ingestion, replay, preview replacement, and close.
+    let addBillingScopeLockParameter (command: SqlCommand) (rawFact: RawUsageFact) =
+        let periodFromUtc, periodToUtc = BillingPeriodRules.monthContaining (toUtcDateTime rawFact.ObservedAt)
+
+        let lockIdentity =
+            $"ops:charge-preview:{rawFact.OwnerId:D}:{rawFact.OrganizationId:D}:{rawFact.RepositoryId:D}:{periodFromUtc.Ticks}:{periodToUtc.Ticks}"
+
+        command.Parameters.Add("@LockResource", SqlDbType.NVarChar, 255).Value <- $"ops:charge-preview:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes lockIdentity))}"
 
     /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
     let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
@@ -587,6 +606,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+        addBillingScopeLockParameter command rawFact
 
     /// Adds raw fact parameters for archive replay inserts that intentionally omit hot payload bytes.
     let addReplayedRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
@@ -599,6 +619,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+        addBillingScopeLockParameter command rawFact
 
     /// Adds archive pointer parameters for replay inserts that keep hot payload bytes out of SQL.
     let addReplayedArchivePointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =
@@ -624,19 +645,41 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
 
         member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) =
             task {
-                use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
-                addRawUsageFactParameters command rawFact
-                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
-                return rowsAffected = 1
+                try
+                    use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
+                    command.CommandTimeout <- OperationsUsageSql.RawUsageFactInsertCommandTimeoutSeconds
+                    addRawUsageFactParameters command rawFact
+                    let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
+                    do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    return rowsAffected = 1
+                with
+                | ex ->
+                    try
+                        do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    with
+                    | _ -> ()
+
+                    return raise ex
             }
 
         member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
             task {
-                use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
-                addReplayedRawUsageFactParameters command rawFact
-                addReplayedArchivePointerParameters command pointer
-                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
-                return rowsAffected = 1
+                try
+                    use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
+                    command.CommandTimeout <- OperationsUsageSql.RawUsageFactInsertCommandTimeoutSeconds
+                    addReplayedRawUsageFactParameters command rawFact
+                    addReplayedArchivePointerParameters command pointer
+                    let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
+                    do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    return rowsAffected = 1
+                with
+                | ex ->
+                    try
+                        do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
+                    with
+                    | _ -> ()
+
+                    return raise ex
             }
 
         member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) =

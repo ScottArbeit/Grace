@@ -32,6 +32,18 @@ module OperationsUsageSql =
     [<Literal>]
     let CorrelationIdMaxLength = 200
 
+    /// Names the transaction-scoped SQL marker that admits a terminal-scope raw fact only from reviewed live or replay insertion.
+    [<Literal>]
+    let TrustedRawUsageFactInsertSessionKey = "Grace.Operations.TrustedRawUsageFactInsert"
+
+    /// Sets the SQL application-lock wait shared by raw ingestion and archive replay before terminal billing insertion.
+    [<Literal>]
+    let RawUsageFactScopeLockTimeoutMilliseconds = 60000
+
+    /// Keeps the raw-fact client command alive after its 60-second SQL scope-lock wait has completed.
+    [<Literal>]
+    let RawUsageFactInsertCommandTimeoutSeconds = 65
+
     /// Limits storage-pool identifiers to the aggregate key column width used by the operations store.
     [<Literal>]
     let StoragePoolIdMaxLength = 256
@@ -93,6 +105,12 @@ END;
     [<Literal>]
     let TryInsertRawUsageFact =
         """
+DECLARE @LockResult int;
+DECLARE @TrustedRawUsageFactInsertMarker nvarchar(36)=CONVERT(nvarchar(36),@UsageFactId);
+EXEC @LockResult = sys.sp_getapplock @Resource=@LockResource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=60000;
+IF @LockResult < 0 THROW 51000, 'Could not serialize accepted usage against billing close scope.', 1;
+BEGIN TRY
+EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=@TrustedRawUsageFactInsertMarker;
 INSERT INTO ops.RawUsageFact
 (
     UsageFactId,
@@ -123,6 +141,12 @@ WHERE NOT EXISTS
     FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK)
     WHERE UsageFactId = @UsageFactId
 );
+EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=NULL;
+END TRY
+BEGIN CATCH
+    EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=NULL;
+    THROW;
+END CATCH;
 """
 
     /// Selects hot facts and partially verified facts that need archive processing or cleanup.
@@ -202,6 +226,12 @@ ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
     [<Literal>]
     let TryInsertReplayedArchivedRawUsageFact =
         """
+DECLARE @LockResult int;
+DECLARE @TrustedRawUsageFactInsertMarker nvarchar(36)=CONVERT(nvarchar(36),@UsageFactId);
+EXEC @LockResult = sys.sp_getapplock @Resource=@LockResource, @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=60000;
+IF @LockResult < 0 THROW 51000, 'Could not serialize accepted archive replay against billing close scope.', 1;
+BEGIN TRY
+EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=@TrustedRawUsageFactInsertMarker;
 INSERT INTO ops.RawUsageFact
 (
     UsageFactId,
@@ -244,6 +274,12 @@ WHERE NOT EXISTS
     FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK)
     WHERE UsageFactId = @UsageFactId
 );
+EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=NULL;
+END TRY
+BEGIN CATCH
+    EXEC sys.sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert', @value=NULL;
+    THROW;
+END CATCH;
 """
 
     /// Declares the temporary table variable used for batched temporary-hot payload restore.

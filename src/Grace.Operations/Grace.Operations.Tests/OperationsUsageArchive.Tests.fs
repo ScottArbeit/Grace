@@ -395,6 +395,32 @@ type private RecordingArchiveReplayStore(events: List<string>) =
 
             Task.FromResult(Ok result)
 
+/// Records accepted replay routes and models correction-work uniqueness by the persisted UsageFactId.
+type private RecordingArchiveReplayBillingPeriodService() =
+    let routes = ResizeArray<Guid * Guid * Guid * DateTime * Guid>()
+    let correctionWorkUsageFactIds = HashSet<Guid>()
+
+    /// Returns every replay route forwarded to the shared billing late-fact service.
+    member _.Routes = routes |> Seq.toList
+
+    /// Returns the number of distinct correction-work identities reached by replay routing.
+    member _.DistinctCorrectionWorkCount = correctionWorkUsageFactIds.Count
+
+    interface IBillingPeriodService with
+        member _.RunAsync(_nowUtc, _cancellationToken) = Task.CompletedTask
+        member _.RetryCloseAsync(_scope, _nowUtc, _provenance, _cancellationToken) = Task.FromResult(BillingCloseOutcome.NotEligible)
+        member _.ApplyManualCorrectionAsync(_correction, _provenance, _cancellationToken) = Task.CompletedTask
+
+        member _.RecordAcceptedLateFactAsync(ownerId, organizationId, repositoryId, observedAtUtc, usageFactId, _cancellationToken) =
+            routes.Add((ownerId, organizationId, repositoryId, observedAtUtc, usageFactId))
+
+            correctionWorkUsageFactIds.Add usageFactId
+            |> ignore
+
+            Task.CompletedTask
+
+        member _.ReenableCorrectionWorkAsync(_workId, _provenance, _cancellationToken) = Task.CompletedTask
+
 /// Provides deterministic time for rehydration expiry tests.
 type private FixedClock(now: Instant) =
 
@@ -492,15 +518,20 @@ type OperationsUsageArchiveTests() =
                 .Instance
         )
 
-    /// Creates the replay processor with fake SQL, Blob, and replay dependencies.
-    let createReplayProcessor archiveStore blobStore replayStore =
+    /// Creates the replay processor with fake SQL, Blob, replay, and shared billing-routing dependencies.
+    let createReplayProcessorWithBilling archiveStore blobStore replayStore billingPeriods =
         OperationsUsageArchiveReplayProcessor(
             archiveStore,
             blobStore,
             replayStore,
+            billingPeriods,
             NullLogger<OperationsUsageArchiveReplayProcessor>
                 .Instance
         )
+
+    /// Creates the replay processor with a disposable recording billing route for tests not inspecting terminal routing.
+    let createReplayProcessor archiveStore blobStore replayStore =
+        createReplayProcessorWithBilling archiveStore blobStore replayStore (RecordingArchiveReplayBillingPeriodService() :> IBillingPeriodService)
 
     /// Creates the scoped rehydration processor with deterministic time.
     let createRehydrationProcessor archiveStore blobStore clock =
@@ -1525,7 +1556,7 @@ type OperationsUsageArchiveTests() =
             )
         }
 
-    /// Verifies archive replay validates Blob authority and remains idempotent by UsageFactId.
+    /// Verifies archive replay validates Blob authority, replays terminal routing, and remains idempotent by UsageFactId.
     [<Test>]
     member _.ArchiveReplayValidatesBlobAuthorityAndIsIdempotent() =
         task {
@@ -1542,10 +1573,14 @@ type OperationsUsageArchiveTests() =
             let blobStore = RecordingArchiveBlobStore(events)
             blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
             let replayStore = RecordingArchiveReplayStore(events)
-            let processor = createReplayProcessor archiveStore blobStore replayStore
+            let billingPeriods = RecordingArchiveReplayBillingPeriodService()
+
+            let processor = createReplayProcessorWithBilling archiveStore blobStore replayStore (billingPeriods :> IBillingPeriodService)
 
             let! first = processor.ReplayBatchAsync(None, 10, CancellationToken.None)
             let! second = processor.ReplayBatchAsync(None, 10, CancellationToken.None)
+
+            let firstRoute = billingPeriods.Routes |> List.head
 
             Assert.Multiple(
                 Action (fun () ->
@@ -1555,7 +1590,14 @@ type OperationsUsageArchiveTests() =
                     Assert.That(second.Examined, Is.EqualTo(1))
                     Assert.That(second.Accepted, Is.EqualTo(0))
                     Assert.That(second.AlreadyProcessed, Is.EqualTo(1))
-                    Assert.That(replayStore.AcceptedCount, Is.EqualTo(1)))
+                    Assert.That(replayStore.AcceptedCount, Is.EqualTo(1))
+                    Assert.That(billingPeriods.Routes |> List.length, Is.EqualTo(2))
+                    Assert.That(billingPeriods.DistinctCorrectionWorkCount, Is.EqualTo(1))
+
+                    Assert.That(
+                        firstRoute,
+                        Is.EqualTo((fact.Scope.OwnerId, fact.Scope.OrganizationId, fact.Scope.RepositoryId, fact.ObservedAt.ToDateTimeUtc(), fact.UsageFactId))
+                    ))
             )
         }
 

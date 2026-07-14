@@ -17,6 +17,7 @@
     <Compile Include="OperationsUsageStorage.Tests.fs" />
     <Compile Include="OperationsPricing.Tests.fs" />
     <Compile Include="OperationsChargePreview.Tests.fs" />
+    <Compile Include="OperationsBilling.Tests.fs" />
     <Compile Include="OperationsUsageArchive.Tests.fs" />
     <Compile Include="OperationsWorkerIngestion.Tests.fs" />
     <Compile Include="Program.fs" />

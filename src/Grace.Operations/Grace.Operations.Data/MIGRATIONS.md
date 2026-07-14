@@ -3,8 +3,9 @@
 `Grace.Operations.Data` owns the EF Core model and migrations for the Azure SQL operations store. The current baseline
 schema is intentionally narrow:
 
-- `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary and keeps
-  the exact accepted broker payload in `RawPayload` for replay and audit.
+- `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary, a
+  database-assigned `AcceptedAtUtc` ordering point, and the exact accepted broker payload in `RawPayload` for replay
+  and audit.
 - `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
 - `ops.ChargePreviewLine` stores deterministic provisional owner charge lines rebuilt from compact immutable usage
   facts and complete effective pricing. A rebuild atomically replaces one owner/repository/half-open-period scope;
@@ -14,6 +15,50 @@ schema is intentionally narrow:
 
 The ingestion hot path still uses reviewed raw SQL for the durable insert and aggregate update. That path preserves the
 `UsageFactId` idempotency lock and the aggregate `MERGE ... WITH (HOLDLOCK)` behavior that the worker depends on.
+
+## Owner-Scoped Billing Periods And Immutable Ledger
+
+`20260711140000_AddBillingPeriodCloseLedger` adds the current non-production billing model. A billing period is exactly
+`OwnerId`, `OrganizationId`, `RepositoryId`, and a half-open UTC calendar month. There is no secondary billing identity.
+
+- Periods remain `Open` until 24 hours after the month end, become `Provisional` through the close window, and are eligible
+  for close at 72 hours. The hosted pass runs once at startup and every 30 minutes.
+- Closing uses the exact owner/org/repository/month SQL lock and application-lock resource used by preview replacement.
+  It re-reads state and completeness evidence in a serializable transaction, rebuilds the final preview, writes its fact
+  and pricing digests, posts immutable ledger entries, and commits `Closed` as one transaction. Empty previews may close
+  with explicit zero totals and zero ledger entries.
+- `ChargeLedgerEntry` is append-only. Corrections append signed Adjustments with complete assignment, plan,
+  mapping, rate, unit, effective-window, correlation, and prior-entry provenance. Automatic late-fact work is uniquely
+  identified by period and `UsageFactId`, so repeated delivery is isolated and idempotent.
+- The schema blocks direct `UPDATE` or `DELETE` of ledger entries and rejects new initial-charge entries after a period
+  is terminal. Historical pricing plan, usage-kind mapping, assignment, and rate inserts, updates, and deletes are
+  blocked when their half-open effective windows intersect a `Closed`, `Corrected`, or `PermanentlyFailed` owner-scoped
+  period, including a zero-usage period. Future-effective pricing remains allowed.
+- Active rejected usage evidence is bounded and scoped by owner/org/repository/month when available. The first active
+  non-empty `UsageFactId` failure is canonical; later conflicting rejects settle without replacing its scope. Acceptance
+  or explicit repair resolves that bounded conflict evidence.
+- Automatic late usage is routed from the existing terminal owner period, not a current assignment, only when the raw
+  fact's database-assigned `AcceptedAtUtc` is strictly later than the period's database-assigned `ClosedAtUtc`. Its
+  durable work is unique by period and `UsageFactId`, posts one isolated adjustment linked to its work and immediately
+  preceding automatic pricing-grain entry, and remains visibly pending and ineligible for automatic polling when pricing
+  is missing. An explicit internal operator repair with durable provenance may re-enable only that exact blocked row;
+  Grace never inserts or mutates historical pricing to settle it. Manual Adjustments validate their complete
+  owner-scoped pricing grain and any requested predecessor before appending immutable history.
+- `20260713120000_StabilizeBillingPeriodCloseLedger` protects the raw billing source and evidence fields of every
+  terminal period at the SQL boundary. Key-changing direct SQL cannot move a fact into terminal history, and direct
+  terminal state changes require the same immutable close, correction, or permanent-failure evidence as the service.
+  `RawPayload` and archive, retention, rehydration, and archive-failure metadata remain operable so the existing
+  hot/cold archive lifecycle can complete. The migration also adds `PermanentlyFailed` (`State = 4`) for deterministic
+  calculation overflow. It records bounded code, detail, timestamp, and provenance, cannot return to ordinary close or
+  correction processing, and has no replacement or settlement behavior in this leaf; that separately tracked outcome
+  belongs to #715.
+- Routine billing materialization reads only the current UTC calendar month and two preceding UTC months for pricing
+  assignments and accepted raw facts. Existing nonterminal periods, unfinished explicit correction work, and active
+  scoped ingestion-failure evidence are independently selected, including scopes older than the rolling window. Older
+  terminal-history recovery requires a separate operator-directed workflow rather than silently growing every worker pass.
+
+Grace has no production billing data. These migrations describe the current schema only: no compatibility columns,
+views, aliases, backfill, or legacy objects are retained.
 
 ## Hot/Cold Raw Payload Archive
 
