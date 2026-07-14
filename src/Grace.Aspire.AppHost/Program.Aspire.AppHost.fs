@@ -269,14 +269,25 @@ let private createServiceBusConfiguration configFilePath (configuration: IConfig
         Console.WriteLine($"Creating Service Bus Emulator config at {configFilePath}:{Environment.NewLine}{json}")
         File.WriteAllText(configFilePath, json)
 
-/// Composes Grace.Cache as a separate F# process with no cache CLI dependency or service capability claims.
-let private addCacheProject (builder: IDistributedApplicationBuilder) =
-    builder
-        .AddProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.fsproj")
-        .WithEnvironment("GRACE_CACHE_INSTANCE_NAME", "aspire-cache")
-        .WithEnvironment("ASPNETCORE_URLS", "http://+:8080")
-        .WithHttpEndpoint(targetPort = 8080, name = "http")
-    |> ignore
+/// Composes Grace.Cache without a CLI dependency and isolates ordinary test hosts from fixed developer ports.
+let private addCacheProject (builder: IDistributedApplicationBuilder) isTestRun useFixedTestPorts =
+    let cache =
+        builder
+            .AddProject("grace-cache", "..\\Grace.Cache\\Grace.Cache.fsproj")
+            .WithEnvironment("GRACE_CACHE_INSTANCE_NAME", "aspire-cache")
+
+    if isTestRun && not useFixedTestPorts then
+        let cacheTargetPort = getAvailableTcpPort ()
+
+        cache
+            .WithHttpEndpoint(targetPort = cacheTargetPort, name = "http")
+            .WithEnvironment("ASPNETCORE_URLS", $"http://127.0.0.1:{cacheTargetPort}")
+        |> ignore
+    else
+        cache
+            .WithEnvironment("ASPNETCORE_URLS", "http://+:8080")
+            .WithHttpEndpoint(targetPort = 8080, name = "http")
+        |> ignore
 
 /// Builds and runs the existing AppHost resource graph through the F# composition entry point.
 [<EntryPoint>]
@@ -364,7 +375,7 @@ let main args =
             redis.WithLifetime(ContainerLifetime.Session)
             |> ignore
 
-        addCacheProject builder
+        addCacheProject builder isTestRun useFixedTestPorts
 
         if not isPublishMode then
             let otlpEndpoint =
@@ -555,8 +566,20 @@ let main args =
 
                 let cosmosConnStr = cosmos.Resource.ConnectionStringExpression
 
-                let azuriteConnection =
-                    $"DefaultEndpointsProtocol=http;AccountName=gracevcsdevelopment;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://{azuriteBlobHostAndPort}/gracevcsdevelopment;QueueEndpoint=http://{azuriteQueueHostAndPort}/gracevcsdevelopment;TableEndpoint=http://{azuriteTableHostAndPort}/gracevcsdevelopment;"
+                let azuriteConnectionBuilder = ReferenceExpressionBuilder()
+
+                azuriteConnectionBuilder.AppendLiteral(
+                    "DefaultEndpointsProtocol=http;AccountName=gracevcsdevelopment;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://"
+                )
+
+                azuriteConnectionBuilder.AppendValueProvider(azuriteBlobHostAndPort, null)
+                azuriteConnectionBuilder.AppendLiteral("/gracevcsdevelopment;QueueEndpoint=http://")
+                azuriteConnectionBuilder.AppendValueProvider(azuriteQueueHostAndPort, null)
+                azuriteConnectionBuilder.AppendLiteral("/gracevcsdevelopment;TableEndpoint=http://")
+                azuriteConnectionBuilder.AppendValueProvider(azuriteTableHostAndPort, null)
+                azuriteConnectionBuilder.AppendLiteral("/gracevcsdevelopment;")
+
+                let azuriteConnection = azuriteConnectionBuilder.Build()
 
                 graceServer
                     .WithParentRelationship(azurite.Resource)
@@ -637,8 +660,15 @@ let main args =
                             .GetEndpoint("amqp")
                             .Property(EndpointProperty.HostAndPort)
 
-                    let serviceBusConnection =
-                        $"Endpoint=sb://{serviceBusHostAndPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+                    let serviceBusConnectionBuilder = ReferenceExpressionBuilder()
+                    serviceBusConnectionBuilder.AppendLiteral("Endpoint=sb://")
+                    serviceBusConnectionBuilder.AppendValueProvider(serviceBusHostAndPort, null)
+
+                    serviceBusConnectionBuilder.AppendLiteral(
+                        ";SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+                    )
+
+                    let serviceBusConnection = serviceBusConnectionBuilder.Build()
 
                     graceServer
                         .WithParentRelationship(serviceBusEmulator.Resource)
@@ -849,6 +879,11 @@ let main args =
             let graceServer =
                 builder
                     .AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
+                    .WithReference(cosmosDatabase :?> IResourceBuilder<IResourceWithConnectionString>)
+                    .WithReference(blobStorage :?> IResourceBuilder<IResourceWithConnectionString>)
+                    .WithReference(diffStorage :?> IResourceBuilder<IResourceWithConnectionString>)
+                    .WithReference(zipStorage :?> IResourceBuilder<IResourceWithConnectionString>)
+                    .WithReference(serviceBus :?> IResourceBuilder<IResourceWithConnectionString>)
                     .WithParentRelationship(redis.Resource)
                     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Production")
                     .WithEnvironment("DOTNET_ENVIRONMENT", "Production")
