@@ -3,6 +3,7 @@ namespace Grace.Cache
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open System
+open System.Net
 
 /// Represents the minimal private process identity required before the cache host listens.
 type CacheHostSettings = private { InstanceName: string }
@@ -23,17 +24,35 @@ module CacheHostSettings =
 module CacheHost =
 
     /// Lists the only routes available before cache enrollment, storage, or artifact serving exists.
-    let routeInventory = [ "/healthz"; "/status" ]
+    let routeInventory =
+        [
+            "/healthz"
+            "/status"
+            "/control/status"
+        ]
 
     /// Builds the cache HTTP host after startup settings have already been validated.
-    let build (settings: CacheHostSettings) (args: string array) =
+    let build (settings: CacheHostSettings) (configuration: CacheMachineConfiguration) (args: string array) =
         let builder = WebApplication.CreateBuilder(args)
         let app = builder.Build()
+
+        app.Urls.Add(configuration.Endpoint)
+        app.Urls.Add(CacheMachineConfiguration.ControlEndpoint.AbsoluteUri)
 
         app.MapGet("/healthz", Func<string>(fun () -> "Grace Cache scaffold healthy."))
         |> ignore
 
-        app.MapGet("/status", Func<IResult>(fun () -> Results.Json({| service = "Grace.Cache"; status = "ready" |})))
+        app.MapGet("/status", Func<IResult>(fun () -> Results.Json(CacheMachineConfiguration.toStatus configuration)))
+        |> ignore
+
+        app.MapGet(
+            "/control/status",
+            Func<HttpContext, IResult> (fun context ->
+                if IPAddress.IsLoopback context.Connection.RemoteIpAddress then
+                    Results.Json(CacheMachineConfiguration.toStatus configuration)
+                else
+                    Results.NotFound())
+        )
         |> ignore
 
         app

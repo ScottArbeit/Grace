@@ -869,6 +869,7 @@ module GraceCommand =
 
         // Add subcommands.
         rootCommand.Subcommands.Add(Connect.Build)
+        rootCommand.Subcommands.Add(CacheCommand.Build)
         rootCommand.Subcommands.Add(Watch.Build)
         rootCommand.Subcommands.Add(Branch.Build)
         rootCommand.Subcommands.Add(DirectoryVersion.Build)
