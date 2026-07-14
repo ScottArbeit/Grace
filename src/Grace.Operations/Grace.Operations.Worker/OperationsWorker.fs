@@ -1913,6 +1913,14 @@ type OperationsUsageIngestionProcessor
                             match UsageFact.Validate usageFact with
                             | Error errors ->
                                 let scope = if isNull (box usageFact.Scope) then None else Some usageFact.Scope
+
+                                let validFailureScope =
+                                    scope
+                                    |> Option.filter (fun value ->
+                                        value.OwnerId <> Guid.Empty
+                                        && value.OrganizationId <> Guid.Empty
+                                        && value.RepositoryId <> Guid.Empty)
+
                                 let failureUsageFactId = if usageFact.UsageFactId = Guid.Empty then None else Some usageFact.UsageFactId
 
                                 match failureUsageFactId with
@@ -1920,10 +1928,11 @@ type OperationsUsageIngestionProcessor
                                     do!
                                         billingFailures.RecordFailureAsync(
                                             Some usageFactId,
-                                            scope |> Option.map (fun value -> value.OwnerId),
-                                            scope
+                                            validFailureScope
+                                            |> Option.map (fun value -> value.OwnerId),
+                                            validFailureScope
                                             |> Option.map (fun value -> value.OrganizationId),
-                                            scope
+                                            validFailureScope
                                             |> Option.map (fun value -> value.RepositoryId),
                                             Some(usageFact.ObservedAt.ToDateTimeUtc()),
                                             string usageFact.CorrelationId,

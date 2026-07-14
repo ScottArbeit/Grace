@@ -1058,6 +1058,59 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies every empty scope identifier records scope-free failure evidence and cannot materialize an all-zero billing scope.
+    [<Test>]
+    member _.EmptyScopeIdentifiersRecordScopeFreeFailureEvidenceWithoutLateMaterialization() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("17171717-1717-4717-8717-171717171717"))
+
+            let invalidOwner = { fact with Scope = { fact.Scope with OwnerId = Guid.Empty } }
+            let invalidOrganization = { fact with Scope = { fact.Scope with OrganizationId = Guid.Empty } }
+            let invalidRepository = { fact with Scope = { fact.Scope with RepositoryId = Guid.Empty } }
+
+            let processor, store, actions, events, failures, billingPeriods =
+                createProcessorWithBilling (fun storedFact _rawPayload _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            do!
+                invalidOwner
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun message -> processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            do!
+                invalidOrganization
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun message -> processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            do!
+                invalidRepository
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun message -> processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let scopeFreeFailures =
+                failures.Calls
+                |> List.forall (fun (_usageFactId, ownerId, organizationId, repositoryId, _observedAtUtc, _correlationId, _failureCode) ->
+                    ownerId.IsNone
+                    && organizationId.IsNone
+                    && repositoryId.IsNone)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(failures.Calls, Has.Length.EqualTo(3))
+                    Assert.That(scopeFreeFailures, Is.True)
+                    Assert.That(billingPeriods.LateFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter|dead-letter|dead-letter"))
+
+                    Assert.That(
+                        settlementText actions.Settlements,
+                        Is.EqualTo("dead-letter:InvalidUsageFact|dead-letter:InvalidUsageFact|dead-letter:InvalidUsageFact")
+                    ))
+            )
+        }
+
     /// Verifies non-positive quantities are treated as impossible poison input.
     [<Test>]
     member _.InvalidQuantityIsDeadLetteredWithoutStorage() =

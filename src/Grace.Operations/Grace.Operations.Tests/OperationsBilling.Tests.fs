@@ -14,6 +14,15 @@ open System.IO
 type OperationsBillingTests() =
     let utc year month day hour = DateTime(year, month, day, hour, 0, 0, DateTimeKind.Utc)
 
+    /// Restricts source scans to paths outside cross-platform build-output directories.
+    let isSourcePath (path: string) =
+        path.Split([| '\\'; '/' |], StringSplitOptions.RemoveEmptyEntries)
+        |> Array.forall (fun segment ->
+            not (
+                String.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)
+                || String.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase)
+            ))
+
     /// Verifies leap-month calculation and the exact Open, Provisional, and close-eligible boundaries.
     [<Test>]
     member _.LifecycleUsesExactUtcBoundaries() =
@@ -165,11 +174,7 @@ type OperationsBillingTests() =
 
         let found =
             Directory.GetFiles(root, "*", SearchOption.AllDirectories)
-            |> Array.filter (fun path ->
-                not (
-                    path.Contains("\\bin\\")
-                    || path.Contains("\\obj\\")
-                ))
+            |> Array.filter isSourcePath
             |> Array.exists (fun path ->
                 let text = File.ReadAllText(path)
 
@@ -177,6 +182,34 @@ type OperationsBillingTests() =
                 |> Array.exists (fun term -> text.Contains(term, StringComparison.Ordinal)))
 
         Assert.That(found, Is.False)
+
+    /// Verifies source-only scans exclude bin and obj output using either Windows or Unix separators.
+    [<Test>]
+    member _.SourceOnlyScansExcludeCrossPlatformBuildOutputPaths() =
+        let sourcePaths =
+            [|
+                "C:\\source\\Grace.Operations\\OperationsBilling.fs"
+                "/source/Grace.Operations/OperationsBilling.fs"
+            |]
+
+        let buildOutputPaths =
+            [|
+                "C:\\source\\Grace.Operations\\bin\\Release\\net10.0\\generated.fs"
+                "C:\\source\\Grace.Operations\\obj\\Release\\net10.0\\generated.fs"
+                "/source/Grace.Operations/bin/Release/net10.0/generated.fs"
+                "/source/Grace.Operations/obj/Release/net10.0/generated.fs"
+            |]
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(sourcePaths |> Array.forall isSourcePath, Is.True)
+
+                Assert.That(
+                    buildOutputPaths
+                    |> Array.forall (isSourcePath >> not),
+                    Is.True
+                ))
+        )
 
     /// Verifies lock, serializable retry, cadence, correction work, and SQL immutability guards remain explicit.
     [<Test>]
@@ -270,7 +303,7 @@ type OperationsBillingTests() =
                 Assert.That(migrationSource, Does.Contain("AcceptedAtUtc datetime2(7) NOT NULL"))
                 Assert.That(migrationSource, Does.Contain("IsAutomaticRetryEligible bit NOT NULL"))
                 Assert.That(docs, Does.Contain("Grace never inserts or mutates historical pricing"))
-                Assert.That(testHost, Does.Contain("20260713130000_StabilizeBillingCorrectionWorkFailure")))
+                Assert.That(testHost, Does.Contain("20260713140000_StabilizeBillingTerminalInsertProtection")))
         )
 
     /// Verifies canonical failure handling and owner-period Adjustment validation are not bypassed by conflicting retries.
@@ -538,20 +571,12 @@ type OperationsBillingTests() =
                 Assert.That(closeSource, Does.Contain("scope changed before its owner/month lock was acquired; retry routing from the persisted fact"))
                 Assert.That(closeSource, Does.Contain("WHERE NOT EXISTS(SELECT 1 FROM ops.BillingCorrectionWork WITH(UPDLOCK,HOLDLOCK)"))
 
-                // SQL bypass: a terminal destination must have an unchanged source tuple, including its usage-fact identifier.
+                // SQL bypass: terminal source and destination updates compare row pairs by UsageFactId, defeating multi-row swaps.
                 Assert.That(billingSource, Does.Contain("SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId"))
-
-                Assert.That(
-                    billingSource,
-                    Does.Contain("EXCEPT\n            SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId")
-                )
-
-                Assert.That(
-                    billingSource,
-                    Does.Contain("UPDATE(UsageFactId) OR UPDATE(OwnerId) OR UPDATE(OrganizationId) OR UPDATE(RepositoryId) OR UPDATE(ObservedAtUtc)")
-                )
-
-                Assert.That(billingSource, Does.Not.Contain("LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId"))
+                Assert.That(billingSource, Does.Contain("LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId"))
+                Assert.That(billingSource, Does.Contain("LEFT JOIN deleted d ON d.UsageFactId=i.UsageFactId"))
+                Assert.That(billingSource, Does.Contain("d.UsageFactId IS NULL"))
+                Assert.That(billingSource, Does.Not.Contain("UPDATE(UsageFactId) OR UPDATE(OwnerId)"))
                 Assert.That(billingSource, Does.Contain("destinationPeriod.State IN (2,3,4)"))
                 Assert.That(billingSource, Does.Not.Contain("i.RawPayload<>d.RawPayload"))
 
@@ -605,6 +630,7 @@ type OperationsBillingTests() =
         let usageDataSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsData.fs"))
         let entitySource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsEntities.fs"))
         let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+        let aspireTestHostSource = File.ReadAllText(Path.Combine(root, "..", "Grace.Server.Tests", "AspireTestHost.fs"))
 
         let initialMigrationSource =
             File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260711140000_AddBillingPeriodCloseLedger.fs"))
@@ -640,8 +666,9 @@ type OperationsBillingTests() =
                 Assert.That(billingSource, Does.Contain("SESSION_CONTEXT(N'Grace.Operations.TrustedRawUsageFactInsert')"))
                 Assert.That(billingSource, Does.Contain("ISNULL(CONVERT(nvarchar(36),SESSION_CONTEXT(N'Grace.Operations.TrustedRawUsageFactInsert')),N'')"))
                 Assert.That(billingSource, Does.Contain("terminalPeriod.State=4"))
-                Assert.That(billingSource, Does.Contain("IF EXISTS(SELECT 1 FROM deleted)\n       AND (UPDATE(UsageFactId)"))
                 Assert.That(billingSource, Does.Contain("WHERE EXISTS(SELECT 1 FROM deleted)"))
+                Assert.That(billingSource, Does.Contain("LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId"))
+                Assert.That(billingSource, Does.Contain("LEFT JOIN deleted d ON d.UsageFactId=i.UsageFactId"))
                 Assert.That(usageSqlSource, Does.Contain("sp_set_session_context @key=N'Grace.Operations.TrustedRawUsageFactInsert'"))
                 Assert.That(usageSqlSource, Does.Contain("DECLARE @TrustedRawUsageFactInsertMarker nvarchar(36)=CONVERT(nvarchar(36),@UsageFactId);"))
                 Assert.That(usageSqlSource, Does.Contain("@value=@TrustedRawUsageFactInsertMarker;"))
@@ -649,6 +676,37 @@ type OperationsBillingTests() =
                 Assert.That(usageSqlSource, Does.Contain("@value=NULL"))
                 Assert.That(usageDataSource, Does.Contain("clearTrustedRawUsageFactInsertAsync"))
                 Assert.That(usageDataSource, Does.Contain("CancellationToken.None"))
+                Assert.That(OperationsUsageSql.RawUsageFactScopeLockTimeoutMilliseconds, Is.EqualTo(60000))
+
+                Assert.That(
+                    OperationsUsageSql.RawUsageFactInsertCommandTimeoutSeconds,
+                    Is.GreaterThan(
+                        OperationsUsageSql.RawUsageFactScopeLockTimeoutMilliseconds
+                        / 1000
+                    )
+                )
+
+                Assert.That(usageSqlSource, Does.Contain("@LockTimeout=60000"))
+
+                Assert.That(
+                    usageDataSource.IndexOf(
+                        "command.CommandTimeout <- OperationsUsageSql.RawUsageFactInsertCommandTimeoutSeconds",
+                        usageDataSource.IndexOf("member _.TryInsertRawUsageFactAsync", StringComparison.Ordinal),
+                        StringComparison.Ordinal
+                    ),
+                    Is.GreaterThan(0)
+                )
+
+                Assert.That(
+                    usageDataSource.IndexOf(
+                        "command.CommandTimeout <- OperationsUsageSql.RawUsageFactInsertCommandTimeoutSeconds",
+                        usageDataSource.IndexOf("member _.TryInsertReplayedArchivedUsageFactAsync", StringComparison.Ordinal),
+                        StringComparison.Ordinal
+                    ),
+                    Is.GreaterThan(0)
+                )
+
+                Assert.That(aspireTestHostSource, Does.Contain("20260713140000_StabilizeBillingTerminalInsertProtection"))
                 Assert.That(closeSource, Does.Contain("fact.AcceptedAtUtc > period.ClosedAtUtc"))
                 Assert.That(closeSource, Does.Not.Contain("fact.AcceptedAtUtc >= period.ClosedAtUtc"))
 

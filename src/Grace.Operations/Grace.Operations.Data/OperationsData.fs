@@ -647,6 +647,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
             task {
                 try
                     use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
+                    command.CommandTimeout <- OperationsUsageSql.RawUsageFactInsertCommandTimeoutSeconds
                     addRawUsageFactParameters command rawFact
                     let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
                     do! clearTrustedRawUsageFactInsertAsync CancellationToken.None
@@ -665,6 +666,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
             task {
                 try
                     use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
+                    command.CommandTimeout <- OperationsUsageSql.RawUsageFactInsertCommandTimeoutSeconds
                     addReplayedRawUsageFactParameters command rawFact
                     addReplayedArchivePointerParameters command pointer
                     let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken

@@ -36,6 +36,14 @@ module OperationsUsageSql =
     [<Literal>]
     let TrustedRawUsageFactInsertSessionKey = "Grace.Operations.TrustedRawUsageFactInsert"
 
+    /// Sets the SQL application-lock wait shared by raw ingestion and archive replay before terminal billing insertion.
+    [<Literal>]
+    let RawUsageFactScopeLockTimeoutMilliseconds = 60000
+
+    /// Keeps the raw-fact client command alive after its 60-second SQL scope-lock wait has completed.
+    [<Literal>]
+    let RawUsageFactInsertCommandTimeoutSeconds = 65
+
     /// Limits storage-pool identifiers to the aggregate key column width used by the operations store.
     [<Literal>]
     let StoragePoolIdMaxLength = 256

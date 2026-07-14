@@ -777,25 +777,16 @@ BEGIN
     )
         THROW 51010, 'Terminal billing raw fact inserts require trusted application routing.', 1;
 
-    -- UPDATE(column) closes the multi-row swap bypass that set comparison alone cannot distinguish.
-    IF EXISTS(SELECT 1 FROM deleted)
-       AND (UPDATE(UsageFactId) OR UPDATE(OwnerId) OR UPDATE(OrganizationId) OR UPDATE(RepositoryId) OR UPDATE(ObservedAtUtc))
-       AND EXISTS
-       (
-           SELECT 1
-           FROM inserted i
-           JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
-             AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3,4)
-       )
-        THROW 51005, 'Terminal billing raw fact source and evidence fields are immutable.', 1;
-
+    -- Pair updates by UsageFactId so a multi-row value swap cannot pass as an unchanged set.
     IF EXISTS
     (
         SELECT 1
         FROM deleted d
         JOIN ops.BillingPeriod sourcePeriod ON sourcePeriod.OwnerId=d.OwnerId AND sourcePeriod.OrganizationId=d.OrganizationId AND sourcePeriod.RepositoryId=d.RepositoryId
           AND d.ObservedAtUtc>=sourcePeriod.PeriodFromUtc AND d.ObservedAtUtc<sourcePeriod.PeriodToUtc AND sourcePeriod.State IN (2,3,4)
-        WHERE EXISTS
+        LEFT JOIN inserted i ON i.UsageFactId=d.UsageFactId
+        WHERE i.UsageFactId IS NULL
+           OR EXISTS
         (
             SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId,d.StoragePoolId,d.Quantity,d.ObservedAtUtc,d.AcceptedAtUtc,d.CreatedAtUtc
             EXCEPT
@@ -811,14 +802,18 @@ BEGIN
         FROM inserted i
         JOIN ops.BillingPeriod destinationPeriod ON destinationPeriod.OwnerId=i.OwnerId AND destinationPeriod.OrganizationId=i.OrganizationId AND destinationPeriod.RepositoryId=i.RepositoryId
           AND i.ObservedAtUtc>=destinationPeriod.PeriodFromUtc AND i.ObservedAtUtc<destinationPeriod.PeriodToUtc AND destinationPeriod.State IN (2,3,4)
+        LEFT JOIN deleted d ON d.UsageFactId=i.UsageFactId
         WHERE EXISTS(SELECT 1 FROM deleted)
-          AND EXISTS
-        (
-            SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId,i.StoragePoolId,i.Quantity,i.ObservedAtUtc,i.AcceptedAtUtc,i.CreatedAtUtc
-            EXCEPT
-            SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId,d.StoragePoolId,d.Quantity,d.ObservedAtUtc,d.AcceptedAtUtc,d.CreatedAtUtc
-            FROM deleted d
-        )
+          AND
+          (
+              d.UsageFactId IS NULL
+              OR EXISTS
+              (
+                  SELECT i.UsageFactId,i.CorrelationId,i.FactKind,i.OwnerId,i.OrganizationId,i.RepositoryId,i.StoragePoolId,i.Quantity,i.ObservedAtUtc,i.AcceptedAtUtc,i.CreatedAtUtc
+                  EXCEPT
+                  SELECT d.UsageFactId,d.CorrelationId,d.FactKind,d.OwnerId,d.OrganizationId,d.RepositoryId,d.StoragePoolId,d.Quantity,d.ObservedAtUtc,d.AcceptedAtUtc,d.CreatedAtUtc
+              )
+          )
     )
         THROW 51005, 'Terminal billing raw fact source and evidence fields are immutable.', 1;
 END;
