@@ -80,6 +80,17 @@ module BranchCommandTests =
             CreatedSaveMessage = None
         }
 
+    /// Verifies canonical typed-slot sentinels remain absent after JSON round-tripping while concrete References stay eligible for lookup.
+    [<Test>]
+    let ``concrete reference ids exclude JSON round-tripped typed sentinels`` () =
+        let concreteReferenceId = Guid.NewGuid()
+        let roundTrippedSentinel = deserialize<ReferenceDto> (serialize ReferenceDto.Default)
+        let concreteReference = { ReferenceDto.Default with ReferenceId = concreteReferenceId }
+
+        Common.concreteReferenceIds [ roundTrippedSentinel
+                                      concreteReference ]
+        |> should equal [ concreteReferenceId ]
+
     /// Runs the supplied action with a temporary current repository identity for branch switch preflight tests.
     let private withTempBranchSwitchRepo (action: unit -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-branch-switch-tests-{Guid.NewGuid():N}")

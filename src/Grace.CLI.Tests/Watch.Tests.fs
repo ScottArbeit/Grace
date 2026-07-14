@@ -9,6 +9,7 @@ open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Services
 open Grace.Shared.Utilities
+open Grace.Shared.Validation.Errors
 open Grace.Types.Automation
 open Grace.Types.Common
 open Grace.Types.Reference
@@ -2931,9 +2932,9 @@ module WatchTests =
             finally
                 Watch.resetSignalRSubscriptionRefreshForWatchTests ())
 
-    /// Verifies that stale reconnect refreshes cannot replace the hub's active current-branch group.
+    /// Verifies that a branch change during parent lookup leaves the current registration intact but cannot register stale parent trust.
     [<Test>]
-    let ``stale signalr refresh does not invoke current branch hub registration`` () =
+    let ``stale signalr parent refresh keeps current branch registration and skips parent registration`` () =
         withTempRepo (fun root ->
             let repositoryId = Guid.NewGuid()
             let branchAId = Guid.NewGuid()
@@ -2964,7 +2965,7 @@ module WatchTests =
                 let currentRegistrations = ResizeArray<RepositoryId * BranchId>()
                 let parentRegistrations = ResizeArray<BranchId * BranchId>()
 
-                /// Records current-branch group registrations only when the refresh has local authority.
+                /// Records current-branch group registration before the optional parent lookup.
                 let registerCurrentBranch repositoryId branchId _ =
                     currentRegistrations.Add(repositoryId, branchId)
                     Task.CompletedTask
@@ -2985,10 +2986,10 @@ module WatchTests =
 
                 match result with
                 | Ok _ -> ()
-                | Error error -> Assert.Fail($"Expected stale refresh to return the parent lookup result without hub side effects: {error}")
+                | Error error -> Assert.Fail($"Expected stale parent refresh to preserve the current registration: {error}")
 
                 currentRegistrations.ToArray()
-                |> should equal Array.empty<RepositoryId * BranchId>
+                |> should equal [| repositoryId, branchAId |]
 
                 parentRegistrations.ToArray()
                 |> should equal Array.empty<BranchId * BranchId>
@@ -3048,7 +3049,8 @@ module WatchTests =
                     .GetResult()
 
             match result with
-            | Ok parentBranch -> parentBranch.BranchId |> should equal parentId
+            | Ok (Some parentBranch) -> parentBranch.BranchId |> should equal parentId
+            | Ok None -> Assert.Fail("Expected a real parent branch registration.")
             | Error error -> Assert.Fail($"Expected successful SignalR branch registration: {error}")
 
             registrations.ToArray()
@@ -3065,6 +3067,57 @@ module WatchTests =
 
             subscription.ParentBranchId
             |> should equal parentId)
+
+    /// Verifies that a parentless/default branch still joins current-branch delivery without creating parent trust.
+    [<Test>]
+    let ``parentless signalr refresh registers current branch without parent registration`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+
+            try
+                writeRepositoryConfiguration root repositoryId "parentless-current-branch-repo" branchId "main"
+                resetConfiguration ()
+                Current() |> ignore
+
+                let getParentBranch (_: GetBranchParameters) =
+                    Task.FromResult(Error(GraceError.Create (BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist) "parentless-registration-test"))
+
+                let currentRegistrations = ResizeArray<RepositoryId * BranchId>()
+                let parentRegistrations = ResizeArray<BranchId * BranchId>()
+
+                let registerCurrentBranch repositoryId branchId _ =
+                    currentRegistrations.Add(repositoryId, branchId)
+                    Task.CompletedTask
+
+                let registerParentBranch branchId parentBranchId _ =
+                    parentRegistrations.Add(branchId, parentBranchId)
+                    Task.CompletedTask
+
+                let result =
+                    (Watch.registerCurrentSignalRParentBranchWithClientsForWatchTests
+                        getParentBranch
+                        registerCurrentBranch
+                        registerParentBranch
+                        CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult()
+
+                match result with
+                | Ok None -> ()
+                | Ok (Some _) -> Assert.Fail("Expected parentless registration to omit parent trust.")
+                | Error error -> Assert.Fail($"Expected parentless registration to preserve current-branch delivery: {error}")
+
+                currentRegistrations.ToArray()
+                |> should equal [| repositoryId, branchId |]
+
+                parentRegistrations.ToArray()
+                |> should equal Array.empty<BranchId * BranchId>
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests Constants.DefaultParentBranchId
+                |> should equal false
+            finally
+                Watch.resetSignalRSubscriptionRefreshForWatchTests ())
 
     /// Verifies that reconnect refresh invokes registration and clears local trust when registration fails.
     [<Test>]

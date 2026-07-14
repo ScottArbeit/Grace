@@ -409,6 +409,9 @@ type NotificationServerTests() =
         let parentPromotionDiffIndex =
             commitBranch.IndexOf("match! getLatestPromotion branchDto.RepositoryId branchDto.ParentBranchId", StringComparison.Ordinal)
 
+        let parentLookupIndex =
+            commitBranch.IndexOf("let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId", StringComparison.Ordinal)
+
         let parentNotificationIndex = commitBranch.IndexOf(".NotifyOnCommit(", StringComparison.Ordinal)
         let currentBranchNotificationIndex = commitBranch.IndexOf("do! emitCurrentBranchReference branchDto.BranchName", StringComparison.Ordinal)
 
@@ -416,18 +419,25 @@ type NotificationServerTests() =
             Action (fun () ->
                 Assert.That(zipIndex, Is.GreaterThanOrEqualTo(0), "Commit handling must create the directory-version zip before notifying Watch.")
                 Assert.That(commitDiffIndex, Is.GreaterThan(zipIndex), "Commit diff work should remain after zip generation.")
-                Assert.That(parentPromotionDiffIndex, Is.GreaterThan(commitDiffIndex), "Parent-promotion diff work should remain before notifications.")
+
+                Assert.That(
+                    currentBranchNotificationIndex,
+                    Is.GreaterThan(commitDiffIndex),
+                    "Current-branch commit payloads must follow commit artifact and same-branch diff readiness."
+                )
+
+                Assert.That(
+                    parentPromotionDiffIndex,
+                    Is.GreaterThan(currentBranchNotificationIndex),
+                    "Parent-promotion work must not suppress same-branch commit delivery."
+                )
+
+                Assert.That(parentLookupIndex, Is.GreaterThan(currentBranchNotificationIndex), "Parent lookup must not suppress same-branch commit delivery.")
 
                 Assert.That(
                     parentNotificationIndex,
                     Is.GreaterThan(parentPromotionDiffIndex),
                     "Parent-branch commit notifications must not run before commit artifact and diff readiness."
-                )
-
-                Assert.That(
-                    currentBranchNotificationIndex,
-                    Is.GreaterThan(parentNotificationIndex),
-                    "Current-branch commit payloads must not run before commit notifications are ready."
                 ))
         )
 
@@ -448,17 +458,28 @@ type NotificationServerTests() =
         let commitDiffIndex = checkpointBranch.IndexOf("match! getLatestCommit repositoryId branchId", StringComparison.Ordinal)
         let currentBranchNotificationIndex = checkpointBranch.IndexOf("do! emitCurrentBranchReference branchDto.BranchName", StringComparison.Ordinal)
 
+        let parentLookupIndex =
+            checkpointBranch.IndexOf("let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId", StringComparison.Ordinal)
+
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(parentNotificationIndex, Is.GreaterThanOrEqualTo(0), "Checkpoint handling must preserve parent notification.")
-                Assert.That(checkpointDiffIndex, Is.GreaterThan(parentNotificationIndex), "Checkpoint diff work should remain in the checkpoint branch.")
+                Assert.That(checkpointDiffIndex, Is.GreaterThanOrEqualTo(0), "Checkpoint diff work should remain in the checkpoint branch.")
                 Assert.That(commitDiffIndex, Is.GreaterThan(checkpointDiffIndex), "Commit comparison work should remain after checkpoint diff setup.")
 
                 Assert.That(
                     currentBranchNotificationIndex,
                     Is.GreaterThan(commitDiffIndex),
-                    "Current-branch checkpoint payloads must not run before checkpoint diff readiness."
-                ))
+                    "Current-branch checkpoint payloads must follow checkpoint diff readiness."
+                )
+
+                Assert.That(
+                    parentLookupIndex,
+                    Is.GreaterThan(currentBranchNotificationIndex),
+                    "Parent lookup must not suppress same-branch checkpoint delivery."
+                )
+
+                Assert.That(parentNotificationIndex, Is.GreaterThan(parentLookupIndex), "Parent checkpoint notification must remain after parent lookup."))
         )
 
     /// Verifies that save current-branch broadcasts are ordered after branch-specific diff readiness.
@@ -479,18 +500,44 @@ type NotificationServerTests() =
         let checkpointDiffIndex = saveBranch.IndexOf("match! getLatestCheckpoint branchDto.RepositoryId branchDto.BranchId", StringComparison.Ordinal)
         let currentBranchNotificationIndex = saveBranch.IndexOf("do! emitCurrentBranchReference branchDto.BranchName", StringComparison.Ordinal)
 
+        let parentLookupIndex =
+            saveBranch.IndexOf("let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId", StringComparison.Ordinal)
+
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(parentNotificationIndex, Is.GreaterThanOrEqualTo(0), "Save handling must preserve parent notification.")
-                Assert.That(saveDiffIndex, Is.GreaterThan(parentNotificationIndex), "Save-to-save diff work should remain in the Save branch.")
+                Assert.That(saveDiffIndex, Is.GreaterThanOrEqualTo(0), "Save-to-save diff work should remain in the Save branch.")
                 Assert.That(commitDiffIndex, Is.GreaterThan(saveDiffIndex), "Save-to-commit diff work should remain after save diff setup.")
                 Assert.That(checkpointDiffIndex, Is.GreaterThan(commitDiffIndex), "Save-to-checkpoint diff work should remain after commit comparison.")
 
                 Assert.That(
                     currentBranchNotificationIndex,
                     Is.GreaterThan(checkpointDiffIndex),
-                    "Current-branch save payloads must not run before save diff readiness."
-                ))
+                    "Current-branch save payloads must follow save diff readiness."
+                )
+
+                Assert.That(parentLookupIndex, Is.GreaterThan(currentBranchNotificationIndex), "Parent lookup must not suppress same-branch save delivery.")
+                Assert.That(parentNotificationIndex, Is.GreaterThan(parentLookupIndex), "Parent save notification must remain after parent lookup."))
+        )
+
+    /// Verifies that all parent notifications guard the default parent sentinel after same-branch delivery.
+    [<Test>]
+    member _.ReferenceNotificationsSkipDefaultParentLookups() =
+        let notificationServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Notification.Server.fs"))
+        let notificationSource = File.ReadAllText notificationServerPath
+        let parentGuardPattern = "if\\s+branchDto\\.ParentBranchId\\s*<>\\s*Constants\\.DefaultParentBranchId\\s+then"
+
+        Assert.That(
+            Text
+                .RegularExpressions
+                .Regex
+                .Matches(
+                    notificationSource,
+                    parentGuardPattern
+                )
+                .Count,
+            Is.EqualTo(3),
+            "Commit, Checkpoint, and Save notification paths must each skip default-parent lookup and parent delivery."
         )
 
     /// Verifies that the additive current-branch contract does not remove parent-branch notification methods.

@@ -9,6 +9,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
+open Grace.Shared.Validation.Errors
 open Grace.Types.Common
 open Grace.Types.Reference
 open Grace.Shared.Utilities
@@ -1216,6 +1217,12 @@ module Watch =
             else
                 false)
 
+    /// Reports whether a SignalR refresh still owns the current branch before it joins the same-branch delivery group.
+    let private signalRBranchSubscriptionRefreshStillCurrent refreshAuthority =
+        lock signalRBranchSubscriptionLock (fun () ->
+            Current().BranchId = refreshAuthority.BranchId
+            && signalRBranchSubscription.Generation = refreshAuthority.Generation)
+
     /// Clears branch-scoped SignalR trust while Watch recalculates the current parent branch.
     let private clearSignalRBranchSubscription () =
         clearSignalRBranchSubscriptionWithRefreshFlag false
@@ -1306,7 +1313,7 @@ module Watch =
         refresh ()
 
     /// Refreshes SignalR branch groups after reconnect or branch transition recovery.
-    let private refreshSignalRSubscriptionsForActiveConnection (refresh: unit -> Task<Result<Grace.Types.Branch.BranchDto, GraceError>>) =
+    let private refreshSignalRSubscriptionsForActiveConnection (refresh: unit -> Task<Result<'T, GraceError>>) =
         try
             match refresh().GetAwaiter().GetResult() with
             | Ok _ -> true
@@ -7190,53 +7197,65 @@ module Watch =
                         BranchId = $"{current.BranchId}"
                     )
 
-                match! getParentBranch branchGetParameters with
-                | Ok returnValue ->
-                    let parentBranchDto = returnValue.ReturnValue
+                if signalRBranchSubscriptionRefreshStillCurrent refreshAuthority then
+                    do! registerCurrentBranch current.RepositoryId refreshAuthority.BranchId cancellationToken
 
-                    if trySetSignalRBranchSubscription refreshAuthority parentBranchDto.BranchId then
-                        let trustedSubscription =
-                            { BranchId = refreshAuthority.BranchId; ParentBranchId = parentBranchDto.BranchId; Generation = refreshAuthority.Generation }
+                    if signalRBranchSubscriptionRefreshStillCurrent refreshAuthority then
+                        match! getParentBranch branchGetParameters with
+                        | Ok returnValue ->
+                            let parentBranchDto = returnValue.ReturnValue
 
-                        try
-                            let mutable registeredParentBranch = false
+                            if trySetSignalRBranchSubscription refreshAuthority parentBranchDto.BranchId then
+                                let trustedSubscription =
+                                    {
+                                        BranchId = refreshAuthority.BranchId
+                                        ParentBranchId = parentBranchDto.BranchId
+                                        Generation = refreshAuthority.Generation
+                                    }
 
-                            if signalRBranchSubscriptionStillTrusted trustedSubscription then
-                                do! registerCurrentBranch current.RepositoryId refreshAuthority.BranchId cancellationToken
+                                try
+                                    if signalRBranchSubscriptionStillTrusted trustedSubscription then
+                                        do! registerParentBranch refreshAuthority.BranchId parentBranchDto.BranchId cancellationToken
 
-                                if signalRBranchSubscriptionStillTrusted trustedSubscription then
-                                    do! registerParentBranch refreshAuthority.BranchId parentBranchDto.BranchId cancellationToken
-                                    registeredParentBranch <- true
-                                else
-                                    logToAnsiConsole
-                                        Colors.Important
-                                        $"Grace Watch skipped stale SignalR parent subscription registration for branch {refreshAuthority.BranchId}; current branch identity changed after current-branch registration."
+                                        logToAnsiConsole
+                                            Colors.Highlighted
+                                            $"SignalR Hub connection state: {connectionState ()}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {connectionId ()}."
+                                with
+                                | ex ->
+                                    clearSignalRBranchSubscriptionIfStillTrusted trustedSubscription
+                                    |> ignore
+
+                                    raise ex
+
+                                return Ok(Some parentBranchDto)
                             else
                                 logToAnsiConsole
                                     Colors.Important
-                                    $"Grace Watch skipped stale SignalR current-branch subscription registration for branch {refreshAuthority.BranchId}; current branch identity changed before hub registration."
+                                    $"Grace Watch ignored stale SignalR parent subscription refresh for branch {refreshAuthority.BranchId}; current branch identity changed before registration completed."
 
-                            if registeredParentBranch then
-                                logToAnsiConsole
-                                    Colors.Highlighted
-                                    $"SignalR Hub connection state: {connectionState ()}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {connectionId ()}."
-                        with
-                        | ex ->
-                            clearSignalRBranchSubscriptionIfStillTrusted trustedSubscription
-                            |> ignore
-
-                            raise ex
-
-                        return Ok parentBranchDto
+                                return Ok(Some parentBranchDto)
+                        | Error error when error.Error = BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist ->
+                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                            return Ok None
+                        | Error error ->
+                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                            return Error error
                     else
+                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
                         logToAnsiConsole
                             Colors.Important
-                            $"Grace Watch ignored stale SignalR parent subscription refresh for branch {refreshAuthority.BranchId}; current branch identity changed before registration completed."
+                            $"Grace Watch skipped stale SignalR parent subscription lookup for branch {refreshAuthority.BranchId}; current branch identity changed after current-branch registration."
 
-                        return Ok parentBranchDto
-                | Error error ->
+                        return Ok None
+                else
                     completeSignalRBranchSubscriptionRefreshWithoutTrust ()
-                    return Error error
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Watch skipped stale SignalR current-branch subscription registration for branch {refreshAuthority.BranchId}; current branch identity changed before hub registration."
+
+                    return Ok None
             finally
                 signalRBranchSubscriptionRefreshSemaphore.Release()
                 |> ignore

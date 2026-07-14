@@ -1534,15 +1534,11 @@ module Branch =
 
                                                 let parentBranchDto = parentBranchReturnValue.ReturnValue
 
-                                                let referenceIds = List<ReferenceId>()
+                                                let referenceIds =
+                                                    concreteReferenceIds [ branchDto.LatestCommit
+                                                                           branchDto.LatestPromotion ]
 
-                                                if branchDto.LatestCommit <> ReferenceDto.Default then
-                                                    referenceIds.Add(branchDto.LatestCommit.ReferenceId)
-
-                                                if branchDto.LatestPromotion <> ReferenceDto.Default then
-                                                    referenceIds.Add(branchDto.LatestPromotion.ReferenceId)
-
-                                                if referenceIds.Count > 0 then
+                                                if referenceIds.Length > 0 then
                                                     let getReferencesByReferenceIdParameters =
                                                         Parameters.Repository.GetReferencesByReferenceIdParameters(
                                                             OwnerId = graceIds.OwnerIdString,

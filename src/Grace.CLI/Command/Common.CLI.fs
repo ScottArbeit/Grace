@@ -9,6 +9,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
 open Grace.Types.Common
+open Grace.Types.Reference
 open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Spectre.Console
@@ -31,6 +32,16 @@ module Common =
 
     /// Clears process-local lifecycle warning suppression so tests and repeated invocations can render warnings again.
     let resetLifecycleWarningSuppression () = renderedLifecycleWarnings <- HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+    /// Selects concrete typed-slot Reference IDs so canonical absence sentinels never reach a Reference mutation or lookup boundary.
+    let concreteReferenceIds (references: seq<ReferenceDto>) =
+        references
+        |> Seq.choose (fun referenceDto ->
+            if referenceDto.ReferenceId = ReferenceId.Empty then
+                None
+            else
+                Some referenceDto.ReferenceId)
+        |> Seq.toList
 
     /// Executes the parameter base command by binding ParseResult values to the SDK request and CLI output contract.
     type ParameterBase() =

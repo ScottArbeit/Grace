@@ -969,7 +969,6 @@ module Notification =
 
                         | ReferenceType.Commit ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
-                            let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
 
                             let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
                             let! exists = directoryVersionActorProxy.Exists correlationId
@@ -991,39 +990,36 @@ module Notification =
                                             branchDto.RepositoryId
                                             correlationId
 
-                                // Create the diff between the commit and the parent branch's most recent promotion.
-                                match! getLatestPromotion branchDto.RepositoryId branchDto.ParentBranchId with
-                                | Some latestPromotion ->
-                                    do!
-                                        diffTwoDirectoryVersions
-                                            directoryId
-                                            latestPromotion.DirectoryId
-                                            branchDto.OwnerId
-                                            branchDto.OrganizationId
-                                            branchDto.RepositoryId
-                                            correlationId
-                                | None -> ()
-
-                            if not <| isNull hubContext then
-                                do!
-                                    hubContext
-                                        .Clients
-                                        .Group($"{branchDto.ParentBranchId}")
-                                        .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
-                            else
-                                log.LogWarning("No SignalR hub context available; cannot notify clients of commit.")
-
                             do! emitCurrentBranchReference branchDto.BranchName
+
+                            if branchDto.ParentBranchId
+                               <> Constants.DefaultParentBranchId then
+                                // Create the diff between the commit and the parent branch's most recent promotion.
+                                if exists then
+                                    match! getLatestPromotion branchDto.RepositoryId branchDto.ParentBranchId with
+                                    | Some latestPromotion ->
+                                        do!
+                                            diffTwoDirectoryVersions
+                                                directoryId
+                                                latestPromotion.DirectoryId
+                                                branchDto.OwnerId
+                                                branchDto.OrganizationId
+                                                branchDto.RepositoryId
+                                                correlationId
+                                    | None -> ()
+
+                                let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
+
+                                if not <| isNull hubContext then
+                                    do!
+                                        hubContext
+                                            .Clients
+                                            .Group($"{branchDto.ParentBranchId}")
+                                            .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+                                else
+                                    log.LogWarning("No SignalR hub context available; cannot notify clients of commit.")
                         | ReferenceType.Checkpoint ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
-                            let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
-
-                            if not <| isNull hubContext then
-                                do!
-                                    hubContext
-                                        .Clients
-                                        .Group($"{branchDto.ParentBranchId}")
-                                        .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
                             // Create the diff between the two most recent checkpoints.
                             let! checkpoints = getCheckpoints repositoryId branchId 2 correlationId
@@ -1053,18 +1049,19 @@ module Notification =
 
                             do! emitCurrentBranchReference branchDto.BranchName
 
+                            if branchDto.ParentBranchId
+                               <> Constants.DefaultParentBranchId then
+                                let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
+
+                                if not <| isNull hubContext then
+                                    do!
+                                        hubContext
+                                            .Clients
+                                            .Group($"{branchDto.ParentBranchId}")
+                                            .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+
                         | ReferenceType.Save ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
-                            let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
-
-                            if not <| isNull hubContext then
-                                do!
-                                    hubContext
-                                        .Clients
-                                        .Group($"{branchDto.ParentBranchId}")
-                                        .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
-                            else
-                                log.LogWarning("No SignalR hub context available; cannot notify clients of save.")
 
                             // Create the diff between the new save and the previous save.
                             let! latestTwoSaves = getSaves branchDto.RepositoryId branchId 2 correlationId
@@ -1112,6 +1109,19 @@ module Notification =
                             | None -> ()
 
                             do! emitCurrentBranchReference branchDto.BranchName
+
+                            if branchDto.ParentBranchId
+                               <> Constants.DefaultParentBranchId then
+                                let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
+
+                                if not <| isNull hubContext then
+                                    do!
+                                        hubContext
+                                            .Clients
+                                            .Group($"{branchDto.ParentBranchId}")
+                                            .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+                                else
+                                    log.LogWarning("No SignalR hub context available; cannot notify clients of save.")
 
                         | ReferenceType.Tag
                         | ReferenceType.Rebase
