@@ -558,6 +558,7 @@ WHERE BillingCorrectionWorkId=@WorkId AND CompletedAtUtc IS NULL AND Permanently
 
             let pricingDigest =
                 lines
+                |> Seq.sortBy (fun line -> line.ChargePreviewLineId)
                 |> Seq.map (fun line ->
                     $"{line.ChargePreviewLineId:D}:{line.PricingAssignmentId:D}:{line.PricingPlanId:D}:{line.BillableUsageKindMappingId:D}:{line.PricingRateId:D}:{line.ChargeMicros}")
                 |> digest
@@ -941,7 +942,7 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                     work.Transaction <- transaction
 
                     work.CommandText <-
-                        "SELECT w.BillingPeriodId,w.UsageFactId,p.State FROM ops.BillingCorrectionWork w WITH(UPDLOCK,HOLDLOCK) JOIN ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL AND w.PermanentlyFailedAtUtc IS NULL AND p.OwnerId=@OwnerId AND p.OrganizationId=@OrganizationId AND p.RepositoryId=@RepositoryId AND p.PeriodFromUtc=@PeriodFromUtc AND p.PeriodToUtc=@PeriodToUtc;"
+                        "SELECT w.BillingPeriodId,w.UsageFactId,p.State,p.ClosedAtUtc FROM ops.BillingCorrectionWork w WITH(UPDLOCK,HOLDLOCK) JOIN ops.BillingPeriod p WITH(UPDLOCK,HOLDLOCK) ON p.BillingPeriodId=w.BillingPeriodId WHERE w.BillingCorrectionWorkId=@WorkId AND w.CompletedAtUtc IS NULL AND w.PermanentlyFailedAtUtc IS NULL AND p.OwnerId=@OwnerId AND p.OrganizationId=@OrganizationId AND p.RepositoryId=@RepositoryId AND p.PeriodFromUtc=@PeriodFromUtc AND p.PeriodToUtc=@PeriodToUtc;"
 
                     add work "@WorkId" SqlDbType.UniqueIdentifier workId
                     addScope work scope
@@ -955,6 +956,13 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                         let periodId = workReader.GetGuid(0)
                         let usageFactId = workReader.GetGuid(1)
                         let state = workReader.GetInt32(2)
+
+                        let closedAtUtc =
+                            if workReader.IsDBNull(3) then
+                                invalidOp "Automatic correction work must reference a period with a database UTC close timestamp."
+                            else
+                                utcFromSql (workReader.GetDateTime(3))
+
                         do! workReader.CloseAsync()
 
                         if state < int BillingPeriodState.Closed
@@ -965,10 +973,11 @@ SELECT OwnerId,OrganizationId,RepositoryId,PeriodFromUtc,PeriodToUtc FROM Candid
                         fact.Transaction <- transaction
 
                         fact.CommandText <-
-                            "SELECT FactKind,Quantity,ObservedAtUtc FROM ops.RawUsageFact WITH(UPDLOCK,HOLDLOCK) WHERE UsageFactId=@UsageFactId AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc;"
+                            "SELECT FactKind,Quantity,ObservedAtUtc FROM ops.RawUsageFact WITH(UPDLOCK,HOLDLOCK) WHERE UsageFactId=@UsageFactId AND OwnerId=@OwnerId AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryId AND ObservedAtUtc>=@PeriodFromUtc AND ObservedAtUtc<@PeriodToUtc AND AcceptedAtUtc>@ClosedAtUtc;"
 
                         add fact "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
                         addScope fact scope
+                        add fact "@ClosedAtUtc" SqlDbType.DateTime2 closedAtUtc
                         use! factReader = fact.ExecuteReaderAsync(cancellationToken)
                         let! foundFact = factReader.ReadAsync(cancellationToken)
 

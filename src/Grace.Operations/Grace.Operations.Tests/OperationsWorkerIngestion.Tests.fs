@@ -1058,6 +1058,41 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies invalid or default observed time is retained as failure metadata only and cannot materialize a billing month.
+    [<Test>]
+    member _.DefaultObservedAtRecordsNoMaterializableBillingFailureTime() =
+        task {
+            let fact =
+                { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("19191919-1919-4919-8919-191919191919")) with
+                    ObservedAt = Constants.DefaultTimestamp
+                }
+
+            let processor, store, actions, events, failures, billingPeriods =
+                createProcessorWithBilling (fun storedFact _rawPayload _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            do!
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun message -> processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let usageFactId, ownerId, organizationId, repositoryId, observedAtUtc, _correlationId, failureCode = failures.Calls |> List.exactlyOne
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(usageFactId, Is.EqualTo(Some fact.UsageFactId))
+                    Assert.That(ownerId, Is.EqualTo(Some fact.Scope.OwnerId))
+                    Assert.That(organizationId, Is.EqualTo(Some fact.Scope.OrganizationId))
+                    Assert.That(repositoryId, Is.EqualTo(Some fact.Scope.RepositoryId))
+                    Assert.That(observedAtUtc, Is.EqualTo(None))
+                    Assert.That(failureCode, Is.EqualTo("InvalidUsageFact"))
+                    Assert.That(billingPeriods.LateFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
+            )
+        }
+
     /// Verifies every empty scope identifier records scope-free failure evidence and cannot materialize an all-zero billing scope.
     [<Test>]
     member _.EmptyScopeIdentifiersRecordScopeFreeFailureEvidenceWithoutLateMaterialization() =

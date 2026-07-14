@@ -303,7 +303,7 @@ type OperationsBillingTests() =
                 Assert.That(migrationSource, Does.Contain("AcceptedAtUtc datetime2(7) NOT NULL"))
                 Assert.That(migrationSource, Does.Contain("IsAutomaticRetryEligible bit NOT NULL"))
                 Assert.That(docs, Does.Contain("Grace never inserts or mutates historical pricing"))
-                Assert.That(testHost, Does.Contain("20260713140000_StabilizeBillingTerminalInsertProtection")))
+                Assert.That(testHost, Does.Contain("20260714100000_StabilizeBillingCloseEvidenceGuards")))
         )
 
     /// Verifies canonical failure handling and owner-period Adjustment validation are not bypassed by conflicting retries.
@@ -706,7 +706,7 @@ type OperationsBillingTests() =
                     Is.GreaterThan(0)
                 )
 
-                Assert.That(aspireTestHostSource, Does.Contain("20260713140000_StabilizeBillingTerminalInsertProtection"))
+                Assert.That(aspireTestHostSource, Does.Contain("20260714100000_StabilizeBillingCloseEvidenceGuards"))
                 Assert.That(closeSource, Does.Contain("fact.AcceptedAtUtc > period.ClosedAtUtc"))
                 Assert.That(closeSource, Does.Not.Contain("fact.AcceptedAtUtc >= period.ClosedAtUtc"))
 
@@ -715,4 +715,84 @@ type OperationsBillingTests() =
                 Assert.That(migrationScript, Does.Contain("TR_ops_ChargePreviewLine_TerminalBillingProtection"))
                 Assert.That(migrationScript, Does.Contain("TR_ops_ChargePreviewFreshness_TerminalBillingProtection"))
                 Assert.That(migrationScript, Does.Contain("Terminal billing raw fact inserts require trusted application routing.")))
+        )
+
+    /// Proves session-eleven close, correction, and failure SQL guards keep current source evidence ahead of terminal mutation.
+    [<Test>]
+    member _.SessionElevenCloseEvidenceGuardsRejectSqlBypassPaths() =
+        let root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."))
+        let billingSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBilling.fs"))
+        let closeSource = File.ReadAllText(Path.Combine(root, "Grace.Operations.Data", "OperationsBillingClose.fs"))
+        let testHostSource = File.ReadAllText(Path.Combine(root, "..", "Grace.Server.Tests", "AspireTestHost.fs"))
+
+        let migrationPath = Path.Combine(root, "Grace.Operations.Data", "Migrations", "20260714100000_StabilizeBillingCloseEvidenceGuards.fs")
+
+        let migrationSource = File.ReadAllText(migrationPath)
+
+        use context =
+            OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsBillingSessionElevenModel;Integrated Security=true;"
+
+        let migrationScript = (context.GetService<IMigrator>()).GenerateScript()
+
+        Assert.Multiple(
+            Action (fun () ->
+                // Forged freshness, preview, and initial-ledger rows cannot close a period unless they match the current fact and pricing source set.
+                Assert.That(billingSource, Does.Contain("TR_ops_BillingPeriod_FinalPreviewSourceProtection"))
+                Assert.That(billingSource, Does.Contain("@ExpectedPreview"))
+                Assert.That(billingSource, Does.Contain("CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL"))
+                Assert.That(billingSource, Does.Contain("Terminal billing close preview does not represent the current accepted facts and pricing source set."))
+                Assert.That(billingSource, Does.Contain("Terminal billing close freshness evidence does not match the current final source set."))
+                Assert.That(billingSource, Does.Contain("STRING_AGG"))
+                Assert.That(billingSource, Does.Contain("HASHBYTES('SHA2_256'"))
+                Assert.That(closeSource, Does.Contain("|> Seq.sortBy (fun line -> line.ChargePreviewLineId)"))
+
+                // Direct correction completion or deletion has the same automatic Adjustment proof as the supported post-then-complete path.
+                Assert.That(billingSource, Does.Contain("TR_ops_BillingCorrectionWork_CompletionProtection"))
+                Assert.That(billingSource, Does.Contain("entry.ReasonCode=N'AutomaticLateUsage'"))
+                Assert.That(billingSource, Does.Contain("entry.CorrelationId=CONVERT(nvarchar(200),work.BillingCorrectionWorkId)"))
+
+                Assert.That(
+                    closeSource,
+                    Does.Contain("WHERE NOT EXISTS(SELECT 1 FROM ops.ChargeLedgerEntry WITH(UPDLOCK,HOLDLOCK) WHERE BillingCorrectionWorkId=@WorkId)")
+                )
+
+                Assert.That(
+                    closeSource.IndexOf(
+                        "INSERT INTO ops.ChargeLedgerEntry",
+                        closeSource.IndexOf("let processCorrectionWork", StringComparison.Ordinal),
+                        StringComparison.Ordinal
+                    ),
+                    Is.GreaterThanOrEqualTo(0)
+                )
+
+                Assert.That(closeSource, Does.Contain("UPDATE ops.BillingCorrectionWork SET CompletedAtUtc=SYSUTCDATETIME()"))
+
+                // The processor rechecks the strict database timestamp; equal and earlier accepted facts cannot post as late correction work.
+                Assert.That(closeSource, Does.Contain("p.ClosedAtUtc"))
+                Assert.That(closeSource, Does.Contain("AND AcceptedAtUtc>@ClosedAtUtc;"))
+                Assert.That(closeSource, Does.Not.Contain("AcceptedAtUtc>=@ClosedAtUtc"))
+
+                // Direct failure resolution or deletion needs the exact accepted repair fact, while accepted replay remains the supported idempotent path.
+                Assert.That(billingSource, Does.Contain("TR_ops_BillingIngestionFailure_ResolutionProtection"))
+                Assert.That(billingSource, Does.Contain("fact.UsageFactId=failure.UsageFactId"))
+                Assert.That(closeSource, Does.Contain("Accepted usage fact resolved canonical failure evidence."))
+
+                // The migration is database-only, appears in the generated script, and advances Aspire's readiness floor.
+                Assert.That(File.Exists(migrationPath), Is.True)
+                Assert.That(migrationSource, Does.Contain("TR_ops_BillingPeriod_FinalPreviewSourceProtection"))
+                Assert.That(migrationSource, Does.Contain("TR_ops_BillingCorrectionWork_CompletionProtection"))
+                Assert.That(migrationSource, Does.Contain("TR_ops_BillingIngestionFailure_ResolutionProtection"))
+                Assert.That(migrationScript, Does.Contain("Terminal billing close freshness evidence does not match the current final source set."))
+
+                Assert.That(
+                    migrationScript,
+                    Does.Contain("Billing correction work can complete or be removed only after its matching automatic Adjustment is posted.")
+                )
+
+                Assert.That(
+                    migrationScript,
+                    Does.Contain("Active billing ingestion failure evidence requires its exact accepted repair fact before resolution or removal.")
+                )
+
+                Assert.That(testHostSource, Does.Contain("20260714100000_StabilizeBillingCloseEvidenceGuards")))
         )

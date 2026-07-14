@@ -1923,6 +1923,14 @@ type OperationsUsageIngestionProcessor
 
                                 let failureUsageFactId = if usageFact.UsageFactId = Guid.Empty then None else Some usageFact.UsageFactId
 
+                                let validFailureObservedAtUtc =
+                                    if usageFact.ObservedAt = Constants.DefaultTimestamp
+                                       || errors
+                                          |> List.exists (fun error -> error.StartsWith("ObservedAt", StringComparison.Ordinal)) then
+                                        None
+                                    else
+                                        Some(usageFact.ObservedAt.ToDateTimeUtc())
+
                                 match failureUsageFactId with
                                 | Some usageFactId ->
                                     do!
@@ -1934,7 +1942,7 @@ type OperationsUsageIngestionProcessor
                                             |> Option.map (fun value -> value.OrganizationId),
                                             validFailureScope
                                             |> Option.map (fun value -> value.RepositoryId),
-                                            Some(usageFact.ObservedAt.ToDateTimeUtc()),
+                                            validFailureObservedAtUtc,
                                             string usageFact.CorrelationId,
                                             "InvalidUsageFact",
                                             "Usage fact failed contract validation.",

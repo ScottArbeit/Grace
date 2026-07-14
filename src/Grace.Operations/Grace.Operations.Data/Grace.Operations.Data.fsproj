@@ -32,6 +32,7 @@
     <Compile Include="Migrations\20260713120000_StabilizeBillingPeriodCloseLedger.fs" />
     <Compile Include="Migrations\20260713130000_StabilizeBillingCorrectionWorkFailure.fs" />
     <Compile Include="Migrations\20260713140000_StabilizeBillingTerminalInsertProtection.fs" />
+    <Compile Include="Migrations\20260714100000_StabilizeBillingCloseEvidenceGuards.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
     <Compile Include="OperationsBillingClose.fs" />

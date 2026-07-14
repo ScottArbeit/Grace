@@ -1034,6 +1034,268 @@ BEGIN
     END;
 """
 
+    /// Proves a terminal close's freshness digest and preview grain still derive from the current accepted facts and effective pricing.
+    let CreateFinalPreviewSourceProtectionTrigger =
+        """
+CREATE TRIGGER ops.TR_ops_BillingPeriod_FinalPreviewSourceProtection ON ops.BillingPeriod
+AFTER UPDATE AS
+BEGIN
+    IF NOT EXISTS
+    (
+        SELECT 1
+        FROM deleted d
+        JOIN inserted i ON i.BillingPeriodId=d.BillingPeriodId
+        WHERE d.State=1 AND i.State=2
+    )
+        RETURN;
+
+    DECLARE @ExpectedPreview TABLE
+    (
+        BillingPeriodId uniqueidentifier NOT NULL,
+        FactKind int NOT NULL,
+        BillableUsageKindMappingId uniqueidentifier NOT NULL,
+        BillableUsageKind int NOT NULL,
+        PricingAssignmentId uniqueidentifier NOT NULL,
+        PricingPlanId uniqueidentifier NOT NULL,
+        PricingRateId uniqueidentifier NOT NULL,
+        CurrencyCode varchar(3) COLLATE Latin1_General_100_BIN2 NOT NULL,
+        UnitName nvarchar(64) NOT NULL,
+        UnitQuantity bigint NOT NULL,
+        UnitPriceMicros bigint NOT NULL,
+        EffectiveFromUtc datetime2(7) NOT NULL,
+        EffectiveToUtc datetime2(7) NOT NULL,
+        TotalQuantity bigint NOT NULL,
+        ChargeMicros bigint NOT NULL
+    );
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted period
+        JOIN deleted priorPeriod ON priorPeriod.BillingPeriodId=period.BillingPeriodId AND priorPeriod.State=1 AND period.State=2
+        JOIN ops.RawUsageFact fact ON fact.OwnerId=period.OwnerId AND fact.OrganizationId=period.OrganizationId AND fact.RepositoryId=period.RepositoryId
+          AND fact.ObservedAtUtc>=period.PeriodFromUtc AND fact.ObservedAtUtc<period.PeriodToUtc
+        OUTER APPLY
+        (
+            SELECT TOP (1) candidate.PricingAssignmentId,candidate.PricingPlanId,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+            FROM ops.PricingAssignment candidate
+            WHERE candidate.OwnerId=period.OwnerId AND candidate.OrganizationId=period.OrganizationId AND candidate.RepositoryId=period.RepositoryId
+              AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+            ORDER BY candidate.EffectiveFromUtc DESC,candidate.PricingAssignmentId
+        ) assignment
+        OUTER APPLY
+        (
+            SELECT TOP (1) candidate.PricingPlanId,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+            FROM ops.PricingPlan candidate
+            WHERE candidate.PricingPlanId=assignment.PricingPlanId AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc
+              AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+            ORDER BY candidate.EffectiveFromUtc DESC,candidate.PricingPlanId
+        ) pricingPlan
+        OUTER APPLY
+        (
+            SELECT TOP (1) candidate.BillableUsageKindMappingId,candidate.BillableUsageKind,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+            FROM ops.BillableUsageKindMapping candidate
+            WHERE candidate.FactKind=fact.FactKind AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc
+              AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+            ORDER BY candidate.EffectiveFromUtc DESC,candidate.BillableUsageKindMappingId
+        ) mapping
+        OUTER APPLY
+        (
+            SELECT TOP (1) candidate.PricingRateId,candidate.CurrencyCode,candidate.UnitName,candidate.UnitQuantity,candidate.UnitPriceMicros,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+            FROM ops.PricingRate candidate
+            WHERE candidate.PricingPlanId=pricingPlan.PricingPlanId AND candidate.BillableUsageKind=mapping.BillableUsageKind
+              AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+            ORDER BY candidate.EffectiveFromUtc DESC,candidate.PricingRateId
+        ) rate
+        WHERE assignment.PricingAssignmentId IS NULL OR pricingPlan.PricingPlanId IS NULL OR mapping.BillableUsageKindMappingId IS NULL OR rate.PricingRateId IS NULL
+    )
+        THROW 51018, 'Terminal billing close requires complete current pricing for every accepted source fact.', 1;
+
+    INSERT INTO @ExpectedPreview
+    (
+        BillingPeriodId,FactKind,BillableUsageKindMappingId,BillableUsageKind,PricingAssignmentId,PricingPlanId,PricingRateId,
+        CurrencyCode,UnitName,UnitQuantity,UnitPriceMicros,EffectiveFromUtc,EffectiveToUtc,TotalQuantity,ChargeMicros
+    )
+    SELECT
+        period.BillingPeriodId,fact.FactKind,mapping.BillableUsageKindMappingId,mapping.BillableUsageKind,assignment.PricingAssignmentId,pricingPlan.PricingPlanId,rate.PricingRateId,
+        rate.CurrencyCode,rate.UnitName,rate.UnitQuantity,rate.UnitPriceMicros,applicability.EffectiveFromUtc,applicability.EffectiveToUtc,
+        CAST(SUM(CONVERT(decimal(38,0),fact.Quantity)) AS bigint),
+        CAST
+        (
+            (
+                SUM(CONVERT(decimal(38,0),fact.Quantity))*CONVERT(decimal(38,0),rate.UnitPriceMicros)
+                + CONVERT(decimal(38,0),rate.UnitQuantity)/2
+            ) / CONVERT(decimal(38,0),rate.UnitQuantity)
+            AS bigint
+        )
+    FROM inserted period
+    JOIN deleted priorPeriod ON priorPeriod.BillingPeriodId=period.BillingPeriodId AND priorPeriod.State=1 AND period.State=2
+    JOIN ops.RawUsageFact fact ON fact.OwnerId=period.OwnerId AND fact.OrganizationId=period.OrganizationId AND fact.RepositoryId=period.RepositoryId
+      AND fact.ObservedAtUtc>=period.PeriodFromUtc AND fact.ObservedAtUtc<period.PeriodToUtc
+    OUTER APPLY
+    (
+        SELECT TOP (1) candidate.PricingAssignmentId,candidate.PricingPlanId,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+        FROM ops.PricingAssignment candidate
+        WHERE candidate.OwnerId=period.OwnerId AND candidate.OrganizationId=period.OrganizationId AND candidate.RepositoryId=period.RepositoryId
+          AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+        ORDER BY candidate.EffectiveFromUtc DESC,candidate.PricingAssignmentId
+    ) assignment
+    OUTER APPLY
+    (
+        SELECT TOP (1) candidate.PricingPlanId,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+        FROM ops.PricingPlan candidate
+        WHERE candidate.PricingPlanId=assignment.PricingPlanId AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc
+          AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+        ORDER BY candidate.EffectiveFromUtc DESC,candidate.PricingPlanId
+    ) pricingPlan
+    OUTER APPLY
+    (
+        SELECT TOP (1) candidate.BillableUsageKindMappingId,candidate.BillableUsageKind,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+        FROM ops.BillableUsageKindMapping candidate
+        WHERE candidate.FactKind=fact.FactKind AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc
+          AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+        ORDER BY candidate.EffectiveFromUtc DESC,candidate.BillableUsageKindMappingId
+    ) mapping
+    OUTER APPLY
+    (
+        SELECT TOP (1) candidate.PricingRateId,candidate.CurrencyCode,candidate.UnitName,candidate.UnitQuantity,candidate.UnitPriceMicros,candidate.EffectiveFromUtc,candidate.EffectiveToUtc
+        FROM ops.PricingRate candidate
+        WHERE candidate.PricingPlanId=pricingPlan.PricingPlanId AND candidate.BillableUsageKind=mapping.BillableUsageKind
+          AND candidate.EffectiveFromUtc<=fact.ObservedAtUtc AND (candidate.EffectiveToUtc IS NULL OR fact.ObservedAtUtc<candidate.EffectiveToUtc)
+        ORDER BY candidate.EffectiveFromUtc DESC,candidate.PricingRateId
+    ) rate
+    OUTER APPLY
+    (
+        SELECT MAX(boundary.EffectiveFromUtc) EffectiveFromUtc,MIN(boundary.EffectiveToUtc) EffectiveToUtc
+        FROM (VALUES
+        (assignment.EffectiveFromUtc,ISNULL(assignment.EffectiveToUtc,period.PeriodToUtc)),
+        (pricingPlan.EffectiveFromUtc,ISNULL(pricingPlan.EffectiveToUtc,period.PeriodToUtc)),
+        (mapping.EffectiveFromUtc,ISNULL(mapping.EffectiveToUtc,period.PeriodToUtc)),
+        (rate.EffectiveFromUtc,ISNULL(rate.EffectiveToUtc,period.PeriodToUtc)),
+        (period.PeriodFromUtc,period.PeriodToUtc)
+        ) boundary(EffectiveFromUtc,EffectiveToUtc)
+    ) applicability
+    GROUP BY period.BillingPeriodId,fact.FactKind,mapping.BillableUsageKindMappingId,mapping.BillableUsageKind,assignment.PricingAssignmentId,pricingPlan.PricingPlanId,rate.PricingRateId,
+        rate.CurrencyCode,rate.UnitName,rate.UnitQuantity,rate.UnitPriceMicros,applicability.EffectiveFromUtc,applicability.EffectiveToUtc;
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM @ExpectedPreview expected
+        JOIN inserted period ON period.BillingPeriodId=expected.BillingPeriodId
+        LEFT JOIN ops.ChargePreviewLine preview ON preview.OwnerId=period.OwnerId AND preview.OrganizationId=period.OrganizationId AND preview.RepositoryId=period.RepositoryId
+          AND preview.PeriodFromUtc=period.PeriodFromUtc AND preview.PeriodToUtc=period.PeriodToUtc
+          AND preview.FactKind=expected.FactKind AND preview.BillableUsageKindMappingId=expected.BillableUsageKindMappingId
+          AND preview.BillableUsageKind=expected.BillableUsageKind AND preview.PricingAssignmentId=expected.PricingAssignmentId
+          AND preview.PricingPlanId=expected.PricingPlanId AND preview.PricingRateId=expected.PricingRateId
+          AND preview.CurrencyCode=expected.CurrencyCode AND preview.UnitName=expected.UnitName AND preview.UnitQuantity=expected.UnitQuantity
+          AND preview.UnitPriceMicros=expected.UnitPriceMicros AND preview.EffectiveFromUtc=expected.EffectiveFromUtc AND preview.EffectiveToUtc=expected.EffectiveToUtc
+        WHERE preview.ChargePreviewLineId IS NULL OR preview.TotalQuantity<>expected.TotalQuantity OR preview.ChargeMicros<>expected.ChargeMicros
+    )
+    OR EXISTS
+    (
+        SELECT 1
+        FROM inserted period
+        JOIN deleted priorPeriod ON priorPeriod.BillingPeriodId=period.BillingPeriodId AND priorPeriod.State=1 AND period.State=2
+        JOIN ops.ChargePreviewLine preview ON preview.OwnerId=period.OwnerId AND preview.OrganizationId=period.OrganizationId AND preview.RepositoryId=period.RepositoryId
+          AND preview.PeriodFromUtc=period.PeriodFromUtc AND preview.PeriodToUtc=period.PeriodToUtc
+        LEFT JOIN @ExpectedPreview expected ON expected.BillingPeriodId=period.BillingPeriodId AND expected.FactKind=preview.FactKind
+          AND expected.BillableUsageKindMappingId=preview.BillableUsageKindMappingId AND expected.BillableUsageKind=preview.BillableUsageKind
+          AND expected.PricingAssignmentId=preview.PricingAssignmentId AND expected.PricingPlanId=preview.PricingPlanId AND expected.PricingRateId=preview.PricingRateId
+          AND expected.CurrencyCode=preview.CurrencyCode AND expected.UnitName=preview.UnitName AND expected.UnitQuantity=preview.UnitQuantity
+          AND expected.UnitPriceMicros=preview.UnitPriceMicros AND expected.EffectiveFromUtc=preview.EffectiveFromUtc AND expected.EffectiveToUtc=preview.EffectiveToUtc
+        WHERE expected.BillingPeriodId IS NULL
+    )
+        THROW 51019, 'Terminal billing close preview does not represent the current accepted facts and pricing source set.', 1;
+
+    DECLARE @FactsCanonical varchar(max),@PricingCanonical varchar(max),@FactsDigest char(64),@PricingDigest char(64);
+
+    SELECT @FactsCanonical=STRING_AGG
+    (
+        CONVERT(varchar(max),CONCAT(CONVERT(varchar(36),fact.UsageFactId),':',CONVERT(varchar(12),fact.FactKind),':',CONVERT(varchar(24),fact.Quantity),':',
+        CONVERT(varchar(24),DATEDIFF_BIG(day,CAST('0001-01-01T00:00:00' AS datetime2(7)),fact.ObservedAtUtc)*CAST(864000000000 AS bigint)+DATEPART(hour,fact.ObservedAtUtc)*CAST(36000000000 AS bigint)+DATEPART(minute,fact.ObservedAtUtc)*CAST(600000000 AS bigint)+DATEPART(second,fact.ObservedAtUtc)*CAST(10000000 AS bigint)+DATEPART(nanosecond,fact.ObservedAtUtc)/100)))
+        , '|'
+    ) WITHIN GROUP (ORDER BY fact.UsageFactId)
+    FROM inserted period
+    JOIN deleted priorPeriod ON priorPeriod.BillingPeriodId=period.BillingPeriodId AND priorPeriod.State=1 AND period.State=2
+    JOIN ops.RawUsageFact fact ON fact.OwnerId=period.OwnerId AND fact.OrganizationId=period.OrganizationId AND fact.RepositoryId=period.RepositoryId
+      AND fact.ObservedAtUtc>=period.PeriodFromUtc AND fact.ObservedAtUtc<period.PeriodToUtc;
+
+    SELECT @PricingCanonical=STRING_AGG
+    (
+        CONVERT(varchar(max),CONCAT(CONVERT(varchar(36),preview.ChargePreviewLineId),':',CONVERT(varchar(36),preview.PricingAssignmentId),':',CONVERT(varchar(36),preview.PricingPlanId),':',CONVERT(varchar(36),preview.BillableUsageKindMappingId),':',CONVERT(varchar(36),preview.PricingRateId),':',CONVERT(varchar(24),preview.ChargeMicros)))
+        , '|'
+    ) WITHIN GROUP (ORDER BY preview.ChargePreviewLineId)
+    FROM inserted period
+    JOIN deleted priorPeriod ON priorPeriod.BillingPeriodId=period.BillingPeriodId AND priorPeriod.State=1 AND period.State=2
+    JOIN ops.ChargePreviewLine preview ON preview.OwnerId=period.OwnerId AND preview.OrganizationId=period.OrganizationId AND preview.RepositoryId=period.RepositoryId
+      AND preview.PeriodFromUtc=period.PeriodFromUtc AND preview.PeriodToUtc=period.PeriodToUtc;
+
+    -- The digest tuple is ASCII-only, so SQL varchar bytes are exactly the F# UTF-8 canonical bytes.
+    SELECT @FactsDigest=CONVERT(char(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),ISNULL(@FactsCanonical,''))),2),
+           @PricingDigest=CONVERT(char(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),ISNULL(@PricingCanonical,''))),2);
+
+    IF EXISTS
+    (
+        SELECT 1
+        FROM inserted period
+        JOIN deleted priorPeriod ON priorPeriod.BillingPeriodId=period.BillingPeriodId AND priorPeriod.State=1 AND period.State=2
+        LEFT JOIN ops.ChargePreviewFreshness freshness ON freshness.BillingPeriodId=period.BillingPeriodId
+        WHERE freshness.BillingPeriodId IS NULL OR freshness.AcceptedFactsDigest<>@FactsDigest OR freshness.PricingDigest<>@PricingDigest
+    )
+        THROW 51020, 'Terminal billing close freshness evidence does not match the current final source set.', 1;
+END;
+"""
+
+    /// Requires correction-work completion or removal to retain the exact automatic Adjustment that settled it.
+    let CreateBillingCorrectionWorkCompletionProtectionTrigger =
+        """
+CREATE TRIGGER ops.TR_ops_BillingCorrectionWork_CompletionProtection ON ops.BillingCorrectionWork
+AFTER UPDATE, DELETE AS
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM deleted work
+        LEFT JOIN inserted replacement ON replacement.BillingCorrectionWorkId=work.BillingCorrectionWorkId
+        WHERE (replacement.BillingCorrectionWorkId IS NULL OR (work.CompletedAtUtc IS NULL AND replacement.CompletedAtUtc IS NOT NULL))
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM ops.ChargeLedgerEntry entry
+              WHERE entry.BillingCorrectionWorkId=work.BillingCorrectionWorkId
+                AND entry.EntryKind=1 AND entry.SourceChargePreviewLineId IS NULL
+                AND entry.InitiatedByPrincipalId=N'Grace.Operations' AND entry.ReasonCode=N'AutomaticLateUsage'
+                AND entry.CorrelationId=CONVERT(nvarchar(200),work.BillingCorrectionWorkId)
+          )
+    )
+        THROW 51021, 'Billing correction work can complete or be removed only after its matching automatic Adjustment is posted.', 1;
+END;
+"""
+
+    /// Requires active ingestion-failure resolution or removal to be supported by the exact accepted repair fact.
+    let CreateBillingIngestionFailureResolutionProtectionTrigger =
+        """
+CREATE TRIGGER ops.TR_ops_BillingIngestionFailure_ResolutionProtection ON ops.BillingIngestionFailure
+AFTER UPDATE, DELETE AS
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1
+        FROM deleted failure
+        LEFT JOIN inserted replacement ON replacement.BillingIngestionFailureId=failure.BillingIngestionFailureId
+        WHERE failure.ResolvedAtUtc IS NULL
+          AND (replacement.BillingIngestionFailureId IS NULL OR replacement.ResolvedAtUtc IS NOT NULL)
+          AND
+          (
+              failure.UsageFactId IS NULL
+              OR NOT EXISTS(SELECT 1 FROM ops.RawUsageFact fact WHERE fact.UsageFactId=failure.UsageFactId)
+          )
+    )
+        THROW 51022, 'Active billing ingestion failure evidence requires its exact accepted repair fact before resolution or removal.', 1;
+END;
+"""
+
     /// Freezes complete final preview lines once their owner scope reaches a terminal billing period.
     let CreateTerminalChargePreviewLineProtectionTrigger =
         """
