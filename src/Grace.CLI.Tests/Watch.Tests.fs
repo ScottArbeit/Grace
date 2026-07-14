@@ -12186,9 +12186,9 @@ module WatchTests =
             |> Seq.toArray
             |> should equal Array.empty<FileSystemDifference>)
 
-    /// Verifies that delete classification stays case-insensitive even when other watch matching is case-sensitive.
+    /// Verifies that case-sensitive delete classification does not delete a separately cased tracked path.
     [<Test>]
-    let ``case-sensitive watch comparison still preserves tracked delete casing`` () =
+    let ``case-sensitive watch comparison does not delete casing-distinct tracked path`` () =
         withTempRepo (fun root ->
             Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
 
@@ -12234,11 +12234,7 @@ module WatchTests =
             observedDifferences
             |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
             |> Seq.toArray
-            |> should
-                equal
-                [|
-                    DifferenceType.Delete, FileSystemEntryType.File, "Foo.txt"
-                |])
+            |> should equal Array.empty<DifferenceType * FileSystemEntryType * string>)
 
     /// Verifies that case-insensitive file adds under tracked directories preserve the tracked parent casing.
     [<Test>]
@@ -22476,6 +22472,9 @@ module WatchTests =
             |> Array.map (fun fileVersion -> string fileVersion.RelativePath)
             |> should equal [| "README.txt" |]
 
+            caseSensitivePlan.RetainedFiles
+            |> should equal Array.empty<LocalFileVersion>
+
             Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
 
             let caseInsensitivePlan =
@@ -22488,8 +22487,101 @@ module WatchTests =
 
             caseInsensitivePlan.FileWrites
             |> should equal Array.empty<LocalFileVersion>
+
+            caseInsensitivePlan.RetainedFiles
+            |> Array.map (fun fileVersion -> string fileVersion.RelativePath)
+            |> should equal [| "README.txt" |]
         finally
             Watch.clearPendingWatchWorkForTests ()
+
+    /// Verifies reserved namespace and repository containment use the active worktree case policy without prefix matches.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``watch path containment respects reserved namespace case policy and separators`` () =
+        let root = Path.Combine(Path.GetTempPath(), "grace-watch-path-comparison-root")
+        let graceDirectory = Path.Combine(root, ".grace")
+        let caseVariantGraceDirectory = Path.Combine(root, ".GRACE")
+        let reservedChild = Path.Combine(graceDirectory, "objects", "object.bin")
+        let caseVariantChild = Path.Combine(caseVariantGraceDirectory, "notes.txt")
+        let siblingPrefix = Path.Combine(root, ".graceful", "notes.txt")
+        let siblingDash = Path.Combine(root, ".grace-cache", "notes.txt")
+        let rootCaseVariant = Path.Combine(Path.GetDirectoryName(root), requireDifferentlyCasedPath (Path.GetFileName(root)), "child.txt")
+
+        try
+            Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory graceDirectory
+            |> should equal true
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory reservedChild
+            |> should equal true
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory caseVariantGraceDirectory
+            |> should equal false
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory caseVariantChild
+            |> should equal false
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory siblingPrefix
+            |> should equal false
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory siblingDash
+            |> should equal false
+
+            Watch.isPathWithinDirectoryForWatchTests root rootCaseVariant
+            |> should equal false
+
+            Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory caseVariantGraceDirectory
+            |> should equal true
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory caseVariantChild
+            |> should equal true
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory siblingPrefix
+            |> should equal false
+
+            Watch.isPathWithinDirectoryForWatchTests graceDirectory siblingDash
+            |> should equal false
+
+            Watch.isPathWithinDirectoryForWatchTests root rootCaseVariant
+            |> should equal true
+        finally
+            Watch.clearPendingWatchWorkForTests ()
+
+    /// Verifies retained-tree path sets compare status and disk casing only when the active worktree policy permits it.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch remote materialization retained tree respects active path comparison`` () =
+        withTempRepo (fun root ->
+            let directoryName = "CaseDirectory"
+            let trackedFilePath = Path.Combine(directoryName, "tracked.txt")
+            let diskDirectory = Path.Combine(root, directoryName)
+
+            Directory.CreateDirectory(diskDirectory) |> ignore
+
+            File.WriteAllText(Path.Combine(root, trackedFilePath), "retained content")
+
+            configureCurrentWatchIdentity root "current-repo" "current-branch"
+            |> ignore
+
+            let currentStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) [| trackedFilePath |] [| "casedirectory" |]
+
+            try
+                Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+                (Watch.currentBranchMaterializationRetainedDirectoryMatchesStatusForWatchTests currentStatus (RelativePath "casedirectory"))
+                    .GetAwaiter()
+                    .GetResult()
+                |> should equal false
+
+                Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
+
+                (Watch.currentBranchMaterializationRetainedDirectoryMatchesStatusForWatchTests currentStatus (RelativePath "casedirectory"))
+                    .GetAwaiter()
+                    .GetResult()
+                |> should equal true
+            finally
+                Watch.clearPendingWatchWorkForTests ())
 
     /// Verifies case-sensitive containment rejects paths that differ only by the root directory casing.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]

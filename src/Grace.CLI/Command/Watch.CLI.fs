@@ -66,6 +66,23 @@ module Watch =
     /// Reads Grace Watch runtime mode for tests that exercise confidence-loss transitions.
     let internal currentGraceWatchRuntimeModeForWatchTests () = currentGraceWatchRuntimeMode ()
 
+    /// Provides the fallback path comparison until the repository volume can be probed.
+    let private defaultWatchPathComparison () =
+        if OperatingSystem.IsWindows() then
+            StringComparison.OrdinalIgnoreCase
+        else
+            StringComparison.Ordinal
+
+    let mutable private watchPathComparison = defaultWatchPathComparison ()
+    let mutable private watchPathComparisonOverride: StringComparison option = None
+    let mutable private watchPathComparisonConfiguredRoot: string option = None
+
+    /// Converts a Watch filesystem comparison policy into the matching collection comparer.
+    let private stringComparerForWatchPathComparison pathComparison =
+        match pathComparison with
+        | StringComparison.OrdinalIgnoreCase -> StringComparer.OrdinalIgnoreCase
+        | _ -> StringComparer.Ordinal
+
     /// Holds the copied ignore inputs that govern every Watch eligibility decision for one Watch lifetime.
     type private WatchIgnoreSnapshot =
         {
@@ -135,12 +152,15 @@ module Watch =
             |> Path.GetFullPath
             |> Path.TrimEndingDirectorySeparator
 
-        String.Equals(normalizedCandidate, normalizedDirectory, StringComparison.InvariantCultureIgnoreCase)
+        String.Equals(normalizedCandidate, normalizedDirectory, watchPathComparison)
         || normalizedCandidate.StartsWith(
             normalizedDirectory
             + string Path.DirectorySeparatorChar,
-            StringComparison.InvariantCultureIgnoreCase
+            watchPathComparison
         )
+
+    /// Exposes Watch namespace containment for deterministic path-comparison tests.
+    let internal isPathWithinDirectoryForWatchTests directoryPath candidatePath = isPathWithinDirectoryForWatch directoryPath candidatePath
 
     /// Checks a file path against the copied Watch-lifetime ignore snapshot.
     let private shouldIgnoreFileForWatch fullPath =
@@ -148,11 +168,11 @@ module Watch =
         let fileInfo = FileInfo(fullPath)
 
         isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
-        || fullPath.Equals(snapshot.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.EndsWith(".gracetmp", StringComparison.OrdinalIgnoreCase)
+        || fullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
+        || fullPath.EndsWith(".gracetmp", watchPathComparison)
         || Directory.Exists(fullPath)
         || (not (isNull fileInfo.Directory)
             && snapshot.DirectoryEntries
@@ -523,13 +543,21 @@ module Watch =
 
     /// Reports whether the deleted callback path is an update marker path owned by any branch temp directory.
     let private isUpdateMarkerPath (markerFileName: string) =
-        String.Equals(Path.GetFileName(markerFileName), Constants.UpdateInProgressFileName, StringComparison.OrdinalIgnoreCase)
+        String.Equals(Path.GetFileName(markerFileName), Constants.UpdateInProgressFileName, watchPathComparison)
 
     let private graceUpdateMarkerDeletionLock = obj ()
     let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
     let private recentGraceUpdateMarkerCompletedUtc = List<DateTime>()
-    let private observedGraceUpdateMarkerLastWriteUtc = Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+    let mutable private observedGraceUpdateMarkerLastWriteUtc = Dictionary<string, DateTime>(stringComparerForWatchPathComparison watchPathComparison)
     let mutable private markerCompletionConfidenceLossActive = 0
+
+    /// Drops marker freshness captured under an obsolete path policy before later callbacks can trust it.
+    let private ensureObservedGraceUpdateMarkerPathComparer () =
+        let desiredComparer = stringComparerForWatchPathComparison watchPathComparison
+
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            if not (obj.ReferenceEquals(observedGraceUpdateMarkerLastWriteUtc.Comparer, desiredComparer)) then
+                observedGraceUpdateMarkerLastWriteUtc <- Dictionary<string, DateTime>(desiredComparer))
 
     /// Gets the completion sidecar written before the Grace update marker is removed.
     let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
@@ -647,7 +675,7 @@ module Watch =
             | false, _ -> UnobservedMarker)
 
     /// Reports whether a deleted marker path is the current transition marker Watch was expected to observe.
-    let private deletedMarkerIsCurrentMarker markerFileName = String.Equals(markerFileName, updateInProgressFileName (), StringComparison.OrdinalIgnoreCase)
+    let private deletedMarkerIsCurrentMarker markerFileName = String.Equals(markerFileName, updateInProgressFileName (), watchPathComparison)
 
     /// Reports whether the on-disk repository config has moved beyond Watch's cached branch identity.
     let private persistedConfigurationChangedSinceWatchCached () =
@@ -662,7 +690,7 @@ module Watch =
                 || not (String.Equals(cached.RepositoryName, persisted.RepositoryName, StringComparison.OrdinalIgnoreCase))
                 || cached.BranchId <> persisted.BranchId
                 || not (String.Equals(cached.BranchName, persisted.BranchName, StringComparison.OrdinalIgnoreCase))
-                || not (String.Equals(cached.RootDirectory, persisted.RootDirectory, StringComparison.OrdinalIgnoreCase))
+                || not (String.Equals(cached.RootDirectory, persisted.RootDirectory, watchPathComparison))
             | Error _ -> false
         with
         | _ -> false
@@ -683,12 +711,12 @@ module Watch =
 
         let normalizedFullPath = Path.GetFullPath(fullPath)
 
-        if normalizedFullPath.Equals(rootDirectory, StringComparison.InvariantCultureIgnoreCase) then
+        if normalizedFullPath.Equals(rootDirectory, watchPathComparison) then
             Some Constants.RootDirectoryPath
         else
             let rootDirectoryWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
 
-            if normalizedFullPath.StartsWith(rootDirectoryWithSeparator, StringComparison.InvariantCultureIgnoreCase) then
+            if normalizedFullPath.StartsWith(rootDirectoryWithSeparator, watchPathComparison) then
                 normalizedFullPath
                     .Substring(rootDirectoryWithSeparator.Length)
                     .Replace(Path.DirectorySeparatorChar, '/')
@@ -702,16 +730,12 @@ module Watch =
             .Replace(Path.DirectorySeparatorChar, '/')
             .Replace(Path.AltDirectorySeparatorChar, '/')
 
-    /// Provides the fallback path comparison until the repository volume can be probed.
-    let private defaultWatchPathComparison () =
-        if OperatingSystem.IsWindows() then
-            StringComparison.OrdinalIgnoreCase
-        else
-            StringComparison.Ordinal
+    /// Preserves first-seen normalized relative paths under the active worktree path policy.
+    let private distinctNormalizedRelativePathsForWatch (relativePaths: seq<RelativePath>) =
+        let normalizedPaths = HashSet<string>(stringComparerForWatchPathComparison watchPathComparison)
 
-    let mutable private watchPathComparison = defaultWatchPathComparison ()
-    let mutable private watchPathComparisonOverride: StringComparison option = None
-    let mutable private watchPathComparisonConfiguredRoot: string option = None
+        relativePaths
+        |> Seq.filter (fun relativePath -> normalizedPaths.Add(normalizeRelativePath relativePath))
 
     /// Removes uploaded identities after their matching watch work is either applied or proven content-equivalent.
     let private removeUploadedFileVersionsForPaths (relativePaths: seq<RelativePath>) =
@@ -785,6 +809,8 @@ module Watch =
                         StringComparison.Ordinal
 
                 watchPathComparisonConfiguredRoot <- Some normalizedRoot
+
+        ensureObservedGraceUpdateMarkerPathComparer ()
 
     /// Identifies the origin allowed to create a local Watch scheduling candidate.
     type internal WatchObservationOrigin =
@@ -875,15 +901,7 @@ module Watch =
     type internal WatchObservationCandidateScheduler(quietWindow: TimeSpan, pathComparison: StringComparison) =
         let gate = obj ()
 
-        let pathComparer =
-            match pathComparison with
-            | StringComparison.Ordinal -> StringComparer.Ordinal
-            | StringComparison.OrdinalIgnoreCase -> StringComparer.OrdinalIgnoreCase
-            | StringComparison.InvariantCulture -> StringComparer.InvariantCulture
-            | StringComparison.InvariantCultureIgnoreCase -> StringComparer.InvariantCultureIgnoreCase
-            | StringComparison.CurrentCulture -> StringComparer.CurrentCulture
-            | StringComparison.CurrentCultureIgnoreCase -> StringComparer.CurrentCultureIgnoreCase
-            | _ -> StringComparer.Ordinal
+        let pathComparer = stringComparerForWatchPathComparison pathComparison
 
         let candidates = Dictionary<string, WatchObservationCandidate>(pathComparer)
         let mutable nextGeneration = 0L
@@ -1145,13 +1163,10 @@ module Watch =
     let private isGraceStatusArtifact (fullPath: string) =
         let statusFile = Current().GraceStatusFile
 
-        fullPath.Equals(statusFile, StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
-
-    /// Compares delete-trigger paths against GraceStatus with the legacy status delete semantics.
-    let private deletedPathComparison = StringComparison.OrdinalIgnoreCase
+        fullPath.Equals(statusFile, watchPathComparison)
+        || fullPath.Equals(statusFile + "-wal", watchPathComparison)
+        || fullPath.Equals(statusFile + "-shm", watchPathComparison)
+        || fullPath.Equals(statusFile + "-journal", watchPathComparison)
 
     /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
     let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
@@ -1173,11 +1188,11 @@ module Watch =
         let deletedRelativePath = RelativePath(normalizeRelativePath relativePath)
 
         let isTrackedFile =
-            tryFindTrackedFileWithComparison deletedPathComparison status deletedRelativePath
+            tryFindTrackedFileWithComparison watchPathComparison status deletedRelativePath
             |> Option.isSome
 
         let isTrackedDirectory =
-            tryFindTrackedDirectoryWithComparison deletedPathComparison status deletedRelativePath
+            tryFindTrackedDirectoryWithComparison watchPathComparison status deletedRelativePath
             |> Option.isSome
 
         match isTrackedFile, isTrackedDirectory with
@@ -1715,6 +1730,7 @@ module Watch =
     let internal setWatchPathComparisonForWatchTests comparison =
         watchPathComparison <- comparison
         watchPathComparisonOverride <- Some comparison
+        ensureObservedGraceUpdateMarkerPathComparer ()
         configureLocalObservationCandidateScheduler TimeSpan.Zero
 
     /// Installs the repository case-sensitivity detector used by watch tests.
@@ -1987,7 +2003,7 @@ module Watch =
 
             for relativePath in
                 processedFilePaths
-                |> Seq.distinctBy normalizeRelativePath do
+                |> distinctNormalizedRelativePathsForWatch do
                 match! tryFindUploadedFinalFileVersion relativePath with
                 | UploadedFinalFileVersionFound uploadedFileVersion ->
                     match tryFindTrackedFile status uploadedFileVersion.RelativePath with
@@ -2019,7 +2035,7 @@ module Watch =
                 let trackedFile =
                     match tryFindTrackedFileWithComparison StringComparison.Ordinal status relativePath with
                     | Some exactTrackedFile -> Some exactTrackedFile
-                    | None -> tryFindTrackedFileWithComparison deletedPathComparison status relativePath
+                    | None -> tryFindTrackedFileWithComparison watchPathComparison status relativePath
 
                 match trackedFile with
                 | Some trackedFile ->
@@ -2033,7 +2049,7 @@ module Watch =
                     match tryFindTrackedDirectoryWithComparison StringComparison.Ordinal status relativePath with
                     | Some exactTrackedDirectory -> exactTrackedDirectory.RelativePath
                     | None ->
-                        match tryFindTrackedDirectoryWithComparison deletedPathComparison status relativePath with
+                        match tryFindTrackedDirectoryWithComparison watchPathComparison status relativePath with
                         | Some trackedDirectory -> trackedDirectory.RelativePath
                         | None -> relativePath
 
@@ -2144,7 +2160,7 @@ module Watch =
     let private tryFindTrackedFileForStatusTrigger (status: GraceStatus) (relativePath: RelativePath) =
         match tryFindTrackedFileWithComparison StringComparison.Ordinal status relativePath with
         | Some exactTrackedFile -> Some exactTrackedFile
-        | None -> tryFindTrackedFileWithComparison deletedPathComparison status relativePath
+        | None -> tryFindTrackedFileWithComparison watchPathComparison status relativePath
 
     /// Checks whether a stale delete trigger's final file content differs from GraceStatus.
     let private finalFileContentChangedFromTrackedStatus (status: GraceStatus) (relativePath: RelativePath) =
@@ -2220,19 +2236,13 @@ module Watch =
         let fileInfo = FileInfo(fullPath)
         let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
 
-        let isInGraceDirectory =
-            normalizedFullPath.Equals(graceDirectory, StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.StartsWith(
-                graceDirectory
-                + string Path.DirectorySeparatorChar,
-                StringComparison.InvariantCultureIgnoreCase
-            )
+        let isInGraceDirectory = isPathWithinDirectoryForWatch graceDirectory normalizedFullPath
 
         let isGraceStatusArtifact =
-            normalizedFullPath.Equals(snapshot.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+            normalizedFullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
 
         if isInGraceDirectory || isGraceStatusArtifact then
             true
@@ -2247,7 +2257,7 @@ module Watch =
                     checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
 
             (pathKind <> DeletedDirectory
-             && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
+             && normalizedFullPath.EndsWith(".gracetmp", watchPathComparison))
             || (pathKind = DeletedPathKindUnknown
                 && snapshot.DirectoryEntries
                    |> Array.exists directoryIgnoreMatches)
@@ -2543,7 +2553,7 @@ module Watch =
 
         for relativePath in
             relativePaths
-            |> Seq.distinctBy normalizeRelativePath do
+            |> distinctNormalizedRelativePathsForWatch do
             let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
             if finalPathMatchesEntryType FileSystemEntryType.File relativePath
@@ -2683,13 +2693,7 @@ module Watch =
 
     /// Rebuilds the replay sequence dictionary when repository path comparison changes.
     let private ensureStartupReplaySequenceComparer () =
-        let desiredComparer =
-            if watchPathComparison = StringComparison.OrdinalIgnoreCase
-               || watchPathComparison = StringComparison.InvariantCultureIgnoreCase
-               || watchPathComparison = StringComparison.CurrentCultureIgnoreCase then
-                StringComparer.OrdinalIgnoreCase
-            else
-                StringComparer.Ordinal
+        let desiredComparer = stringComparerForWatchPathComparison watchPathComparison
 
         if not (obj.ReferenceEquals(pendingStatusDifferenceReplaySequences.Comparer, desiredComparer)) then
             let replacement = Dictionary<string, Queue<int64>>(desiredComparer)
@@ -4311,7 +4315,7 @@ module Watch =
             try
                 let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
 
-                String.Equals(IpcFileName(), previousIpcFileName, StringComparison.OrdinalIgnoreCase)
+                String.Equals(IpcFileName(), previousIpcFileName, watchPathComparison)
                 && isGraceWatchResyncRequiredStatusPublished inspection
             with
             | _ -> false
@@ -4604,6 +4608,7 @@ module Watch =
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None
+        ensureObservedGraceUpdateMarkerPathComparer ()
         configureLocalObservationCandidateScheduler TimeSpan.Zero
         repositoryPathCaseInsensitiveLookupForWatch <- detectRepositoryPathCaseInsensitiveLookup
         fileExistsForWatchFinalPath <- File.Exists
@@ -4673,12 +4678,12 @@ module Watch =
                 appliedDifferences
                 |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.Directory)
                 |> Seq.map (fun difference -> string difference.RelativePath)
-                |> HashSet
+                |> fun paths -> HashSet<string>(paths, stringComparerForWatchPathComparison watchPathComparison)
 
             let statusTriggerPathsToDrain =
                 appliedDifferences
                 |> Seq.map (fun difference -> string difference.RelativePath)
-                |> HashSet
+                |> fun paths -> HashSet<string>(paths, stringComparerForWatchPathComparison watchPathComparison)
 
             let mutable removedPendingDirectory = Unchecked.defaultof<PendingDirectoryWorkSnapshot>
 
@@ -5042,12 +5047,7 @@ module Watch =
         }
 
     /// Converts the active repository path comparison into dictionary lookup semantics.
-    let private materializationStringComparer () =
-        match watchPathComparison with
-        | StringComparison.OrdinalIgnoreCase
-        | StringComparison.InvariantCultureIgnoreCase
-        | StringComparison.CurrentCultureIgnoreCase -> StringComparer.OrdinalIgnoreCase
-        | _ -> StringComparer.Ordinal
+    let private materializationStringComparer () = stringComparerForWatchPathComparison watchPathComparison
 
     /// Normalizes paths for exact materialization target comparisons.
     let private normalizedMaterializationPath (relativePath: RelativePath) = normalizeFilePath $"{relativePath}"
@@ -5073,6 +5073,8 @@ module Watch =
         let rootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(current.RootDirectory))
 
         let reservedPaths =
+            let uniquePaths = HashSet<string>(materializationStringComparer ())
+
             [|
                 current.GraceDirectory
                 current.ObjectDirectory
@@ -5083,16 +5085,12 @@ module Watch =
             |]
             |> Array.filter (String.IsNullOrWhiteSpace >> not)
             |> Array.map (fun path -> Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)))
-            |> Array.distinct
+            |> Array.choose (fun path -> if uniquePaths.Add(path) then Some path else None)
 
         let targetFullPath (relativePath: RelativePath) =
             let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, string relativePath))
-            let rootWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
 
-            if
-                not (String.Equals(rootDirectory, fullPath, watchPathComparison))
-                && not (fullPath.StartsWith(rootWithSeparator, watchPathComparison))
-            then
+            if not (isPathWithinDirectoryForWatch rootDirectory fullPath) then
                 invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
 
             fullPath
@@ -5103,9 +5101,7 @@ module Watch =
                 |> Path.TrimEndingDirectorySeparator
 
             reservedPaths
-            |> Array.exists (fun reservedPath ->
-                String.Equals(fullPath, reservedPath, watchPathComparison)
-                || fullPath.StartsWith(reservedPath + string Path.DirectorySeparatorChar, watchPathComparison))
+            |> Array.exists (fun reservedPath -> isPathWithinDirectoryForWatch reservedPath fullPath)
 
         let validateCanonicalPath allowRoot (relativePath: RelativePath) =
             let rawPath = string relativePath
@@ -5267,18 +5263,8 @@ module Watch =
     let private materializationTargetFullPath (relativePath: RelativePath) =
         let rootDirectory = Path.GetFullPath(Current().RootDirectory)
         let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, $"{relativePath}"))
-        let comparison = watchPathComparison
 
-        let rootWithSeparator =
-            if rootDirectory.EndsWith(string Path.DirectorySeparatorChar, StringComparison.Ordinal) then
-                rootDirectory
-            else
-                rootDirectory + string Path.DirectorySeparatorChar
-
-        if
-            not (String.Equals(rootDirectory, fullPath, comparison))
-            && not (fullPath.StartsWith(rootWithSeparator, comparison))
-        then
+        if not (isPathWithinDirectoryForWatch rootDirectory fullPath) then
             invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
 
         fullPath
@@ -5376,9 +5362,11 @@ module Watch =
 
     /// Chooses only paths that are not already covered by an ancestor directory delete.
     let private topLevelDirectoryDeletePaths (paths: seq<RelativePath>) =
+        let uniquePaths = HashSet<string>(materializationStringComparer ())
+
         let ordered =
             paths
-            |> Seq.distinctBy normalizedMaterializationPath
+            |> Seq.filter (fun path -> uniquePaths.Add(normalizedMaterializationPath path))
             |> Seq.sortBy (fun path -> (normalizedMaterializationPath path).Length)
             |> Seq.toArray
 
@@ -5387,8 +5375,7 @@ module Watch =
             not (
                 ordered
                 |> Array.exists (fun other ->
-                    normalizedMaterializationPath other
-                    <> normalizedMaterializationPath candidate
+                    not (String.Equals(normalizedMaterializationPath other, normalizedMaterializationPath candidate, watchPathComparison))
                     && materializationPathIsUnder other candidate)
             ))
 
@@ -5431,22 +5418,32 @@ module Watch =
             |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
             |> topLevelDirectoryDeletePaths
 
-        let directoryDeleteSet = directoryDeletes |> HashSet<RelativePath>
+        let directoryDeleteSet = HashSet<string>(materializationStringComparer ())
+
+        directoryDeletes
+        |> Seq.map normalizedMaterializationPath
+        |> Seq.iter (fun path -> directoryDeleteSet.Add(path) |> ignore)
 
         let fileIsUnderDirectoryDelete (relativePath: RelativePath) =
             directoryDeleteSet
-            |> Seq.exists (fun directoryPath -> materializationPathIsUnder directoryPath relativePath)
+            |> Seq.exists (fun directoryPath -> materializationPathIsUnder (RelativePath directoryPath) relativePath)
 
         let fileDeletes =
+            let deletedPaths = HashSet<string>(materializationStringComparer ())
+
             currentFiles.Values
-            |> Seq.filter (fun (fileVersion: LocalFileVersion) ->
+            |> Seq.choose (fun (fileVersion: LocalFileVersion) ->
                 let path = normalizedMaterializationPath fileVersion.RelativePath
 
-                not (fileIsUnderDirectoryDelete fileVersion.RelativePath)
-                && (not (remoteFiles.ContainsKey path)
-                    || remoteDirectories.ContainsKey path))
-            |> Seq.map (fun fileVersion -> fileVersion.RelativePath)
-            |> Seq.distinctBy normalizedMaterializationPath
+                if
+                    not (fileIsUnderDirectoryDelete fileVersion.RelativePath)
+                    && (not (remoteFiles.ContainsKey path)
+                        || remoteDirectories.ContainsKey path)
+                    && deletedPaths.Add(path)
+                then
+                    Some fileVersion.RelativePath
+                else
+                    None)
             |> Seq.toArray
 
         let directoryCreates =
@@ -5499,6 +5496,8 @@ module Watch =
             |> Seq.toArray
 
         let retainedDirectories =
+            let retainedDirectoryPaths = HashSet<string>(materializationStringComparer ())
+
             seq {
                 yield! directoryCreates
 
@@ -5507,7 +5506,7 @@ module Watch =
                     |> Seq.map (fun fileVersion -> fileVersion.RelativePath)
             }
             |> Seq.collect materializationAncestorDirectoryPaths
-            |> Seq.distinct
+            |> Seq.filter (fun path -> retainedDirectoryPaths.Add(normalizedMaterializationPath path))
             |> Seq.choose (fun path ->
                 let mutable currentDirectory = Unchecked.defaultof<LocalDirectoryVersion>
 
@@ -5568,10 +5567,10 @@ module Watch =
                     |> Seq.filter (fun directoryVersion ->
                         let directoryPath = normalizedMaterializationPath directoryVersion.RelativePath
 
-                        directoryPath = targetPath
+                        String.Equals(directoryPath, targetPath, watchPathComparison)
                         || materializationPathIsUnder relativePath directoryVersion.RelativePath)
                     |> Seq.map (fun directoryVersion -> normalizedMaterializationPath directoryVersion.RelativePath)
-                    |> HashSet
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
 
                 let expectedFiles =
                     currentFiles.Values
@@ -5581,7 +5580,7 @@ module Watch =
                 let expectedFilePaths =
                     expectedFiles
                     |> Seq.map (fun fileVersion -> normalizedMaterializationPath fileVersion.RelativePath)
-                    |> HashSet
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
 
                 let actualFiles =
                     Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories)
@@ -5597,12 +5596,12 @@ module Watch =
                             |> Seq.map (fun directoryPath -> RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryPath))))
                     }
                     |> Seq.map normalizedMaterializationPath
-                    |> HashSet
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
 
                 let actualFilePaths =
                     actualFiles
                     |> Seq.map normalizedMaterializationPath
-                    |> HashSet
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
 
                 let hasUnexpectedDirectories =
                     actualDirectoryPaths
@@ -5630,6 +5629,10 @@ module Watch =
 
                     return allTrackedFilesMatch
         }
+
+    /// Exposes retained-tree preflight for deterministic path-comparison tests.
+    let internal currentBranchMaterializationRetainedDirectoryMatchesStatusForWatchTests currentStatus relativePath =
+        targetDirectoryStillMatchesStatus currentStatus relativePath
 
     /// Fails before exact target mutation when a tracked parent directory no longer matches the accepted clean snapshot.
     let private verifyCurrentBranchMaterializationRetainedDirectories (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
@@ -5853,13 +5856,14 @@ module Watch =
     /// Verifies every local object-cache file required by the exact file writes is already present and hash-valid.
     let private verifyCurrentBranchMaterializationObjectCache (plan: CurrentBranchRemoteMaterializationPlan) =
         task {
-            let invalidObjectCacheFiles = ResizeArray<string>()
+            let invalidObjectCacheFiles = HashSet<string>(materializationStringComparer ())
 
             for fileVersion in plan.FileWrites do
                 let objectCachePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
 
                 if not (File.Exists objectCachePath) then
                     invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                    |> ignore
                 else
                     try
                         let actualSize = FileInfo(objectCachePath).Length
@@ -5881,14 +5885,14 @@ module Watch =
                                 )
                         then
                             invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                            |> ignore
                     with
-                    | _ -> invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                    | _ ->
+                        invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                        |> ignore
 
             if invalidObjectCacheFiles.Count > 0 then
-                let invalidPaths =
-                    invalidObjectCacheFiles
-                    |> Seq.distinct
-                    |> String.concat ", "
+                let invalidPaths = invalidObjectCacheFiles |> String.concat ", "
 
                 invalidOp $"Remote materialization cannot start because object-cache content is missing or corrupt for: {invalidPaths}."
         }
@@ -7533,7 +7537,7 @@ module Watch =
     let private deletedMarkerCanCompleteCurrentTransition markerFileName =
         let currentMarkerFileName = updateInProgressFileName ()
 
-        String.Equals(markerFileName, currentMarkerFileName, StringComparison.OrdinalIgnoreCase)
+        String.Equals(markerFileName, currentMarkerFileName, watchPathComparison)
         || not (File.Exists(currentMarkerFileName))
 
     /// Coordinates on grace update in progress deleted behavior for this CLI command path.
@@ -9299,15 +9303,7 @@ module Watch =
 
                             if
                                 not
-                                <| String.Equals
-                                    (
-                                        currentPath,
-                                        targetPath,
-                                        if OperatingSystem.IsWindows() then
-                                            StringComparison.OrdinalIgnoreCase
-                                        else
-                                            StringComparison.Ordinal
-                                    )
+                                <| String.Equals(currentPath, targetPath, watchPathComparison)
                             then
                                 let wasEnabled = updateInProgressFileSystemWatcher.EnableRaisingEvents
                                 updateInProgressFileSystemWatcher.EnableRaisingEvents <- false
