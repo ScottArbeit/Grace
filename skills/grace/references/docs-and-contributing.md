@@ -39,7 +39,7 @@ When asked to regenerate or substantially revise `CONTRIBUTING.md`, inspect curr
 - `scripts/validate.ps1`
 - `src/Grace.Shared/Constants.Shared.fs`
 - `src/Grace.Aspire.AppHost/AGENTS.md`
-- `src/Grace.Aspire.AppHost/Program.Aspire.AppHost.cs`
+- `src/Grace.Aspire.AppHost/Program.Aspire.AppHost.fs`
 - `src/Grace.Aspire.AppHost/Properties/launchSettings.json`
 - `README.md`
 - existing `CONTRIBUTING.md`

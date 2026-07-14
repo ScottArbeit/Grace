@@ -178,6 +178,10 @@ AppPackages/
 # Others
 sql/
 *.[Cc]ache
+!src/Grace.Cache/
+!src/Grace.Cache/**
+src/Grace.Cache/bin/
+src/Grace.Cache/obj/
 ClientBin/
 [Ss]tyle[Cc]op.*
 ~$*

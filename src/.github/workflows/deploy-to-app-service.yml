@@ -37,7 +37,7 @@ jobs:
         run: |
           set -e
           export DOTNET_ENVIRONMENT=${{ env.DOTNET_ENVIRONMENT }}
-          nohup dotnet run --project Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj --no-build > aspire.log 2>&1 &
+          nohup dotnet run --project Grace.Aspire.AppHost/Grace.Aspire.AppHost.fsproj --no-build > aspire.log 2>&1 &
           echo $! > aspire.pid
           sleep 90
 
@@ -103,4 +103,3 @@ jobs:
       - name: Logout Azure CLI
         if: always()
         run: az logout
-

@@ -94,7 +94,7 @@ Grace can be run locally using **Docker containers and emulators**, via the Aspi
 Where to look in the repo:
 
 - `Grace.Aspire.AppHost/Properties/launchSettings.json`
-- `Grace.Aspire.AppHost/Program.Aspire.AppHost.cs`
+- `Grace.Aspire.AppHost/Program.Aspire.AppHost.fs`
 
 Aspire:
 

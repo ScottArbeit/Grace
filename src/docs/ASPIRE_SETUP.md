@@ -165,7 +165,7 @@ The tracer bullet is proof of the local operational usage pipeline only:
 ## Troubleshooting
 
 - **Port conflicts** – Update bindings inside
-  `Grace.Aspire.AppHost/Program.Aspire.AppHost.cs` if ports `5000`, `5001`,
+  `Grace.Aspire.AppHost/Program.Aspire.AppHost.fs` if ports `5000`, `5001`,
   `10000–10002`, `8081`, `10251–10255`, `5672`, `5300`, or `21433` are already
   used.
 - **Cosmos DB emulator** – First launch can take several minutes. Inspect logs

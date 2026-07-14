@@ -213,6 +213,7 @@ function Get-ServerUnitTestFilterTerms {
 function Get-FastTestFilterTerms {
     $terms = @(
         "FullyQualifiedName~Grace.Authorization.Tests",
+        "FullyQualifiedName~Grace.Cache.Tests",
         "FullyQualifiedName~Grace.CLI.Tests",
         "FullyQualifiedName~Grace.Operations.Tests",
         "FullyQualifiedName~Grace.Types.Tests"

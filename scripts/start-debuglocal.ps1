@@ -13,7 +13,7 @@
 [CmdletBinding()]
 param(
   [string] $LaunchProfile = "DebugLocal",
-  [string] $ProjectPath = "src/Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj",
+  [string] $ProjectPath = "src/Grace.Aspire.AppHost/Grace.Aspire.AppHost.fsproj",
   [string] $LaunchSettingsPath = "src/Grace.Aspire.AppHost/Properties/launchSettings.json",
   [string] $GraceServerUri = "http://localhost:5000",
   [string] $BootstrapUserId = "",

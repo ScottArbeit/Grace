@@ -2,7 +2,7 @@
 
 This document summarizes environment dependencies, onboarding variables, and runtime settings used by Grace.
 Primary sources are `src/Grace.Shared/Constants.Shared.fs` (`EnvironmentVariables`) and Aspire host
-configuration in `src/Grace.Aspire.AppHost/Program.Aspire.AppHost.cs`.
+configuration in `src/Grace.Aspire.AppHost/Program.Aspire.AppHost.fs`.
 
 ## Docker Dependencies (Local Aspire)
 

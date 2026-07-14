@@ -1,7 +1,9 @@
 namespace Grace.Server.Tests
 
+open Aspire.Hosting.Testing
 open Grace.Shared
 open NUnit.Framework
+open Projects
 open System
 open System.IO
 
@@ -9,8 +11,8 @@ open System.IO
 [<TestFixture>]
 type OperationalFactsPublisherAppHostTests() =
 
-    /// Reads the AppHost source so focused wiring assertions stay on the Aspire-facing test surface.
-    let appHostSource () = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.cs")))
+    /// Reads the F# AppHost source so focused wiring assertions stay on the Aspire-facing test surface.
+    let appHostSource () = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.fs")))
 
     /// Verifies that AppHost provisions and forwards the same operational facts topic name.
     [<Test>]
@@ -19,29 +21,31 @@ type OperationalFactsPublisherAppHostTests() =
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(appHostSource, Does.Contain("ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic)"))
+                Assert.That(appHostSource, Does.Contain("resolveSetting configuration Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic"))
 
                 Assert.That(
                     appHostSource,
-                    Does.Contain(".WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)")
+                    Does.Contain(".WithEnvironment(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)")
                 )
 
                 Assert.That(
                     appHostSource,
-                    Does.Contain("var operationalFactsTopic = GetRequiredSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic);")
+                    Does.Contain(
+                        "let operationalFactsTopic = getRequiredSetting configuration Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic"
+                    )
                 )
 
-                Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(serviceBusTopicName, operationalFactsTopicName);"))
-                Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(serviceBusTopic, operationalFactsTopic)"))
-                Assert.That(appHostSource, Does.Contain("ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)"))
-                Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(topicName, operationalFactsTopicName)"))
-                Assert.That(appHostSource, Does.Contain("OperationalFactsProcessorSubscriptionName = \"operational-facts-processor\""))
-                Assert.That(appHostSource, Does.Not.Contain("var operationalFactsSubscriptionName = $\"{operationalFactsTopicName}-processor\";"))
-                Assert.That(appHostSource, Does.Contain("RequiresDuplicateDetection = true"))
-                Assert.That(appHostSource, Does.Contain("DuplicateDetectionHistoryTimeWindow = \"PT5M\""))
+                Assert.That(appHostSource, Does.Contain("ensureDistinctServiceBusTopics (Some serviceBusTopicName) (Some operationalFactsTopicName)"))
+                Assert.That(appHostSource, Does.Contain("ensureDistinctServiceBusTopics serviceBusTopic (Some operationalFactsTopic)"))
+                Assert.That(appHostSource, Does.Contain("resolveSetting configuration Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic"))
+                Assert.That(appHostSource, Does.Contain("ensureDistinctServiceBusTopics (Some topicName) (Some operationalFactsTopicName)"))
+                Assert.That(appHostSource, Does.Contain("let OperationalFactsProcessorSubscription = \"operational-facts-processor\""))
+                Assert.That(appHostSource, Does.Not.Contain("operationalFactsTopicName}-processor"))
+                Assert.That(appHostSource, Does.Contain("topic.RequiresDuplicateDetection <- true"))
+                Assert.That(appHostSource, Does.Match("topic\\s+operationalFactsTopicName\\s+\"PT5M\"\\s+true"))
 
-                Assert.That(appHostSource, Does.Contain("OperationalFactsProcessorSubscriptionName,"))
-                Assert.That(appHostSource, Does.Contain("Name = OperationalFactsProcessorSubscriptionName")))
+                Assert.That(appHostSource, Does.Contain("ResourceNames.OperationalFactsProcessorSubscription"))
+                Assert.That(appHostSource, Does.Contain("subscription ResourceNames.OperationalFactsProcessorSubscription")))
         )
 
     /// Verifies publish mode keeps Aspire resource identities independent from configurable Azure entity names.
@@ -51,27 +55,33 @@ type OperationalFactsPublisherAppHostTests() =
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(appHostSource, Does.Contain("GraceEventTopicResourceName = \"grace-event-topic\""))
-                Assert.That(appHostSource, Does.Contain("GraceEventSubscriptionResourceName = \"grace-event-subscription\""))
-                Assert.That(appHostSource, Does.Contain("OperationalFactsTopicResourceName = \"grace-operational-facts-topic\""))
+                Assert.That(appHostSource, Does.Contain("let GraceEventTopic = \"grace-event-topic\""))
+                Assert.That(appHostSource, Does.Contain("let GraceEventSubscription = \"grace-event-subscription\""))
+                Assert.That(appHostSource, Does.Contain("let OperationalFactsTopic = \"grace-operational-facts-topic\""))
 
                 Assert.That(
                     appHostSource,
-                    Does.Contain("OperationalFactsProcessorSubscriptionResourceName = \"grace-operational-facts-processor-subscription\"")
+                    Does.Contain("let OperationalFactsProcessorSubscriptionResource = \"grace-operational-facts-processor-subscription\"")
                 )
 
-                Assert.That(appHostSource, Does.Contain("serviceBus.AddServiceBusTopic(GraceEventTopicResourceName, serviceBusTopicName)"))
+                Assert.That(
+                    appHostSource,
+                    Does.Match(
+                        "serviceBus\\s+\\.AddServiceBusTopic\\(ResourceNames\\.GraceEventTopic,\\s*serviceBusTopicName\\)\\s+\\.AddServiceBusSubscription\\(ResourceNames\\.GraceEventSubscription,\\s*graceEventSubscriptionName\\)"
+                    )
+                )
 
-                Assert.That(appHostSource, Does.Contain(".AddServiceBusSubscription(GraceEventSubscriptionResourceName, graceEventSubscriptionName)"))
+                Assert.That(appHostSource, Does.Contain("ResourceNames.OperationalFactsTopic, operationalFactsTopicName"))
 
-                Assert.That(appHostSource, Does.Contain("OperationalFactsTopicResourceName,"))
-                Assert.That(appHostSource, Does.Contain("operationalFactsTopicName)"))
+                Assert.That(
+                    appHostSource,
+                    Does.Contain(
+                        ".AddServiceBusSubscription(ResourceNames.OperationalFactsProcessorSubscriptionResource, ResourceNames.OperationalFactsProcessorSubscription)"
+                    )
+                )
 
-                Assert.That(appHostSource, Does.Contain("OperationalFactsProcessorSubscriptionResourceName,"))
-
-                Assert.That(appHostSource, Does.Not.Contain("serviceBus.AddServiceBusTopic(serviceBusTopicName)"))
-                Assert.That(appHostSource, Does.Not.Contain("\"operational-facts\",\r\n                        operationalFactsTopicName"))
-                Assert.That(appHostSource, Does.Not.Contain(".AddServiceBusSubscription(OperationalFactsProcessorSubscriptionName)")))
+                Assert.That(appHostSource, Does.Not.Contain("AddServiceBusTopic(serviceBusTopicName)"))
+                Assert.That(appHostSource, Does.Not.Contain("AddServiceBusSubscription(ResourceNames.OperationalFactsProcessorSubscription)")))
         )
 
     /// Verifies DebugAzure requires the durable operational facts processor subscription to exist.
@@ -83,17 +93,128 @@ type OperationalFactsPublisherAppHostTests() =
             Action (fun () ->
                 Assert.That(
                     appHostSource,
-                    Does.Contain("OperationalFactsProcessorSubscriptionSettingName = \"grace__azure_service_bus__operational_facts_processor_subscription\"")
+                    Does.Contain("let OperationalFactsProcessorSubscriptionSetting = \"grace__azure_service_bus__operational_facts_processor_subscription\"")
                 )
-
-                Assert.That(appHostSource, Does.Contain("var operationalFactsProcessorSubscription ="))
-
-                Assert.That(appHostSource, Does.Contain("GetRequiredSetting(configuration, OperationalFactsProcessorSubscriptionSettingName);"))
-
-                Assert.That(appHostSource, Does.Contain("EnsureOperationalFactsProcessorSubscription(operationalFactsProcessorSubscription);"))
 
                 Assert.That(
                     appHostSource,
-                    Does.Contain("Set '{OperationalFactsProcessorSubscriptionSettingName}' to '{OperationalFactsProcessorSubscriptionName}'")
+                    Does.Contain(
+                        "let operationalFactsProcessorSubscription = getRequiredSetting configuration ResourceNames.OperationalFactsProcessorSubscriptionSetting"
+                    )
+                )
+
+                Assert.That(appHostSource, Does.Contain("ensureOperationalFactsProcessorSubscription (Some operationalFactsProcessorSubscription)"))
+
+                Assert.That(
+                    appHostSource,
+                    Does.Contain(
+                        "Set '{ResourceNames.OperationalFactsProcessorSubscriptionSetting}' to '{ResourceNames.OperationalFactsProcessorSubscription}'"
+                    )
                 ))
         )
+
+    /// Verifies the F# AppHost directly composes the narrowly scoped Cache process without changing its service boundary.
+    [<Test>]
+    member _.AppHostComposesGraceCacheThroughFSharpProjectInput() =
+        let appHostSource = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(appHostSource, Does.Contain(".AddProject(\"grace-cache\", \"..\\\\Grace.Cache\\\\Grace.Cache.fsproj\")"))
+                Assert.That(appHostSource, Does.Contain(".WithEnvironment(\"GRACE_CACHE_INSTANCE_NAME\", \"aspire-cache\")"))
+                Assert.That(appHostSource, Does.Contain("let private addCacheProject (builder: IDistributedApplicationBuilder) isTestRun useFixedTestPorts"))
+                Assert.That(appHostSource, Does.Not.Contain("Grace.Cache.CLI"))
+                Assert.That(appHostSource, Does.Not.Contain("Program.Aspire.AppHost.cs")))
+        )
+
+    /// Verifies AppHost keeps emulator endpoint values structured until Aspire allocates the resources.
+    [<Test>]
+    member _.AppHostPreservesStructuredEmulatorEndpointExpressions() =
+        let appHostSource = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(appHostSource, Does.Contain("let azuriteConnectionBuilder = ReferenceExpressionBuilder()"))
+
+                Assert.That(appHostSource, Does.Contain("azuriteConnectionBuilder.AppendValueProvider(azuriteBlobHostAndPort, null)"))
+
+                Assert.That(appHostSource, Does.Contain("azuriteConnectionBuilder.AppendValueProvider(azuriteQueueHostAndPort, null)"))
+                Assert.That(appHostSource, Does.Contain("azuriteConnectionBuilder.AppendValueProvider(azuriteTableHostAndPort, null)"))
+                Assert.That(appHostSource, Does.Contain("let serviceBusConnectionBuilder = ReferenceExpressionBuilder()"))
+
+                Assert.That(appHostSource, Does.Contain("serviceBusConnectionBuilder.AppendValueProvider(serviceBusHostAndPort, null)"))
+
+                Assert.That(appHostSource, Does.Match("let\\s+azuriteConnection\\s+=\\s+azuriteConnectionBuilder\\.Build\\(\\)"))
+                Assert.That(appHostSource, Does.Match("let\\s+serviceBusConnection\\s+=\\s+serviceBusConnectionBuilder\\.Build\\(\\)"))
+                Assert.That(appHostSource, Does.Not.Contain("$\"DefaultEndpointsProtocol"))
+                Assert.That(appHostSource, Does.Not.Contain("$\"Endpoint=sb://")))
+        )
+
+    /// Verifies publish mode supplies every Azure resource binding that Grace.Server consumes from Aspire.
+    [<Test>]
+    member _.PublishModeBindsEveryAzureResourceToGraceServer() =
+        let appHostSource = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(appHostSource, Does.Contain(".WithReference(cosmosDatabase :?> IResourceBuilder<IResourceWithConnectionString>)"))
+                Assert.That(appHostSource, Does.Contain(".WithReference(blobStorage :?> IResourceBuilder<IResourceWithConnectionString>)"))
+                Assert.That(appHostSource, Does.Contain(".WithReference(diffStorage :?> IResourceBuilder<IResourceWithConnectionString>)"))
+                Assert.That(appHostSource, Does.Contain(".WithReference(zipStorage :?> IResourceBuilder<IResourceWithConnectionString>)"))
+                Assert.That(appHostSource, Does.Contain(".WithReference(serviceBus :?> IResourceBuilder<IResourceWithConnectionString>)"))
+                Assert.That(appHostSource, Does.Contain(".WithParentRelationship(redis.Resource)")))
+        )
+
+    /// Verifies ordinary test AppHosts allocate a Cache HTTP port instead of colliding with developer port 8080.
+    [<Test>]
+    member _.AppHostAllocatesDynamicCachePortForOrdinaryTestRuns() =
+        let appHostSource = appHostSource ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(appHostSource, Does.Contain("if isTestRun && not useFixedTestPorts then\n        let cacheTargetPort = getAvailableTcpPort ()"))
+
+                Assert.That(
+                    appHostSource,
+                    Does.Contain(
+                        ".WithHttpEndpoint(targetPort = cacheTargetPort, name = \"http\")\n            .WithEnvironment(\"ASPNETCORE_URLS\", $\"http://127.0.0.1:{cacheTargetPort}\")"
+                    )
+                )
+
+                Assert.That(
+                    appHostSource,
+                    Does.Contain(".WithEnvironment(\"ASPNETCORE_URLS\", \"http://+:8080\")\n            .WithHttpEndpoint(targetPort = 8080, name = \"http\")")
+                )
+
+                Assert.That(appHostSource, Does.Contain("addCacheProject builder isTestRun useFixedTestPorts")))
+        )
+
+    /// Verifies both standard validation profiles inherit the Fast cache-test selection.
+    [<Test>]
+    member _.ValidateScriptSelectsCacheTestsForFastAndFullProfiles() =
+        let validationScript = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "scripts", "validate.ps1")))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(validationScript, Does.Contain("\"FullyQualifiedName~Grace.Cache.Tests\","))
+                Assert.That(validationScript, Does.Contain("$terms = Get-FastTestFilterTerms"))
+                Assert.That(validationScript, Does.Contain("if ($IncludeFullTests)")))
+        )
+
+    /// Verifies the hand-authored F# marker preserves Aspire's generated AppHost test-entry contract.
+    [<Test>]
+    member _.FSharpAppHostTestingMarkerIsAcceptedByDistributedApplicationTestingBuilder() =
+        task {
+            use! builder = DistributedApplicationTestingBuilder.CreateAsync<Grace_Aspire_AppHost>()
+            let markerType = typeof<Grace_Aspire_AppHost>
+            let expectedProjectPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost"))
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(markerType.IsClass, Is.True)
+                    Assert.That(markerType.GetConstructors(), Is.Empty)
+                    Assert.That(markerType.Assembly.EntryPoint, Is.Not.Null)
+                    Assert.That(Grace_Aspire_AppHost.ProjectPath, Is.EqualTo(expectedProjectPath))
+                    Assert.That(builder.AppHostAssembly, Is.SameAs(markerType.Assembly)))
+            )
+        }

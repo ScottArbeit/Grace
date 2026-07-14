@@ -60,7 +60,7 @@ Guardrails:
 
 Key files:
 
-- `src/Grace.Aspire.AppHost/Program.Aspire.AppHost.cs`
+- `src/Grace.Aspire.AppHost/Program.Aspire.AppHost.fs`
 - `src/Grace.Aspire.AppHost/AGENTS.md`
 - `src/docs/ASPIRE_SETUP.md`
 - `src/docs/ENVIRONMENT.md`
