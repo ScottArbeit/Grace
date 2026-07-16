@@ -12357,6 +12357,26 @@ module WatchTests =
                     DifferenceType.Add, FileSystemEntryType.File, "Src/newdir/a.txt"
                 |])
 
+    /// Verifies directory existence uses the selected Watch comparison policy rather than host filesystem case behavior.
+    [<Test>]
+    let ``directory existence respects active path comparison independent of host`` () =
+        withTempRepo (fun root ->
+            Directory.CreateDirectory(Path.Combine(root, "CaseDirectory"))
+            |> ignore
+
+            try
+                Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+                Watch.directoryExistsUsingWatchPathComparisonForWatchTests (RelativePath "casedirectory")
+                |> should equal false
+
+                Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
+
+                Watch.directoryExistsUsingWatchPathComparisonForWatchTests (RelativePath "casedirectory")
+                |> should equal true
+            finally
+                Watch.clearPendingWatchWorkForTests ())
+
     /// Verifies that stale deletes requeue canceled same-path file upload work before status-only triggers drain.
     [<Test>]
     let ``stale delete after same-path change requeues canceled upload work`` () =
@@ -13543,6 +13563,7 @@ module WatchTests =
 
             uploadedPaths.ToArray()
             |> should equal [| siblingPath |]
+
             scanCalls |> should equal 0
             applyFromDifferencesCalls |> should equal 1
 
@@ -13564,6 +13585,71 @@ module WatchTests =
 
             afterProcessing.FilesToProcess
             |> should equal Array.empty<string>)
+
+    /// Verifies that a leaf callback derives empty sibling directories from the same bounded untracked subtree as uploads.
+    [<Test; Category("DirectorySubtree")>]
+    let ``nested directory leaf event includes empty untracked sibling without scan`` () =
+        withTempRepo (fun root ->
+            let parentRelativePath = "new-parent"
+            let childARelativePath = "new-parent/child-a"
+            let childBRelativePath = "new-parent/child-b"
+            let childAPath = Path.Combine(root, childARelativePath)
+            let childBPath = Path.Combine(root, childBRelativePath)
+            let mutable uploadCalls = 0
+            let mutable scanCalls = 0
+            let mutable applyFromDifferencesCalls = 0
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Directory.CreateDirectory(childAPath) |> ignore
+            Directory.CreateDirectory(childBPath) |> ignore
+            Watch.OnCreated(createdEvent childAPath)
+
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            let applyIncremental _ _ _ = Task.FromResult(())
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 0
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equivalent
+                [|
+                    DifferenceType.Add, FileSystemEntryType.Directory, parentRelativePath
+                    DifferenceType.Add, FileSystemEntryType.Directory, childARelativePath
+                    DifferenceType.Add, FileSystemEntryType.Directory, childBRelativePath
+                |])
 
     /// Verifies that directory-create classification reuses one refreshed GraceStatus snapshot across a burst.
     [<Test>]
@@ -19963,6 +20049,58 @@ module WatchTests =
 
             outcome |> should equal None)
 
+    /// Verifies that catch-up routes the latest eligible Reference even when a later tag occupies BranchDto LatestReference.
+    [<Test; Category("CurrentBranchCatchUp")>]
+    let ``current branch catch-up uses latest eligible reference when later tag exists`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let saveNotification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "catch-up-save-with-later-tag")
+                    (Blake3Hash "catch-up-save-with-later-tag-blake3")
+
+            let laterTag =
+                { ReferenceDto.Default with
+                    ReferenceId = Guid.NewGuid()
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    ReferenceType = ReferenceType.Tag
+                }
+
+            let branchDto =
+                { branchDtoWithLatestCurrentBranchReference saveNotification with BranchName = BranchName "current-branch"; LatestReference = laterTag }
+
+            let observedReferences = ResizeArray<ReferenceId>()
+
+            let processReference payload =
+                observedReferences.Add(payload.ReferenceId)
+
+                Task.FromResult(
+                    ({ ReferenceId = payload.ReferenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
+                )
+
+            let result, outcome =
+                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
+                    (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-later-tag-test")))
+                    processReference)
+                    .GetAwaiter()
+                    .GetResult()
+
+            result
+            |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
+
+            outcome
+            |> Option.map (fun result -> result.ReferenceId)
+            |> should equal (Some saveNotification.ReferenceId)
+
+            observedReferences.ToArray()
+            |> should equal [| saveNotification.ReferenceId |])
+
     /// Verifies that a failed BranchDto refresh remains a retryable lifecycle result without creating payload-backed work.
     [<Test; Category("CurrentBranchCatchUp")>]
     let ``current branch catch-up reports BranchDto refresh failure without coordinator work`` () =
@@ -20068,7 +20206,7 @@ module WatchTests =
             olderCompletion.SetResult(
                 {
                     ReferenceId = latestReference.ReferenceId
-                    Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+                    Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
                     Decision =
                         Some
                             {
@@ -20352,6 +20490,7 @@ module WatchTests =
                     "status"
                     "status"
                     "status"
+                    "status"
                     "apply"
                 |])
 
@@ -20566,6 +20705,40 @@ module WatchTests =
             decision.Reference
             |> Option.map (fun reference -> reference.ReferenceId)
             |> should equal (Some notification.ReferenceId))
+
+    /// Verifies that a later tag does not displace the latest eligible Save from notification materialization selection.
+    [<Test; Category("CurrentBranchMaterializationSelection")>]
+    let ``latest current branch decision keeps latest eligible reference when later tag exists`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let saveNotification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "save-root-with-later-tag")
+                    (Blake3Hash "save-root-with-later-tag-blake3")
+
+            let laterTag =
+                { ReferenceDto.Default with
+                    ReferenceId = Guid.NewGuid()
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    ReferenceType = ReferenceType.Tag
+                }
+
+            let branchDto = { branchDtoWithLatestCurrentBranchReference saveNotification with LatestReference = laterTag }
+
+            let decision =
+                Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto saveNotification
+
+            decision.NeedsMaterialization |> should equal true
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
 
     /// Verifies that returning to an older root value is accepted only through the newer BranchDto latest Reference id.
     [<Test>]
@@ -21080,7 +21253,59 @@ module WatchTests =
             inspectionCount
             |> should be (greaterThanOrEqualTo 3))
 
-    /// Verifies that an accepted Reference is not rejected solely because BranchDto advances during the lease wait.
+    /// Verifies that local Watch work arriving after dirty publication blocks mutation at the final pre-apply inspection.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator rechecks clean gate after pending publication`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let cleanStatus = liveWatchStatus (Guid.NewGuid())
+            let dirtyStatus = { cleanStatus with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "post-pending-root")
+                    (Blake3Hash "post-pending-root-blake3")
+
+            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "post-pending-gate-test"))
+
+            let mutable inspectionCount = 0
+
+            let inspectStatus () =
+                inspectionCount <- inspectionCount + 1
+
+                if inspectionCount < 4 then
+                    Task.FromResult(watchStatusInspection cleanStatus)
+                else
+                    Task.FromResult(watchStatusInspection dirtyStatus)
+
+            let requestDegradedResync _ = Assert.Fail("New local work must wait for a safe point rather than request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("post-pending local work must not apply"))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .GetAwaiter()
+                    .GetResult()
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+
+            inspectionCount
+            |> should be (greaterThanOrEqualTo 4))
+
+    /// Verifies that an accepted Reference completes before a later same-branch Reference that arrives during its lease wait.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
     let ``current branch materialization coordinator preserves accepted reference after latest advances during lease wait`` () =
         withTempRepo (fun root ->
@@ -21146,11 +21371,129 @@ module WatchTests =
                         .GetAwaiter()
                         .GetResult())
 
+            let mutable laterMaterializationTask: Task<Watch.CurrentBranchMaterializationCoordinatorOutcome option> = null
+
             try
                 branchFetched.Wait(5000) |> should equal true
 
                 branchFetches.ToArray()
                 |> should equal [| acceptedReference.ReferenceId |]
+
+                laterMaterializationTask <-
+                    Task.Run (fun () ->
+                        (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                            getBranch
+                            inspectStatus
+                            requestDegradedResync
+                            waitForSafePoint
+                            reestablishIpc
+                            applyReference
+                            newerReference)
+                            .GetAwaiter()
+                            .GetResult())
+
+                Task.Delay(150).Wait()
+
+                branchFetches.ToArray()
+                |> should equal [| acceptedReference.ReferenceId |]
+            finally
+                blockingLease.Dispose()
+
+            let tasksToWait =
+                if isNull laterMaterializationTask then
+                    [| materializationTask :> Task |]
+                else
+                    [|
+                        materializationTask :> Task
+                        laterMaterializationTask :> Task
+                    |]
+
+            Task.WaitAll(tasksToWait, 5000)
+            |> should equal true
+
+            materializationTask.Result.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            branchFetches.ToArray()
+            |> should
+                equal
+                [|
+                    acceptedReference.ReferenceId
+                    newerReference.ReferenceId
+                |]
+
+            laterMaterializationTask.Result.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            appliedReferences.ToArray()
+            |> should
+                equal
+                [|
+                    acceptedReference.ReferenceId
+                    newerReference.ReferenceId
+                |])
+
+    /// Verifies that lease acquisition refreshes accepted-request root evidence before any local mutation begins.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator skips mutation when accepted root is already local after lease wait`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let acceptedReference =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "accepted-root-already-local")
+                    (Blake3Hash "accepted-root-already-local-blake3")
+
+            let initialStatus = liveWatchStatus (Guid.NewGuid())
+
+            let acceptedRootStatus =
+                { liveWatchStatus acceptedReference.DirectoryId with
+                    RootDirectorySha256Hash = acceptedReference.Sha256Hash
+                    RootDirectoryBlake3Hash = acceptedReference.Blake3Hash
+                }
+
+            let mutable currentStatus = initialStatus
+            let branchFetches = ResizeArray<ReferenceId>()
+            use branchFetched = new ManualResetEventSlim(false)
+
+            let getBranch () =
+                branchFetches.Add(acceptedReference.ReferenceId)
+                branchFetched.Set() |> ignore
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference acceptedReference) "accepted-root-revalidation-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection currentStatus)
+            let requestDegradedResync _ = Assert.Fail("Readable current Watch evidence must not request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+            let appliedReferences = ResizeArray<ReferenceId>()
+            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
+            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
+            |> ignore
+
+            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+
+            let materializationTask =
+                Task.Run (fun () ->
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        acceptedReference)
+                        .GetAwaiter()
+                        .GetResult())
+
+            try
+                branchFetched.Wait(5000) |> should equal true
+                currentStatus <- acceptedRootStatus
             finally
                 blockingLease.Dispose()
 
@@ -21158,13 +21501,13 @@ module WatchTests =
             |> should equal true
 
             materializationTask.Result.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
 
             branchFetches.ToArray()
             |> should equal [| acceptedReference.ReferenceId |]
 
             appliedReferences.ToArray()
-            |> should equal [| acceptedReference.ReferenceId |])
+            |> should equal Array.empty<ReferenceId>)
 
     /// Verifies that a queued Reference is checked against BranchDto latest only after it owns the serialized lane.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -22874,8 +23217,7 @@ module WatchTests =
             let createdDirectory = remoteDirectoryVersion createdDirectoryId createdParent Array.empty [| remoteFile |]
             let retainedDirectoryId = Guid.NewGuid()
 
-            let retainedDirectory =
-                remoteDirectoryVersion retainedDirectoryId retainedParent [| createdDirectoryId |] Array.empty<FileVersion>
+            let retainedDirectory = remoteDirectoryVersion retainedDirectoryId retainedParent [| createdDirectoryId |] Array.empty<FileVersion>
 
             let remoteRootId = Guid.NewGuid()
             let remoteRoot = remoteDirectoryVersion remoteRootId Constants.RootDirectoryPath [| retainedDirectoryId |] Array.empty<FileVersion>
@@ -22891,7 +23233,15 @@ module WatchTests =
             let targetMutations = ResizeArray<string>()
 
             let clients =
-                { remoteMaterializationClients [| remoteRoot; retainedDirectory; createdDirectory |] currentStatus writtenStatuses resyncRequests with
+                { remoteMaterializationClients
+                      [|
+                          remoteRoot
+                          retainedDirectory
+                          createdDirectory
+                      |]
+                      currentStatus
+                      writtenStatuses
+                      resyncRequests with
                     BeforeFinalVerification =
                         fun () ->
                             Directory.Delete(Path.Combine(root, retainedParent), true)
@@ -22916,7 +23266,10 @@ module WatchTests =
             |> should startWith "Remote materialization retained directory changed before apply"
 
             File.Exists(targetPath) |> should equal false
-            targetMutations |> should equal [| "final verification" |]
+
+            targetMutations
+            |> should equal [| "final verification" |]
+
             writtenStatuses.Count |> should equal 0
             resyncRequests.Count |> should equal 1)
 
@@ -25199,6 +25552,8 @@ module WatchTests =
                     "blocked"
                     "clean"
                     "clean"
+                    "clean"
+                    "clean"
                 |]
 
             appliedReferences.ToArray()
@@ -25300,6 +25655,8 @@ module WatchTests =
                     "clean"
                     "clean"
                     "degraded"
+                    "clean"
+                    "clean"
                     "clean"
                     "clean"
                 |]
@@ -25461,7 +25818,7 @@ module WatchTests =
                     .Result
 
             outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
 
             outcome.Value.Decision.Value.Reason
             |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
@@ -25592,7 +25949,7 @@ module WatchTests =
                     notification.ReferenceId
                 |]
 
-            inspections |> should equal 5
+            inspections |> should equal 6
 
             appliedReferences.ToArray()
             |> should equal [| notification.ReferenceId |])
@@ -25659,7 +26016,7 @@ module WatchTests =
                     notification.ReferenceId
                 |]
 
-            inspections |> should equal 5
+            inspections |> should equal 6
 
             appliedReferences.ToArray()
             |> should equal [| notification.ReferenceId |])
@@ -25715,7 +26072,7 @@ module WatchTests =
                     .Result
 
             outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
 
             outcome.Value.Decision.Value.Reason
             |> should equal Services.LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch

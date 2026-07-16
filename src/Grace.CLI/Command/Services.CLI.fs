@@ -516,11 +516,11 @@ module Services =
         | LocalStatusRequiresResync = 4
         /// The remote Reference already matches the local root identity, so materialization would be a no-op.
         | SameRoot = 5
-        /// The remote Reference is the latest applicable current-branch Reference and differs from the local root.
+        /// The remote Reference is the latest eligible current-branch Reference and differs from the local root.
         | RemoteMaterializationRequired = 6
         /// The supplied Reference notification did not include a concrete Reference id.
         | ReferenceIdUnavailable = 7
-        /// The server BranchDto no longer names the notification Reference as both overall and per-type latest.
+        /// The current BranchDto no longer names the notification Reference as the latest eligible materialization input.
         | StaleLatestReference = 8
 
     /// Carries the Watch decision for the latest applicable current-branch Reference notification.
@@ -556,19 +556,54 @@ module Services =
         || (status.RootDirectorySha256Hash = payload.Sha256Hash
             && status.RootDirectoryBlake3Hash = payload.Blake3Hash)
 
-    /// Selects the BranchDto per-type latest-reference authority that must agree with a current-branch notification.
-    let private latestTypedReferenceForCurrentBranchNotification (branchDto: Grace.Types.Branch.BranchDto) referenceType =
-        match referenceType with
-        | ReferenceType.Save -> Some branchDto.LatestSave
-        | ReferenceType.Checkpoint -> Some branchDto.LatestCheckpoint
-        | ReferenceType.Commit -> Some branchDto.LatestCommit
-        | _ -> None
+    /// Selects the latest eligible overall Reference, falling back to typed materializable slots when overall latest is ineligible.
+    let internal tryLatestEligibleCurrentBranchReference (branchDto: Grace.Types.Branch.BranchDto) =
+        let isEligible (referenceDto: ReferenceDto) =
+            referenceDto.ReferenceId <> ReferenceId.Empty
+            && CurrentBranchReferenceNotification.IsEligibleReferenceType referenceDto.ReferenceType
 
-    /// Reports whether BranchDto latest-reference authority still names the notification as the branch head.
-    let private currentBranchNotificationMatchesLatestReferenceAuthority (branchDto: Grace.Types.Branch.BranchDto) payload =
-        branchDto.LatestReference.ReferenceId = payload.ReferenceId
-        && (latestTypedReferenceForCurrentBranchNotification branchDto payload.ReferenceType
-            |> Option.exists (fun latestTypedReference -> latestTypedReference.ReferenceId = payload.ReferenceId))
+        if isEligible branchDto.LatestReference then
+            Some branchDto.LatestReference
+        else
+            [|
+                branchDto.LatestSave
+                branchDto.LatestCheckpoint
+                branchDto.LatestCommit
+            |]
+            |> Array.filter isEligible
+            |> Array.sortByDescending (fun referenceDto ->
+                referenceDto.UpdatedAt
+                |> Option.defaultValue referenceDto.CreatedAt)
+            |> Array.tryHead
+
+    /// Reports whether the current BranchDto still names the notification as the latest eligible materialization input.
+    let private currentBranchNotificationMatchesLatestEligibleReference (branchDto: Grace.Types.Branch.BranchDto) payload =
+        tryLatestEligibleCurrentBranchReference branchDto
+        |> Option.exists (fun latestEligibleReference -> latestEligibleReference.ReferenceId = payload.ReferenceId)
+
+    /// Applies the non-latest safety checks that an already accepted mailbox request must repeat before mutation.
+    let private decideAcceptedCurrentBranchReferenceMaterialization
+        repositoryId
+        branchId
+        (localStatus: GraceWatchStatus option)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        match localStatus with
+        | None -> LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable, payload)
+        | Some status when
+            status.RepositoryId <> repositoryId
+            || status.BranchId <> branchId
+            ->
+            LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch, payload)
+        | Some status when
+            status.SafetyFlags
+            |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal))
+            |> not
+            ->
+            LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync, payload)
+        | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
+            LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.SameRoot, payload)
+        | Some _ -> { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
 
     /// Rejects current-branch notifications that cannot safely wake same-branch materialization.
     let currentBranchReferenceProtocolValidationDecision repositoryId branchId (payload: CurrentBranchReferenceNotification) =
@@ -581,7 +616,22 @@ module Services =
         else
             None
 
-    /// Chooses whether a BranchDto-confirmed current-branch Reference requires remote materialization.
+    /// Rechecks concrete Reference identity and current Watch root evidence for an already accepted mailbox Reference.
+    let revalidateAcceptedCurrentBranchReferenceMaterialization
+        repositoryId
+        branchId
+        (localStatus: GraceWatchStatus option)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        match currentBranchReferenceProtocolValidationDecision repositoryId branchId payload with
+        | Some decision -> decision
+        | None ->
+            match localStatus with
+            | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
+                LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.SameRoot, payload)
+            | _ -> { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
+
+    /// Chooses whether the latest eligible BranchDto current-branch Reference requires remote materialization.
     let decideLatestCurrentBranchReferenceMaterialization
         repositoryId
         branchId
@@ -592,26 +642,10 @@ module Services =
         match currentBranchReferenceProtocolValidationDecision repositoryId branchId payload with
         | Some decision -> decision
         | None ->
-            if not (currentBranchNotificationMatchesLatestReferenceAuthority branchDto payload) then
+            if not (currentBranchNotificationMatchesLatestEligibleReference branchDto payload) then
                 LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.StaleLatestReference, payload)
             else
-                match localStatus with
-                | None -> LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable, payload)
-                | Some status when
-                    status.RepositoryId <> repositoryId
-                    || status.BranchId <> branchId
-                    ->
-                    LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch, payload)
-                | Some status when
-                    status.SafetyFlags
-                    |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal))
-                    |> not
-                    ->
-                    LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync, payload)
-                | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
-                    LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.SameRoot, payload)
-                | Some _ ->
-                    { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
+                decideAcceptedCurrentBranchReferenceMaterialization repositoryId branchId localStatus payload
 
     /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
     let private toGraceWatchStatusContractWithPersistedMode persistedModeOverride (status: GraceWatchStatus) =
