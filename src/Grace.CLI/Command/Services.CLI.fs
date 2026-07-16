@@ -31,6 +31,7 @@ open System.Reflection
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Threading.Tasks
 open System.Reactive.Linq
 open System.Threading
@@ -54,6 +55,9 @@ module Services =
     /// A cache of paths that we've already decided to ignore or not.
     let private shouldIgnoreCache = ConcurrentDictionary<FilePath, bool>()
 
+    /// Clears process-local `.graceignore` decisions after repository configuration changes.
+    let clearShouldIgnoreCache () = shouldIgnoreCache.Clear()
+
     // This section is "borrowed" from Common.CLI.fs, because Services.CLI.fs comes before Common.CLI.fs in the build order.
 
     /// Checks if the output format from the command line is a specific format.
@@ -67,6 +71,74 @@ module Services =
         else
             false
 
+    /// Names the compact runtime state advertised by the Grace Watch IPC status file.
+    type GraceWatchRuntimeMode =
+        /// Grace Watch has claimed startup ownership but has not published a usable status snapshot yet.
+        | StartingUp = 0
+        /// Grace Watch has a usable root snapshot and can serve incremental status shortcuts.
+        | HealthyIncremental = 1
+        /// Grace Watch is rebuilding trusted state before incremental shortcuts can be used.
+        | Resynchronizing = 2
+        /// Grace Watch has stopped accepting incremental shortcuts until an explicit resume or resync occurs.
+        | Suspended = 3
+        /// Grace Watch is shutting down and should not be treated as a live incremental source.
+        | Stopping = 4
+
+    /// Checks whether the repository root resolves differently-cased names to the same file.
+    let private detectWatchRootPathCaseInsensitiveLookup (rootDirectory: string) =
+        let mutable probePath = String.Empty
+        let mutable alternateProbePath = String.Empty
+
+        try
+            try
+                let probeDirectory = Path.Combine(rootDirectory, Constants.GraceConfigDirectory)
+
+                Directory.CreateDirectory(probeDirectory)
+                |> ignore
+
+                let probeName = $"grace-watch-root-case-probe-{Guid.NewGuid():N}"
+                probePath <- Path.Combine(probeDirectory, probeName.ToLowerInvariant())
+                alternateProbePath <- Path.Combine(probeDirectory, probeName.ToUpperInvariant())
+
+                File.WriteAllText(probePath, String.Empty)
+                File.Exists(alternateProbePath)
+            with
+            | _ -> OperatingSystem.IsWindows()
+        finally
+            for path in [| probePath; alternateProbePath |] do
+                try
+                    if
+                        not (String.IsNullOrWhiteSpace(path))
+                        && File.Exists(path)
+                    then
+                        File.Delete(path)
+                with
+                | _ -> ()
+
+    let mutable private watchRootPathCaseInsensitiveLookup = detectWatchRootPathCaseInsensitiveLookup
+
+    /// Chooses the root path identity comparison used when trusting Watch IPC snapshots.
+    let private watchRootPathComparisonForRepository rootDirectory =
+        if watchRootPathCaseInsensitiveLookup rootDirectory then
+            StringComparison.OrdinalIgnoreCase
+        else
+            StringComparison.Ordinal
+
+    /// Compares normalized repository root paths using the supplied repository path identity semantics.
+    let internal watchRootDirectoriesMatchWithComparison comparison persistedRootDirectory currentRootDirectory =
+        let normalizeRootDirectory (rootDirectory: string) =
+            Path
+                .GetFullPath(rootDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+        String.Equals(normalizeRootDirectory persistedRootDirectory, normalizeRootDirectory currentRootDirectory, comparison)
+
+    /// Installs root path case lookup behavior used by Watch IPC identity tests.
+    let internal setWatchRootPathCaseInsensitiveLookupForTests detector = watchRootPathCaseInsensitiveLookup <- detector
+
+    /// Restores the production root path case lookup behavior after Watch IPC identity tests.
+    let internal resetWatchRootPathCaseInsensitiveLookupForTests () = watchRootPathCaseInsensitiveLookup <- detectWatchRootPathCaseInsensitiveLookup
+
     /// GraceWatchStatus defines the schema for the inter-process communication (IPC) file that lets Grace know if `grace watch` is already running.
     ///
     /// It's written by `grace watch`. It holds everything required to allow other instances of Grace to skip checking current status.
@@ -75,6 +147,13 @@ module Services =
         {
             UpdatedAt: Instant
             IsStartupClaim: bool
+            RepositoryId: RepositoryId
+            RepositoryName: RepositoryName
+            BranchId: BranchId
+            BranchName: BranchName
+            RootDirectory: string
+            HasPendingWatchWork: bool
+            IsWorkingTreeClean: bool
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
             RootDirectoryBlake3Hash: Blake3Hash
@@ -83,11 +162,90 @@ module Services =
             DirectoryIds: HashSet<DirectoryVersionId>
         }
 
+        /// Reports whether this status has the root identity fields required for trusted incremental consumers.
+        member private this.HasUsableRootSnapshot =
+            this.RootDirectoryId <> Guid.Empty
+            && not (String.IsNullOrWhiteSpace($"{this.RootDirectorySha256Hash}"))
+            && not (String.IsNullOrWhiteSpace($"{this.RootDirectoryBlake3Hash}"))
+
+        /// Reports whether this status has at least one directory identity for current-state comparisons.
+        member private this.HasDirectoryIndexSnapshot =
+            not (isNull this.DirectoryIds)
+            && this.DirectoryIds.Count > 0
+
+        /// Reports whether this status is recent enough to represent a live Watch process.
+        member private this.IsFreshSnapshot =
+            this.UpdatedAt > getCurrentInstant()
+                .Minus(Duration.FromMinutes(5.0))
+
+        /// Identifies the current Grace Watch runtime mode without introducing a larger state hierarchy.
+        member this.Mode =
+            if this.IsStartupClaim then
+                GraceWatchRuntimeMode.StartingUp
+            elif this.HasUsableRootSnapshot
+                 && this.HasDirectoryIndexSnapshot then
+                GraceWatchRuntimeMode.HealthyIncremental
+            else
+                GraceWatchRuntimeMode.Resynchronizing
+
+        /// Lists compact safety facts that command and agent consumers can inspect before trusting the status snapshot.
+        member this.SafetyFlags =
+            let isStartupClaim = this.IsStartupClaim
+            let hasUsableRootSnapshot = this.HasUsableRootSnapshot
+            let hasDirectoryIndexSnapshot = this.HasDirectoryIndexSnapshot
+            let isFreshSnapshot = this.IsFreshSnapshot
+            let mode = this.Mode
+
+            let hasPendingWatchWork =
+                this.HasPendingWatchWork
+                || not this.IsWorkingTreeClean
+
+            let isTrustedCleanSnapshot =
+                mode = GraceWatchRuntimeMode.HealthyIncremental
+                && isFreshSnapshot
+                && not isStartupClaim
+                && hasUsableRootSnapshot
+                && hasDirectoryIndexSnapshot
+                && not hasPendingWatchWork
+
+            let isLiveDirtySnapshot =
+                mode = GraceWatchRuntimeMode.HealthyIncremental
+                && isFreshSnapshot
+                && not isStartupClaim
+                && hasUsableRootSnapshot
+                && hasDirectoryIndexSnapshot
+                && hasPendingWatchWork
+
+            [|
+                if isStartupClaim then "startupClaim"
+
+                if not isFreshSnapshot then "staleStatus"
+
+                if hasPendingWatchWork then "pendingWatchWork"
+                elif isTrustedCleanSnapshot then "cleanWorkingTree"
+                else "noQueuedWatchWork"
+
+                if hasUsableRootSnapshot then "usableRoot" else "missingRoot"
+
+                if hasDirectoryIndexSnapshot then "directoryIndex" else "missingDirectoryIndex"
+
+                if isTrustedCleanSnapshot then "incrementalSafe"
+                elif isLiveDirtySnapshot then "pendingStatusApply"
+                else "requiresExplicitResync"
+            |]
+
         /// Defines the empty Grace Watch status used before a live status snapshot is available.
         static member Default =
             {
                 UpdatedAt = Instant.MinValue
                 IsStartupClaim = false
+                RepositoryId = RepositoryId.Empty
+                RepositoryName = RepositoryName String.Empty
+                BranchId = BranchId.Empty
+                BranchName = BranchName String.Empty
+                RootDirectory = String.Empty
+                HasPendingWatchWork = false
+                IsWorkingTreeClean = true
                 RootDirectoryId = Guid.Empty
                 RootDirectorySha256Hash = Sha256Hash String.Empty
                 RootDirectoryBlake3Hash = Blake3Hash String.Empty
@@ -96,9 +254,504 @@ module Services =
                 DirectoryIds = HashSet<DirectoryVersionId>()
             }
 
+    /// Mirrors GraceWatchStatus for IPC writes while adding compact runtime fields that older readers can ignore.
+    type private GraceWatchStatusContract =
+        {
+            UpdatedAt: Instant
+            IsStartupClaim: bool
+            RepositoryId: RepositoryId
+            RepositoryName: RepositoryName
+            BranchId: BranchId
+            BranchName: BranchName
+            RootDirectory: string
+            HasPendingWatchWork: bool
+            IsWorkingTreeClean: bool
+            RootDirectoryId: DirectoryVersionId
+            RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
+            LastFileUploadInstant: Instant
+            LastDirectoryVersionInstant: Instant
+            DirectoryIds: HashSet<DirectoryVersionId>
+            Mode: GraceWatchRuntimeMode option
+            SafetyFlags: string array
+        }
+
+    /// Describes the Watch IPC snapshot without requiring it to be trusted for incremental status shortcuts.
+    type GraceWatchStatusInspection =
+        {
+            Exists: bool
+            Status: GraceWatchStatus option
+            PersistedMode: GraceWatchRuntimeMode option
+            SafetyFlags: string array
+            ReadError: string option
+        }
+
+        /// Reports the best runtime mode available from persisted IPC metadata or derived status facts.
+        member this.EffectiveMode =
+            match this.PersistedMode, this.Status with
+            | Some mode, _ -> Some mode
+            | None, Some status -> Some status.Mode
+            | None, None -> None
+
+        /// Reports whether the IPC heartbeat is recent enough to represent a live Watch process.
+        member this.IsFresh =
+            match this.Status with
+            | Some status ->
+                status.UpdatedAt > getCurrentInstant()
+                    .Minus(Duration.FromMinutes(5.0))
+            | None -> false
+
+        /// Reports whether the IPC snapshot belongs to the current repository identity before trust checks.
+        member this.HasCurrentRepositoryIdentity =
+            match this.Status, this.EffectiveMode with
+            | Some status, Some _ ->
+                let current = Current()
+
+                let rootDirectoryMatchesCurrent =
+                    if String.IsNullOrWhiteSpace(status.RootDirectory) then
+                        false
+                    else
+                        try
+                            watchRootDirectoriesMatchWithComparison
+                                (watchRootPathComparisonForRepository current.RootDirectory)
+                                status.RootDirectory
+                                current.RootDirectory
+                        with
+                        | _ -> false
+
+                let repositoryIdentityMatches =
+                    if status.RepositoryId <> RepositoryId.Empty then
+                        status.RepositoryId = current.RepositoryId
+                    else
+                        not (String.IsNullOrWhiteSpace(string status.RepositoryName))
+                        && String.Equals(string status.RepositoryName, current.RepositoryName, StringComparison.OrdinalIgnoreCase)
+
+                let branchIdentityMatches =
+                    if status.BranchId <> BranchId.Empty then
+                        status.BranchId = current.BranchId
+                    else
+                        not (String.IsNullOrWhiteSpace(string status.BranchName))
+                        && String.Equals(string status.BranchName, current.BranchName, StringComparison.OrdinalIgnoreCase)
+
+                repositoryIdentityMatches
+                && branchIdentityMatches
+                && rootDirectoryMatchesCurrent
+            | _ -> false
+
+        /// Reports whether a recovery snapshot came from a same-branch legacy Watch writer without root identity fields.
+        member private this.HasLegacyLiveWatchStateIdentity =
+            match this.Status with
+            | Some status ->
+                String.IsNullOrWhiteSpace(status.RootDirectory)
+                && status.RepositoryId = RepositoryId.Empty
+                && String.IsNullOrWhiteSpace(string status.RepositoryName)
+                && status.BranchId = BranchId.Empty
+                && String.IsNullOrWhiteSpace(string status.BranchName)
+            | None -> false
+
+        /// Reports whether live Watch state has enough persisted identity to be preserved by another command.
+        member this.HasCurrentLiveWatchStateIdentity =
+            match this.Status, this.EffectiveMode with
+            | Some _, Some effectiveMode ->
+                this.HasCurrentRepositoryIdentity
+                || (effectiveMode
+                    <> GraceWatchRuntimeMode.HealthyIncremental
+                    && this.HasLegacyLiveWatchStateIdentity)
+            | _ -> false
+
+        /// Reports whether the IPC snapshot can serve trusted incremental shortcuts.
+        member this.IsUsable =
+            match this.Status, this.EffectiveMode with
+            | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                this.IsFresh
+                && not status.IsStartupClaim
+                && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
+                && status.IsWorkingTreeClean
+                && not status.HasPendingWatchWork
+                && this.HasCurrentRepositoryIdentity
+            | _ -> false
+
+        /// Reports whether a fresh Watch process appears to own the IPC file even when shortcuts are unavailable.
+        member this.IsLiveProcess =
+            this.Exists
+            && this.IsFresh
+            && this.Status.IsSome
+            && this.EffectiveMode
+               <> Some GraceWatchRuntimeMode.Stopping
+
+    /// Reports whether a compact Watch safety flag must be recomputed from a fresh heartbeat before consumers trust it.
+    let private isRawGraceWatchSafetyFlagLivenessSensitive safetyFlag =
+        String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)
+        || String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal)
+        || String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)
+
+    /// Reports whether a compact Watch safety flag would let a command skip local status verification.
+    let private isCleanShortcutSafetyFlag safetyFlag =
+        String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)
+        || String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal)
+
+    /// Reports whether a compact Watch safety flag depends on current-repository identity validation.
+    let private isIdentitySensitiveSafetyFlag safetyFlag =
+        isCleanShortcutSafetyFlag safetyFlag
+        || String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)
+
+    /// Reports whether a compact Watch safety flag should be kept after inspection trust checks.
+    let private isAllowedInspectedSafetyFlag isCurrentRepositoryLiveDirtySnapshot hasCurrentRepositoryIdentity safetyFlag =
+        if isCleanShortcutSafetyFlag safetyFlag then
+            false
+        elif String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal) then
+            isCurrentRepositoryLiveDirtySnapshot
+        elif hasCurrentRepositoryIdentity then
+            true
+        else
+            not (isIdentitySensitiveSafetyFlag safetyFlag)
+
+    /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
+    let private safetyFlagsForGraceWatchStatusContract persistedModeOverride (status: GraceWatchStatus) =
+        let safetyFlags =
+            status.SafetyFlags
+            |> Array.filter (isRawGraceWatchSafetyFlagLivenessSensitive >> not)
+
+        match persistedModeOverride with
+        | Some GraceWatchRuntimeMode.Suspended
+        | Some GraceWatchRuntimeMode.Resynchronizing
+        | Some GraceWatchRuntimeMode.Stopping ->
+            let nonIncrementalFlags =
+                if safetyFlags
+                   |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "pendingWatchWork", StringComparison.Ordinal)) then
+                    [| "requiresExplicitResync" |]
+                else
+                    [|
+                        "noQueuedWatchWork"
+                        "requiresExplicitResync"
+                    |]
+
+            safetyFlags
+            |> Array.append nonIncrementalFlags
+            |> Array.distinct
+        | _ -> safetyFlags
+
+    /// Removes clean shortcut claims from inspected IPC when current repository identity makes the snapshot unusable.
+    let private safetyFlagsForGraceWatchStatusInspection (inspection: GraceWatchStatusInspection) =
+        if inspection.IsUsable then
+            inspection.SafetyFlags
+        else
+            let isCurrentRepositoryLiveDirtySnapshot =
+                match inspection.Status, inspection.EffectiveMode with
+                | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                    inspection.IsFresh
+                    && not status.IsStartupClaim
+                    && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
+                    && inspection.HasCurrentRepositoryIdentity
+                    && (status.HasPendingWatchWork
+                        || not status.IsWorkingTreeClean)
+                | _ -> false
+
+            let safetyFlags =
+                inspection.SafetyFlags
+                |> Array.filter (isAllowedInspectedSafetyFlag isCurrentRepositoryLiveDirtySnapshot inspection.HasCurrentRepositoryIdentity)
+
+            if safetyFlags
+               |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "requiresExplicitResync", StringComparison.Ordinal)) then
+                safetyFlags
+            elif isCurrentRepositoryLiveDirtySnapshot then
+                safetyFlags
+            else
+                [|
+                    yield! safetyFlags
+                    "requiresExplicitResync"
+                |]
+                |> Array.distinct
+
+    /// Selects only durable compact modes for persisted IPC JSON so liveness must be derived from the raw status data.
+    let private modeForGraceWatchStatusContract (status: GraceWatchStatus) =
+        match status.Mode with
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.HealthyIncremental
+        | GraceWatchRuntimeMode.Resynchronizing
+        | GraceWatchRuntimeMode.Stopping -> None
+        | mode -> Some mode
+
+    /// Reports whether Grace Watch may perform a full working-tree scan in the supplied runtime mode.
+    let isGraceWatchScanLegal mode =
+        match mode with
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.Resynchronizing -> true
+        | GraceWatchRuntimeMode.HealthyIncremental
+        | GraceWatchRuntimeMode.Suspended
+        | GraceWatchRuntimeMode.Stopping
+        | _ -> false
+
+    /// Reports whether Grace Watch may record filesystem observations for later incremental application.
+    let isGraceWatchObservationCaptureLegal mode =
+        match mode with
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.HealthyIncremental
+        | GraceWatchRuntimeMode.Resynchronizing -> true
+        | GraceWatchRuntimeMode.Suspended
+        | GraceWatchRuntimeMode.Stopping
+        | _ -> false
+
+    /// Reports whether Grace Watch may apply normal event-derived observations to Grace Status and branch history.
+    let isGraceWatchObservationApplicationLegal mode =
+        match mode with
+        | GraceWatchRuntimeMode.HealthyIncremental -> true
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.Resynchronizing
+        | GraceWatchRuntimeMode.Suspended
+        | GraceWatchRuntimeMode.Stopping
+        | _ -> false
+
+    /// Names the reason Watch either should or should not materialize a same-branch remote Reference.
+    type LatestCurrentBranchReferenceDecisionReason =
+        /// No supplied Reference notification applies to the requested repository, branch, and eligible Reference types.
+        | NoApplicableReference = 0
+        /// The latest applicable Reference does not include the remote root identity required for safe materialization.
+        | ReferenceRootIdentityUnavailable = 1
+        /// The local Watch status is unavailable, so remote materialization cannot proceed from a trusted boundary.
+        | LocalStatusUnavailable = 2
+        /// The local Watch status belongs to a different repository or branch than the chosen Reference.
+        | LocalStatusIdentityMismatch = 3
+        /// The local Watch status is not a clean healthy-incremental snapshot.
+        | LocalStatusRequiresResync = 4
+        /// The remote Reference already matches the local root identity, so materialization would be a no-op.
+        | SameRoot = 5
+        /// The remote Reference is the latest eligible current-branch Reference and differs from the local root.
+        | RemoteMaterializationRequired = 6
+        /// The supplied Reference notification did not include a concrete Reference id.
+        | ReferenceIdUnavailable = 7
+        /// The current BranchDto no longer names the notification Reference as the latest eligible materialization input.
+        | StaleLatestReference = 8
+
+    /// Carries the Watch decision for the latest applicable current-branch Reference notification.
+    type LatestCurrentBranchReferenceDecision =
+        {
+            NeedsMaterialization: bool
+            Reason: LatestCurrentBranchReferenceDecisionReason
+            Reference: CurrentBranchReferenceNotification option
+        }
+
+        /// Defines the deterministic no-reference decision used when all candidates are stale or unsupported.
+        static member NoApplicableReference =
+            { NeedsMaterialization = false; Reason = LatestCurrentBranchReferenceDecisionReason.NoApplicableReference; Reference = None }
+
+        /// Defines a rejected notification decision with the rejected payload preserved for diagnostics.
+        static member Rejected(reason, payload) = { NeedsMaterialization = false; Reason = reason; Reference = Some payload }
+
+    /// Reports whether a current-branch Reference notification has enough root identity for a deterministic decision.
+    let private currentBranchReferenceHasRootIdentity (payload: CurrentBranchReferenceNotification) =
+        payload.DirectoryId <> DirectoryVersionId.Empty
+        && not (String.IsNullOrWhiteSpace($"{payload.Sha256Hash}"))
+        && not (String.IsNullOrWhiteSpace($"{payload.Blake3Hash}"))
+
+    /// Reports whether a current-branch Reference notification applies to this Watch repository and branch.
+    let private currentBranchReferenceAppliesToWatch repositoryId branchId (payload: CurrentBranchReferenceNotification) =
+        payload.RepositoryId = repositoryId
+        && payload.BranchId = branchId
+        && CurrentBranchReferenceNotification.IsEligibleReferenceType payload.ReferenceType
+
+    /// Reports whether a remote Reference points at the same root already held by the local Watch status.
+    let private currentBranchReferenceMatchesLocalRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
+        status.RootDirectoryId = payload.DirectoryId
+        || (status.RootDirectorySha256Hash = payload.Sha256Hash
+            && status.RootDirectoryBlake3Hash = payload.Blake3Hash)
+
+    /// Selects the latest eligible overall Reference, falling back to typed materializable slots when overall latest is ineligible.
+    let internal tryLatestEligibleCurrentBranchReference (branchDto: Grace.Types.Branch.BranchDto) =
+        let isEligible (referenceDto: ReferenceDto) =
+            referenceDto.ReferenceId <> ReferenceId.Empty
+            && CurrentBranchReferenceNotification.IsEligibleReferenceType referenceDto.ReferenceType
+
+        if isEligible branchDto.LatestReference then
+            Some branchDto.LatestReference
+        else
+            [|
+                branchDto.LatestSave
+                branchDto.LatestCheckpoint
+                branchDto.LatestCommit
+            |]
+            |> Array.filter isEligible
+            |> Array.sortByDescending (fun referenceDto ->
+                referenceDto.UpdatedAt
+                |> Option.defaultValue referenceDto.CreatedAt)
+            |> Array.tryHead
+
+    /// Reports whether the current BranchDto still names the notification as the latest eligible materialization input.
+    let private currentBranchNotificationMatchesLatestEligibleReference (branchDto: Grace.Types.Branch.BranchDto) payload =
+        tryLatestEligibleCurrentBranchReference branchDto
+        |> Option.exists (fun latestEligibleReference -> latestEligibleReference.ReferenceId = payload.ReferenceId)
+
+    /// Applies the non-latest safety checks that an already accepted mailbox request must repeat before mutation.
+    let private decideAcceptedCurrentBranchReferenceMaterialization
+        repositoryId
+        branchId
+        (localStatus: GraceWatchStatus option)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        match localStatus with
+        | None -> LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable, payload)
+        | Some status when
+            status.RepositoryId <> repositoryId
+            || status.BranchId <> branchId
+            ->
+            LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch, payload)
+        | Some status when
+            status.SafetyFlags
+            |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal))
+            |> not
+            ->
+            LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync, payload)
+        | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
+            LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.SameRoot, payload)
+        | Some _ -> { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
+
+    /// Rejects current-branch notifications that cannot safely wake same-branch materialization.
+    let currentBranchReferenceProtocolValidationDecision repositoryId branchId (payload: CurrentBranchReferenceNotification) =
+        if not (currentBranchReferenceAppliesToWatch repositoryId branchId payload) then
+            Some LatestCurrentBranchReferenceDecision.NoApplicableReference
+        elif payload.ReferenceId = ReferenceId.Empty then
+            Some(LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.ReferenceIdUnavailable, payload))
+        elif not (currentBranchReferenceHasRootIdentity payload) then
+            Some(LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable, payload))
+        else
+            None
+
+    /// Rechecks concrete Reference identity and current Watch root evidence for an already accepted mailbox Reference.
+    let revalidateAcceptedCurrentBranchReferenceMaterialization
+        repositoryId
+        branchId
+        (localStatus: GraceWatchStatus option)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        match currentBranchReferenceProtocolValidationDecision repositoryId branchId payload with
+        | Some decision -> decision
+        | None ->
+            match localStatus with
+            | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
+                LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.SameRoot, payload)
+            | _ -> { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
+
+    /// Chooses whether the latest eligible BranchDto current-branch Reference requires remote materialization.
+    let decideLatestCurrentBranchReferenceMaterialization
+        repositoryId
+        branchId
+        (localStatus: GraceWatchStatus option)
+        (branchDto: Grace.Types.Branch.BranchDto)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        match currentBranchReferenceProtocolValidationDecision repositoryId branchId payload with
+        | Some decision -> decision
+        | None ->
+            if not (currentBranchNotificationMatchesLatestEligibleReference branchDto payload) then
+                LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.StaleLatestReference, payload)
+            else
+                decideAcceptedCurrentBranchReferenceMaterialization repositoryId branchId localStatus payload
+
+    /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
+    let private toGraceWatchStatusContractWithPersistedMode persistedModeOverride (status: GraceWatchStatus) =
+        {
+            UpdatedAt = status.UpdatedAt
+            IsStartupClaim = status.IsStartupClaim
+            RepositoryId = status.RepositoryId
+            RepositoryName = status.RepositoryName
+            BranchId = status.BranchId
+            BranchName = status.BranchName
+            RootDirectory = status.RootDirectory
+            HasPendingWatchWork = status.HasPendingWatchWork
+            IsWorkingTreeClean = status.IsWorkingTreeClean
+            RootDirectoryId = status.RootDirectoryId
+            RootDirectorySha256Hash = status.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+            LastFileUploadInstant = status.LastFileUploadInstant
+            LastDirectoryVersionInstant = status.LastDirectoryVersionInstant
+            DirectoryIds = status.DirectoryIds
+            Mode =
+                persistedModeOverride
+                |> Option.orElseWith (fun () -> modeForGraceWatchStatusContract status)
+            SafetyFlags = safetyFlagsForGraceWatchStatusContract persistedModeOverride status
+        }
+
+    /// Converts the in-memory Watch status model without forcing a runtime mode into IPC JSON.
+    let private toGraceWatchStatusContract status = toGraceWatchStatusContractWithPersistedMode None status
+
+    /// Writes the compact Watch IPC JSON contract to the already-open status stream.
+    let private writeGraceWatchStatusContractToStream fileStream graceWatchStatus = serializeAsync fileStream (toGraceWatchStatusContract graceWatchStatus)
+
+    /// Writes the compact Watch IPC JSON contract while preserving a known non-incremental runtime mode.
+    let private writeGraceWatchStatusContractWithPersistedModeToStream fileStream mode graceWatchStatus =
+        serializeAsync fileStream (toGraceWatchStatusContractWithPersistedMode (Some mode) graceWatchStatus)
+
+    /// Reads the compact persisted Watch runtime mode from IPC JSON written by newer Watch processes.
+    let private tryReadGraceWatchPersistedMode (json: string) =
+        try
+            use document = JsonDocument.Parse(json)
+            let mutable modeElement = Unchecked.defaultof<JsonElement>
+
+            if document.RootElement.TryGetProperty("Mode", &modeElement)
+               && modeElement.ValueKind <> JsonValueKind.Null
+               && modeElement.ValueKind <> JsonValueKind.Undefined then
+                let modeText =
+                    if modeElement.ValueKind = System.Text.Json.JsonValueKind.String then
+                        modeElement.GetString()
+                    else
+                        modeElement.GetRawText()
+
+                let mutable parsedMode = Unchecked.defaultof<GraceWatchRuntimeMode>
+
+                if Enum.TryParse<GraceWatchRuntimeMode>(modeText, true, &parsedMode) then
+                    Some parsedMode
+                else
+                    None
+            else
+                None
+        with
+        | _ -> None
+
     let mutable graceWatchStatusUpdateTime = Instant.MinValue
+    let mutable private graceWatchHasPendingWorkForStatus = 0
+    let private graceWatchStatusWriteGate = new SemaphoreSlim(1, 1)
     let mutable parseResult: ParseResult = null
     let mutable private invocationCorrelationId: CorrelationId option = None
+
+    /// Records whether the next Grace Watch IPC write should advertise unapplied local observations.
+    let internal setGraceWatchHasPendingWorkForStatus hasPendingWork =
+        Interlocked.Exchange(&graceWatchHasPendingWorkForStatus, (if hasPendingWork then 1 else 0))
+        |> ignore
+
+    /// Reads the pending-work fact that is copied into Grace Watch IPC status snapshots.
+    let private hasGraceWatchPendingWorkForStatus () =
+        Volatile.Read(&graceWatchHasPendingWorkForStatus)
+        <> 0
+
+    /// Restores fields omitted by Watch IPC snapshots written before the current status identity and clean contract.
+    let private normalizeLegacyGraceWatchStatusFields (json: string) =
+        try
+            let statusNode = JsonNode.Parse(json).AsObject()
+
+            let defaultStatusNode =
+                JsonNode
+                    .Parse(serialize GraceWatchStatus.Default)
+                    .AsObject()
+
+            let mutable addedLegacyField = false
+
+            for defaultProperty in defaultStatusNode do
+                if not (statusNode.ContainsKey(defaultProperty.Key)) then
+                    statusNode[defaultProperty.Key] <- defaultProperty.Value.DeepClone()
+                    addedLegacyField <- true
+
+            if addedLegacyField then
+                statusNode.ToJsonString(Constants.JsonSerializerOptions)
+            else
+                json
+        with
+        | _ -> json
+
+    /// Reads Watch IPC JSON while backfilling fields omitted by legacy Watch writers.
+    let private deserializeNormalizedGraceWatchStatus (json: string) =
+        json
+        |> normalizeLegacyGraceWatchStatusFields
+        |> deserialize<GraceWatchStatus>
 
     /// Coordinates directory version preimage entries behavior for this CLI command path.
     let private directoryVersionPreimageEntries (directories: seq<LocalDirectoryVersion>) (files: seq<LocalFileVersion>) =
@@ -556,8 +1209,6 @@ module Services =
                 RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
             }
 
-    let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
-
     let mutable private lastScanForDifferencesSucceeded = true
 
     /// Coordinates was last scan for differences successful behavior for this CLI command path.
@@ -566,41 +1217,45 @@ module Services =
     /// Coordinates set last scan for differences successful for watch tests behavior for this CLI command path.
     let internal setLastScanForDifferencesSuccessfulForWatchTests succeeded = lastScanForDifferencesSucceeded <- succeeded
 
-    /// Clears inherited working directory write times for watch rescan values so explicitly scoped access commands do not target child resources accidentally.
-    let internal clearWorkingDirectoryWriteTimesForWatchRescan () = localWriteTimes.Clear()
+    /// Preserves the old test reset hook after working-tree scans moved to fresh per-scan write-time maps.
+    let internal clearWorkingDirectoryWriteTimesForWatchRescan () = ()
 
     /// Gets a dictionary of local paths and their last write times.
-    let rec getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
-        if shouldNotIgnoreDirectory directoryInfo.FullName then
-            // Add the current directory to the lookup dictionary
-            let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryInfo.FullName)))
+    let getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
+        let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
 
-            localWriteTimes.AddOrUpdate(
-                (FileSystemEntryType.Directory, directoryFullPath),
-                (fun _ -> directoryInfo.LastWriteTimeUtc),
-                (fun _ _ -> directoryInfo.LastWriteTimeUtc)
-            )
-            |> ignore
+        /// Adds non-ignored working-tree entries to the current scan's write-time map.
+        let rec addWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
+            if shouldNotIgnoreDirectory directoryInfo.FullName then
+                // Add the current directory to the lookup dictionary
+                let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryInfo.FullName)))
 
-            // Add each file to the lookup dictionary
-            for f in
-                directoryInfo
-                    .GetFiles()
-                    .Where(fun f -> not <| shouldIgnoreFile f.FullName) do
-                let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, f.FullName)))
-
-                localWriteTimes.AddOrUpdate((FileSystemEntryType.File, fileFullPath), (fun _ -> f.LastWriteTimeUtc), (fun _ _ -> f.LastWriteTimeUtc))
+                localWriteTimes.AddOrUpdate(
+                    (FileSystemEntryType.Directory, directoryFullPath),
+                    (fun _ -> directoryInfo.LastWriteTimeUtc),
+                    (fun _ _ -> directoryInfo.LastWriteTimeUtc)
+                )
                 |> ignore
 
-            // Call recursively for each subdirectory
-            let parallelLoopResult =
-                Parallel.ForEach(directoryInfo.GetDirectories(), Constants.ParallelOptions, (fun d -> getWorkingDirectoryWriteTimes d |> ignore))
+                // Add each file to the lookup dictionary
+                for f in
+                    directoryInfo
+                        .GetFiles()
+                        .Where(fun f -> not <| shouldIgnoreFile f.FullName) do
+                    let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, f.FullName)))
 
-            if parallelLoopResult.IsCompleted then
-                ()
-            else
-                printfn $"Failed while gathering local write times."
+                    localWriteTimes.AddOrUpdate((FileSystemEntryType.File, fileFullPath), (fun _ -> f.LastWriteTimeUtc), (fun _ _ -> f.LastWriteTimeUtc))
+                    |> ignore
 
+                // Call recursively for each subdirectory
+                let parallelLoopResult = Parallel.ForEach(directoryInfo.GetDirectories(), Constants.ParallelOptions, (fun d -> addWorkingDirectoryWriteTimes d))
+
+                if parallelLoopResult.IsCompleted then
+                    ()
+                else
+                    printfn $"Failed while gathering local write times."
+
+        addWorkingDirectoryWriteTimes directoryInfo
         localWriteTimes
 
     /// Reads local state db path from ParseResult, local configuration, or Grace ids.
@@ -1974,11 +2629,125 @@ module Services =
                 | Error error -> return Error error
         }
 
+    /// Computes a stable path segment from repository identity text without leaking local paths into temp directory names.
+    let private localRepositoryScopeSegment (value: string) =
+        let normalizedValue = if String.IsNullOrWhiteSpace(value) then "empty" else value.Trim()
+
+        Convert
+            .ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedValue)))
+            .ToLowerInvariant()
+
+    /// Gets the normalized repository root text used to keep local coordination files scoped to one checkout.
+    let private localRepositoryRootScope (rootDirectory: string) =
+        if String.IsNullOrWhiteSpace(rootDirectory) then
+            "empty-root"
+        else
+            let normalizedRoot =
+                Path
+                    .GetFullPath(rootDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+            if runningOnWindows then normalizedRoot.ToUpperInvariant() else normalizedRoot
+
+    /// Gets the temp directory shared by local coordination files for one repository root and branch identity.
+    let internal localRepositoryBranchTempDirectoryForIdentity
+        (repositoryId: Guid)
+        (repositoryName: string)
+        (rootDirectory: string)
+        (branchId: Guid)
+        (branchName: string)
+        =
+        let repositoryScope =
+            if repositoryId <> Guid.Empty then
+                repositoryId.ToString("N")
+            else
+                localRepositoryScopeSegment repositoryName
+
+        let rootScope =
+            rootDirectory
+            |> localRepositoryRootScope
+            |> localRepositoryScopeSegment
+
+        let branchScope =
+            if branchId <> Guid.Empty then
+                branchId.ToString("N")
+            else
+                localRepositoryScopeSegment branchName
+
+        Path.Combine(Path.GetTempPath(), "Grace", "repositories", repositoryScope, rootScope, "branches", branchScope)
+
+    /// Gets the repository-scoped Watch IPC path for a specific local repository identity.
+    let internal IpcFileNameForIdentity (repositoryId: Guid) (repositoryName: string) (rootDirectory: string) (branchId: Guid) (branchName: string) =
+        getNativeFilePath (
+            Path.Combine(localRepositoryBranchTempDirectoryForIdentity repositoryId repositoryName rootDirectory branchId branchName, Constants.IpcFileName)
+        )
+
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
-    let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
+    let IpcFileName () =
+        let current = Current()
+
+        IpcFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
+
+    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
+    let inspectGraceWatchStatus () =
+        task {
+            if System.IO.File.Exists(IpcFileName()) then
+                try
+                    let json = System.IO.File.ReadAllText(IpcFileName())
+
+                    let status = deserializeNormalizedGraceWatchStatus json
+
+                    let inspection =
+                        {
+                            Exists = true
+                            Status = Some status
+                            PersistedMode = tryReadGraceWatchPersistedMode json
+                            SafetyFlags = status.SafetyFlags
+                            ReadError = None
+                        }
+
+                    return { inspection with SafetyFlags = safetyFlagsForGraceWatchStatusInspection inspection }
+                with
+                | _ ->
+                    return
+                        {
+                            Exists = true
+                            Status = None
+                            PersistedMode = None
+                            SafetyFlags =
+                                [|
+                                    "unreadableStatus"
+                                    "requiresExplicitResync"
+                                |]
+                            ReadError = Some "The Grace Watch status file exists but could not be read."
+                        }
+            else
+                return
+                    {
+                        Exists = false
+                        Status = None
+                        PersistedMode = None
+                        SafetyFlags =
+                            [|
+                                "missingStatus"
+                                "requiresExplicitResync"
+                            |]
+                        ReadError = None
+                    }
+        }
 
     /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
-    let private createGraceWatchStatus (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+    let private createGraceWatchStatusWithPendingWork
+        (pendingWorkOverride: bool option)
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        let current = Current()
+
+        let hasPendingWatchWork =
+            pendingWorkOverride
+            |> Option.defaultWith hasGraceWatchPendingWorkForStatus
+
         let directoryIds =
             match directoryIdsOverride with
             | Some ids -> HashSet<DirectoryVersionId>(ids)
@@ -1997,6 +2766,13 @@ module Services =
         {
             UpdatedAt = getCurrentInstant ()
             IsStartupClaim = false
+            RepositoryId = current.RepositoryId
+            RepositoryName = current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = current.BranchName
+            RootDirectory = current.RootDirectory
+            HasPendingWatchWork = hasPendingWatchWork
+            IsWorkingTreeClean = not hasPendingWatchWork
             RootDirectoryId = graceStatus.RootDirectoryId
             RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
             RootDirectoryBlake3Hash = rootDirectoryBlake3Hash
@@ -2005,8 +2781,22 @@ module Services =
             DirectoryIds = directoryIds
         }
 
-    /// Builds the startup-claim record that prevents duplicate Grace Watch instances.
-    let private createGraceWatchStartupClaim () = { GraceWatchStatus.Default with UpdatedAt = getCurrentInstant (); IsStartupClaim = true }
+    /// Builds a Watch IPC snapshot using the current process pending-work flag.
+    let private createGraceWatchStatus graceStatus directoryIdsOverride = createGraceWatchStatusWithPendingWork None graceStatus directoryIdsOverride
+
+    /// Builds the startup-claim record that prevents duplicate Grace Watch instances for the current repository identity.
+    let private createGraceWatchStartupClaim () =
+        let current = Current()
+
+        { GraceWatchStatus.Default with
+            UpdatedAt = getCurrentInstant ()
+            IsStartupClaim = true
+            RepositoryId = current.RepositoryId
+            RepositoryName = current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = current.BranchName
+            RootDirectory = current.RootDirectory
+        }
 
     /// Checks if the Grace Watch status is within the past 5m.
     let private isGraceWatchStatusFresh (graceWatchStatus: GraceWatchStatus) =
@@ -2017,33 +2807,61 @@ module Services =
     let private isGraceWatchStatusUsable (graceWatchStatus: GraceWatchStatus) =
         isGraceWatchStatusFresh graceWatchStatus
         && not graceWatchStatus.IsStartupClaim
-        && graceWatchStatus.RootDirectoryId <> Guid.Empty
-        && not (String.IsNullOrWhiteSpace($"{graceWatchStatus.RootDirectorySha256Hash}"))
-        && not (String.IsNullOrWhiteSpace($"{graceWatchStatus.RootDirectoryBlake3Hash}"))
-        && not (isNull graceWatchStatus.DirectoryIds)
-        && graceWatchStatus.DirectoryIds.Count > 0
+        && graceWatchStatus.Mode = GraceWatchRuntimeMode.HealthyIncremental
 
-    /// Writes grace watch status data through the CLI output contract.
-    let private writeGraceWatchStatus fileMode graceWatchStatus =
+    /// Writes Grace Watch IPC JSON to disk after the caller has acquired the status write gate.
+    let private writeGraceWatchStatusWithPersistedModeCore persistedModeOverride fileMode graceWatchStatus =
         task {
             Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
             |> ignore
 
             use fileStream = new FileStream(IpcFileName(), fileMode, FileAccess.Write, FileShare.None)
 
-            do! serializeAsync fileStream graceWatchStatus
+            match persistedModeOverride with
+            | Some mode -> do! writeGraceWatchStatusContractWithPersistedModeToStream fileStream mode graceWatchStatus
+            | None -> do! writeGraceWatchStatusContractToStream fileStream graceWatchStatus
+
             graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
         }
 
-    /// Updates the contents of the `grace watch` status inter-process communication file.
-    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+    /// Writes grace watch status data through the CLI output contract with an optional runtime-mode override.
+    let private writeGraceWatchStatusWithPersistedMode persistedModeOverride fileMode graceWatchStatus =
+        task {
+            do! graceWatchStatusWriteGate.WaitAsync()
+
+            try
+                do! writeGraceWatchStatusWithPersistedModeCore persistedModeOverride fileMode graceWatchStatus
+            finally
+                graceWatchStatusWriteGate.Release() |> ignore
+        }
+
+    /// Writes Grace Watch IPC status without forcing a compact runtime mode override.
+    let private writeGraceWatchStatus fileMode graceWatchStatus = writeGraceWatchStatusWithPersistedMode None fileMode graceWatchStatus
+
+    /// Writes Grace Watch IPC content after converting the current Grace status snapshot.
+    let private writeGraceWatchInterprocessFileSnapshotUnderGate
+        persistedModeOverride
+        pendingWorkOverride
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        let newGraceWatchStatus = createGraceWatchStatusWithPendingWork pendingWorkOverride graceStatus directoryIdsOverride
+        //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
+        //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
+
+        writeGraceWatchStatusWithPersistedModeCore persistedModeOverride FileMode.Create newGraceWatchStatus
+
+    /// Writes Grace Watch IPC content after converting the current Grace status snapshot.
+    let private updateGraceWatchInterprocessFileCore persistedModeOverride pendingWorkOverride graceStatus directoryIdsOverride =
         task {
             try
-                let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
-                //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
-                //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
+                do! graceWatchStatusWriteGate.WaitAsync()
 
-                do! writeGraceWatchStatus FileMode.Create newGraceWatchStatus
+                try
+                    do! writeGraceWatchInterprocessFileSnapshotUnderGate persistedModeOverride pendingWorkOverride graceStatus directoryIdsOverride
+                finally
+                    graceWatchStatusWriteGate.Release() |> ignore
+
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with
             | ex ->
@@ -2052,36 +2870,128 @@ module Services =
                 logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
         }
 
+    /// Updates the contents of the `grace watch` status inter-process communication file.
+    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        updateGraceWatchInterprocessFileCore None None graceStatus directoryIdsOverride
+
+    /// Selects the live Watch pending and mode facts that a non-Watch writer must not erase.
+    let private liveWorkPreservationFromInspection (inspection: GraceWatchStatusInspection) =
+        let shouldPreserveLiveWork =
+            inspection.IsLiveProcess
+            && match inspection.EffectiveMode with
+               | Some GraceWatchRuntimeMode.HealthyIncremental ->
+                   match inspection.Status with
+                   | Some status when status.Mode = GraceWatchRuntimeMode.HealthyIncremental -> inspection.HasCurrentRepositoryIdentity
+                   | _ -> false
+               | Some GraceWatchRuntimeMode.StartingUp
+               | Some GraceWatchRuntimeMode.Suspended
+               | Some GraceWatchRuntimeMode.Resynchronizing
+               | Some GraceWatchRuntimeMode.Stopping -> inspection.HasCurrentLiveWatchStateIdentity
+               | Some _ -> inspection.HasCurrentLiveWatchStateIdentity
+               | None -> false
+
+        let pendingWorkOverride =
+            if shouldPreserveLiveWork then
+                match inspection.Status, inspection.EffectiveMode with
+                | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                    Some(
+                        status.HasPendingWatchWork
+                        || not status.IsWorkingTreeClean
+                    )
+                | Some _, Some _ -> Some true
+                | _ -> None
+            else
+                None
+
+        let persistedModeOverride =
+            if shouldPreserveLiveWork then
+                match inspection.EffectiveMode with
+                | Some GraceWatchRuntimeMode.StartingUp
+                | Some GraceWatchRuntimeMode.Suspended
+                | Some GraceWatchRuntimeMode.Resynchronizing
+                | Some GraceWatchRuntimeMode.Stopping -> inspection.EffectiveMode
+                | _ -> None
+            else
+                None
+
+        persistedModeOverride, pendingWorkOverride
+
+    /// Updates Watch IPC identity fields without turning live Watch pending or recovery state into a clean shortcut.
+    let private updateGraceWatchInterprocessFilePreservingLiveWorkStateCore beforeWriteBoundary graceStatus directoryIdsOverride =
+        task {
+            let! _ = inspectGraceWatchStatus ()
+
+            try
+                do! graceWatchStatusWriteGate.WaitAsync()
+
+                try
+                    beforeWriteBoundary ()
+
+                    let! boundaryInspection = inspectGraceWatchStatus ()
+                    let persistedModeOverride, pendingWorkOverride = liveWorkPreservationFromInspection boundaryInspection
+
+                    do! writeGraceWatchInterprocessFileSnapshotUnderGate persistedModeOverride pendingWorkOverride graceStatus directoryIdsOverride
+                finally
+                    graceWatchStatusWriteGate.Release() |> ignore
+
+                logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
+            with
+            | ex ->
+                logToAnsiConsole Colors.Error $"Exception in updateGraceWatchInterprocessFile."
+                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}{Environment.NewLine}{Environment.NewLine}"
+                logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+        }
+
+    /// Updates Watch IPC identity fields without turning live Watch pending or recovery state into a clean shortcut.
+    let updateGraceWatchInterprocessFilePreservingLiveWorkState (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        updateGraceWatchInterprocessFilePreservingLiveWorkStateCore ignore graceStatus directoryIdsOverride
+
+    /// Exercises the non-Watch IPC write boundary after a test-controlled live Watch status change.
+    let internal updateGraceWatchInterprocessFilePreservingLiveWorkStateAfterInspectionForWatchTests
+        beforeWriteBoundary
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        updateGraceWatchInterprocessFilePreservingLiveWorkStateCore beforeWriteBoundary graceStatus directoryIdsOverride
+
+    /// Exercises the gated Watch IPC write boundary after a test-controlled pending-work state change.
+    let internal updateGraceWatchInterprocessFileAfterPendingWorkProbeForWatchTests
+        beforeStatusCreation
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        task {
+            try
+                do! graceWatchStatusWriteGate.WaitAsync()
+
+                try
+                    beforeStatusCreation ()
+                    let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
+                    do! writeGraceWatchStatusWithPersistedModeCore None FileMode.Create newGraceWatchStatus
+                finally
+                    graceWatchStatusWriteGate.Release() |> ignore
+            with
+            | ex ->
+                logToAnsiConsole Colors.Error $"Exception in updateGraceWatchInterprocessFile."
+                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}{Environment.NewLine}{Environment.NewLine}"
+                logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+        }
+
+    /// Updates Watch IPC while preserving the suspended mode that cannot be derived from the compact status payload.
+    let internal updateGraceWatchInterprocessFileForSuspendedMode (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        updateGraceWatchInterprocessFileCore (Some GraceWatchRuntimeMode.Suspended) None graceStatus directoryIdsOverride
+
     /// Reads the `grace watch` status inter-process communication file.
     let getGraceWatchStatus () =
         task {
-            try
-                // If the file exists, `grace watch` is running.
-                if File.Exists(IpcFileName()) then
-                    //logToAnsiConsole Colors.Verbose $"File {IpcFileName} exists."
-                    use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.Read, FileShare.Read)
+            let! inspection = inspectGraceWatchStatus ()
 
-                    let! graceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
-
-                    // `grace watch` updates the file at least every five minutes to indicate that it's still alive.
-                    // When `grace watch` exits, the status file is deleted in a try...finally (Program.CLI.fs), so the only
-                    //   circumstance where it would be on-disk without `grace watch` running is if the process were killed.
-                    // Just to be safe, only return fresh status that contains real root data. A startup claim is only a
-                    // duplicate-start guard and must not be consumed as a usable repository snapshot.
-                    if isGraceWatchStatusUsable graceWatchStatus then
-                        return Some graceWatchStatus
-                    else
-                        return None // The file is stale, a startup claim, or does not contain usable root data.
-                else
-                    //logToAnsiConsole Colors.Verbose $"File {IpcFileName} does not exist."
-                    return None // `grace watch` isn't running.
-            with
-            | ex ->
-                logToAnsiConsole Colors.Error $"Exception when reading inter-process communication file."
-                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}."
-                logToAnsiConsole Colors.Error $"ex.Message: {StringExtensions.EscapeMarkup(ex.Message)}."
-                logToAnsiConsole Colors.Error $"{Environment.NewLine}{StringExtensions.EscapeMarkup(ex.StackTrace)}."
-                return None
+            // `grace watch` updates the file at least every five minutes to indicate that it's still alive.
+            // When `grace watch` exits, the status file is deleted in a try...finally (Program.CLI.fs), so the only
+            // circumstance where it would be on-disk without `grace watch` running is if the process were killed.
+            // Just to be safe, only return fresh status that contains real root data. A startup claim is only a
+            // duplicate-start guard and must not be consumed as a usable repository snapshot.
+            if inspection.IsUsable then return inspection.Status else return None // The file is stale, a startup claim, unreadable, or does not contain usable root data.
         }
 
     /// Atomically claims the `grace watch` status IPC file before foreground watch startup.
@@ -2094,7 +3004,7 @@ module Services =
                 task {
                     fileStream.SetLength(0L)
                     fileStream.Position <- 0L
-                    do! serializeAsync fileStream claimStatus
+                    do! writeGraceWatchStatusContractToStream fileStream claimStatus
                     graceWatchStatusUpdateTime <- claimStatus.UpdatedAt
                 }
 
@@ -2107,9 +3017,23 @@ module Services =
                     use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
 
                     try
-                        let! existingGraceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
+                        use reader = new StreamReader(fileStream, Encoding.UTF8, detectEncodingFromByteOrderMarks = true, bufferSize = 4096, leaveOpen = true)
+                        let! json = reader.ReadToEndAsync()
+                        fileStream.Position <- 0L
 
-                        if isGraceWatchStatusFresh existingGraceWatchStatus then
+                        let existingGraceWatchStatus = deserializeNormalizedGraceWatchStatus json
+
+                        let existingGraceWatchInspection =
+                            {
+                                Exists = true
+                                Status = Some existingGraceWatchStatus
+                                PersistedMode = tryReadGraceWatchPersistedMode json
+                                SafetyFlags = existingGraceWatchStatus.SafetyFlags
+                                ReadError = None
+                            }
+
+                        if isGraceWatchStatusFresh existingGraceWatchStatus
+                           && existingGraceWatchInspection.HasCurrentRepositoryIdentity then
                             return false
                         else
                             do! writeClaimToExistingFile fileStream
@@ -2224,12 +3148,62 @@ module Services =
 
         newGraceStatus
 
-    /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let updateInProgressFileName () =
-        let directory = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName)
+    /// Gets the repository-scoped update marker path for a specific local repository identity.
+    let internal updateInProgressFileNameForIdentity
+        (repositoryId: Guid)
+        (repositoryName: string)
+        (rootDirectory: string)
+        (branchId: Guid)
+        (branchName: string)
+        =
+        let directory = localRepositoryBranchTempDirectoryForIdentity repositoryId repositoryName rootDirectory branchId branchName
+
         Directory.CreateDirectory(directory) |> ignore
 
-        getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.UpdateInProgressFileName))
+        getNativeFilePath (Path.Combine(directory, Constants.UpdateInProgressFileName))
+
+    /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
+    let updateInProgressFileName () =
+        let current = Current()
+
+        updateInProgressFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
+
+    /// Identifies the internal operation that owns the shared working-directory update marker.
+    type internal GraceUpdateMarkerPurpose =
+        | BranchTransition
+        | ReferenceMaterialization
+
+    /// Serializes marker completion evidence so purpose survives marker deletion and Watch restart.
+    let internal serializeGraceUpdateMarkerCompletion purpose (completedUtc: DateTime) =
+        let purposeText =
+            match purpose with
+            | GraceUpdateMarkerPurpose.BranchTransition -> "branch-transition"
+            | GraceUpdateMarkerPurpose.ReferenceMaterialization -> "reference-materialization"
+
+        JsonSerializer.Serialize({| purpose = purposeText; completedUtc = completedUtc.ToString("O", CultureInfo.InvariantCulture) |})
+
+    /// Parses trusted marker completion evidence; legacy or malformed content has no completion authority.
+    let internal tryDeserializeGraceUpdateMarkerCompletion (content: string) =
+        try
+            use document = JsonDocument.Parse(content)
+            let root = document.RootElement
+            let purposeElement = root.GetProperty("purpose")
+            let completedUtcElement = root.GetProperty("completedUtc")
+
+            let purpose =
+                match purposeElement.GetString() with
+                | "branch-transition" -> Some GraceUpdateMarkerPurpose.BranchTransition
+                | "reference-materialization" -> Some GraceUpdateMarkerPurpose.ReferenceMaterialization
+                | _ -> None
+
+            match purpose, DateTime.TryParse(completedUtcElement.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
+            | Some parsedPurpose, (true, completedUtc) -> Some(parsedPurpose, completedUtc)
+            | _ -> None
+        with
+        | :? JsonException
+        | :? KeyNotFoundException
+        | :? InvalidOperationException
+        | :? FormatException -> None
 
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///

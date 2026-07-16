@@ -238,18 +238,21 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 206
+        |> should equal 208
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 197
+        |> should equal 199
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 185
+        |> should equal 187
 
-        countBy ImmediateJsonErrorOnly |> should equal 1
+        countBy ImmediateJsonErrorOnly |> should equal 0
+
+        countBy ConditionalCheckStatusEnvelope
+        |> should equal 1
 
         countBy HumanProgressOnlySuccess
         |> should equal 10
@@ -275,6 +278,12 @@ module CommandOutputContractRegistryTests =
                 | Routed, JsonModeErrorOnly _ -> true
                 | _ -> false)
 
+        let conditionalStatus =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, ConditionalGraceResultEnvelope _ -> true
+                | _ -> false)
+
         let deferredV2 =
             countEntries (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
@@ -289,14 +298,16 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 185
-        intentionallyHumanOnly |> should equal 1
+        jsonReady |> should equal 187
+        intentionallyHumanOnly |> should equal 0
+        conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
         deleted |> should equal 0
 
         jsonReady
         + intentionallyHumanOnly
+        + conditionalStatus
         + deferredV2
         + sourceOnly
         + deleted
@@ -387,6 +398,9 @@ module CommandOutputContractRegistryTests =
         |> should equal true
 
         behaviors.Contains ImmediateJsonErrorOnly
+        |> should equal false
+
+        behaviors.Contains ConditionalCheckStatusEnvelope
         |> should equal true
 
         behaviors.Contains ManualJsonUnenveloped
@@ -466,7 +480,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 187
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -484,7 +498,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 187
 
         let parserInvalidEntries =
             commonEntries
@@ -704,40 +718,68 @@ module CommandOutputContractRegistryTests =
         file.GetProperty("Blake3Hash").GetString()
         |> should equal "file-blake3"
 
-    /// Verifies that watch json mode is registered as immediate error only.
+    /// Verifies that watch json mode is registered as conditional check status output.
     [<Test>]
-    let ``watch json mode is registered as immediate error only`` () =
+    let ``watch json mode is registered as conditional check status output`` () =
         let identity = CommandOutputContract.commandIdentity [] "watch"
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
             entry.CurrentJsonBehavior
-            |> should equal ImmediateJsonErrorOnly
+            |> should equal ConditionalCheckStatusEnvelope
 
             match entry.EnvelopeContract with
-            | JsonModeErrorOnly reason ->
-                reason
-                |> should contain "short-circuited before command execution"
-            | other -> Assert.Fail($"Expected watch to be registered as JsonModeErrorOnly, got {other}.")
+            | ConditionalGraceResultEnvelope (RequiresCliDto, condition) -> condition |> should contain "watch --check"
+            | other -> Assert.Fail($"Expected watch to be registered as ConditionalGraceResultEnvelope, got {other}.")
 
             entry.Features.JsonMode
             |> should equal ExistingBehavior
 
             entry.Features.Select
-            |> should equal RequiresMigration
+            |> should equal ExistingBehavior
 
             entry.ReturnValueContract.Status
-            |> should equal ContractUnsupported
+            |> should equal SchemaReady
 
             let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
 
             match schemaDocument.Schema with
             | Some schema ->
-                schema.Status |> should equal "unsupported"
+                schema.Status |> should equal "schema-ready"
 
                 schema.Envelope
-                |> should contain "GraceError only in JSON mode"
-            | None -> Assert.Fail("watch schema introspection should include the explicit unsupported schema document.")
+                |> should contain "status envelope for status checks"
+
+                schema.Envelope
+                |> should contain "unavailable modes with nonzero exit codes"
+
+                schema.Envelope
+                |> should not' (contain "GraceError on unsupported or failed modes")
+
+                schema.ReturnValueContract
+                |> should equal "WatchStatusDto"
+
+                use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+                let watchStatusSchema =
+                    successSchema
+                        .RootElement
+                        .GetProperty("properties")
+                        .GetProperty("ReturnValue")
+
+                let requiredFields =
+                    watchStatusSchema
+                        .GetProperty("required")
+                        .EnumerateArray()
+                    |> Seq.map (fun field -> field.GetString())
+                    |> Set.ofSeq
+
+                requiredFields
+                |> should not' (contain "UpdatedAt")
+
+                requiredFields
+                |> should not' (contain "RootDirectoryId")
+            | None -> Assert.Fail("watch schema introspection should include the conditional status schema document.")
         | None -> Assert.Fail("watch should have a registry entry.")
 
     /// Verifies that schema ready registry entries describe success and error envelopes.
@@ -820,8 +862,10 @@ module CommandOutputContractRegistryTests =
         let cases =
             [
                 CommandOutputContract.commandIdentity [ "maintenance" ] "check-ignore-entries", "MaintenanceIgnoreEntriesDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "clear-journal", "MaintenanceClearJournalDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "list-contents", "MaintenanceListContentsDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "scan", "MaintenanceScanDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "show-journal", "MaintenanceShowJournalDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "stats", "MaintenanceStatsDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "update-index", "MaintenanceStatsDto"
             ]
@@ -1012,6 +1056,26 @@ module CommandOutputContractRegistryTests =
             |> should equal "correlation-id"
         | None -> Assert.Fail("authenticate.logout should have a registry entry.")
 
+    /// Verifies that maintenance show journal examples include every required journal row property.
+    [<Test>]
+    let ``maintenance show journal example includes quarantine reason`` () =
+        let identity = CommandOutputContract.commandIdentity [ "maintenance" ] "show-journal"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            let document = CommandOutputContract.introspectionDocument Examples entry
+            use success = JsonDocument.Parse(Grace.Shared.Utilities.serialize document.Examples[0].Document)
+
+            let row =
+                success
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")[0]
+
+            row.GetProperty("QuarantineReason").ValueKind
+            |> should equal JsonValueKind.Null
+        | None -> Assert.Fail("maintenance.show-journal should have a registry entry.")
+
     /// Verifies that all registry schema and example documents serialize as json.
     [<Test>]
     let ``all registry schema and example documents serialize as json`` () =
@@ -1062,6 +1126,12 @@ module CommandOutputContractRegistryTests =
                 | Routed, JsonModeErrorOnly _ -> true
                 | _ -> false)
 
+        let conditionalStatus =
+            countDocsTracked (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, ConditionalGraceResultEnvelope _ -> true
+                | _ -> false)
+
         let deferredV2 =
             commandIdsForDocsTracked (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
@@ -1079,6 +1149,7 @@ module CommandOutputContractRegistryTests =
         [
             $"Total leaf commands: `{docsTrackedEntries.Length}`"
             $"JSON-ready routed commands: `{jsonReady}`"
+            $"Conditionally JSON-ready routed commands: `{conditionalStatus}`"
             $"Intentionally human-only commands: `{intentionallyHumanOnly}`"
             $"Deferred routed commands with explicit V2 scope: `{deferredV2.Length}`"
             $"Source-only/unrouted commands: `{sourceOnly.Length}`"

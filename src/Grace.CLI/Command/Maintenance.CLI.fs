@@ -112,6 +112,32 @@ module Maintenance =
                 DefaultValueFactory = (fun _ -> "*.*")
             )
 
+        let journalState =
+            new Option<string>(
+                "--state",
+                Required = false,
+                Description = "Filter Watch journal rows by derived state: all, applied, or pending. [default: all]",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> "all")
+            )
+
+        let journalPath =
+            new Option<string>(
+                "--path",
+                Required = false,
+                Description = "Filter Watch journal rows by repository-relative path when row path metadata is available.",
+                Arity = ArgumentArity.ZeroOrOne
+            )
+
+        let journalLimit =
+            new Option<int>(
+                "--limit",
+                Required = false,
+                Description = "Maximum number of Watch journal rows to inspect. [default: 100]",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> 100)
+            )
+
     /// Tries to map get root sha256 hash and returns a GraceError instead of throwing on unsupported input.
     let private tryGetRootSha256Hash (graceStatus: GraceStatus) =
         let rootHashFromIndex =
@@ -246,10 +272,57 @@ module Maintenance =
                 |> Seq.toArray
         }
 
+    /// Converts one durable Watch journal row into the maintenance command output contract.
+    let private toJournalRowDto (row: Grace.CLI.LocalStateDb.WatchJournalRow) : LocalOutputDto.MaintenanceJournalRowDto =
+        {
+            Sequence = row.Sequence
+            CreatedAtUnixTicks = row.CreatedAtUnixTicks
+            State = $"{row.State}".ToLowerInvariant()
+            DifferenceType = row.DifferenceType
+            FileSystemEntryType = row.EntryType
+            RelativePath = row.RelativePath
+            QuarantineReason = row.QuarantineReason
+        }
+
+    /// Converts a Watch journal diagnostic snapshot into the maintenance command output contract.
+    let private toShowJournalDto (snapshot: Grace.CLI.LocalStateDb.WatchJournalSnapshot) : LocalOutputDto.MaintenanceShowJournalDto =
+        {
+            DbPath = snapshot.DbPath
+            AppliedThroughSequence = snapshot.AppliedThroughSequence
+            AllocatedSequence = snapshot.AllocatedSequence
+            TotalRows = snapshot.TotalRows
+            RowCount = snapshot.RowCount
+            StateFilter = snapshot.StateFilter
+            PathFilter = snapshot.PathFilter
+            Limit = snapshot.Limit
+            Rows = snapshot.Rows |> Array.map toJournalRowDto
+        }
+
+    /// Converts a scoped Watch journal reset result into the maintenance command output contract.
+    let private toClearJournalDto (result: Grace.CLI.LocalStateDb.ClearWatchJournalResult) : LocalOutputDto.MaintenanceClearJournalDto =
+        {
+            DbPath = result.DbPath
+            RowsDeleted = result.RowsDeleted
+            AppliedThroughSequenceBefore = result.AppliedThroughSequenceBefore
+            AppliedThroughSequenceAfter = result.AppliedThroughSequenceAfter
+            AllocatedSequenceBefore = result.AllocatedSequenceBefore
+            AllocatedSequenceAfter = result.AllocatedSequenceAfter
+        }
+
     /// Renders local json results only when the selected output mode includes human-readable console text.
     let private renderLocalJson parseResult dto =
         Ok(GraceReturnValue.Create dto (getCorrelationId parseResult))
         |> renderOutput parseResult
+
+    /// Emits a maintenance command failure through the selected output mode.
+    let private renderMaintenanceError parseResult message =
+        if parseResult |> json then
+            GraceError.Create message (getCorrelationId parseResult)
+            |> writeJsonErrorStdout
+        else
+            logToAnsiConsole Colors.Error message
+
+        -1
 
     /// Routes the update index command from parsed options through validation, the SDK call, and result rendering.
     let private updateIndexHandler (parseResult: ParseResult) =
@@ -855,6 +928,89 @@ module Maintenance =
                     return 0
             }
 
+    /// Executes the show journal command by reading durable Watch journal diagnostics from local state.
+    type ShowJournal() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs the asynchronous show journal action when System.CommandLine dispatches the parsed command.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+
+                    let stateFilter = parseResult.GetValue(Options.journalState)
+                    let pathFilter = parseResult.GetValue(Options.journalPath)
+                    let limit = parseResult.GetValue(Options.journalLimit)
+
+                    let! snapshot =
+                        Grace.CLI.LocalStateDb.readWatchJournalSnapshot
+                            (Current().GraceStatusFile)
+                            stateFilter
+                            (if String.IsNullOrWhiteSpace(pathFilter) then None else Some pathFilter)
+                            limit
+
+                    let dto = toShowJournalDto snapshot
+
+                    if parseResult |> json then
+                        return renderLocalJson parseResult dto
+                    else
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Watch journal database: {Markup.Escape(dto.DbPath)}[/]")
+                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Rows shown: {dto.RowCount}; total rows: {dto.TotalRows}; limit: {dto.Limit}.[/]")
+
+                        AnsiConsole.MarkupLine(
+                            $"[{Colors.Highlighted}]Applied through sequence: {dto.AppliedThroughSequence}; allocated sequence: {dto.AllocatedSequence}.[/]"
+                        )
+
+                        for row in dto.Rows do
+                            AnsiConsole.MarkupLine($"[{Colors.Verbose}]#{row.Sequence} {row.State} created_at_unix_ticks={row.CreatedAtUnixTicks}[/]")
+
+                            match row.QuarantineReason with
+                            | Some reason -> AnsiConsole.MarkupLine($"[{Colors.Verbose}]  quarantine_reason={Markup.Escape(reason)}[/]")
+                            | None -> ()
+
+                        return 0
+                with
+                | ex -> return renderMaintenanceError parseResult $"Exception in ShowJournal: {ExceptionResponse.Create ex}"
+            }
+
+    /// Executes the clear journal command while refusing to race a live Watch process.
+    type ClearJournal() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs the asynchronous clear journal action when System.CommandLine dispatches the parsed command.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+
+                    let! inspection = inspectGraceWatchStatus ()
+
+                    if inspection.IsLiveProcess then
+                        return renderMaintenanceError parseResult "Grace Watch is running; stop grace watch before clearing the durable Watch journal."
+                    elif inspection.Exists && inspection.ReadError.IsSome then
+                        return
+                            renderMaintenanceError
+                                parseResult
+                                "Grace Watch status exists but could not be read; stop grace watch or remove stale Watch IPC before clearing the durable Watch journal."
+                    else
+                        let! result = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
+                        let dto = toClearJournalDto result
+
+                        if parseResult |> json then
+                            return renderLocalJson parseResult dto
+                        else
+                            AnsiConsole.MarkupLine($"[{Colors.Important}]Cleared durable Watch journal rows from local state.[/]")
+                            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Rows deleted: {dto.RowsDeleted}.[/]")
+
+                            AnsiConsole.MarkupLine(
+                                $"[{Colors.Highlighted}]Applied-through sequence reset from {dto.AppliedThroughSequenceBefore} to {dto.AppliedThroughSequenceAfter}; allocation reset from {dto.AllocatedSequenceBefore} to {dto.AllocatedSequenceAfter}.[/]"
+                            )
+
+                            return 0
+                with
+                | ex -> return renderMaintenanceError parseResult $"Exception in ClearJournal: {ExceptionResponse.Create ex}"
+            }
+
     /// Executes the check ignore entries command by binding ParseResult values to the SDK request and CLI output contract.
     type CheckIgnoreEntries() =
         inherit AsynchronousCommandLineAction()
@@ -933,6 +1089,20 @@ module Maintenance =
 
         listContentsCommand.Action <- new ListContents()
         maintenanceCommand.Subcommands.Add(listContentsCommand)
+
+        let showJournalCommand =
+            new Command("show-journal", Description = "Show durable local Watch journal diagnostics.")
+            |> addOption Options.journalState
+            |> addOption Options.journalPath
+            |> addOption Options.journalLimit
+
+        showJournalCommand.Action <- new ShowJournal()
+        maintenanceCommand.Subcommands.Add(showJournalCommand)
+
+        let clearJournalCommand = new Command("clear-journal", Description = "Clear only durable local Watch journal rows and metadata.")
+
+        clearJournalCommand.Action <- new ClearJournal()
+        maintenanceCommand.Subcommands.Add(clearJournalCommand)
 
         let checkIgnoreEntriesCommand =
             new Command("check-ignore-entries", Description = "Check the .graceignore entries for validity.")

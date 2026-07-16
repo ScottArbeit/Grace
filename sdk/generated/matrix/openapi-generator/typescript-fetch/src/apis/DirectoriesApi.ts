@@ -316,7 +316,7 @@ export class DirectoriesApi extends runtime.BaseAPI {
     }
 
     /**
-     * Gets a directory version DTO by SHA-256 hash.
+     * Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace\'s normal not-found error.
      * Get a directory version by SHA-256 hash.
      */
     async getDirectoryVersionBySha256HashRaw(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DirectoryVersionSha256HashLookupReturnValue>> {
@@ -327,7 +327,7 @@ export class DirectoriesApi extends runtime.BaseAPI {
     }
 
     /**
-     * Gets a directory version DTO by SHA-256 hash.
+     * Gets a complete current directory version DTO by SHA-256 hash; no match returns Grace\'s normal not-found error.
      * Get a directory version by SHA-256 hash.
      */
     async getDirectoryVersionBySha256Hash(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DirectoryVersionSha256HashLookupReturnValue> {

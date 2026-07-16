@@ -32,42 +32,36 @@ class ReferenceDto(BaseModel):
     """
     (automatically generated)
     """ # noqa: E501
-    var_class: Optional[StrictStr] = Field(default=None, alias="Class")
-    reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
-    branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
-    directory_id: Optional[UUID] = Field(default=None, alias="DirectoryId")
-    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.", alias="Sha256Hash")
-    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.", alias="Blake3Hash")
-    reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
-    reference_text: Optional[StrictStr] = Field(default=None, alias="ReferenceText")
+    var_class: StrictStr = Field(alias="Class")
+    reference_id: UUID = Field(alias="ReferenceId")
+    branch_id: UUID = Field(alias="BranchId")
+    directory_id: UUID = Field(alias="DirectoryId")
+    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
+    reference_type: ReferenceType = Field(alias="ReferenceType")
+    reference_text: StrictStr = Field(alias="ReferenceText")
     created_by: Optional[StrictStr] = Field(default=None, alias="CreatedBy")
-    created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
+    created_at: datetime = Field(alias="CreatedAt")
     __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "BranchId", "DirectoryId", "Sha256Hash", "Blake3Hash", "ReferenceType", "ReferenceText", "CreatedBy", "CreatedAt"]
 
     @field_validator('sha256_hash')
     def sha256_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
-        if value is None:
-            return value
-
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^$|^[a-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
     @field_validator('blake3_hash')
     def blake3_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
-        if value is None:
-            return value
-
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^$|^[a-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
     model_config = ConfigDict(

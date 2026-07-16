@@ -4,6 +4,8 @@ open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
 open Grace.Types.Common
+open Grace.Types.Branch
+open Grace.Types.Reference
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -82,10 +84,30 @@ module ConnectTests =
         Connect.existingFileMatchesRemoteVersion (Sha256Hash "shared-sha") (Blake3Hash "remote-blake3") remoteFile
         |> should equal true
 
-    /// Verifies that connect skip decision keeps legacy empty blake3 remote compatible.
+    /// Verifies that connect does not accept a remote file without BLAKE3 as a match.
     [<Test>]
-    let ``connect skip decision keeps legacy empty blake3 remote compatible`` () =
-        let remoteFile = FileVersion.Create (RelativePath "legacy-sha-only.txt") (Sha256Hash "legacy-sha") String.Empty false 10L
+    let ``connect skip decision rejects empty remote blake3`` () =
+        let remoteFile = FileVersion.Default
+        remoteFile.RelativePath <- RelativePath "missing-blake3.txt"
+        remoteFile.Sha256Hash <- Sha256Hash "sha"
 
-        Connect.existingFileMatchesRemoteVersion (Sha256Hash "legacy-sha") (Blake3Hash "different-local-blake3") remoteFile
-        |> should equal true
+        Connect.existingFileMatchesRemoteVersion (Sha256Hash "sha") (Blake3Hash String.Empty) remoteFile
+        |> should equal false
+
+    /// Verifies that a typed default sentinel is reported as no Reference even if another field is adversarially populated.
+    [<Test>]
+    let ``typed reference lookup rejects canonical sentinel and wrong type`` () =
+        let promotion =
+            { ReferenceDto.Default with
+                ReferenceId = ReferenceId.NewGuid()
+                DirectoryId = DirectoryVersionId.NewGuid()
+                ReferenceType = ReferenceType.Promotion
+            }
+
+        let branch = { BranchDto.Default with LatestPromotion = promotion; LatestCommit = ReferenceDto.Default }
+
+        Connect.tryGetDirectoryIdFromBranch ReferenceType.Commit branch
+        |> should equal None
+
+        Connect.tryGetDirectoryIdFromBranch ReferenceType.Promotion branch
+        |> should equal (Some promotion.DirectoryId)

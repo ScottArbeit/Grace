@@ -14,8 +14,8 @@ open System.Threading.Tasks
 /// Groups shared helpers for agent session test helpers.
 module private AgentSessionTestHelpers =
 
-    /// Restarts grace server to verify durability across process restarts.
-    let restartGraceServerAsync () =
+    /// Restarts Grace.Server with a scenario label for process-local state assertions.
+    let restartGraceServerAsync restartContext =
         let state =
             match App with
             | Some app ->
@@ -34,7 +34,7 @@ module private AgentSessionTestHelpers =
                 Assert.Fail("Aspire test host was not started by the shared setup fixture.")
                 Unchecked.defaultof<TestHostState>
 
-        AspireTestHost.restartGraceServerAsync state
+        AspireTestHost.restartGraceServerAsync state restartContext
 
     /// Posts session to the running test server.
     let private postSessionAsync<'TResponse> (path: string) (parameters: obj) =
@@ -288,7 +288,7 @@ type AgentSessionServerTests() =
             Assert.That(activeBeforeRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
             Assert.That(activeBeforeRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
 
-            do! AgentSessionTestHelpers.restartGraceServerAsync ()
+            do! AgentSessionTestHelpers.restartGraceServerAsync "AgentSession.ActiveAgentSessionsAreProcessLocalAcrossRestart"
 
             // Contract: active agent sessions are process-local coordination state and are intentionally lost on restart.
             let! statusAfterRestart =

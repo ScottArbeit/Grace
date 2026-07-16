@@ -60,9 +60,28 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
     Save with an empty message because the changed root directory version is the durable record of the directory change.
 - In V1, renames are captured as the old path being deleted plus the new path being added or changed. Grace does not
   assign rename identity, tombstones, or a durable "same file moved" relationship for V1 rename capture.
+- `grace watch` gates incremental reconciliation through an explicit runtime mode. Healthy mode can apply filesystem
+  observations to local status and branch history. Startup and resync mode may scan, rebuild trusted state, and queue
+  observations, but they do not apply normal event-derived saves until the trusted status boundary is restored.
+- Watch reads `.graceignore` into one immutable eligibility snapshot when it starts. Ordinary `.graceignore` edits take
+  effect after Watch restarts; an existing Grace-owned branch transition reloads a new valid snapshot for its target
+  branch.
+- If Watch cannot read a configured `.graceignore` during startup or branch-transition reload, it does not substitute an
+  empty ignore set. A running Watch retains its last valid snapshot and resynchronizes; startup without a valid snapshot
+  does not advertise incremental safety.
+- Ignore rules are project-specific and belong in `.graceignore`. Grace does not provide a generic catalog for editor,
+  IDE, operating-system, build-output, or generated-file names.
+- If the filesystem watcher reports confidence loss, `grace watch` quarantines queued observations, switches to
+  resynchronizing mode, and performs an explicit scan-derived reconciliation before incremental observations resume.
+  If that recovery cannot reach the durable local-status boundary, Watch suspends incremental capture instead of
+  guessing from stale events.
 - When a promotion event from your parent branch is sent to `grace watch` by the server, `grace watch` will run auto-rebase.
 - Every 4.8 minutes, `grace watch` will recompute and rewrite the Grace interprocess-communication (IPC) file, which requires reading and deserializing the local Grace Status file. The size of the IPC file is under 1K for small repos, and scales with the number of directories in the repo. A repo with 275 directories would fit in a 10K IPC file, and a repo with 2,750 directories would fit in a 100K IPC file. They're usually very small.
   > Long story about why we rewrite the file: Imagine that you're at the command line, and you run `grace checkpoint -m ...`. That instance of Grace uses the existence of the IPC file as proof that `grace watch` is running in a separate process. `grace watch` writes the IPC file as soon as it starts, and, deletes it in a `try...finally` clause when it exits. In other words: in any normal exit, including exits caused by unhandled exceptions, the IPC file will be deleted when `grace watch` exits. However: it's possible that `grace watch` could be killed before it has a chance to execute that `finally` clause. For instance, in Windows, if I open Task Manager, right-click on the `grace watch` process, and hit `End Task`, the process dies immediately, and does not execute the `finally` clause. To ensure that there's not a stale IPC file laying around, Grace checks the value of the UpdatedAt field; if it's more than 5 minutes old, Grace will ignore the IPC file and assume that `grace watch` isn't running. So: *that's* why the IPC file gets refreshed every 4.8 minutes: it resets the UpdatedAt field so the file stays under 5 minutes old.
+- `grace watch --check` reports whether the IPC file is usable for incremental shortcuts. Human output explains
+  starting, stale, resynchronizing, suspended, and stopping states without showing local IPC paths or exception stacks.
+  `grace watch --check --output Json` emits the same status as machine-readable fields, including `Mode`, `Reason`,
+  `CanUseIncrementalStatus`, and `SafetyFlags`.
 - Once a minute, `grace watch` does the fullest of garbage collection:
 
   `GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)`

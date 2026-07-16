@@ -7,10 +7,14 @@ open Grace.SDK.Common
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
+open Grace.Shared.Validation.Errors
 open Grace.Types.Common
+open Grace.Types.Reference
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http.Connections
+open Microsoft.AspNetCore.SignalR
 open Microsoft.AspNetCore.SignalR.Client
 open NodaTime
 open Spectre.Console
@@ -40,15 +44,317 @@ open System.Text
 open Grace.Shared.Parameters.Storage
 open Grace.CLI.Text
 open Grace.Types.Automation
+open Microsoft.Extensions.DependencyInjection
 
 /// Groups the watch command parser, handlers, and output helpers.
 module Watch =
     exception private WatchCommandExit of int
 
+    let mutable private graceWatchRuntimeModeValue = int GraceWatchRuntimeMode.HealthyIncremental
+
+    /// Reads the process-local Grace Watch runtime mode used to gate scans and filesystem observations.
+    let private currentGraceWatchRuntimeMode () = enum<GraceWatchRuntimeMode> (Volatile.Read(&graceWatchRuntimeModeValue))
+
+    /// Updates the process-local Grace Watch runtime mode used by event handlers and status application.
+    let private setGraceWatchRuntimeMode mode =
+        Interlocked.Exchange(&graceWatchRuntimeModeValue, int mode)
+        |> ignore
+
+    /// Sets Grace Watch runtime mode for tests that exercise state-gated observation behavior.
+    let internal setGraceWatchRuntimeModeForWatchTests mode = setGraceWatchRuntimeMode mode
+
+    /// Reads Grace Watch runtime mode for tests that exercise confidence-loss transitions.
+    let internal currentGraceWatchRuntimeModeForWatchTests () = currentGraceWatchRuntimeMode ()
+
+    /// Provides the fallback path comparison until the repository volume can be probed.
+    let private defaultWatchPathComparison () =
+        if OperatingSystem.IsWindows() then
+            StringComparison.OrdinalIgnoreCase
+        else
+            StringComparison.Ordinal
+
+    let mutable private watchPathComparison = defaultWatchPathComparison ()
+    let mutable private watchPathComparisonOverride: StringComparison option = None
+    let mutable private watchPathComparisonConfiguredRoot: string option = None
+
+    /// Converts a Watch filesystem comparison policy into the matching collection comparer.
+    let private stringComparerForWatchPathComparison pathComparison =
+        match pathComparison with
+        | StringComparison.OrdinalIgnoreCase -> StringComparer.OrdinalIgnoreCase
+        | _ -> StringComparer.Ordinal
+
+    /// Holds the copied ignore inputs that govern every Watch eligibility decision for one Watch lifetime.
+    type private WatchIgnoreSnapshot =
+        {
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+            FileEntries: string array
+            DirectoryEntries: string array
+        }
+
+    let mutable private activeWatchIgnoreSnapshot: WatchIgnoreSnapshot option = None
+
+    /// Reads a complete ignore snapshot without accepting an unreadable configured `.graceignore` as an empty set.
+    let private tryReadWatchIgnoreSnapshot () =
+        match tryInspectCurrentDirectoryConfiguration () with
+        | Error configurationError -> Error $"Grace Watch could not inspect the repository configuration: {configurationError}"
+        | Ok inspection ->
+            match inspection.Ignore.ErrorMessage with
+            | Some ignoreError -> Error $"Grace Watch could not read {inspection.Ignore.Path}: {ignoreError}"
+            | None ->
+                Ok
+                    {
+                        RootDirectory = Path.GetFullPath(inspection.Configuration.RootDirectory)
+                        GraceDirectory = Path.GetFullPath(inspection.Configuration.GraceDirectory)
+                        GraceStatusFile = Path.GetFullPath(inspection.Configuration.GraceStatusFile)
+                        FileEntries = Array.copy inspection.Configuration.GraceFileIgnoreEntries
+                        DirectoryEntries = Array.copy inspection.Configuration.GraceDirectoryIgnoreEntries
+                    }
+
+    /// Replaces Watch's ignore snapshot only after the repository configuration and `.graceignore` read together successfully.
+    let private tryActivateWatchIgnoreSnapshot () =
+        match tryReadWatchIgnoreSnapshot () with
+        | Ok snapshot ->
+            activeWatchIgnoreSnapshot <- Some snapshot
+            Ok()
+        | Error error ->
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            Error error
+
+    /// Gets the active ignore snapshot, loading it once for focused Watch tests that invoke callbacks without foreground startup.
+    let private currentWatchIgnoreSnapshot () =
+        match activeWatchIgnoreSnapshot with
+        | Some snapshot -> snapshot
+        | None ->
+            match tryActivateWatchIgnoreSnapshot () with
+            | Ok () ->
+                match activeWatchIgnoreSnapshot with
+                | Some snapshot -> snapshot
+                | None -> invalidOp "Grace Watch did not retain the ignore snapshot it just loaded."
+            | Error error -> invalidOp error
+
+    /// Clears the active snapshot between deterministic Watch tests without changing production Watch lifecycle behavior.
+    let internal resetWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot <- None
+
+    /// Loads the current repository snapshot for focused Watch tests that prove restart and invalid-file behavior.
+    let internal tryActivateWatchIgnoreSnapshotForWatchTests () = tryActivateWatchIgnoreSnapshot ()
+
+    /// Reports whether a candidate path is the Grace internal directory itself or belongs to its descendant namespace.
+    let private isPathWithinDirectoryForWatch (directoryPath: string) (candidatePath: string) =
+        let normalizedDirectory =
+            directoryPath
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        let normalizedCandidate =
+            candidatePath
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        String.Equals(normalizedCandidate, normalizedDirectory, watchPathComparison)
+        || normalizedCandidate.StartsWith(
+            normalizedDirectory
+            + string Path.DirectorySeparatorChar,
+            watchPathComparison
+        )
+
+    /// Exposes Watch namespace containment for deterministic path-comparison tests.
+    let internal isPathWithinDirectoryForWatchTests directoryPath candidatePath = isPathWithinDirectoryForWatch directoryPath candidatePath
+
+    /// Checks a file path against the copied Watch-lifetime ignore snapshot.
+    let private shouldIgnoreFileForWatch fullPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let fileInfo = FileInfo(fullPath)
+
+        isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
+        || fullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
+        || fullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
+        || fullPath.EndsWith(".gracetmp", watchPathComparison)
+        || Directory.Exists(fullPath)
+        || (not (isNull fileInfo.Directory)
+            && snapshot.DirectoryEntries
+               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine))
+        || snapshot.DirectoryEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+        || snapshot.FileEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+
+    /// Checks a directory path against the copied Watch-lifetime ignore snapshot.
+    let private shouldIgnoreDirectoryForWatch directoryPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        let directoryInfo = DirectoryInfo(directoryPath)
+
+        isPathWithinDirectoryForWatch snapshot.GraceDirectory directoryInfo.FullName
+        || snapshot.DirectoryEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+
+    /// Checks whether a directory remains eligible under the copied Watch-lifetime ignore snapshot.
+    let private shouldNotIgnoreDirectoryForWatch directoryPath = not <| shouldIgnoreDirectoryForWatch directoryPath
+
+    /// Exposes Watch-lifetime file eligibility for deterministic ignore lifecycle tests.
+    let internal shouldIgnoreFileForWatchTests fullPath = shouldIgnoreFileForWatch fullPath
+
+    /// Reports whether Watch retains a previously valid ignore snapshot after a failed reload attempt.
+    let internal hasActiveWatchIgnoreSnapshotForWatchTests () = activeWatchIgnoreSnapshot.IsSome
+
+    /// Returns working-tree differences or the scan failure while retaining the copied Watch-lifetime ignore inputs.
+    let private tryScanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
+        let snapshot = currentWatchIgnoreSnapshot ()
+
+        let scanInput: WorkingTreeScanInput =
+            {
+                RootDirectory = snapshot.RootDirectory
+                GraceDirectory = snapshot.GraceDirectory
+                GraceStatusFile = snapshot.GraceStatusFile
+                DirectoryIgnoreEntries = snapshot.DirectoryEntries
+                FileIgnoreEntries = snapshot.FileEntries
+            }
+
+        scanWorkingTreeForDifferencesReadOnly scanInput previousGraceStatus
+
+    /// Scans the working tree with the copied Watch-lifetime ignore inputs instead of live configuration values.
+    let private scanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
+        task {
+            match! tryScanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus with
+            | Ok differences ->
+                setLastScanForDifferencesSuccessfulForWatchTests true
+                return differences
+            | Error error ->
+                setLastScanForDifferencesSuccessfulForWatchTests false
+                logToAnsiConsole Colors.Error $"Grace Watch could not scan the working tree with its active ignore snapshot: {error}"
+                return List<FileSystemDifference>()
+        }
+
+    /// Exposes frozen-snapshot scan failures for deterministic Watch startup regression tests.
+    let internal tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests previousGraceStatus =
+        tryScanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus
+
+    /// Exposes frozen-snapshot scans for deterministic Watch startup and resync regression tests.
+    let internal scanForDifferencesWithWatchIgnoreSnapshotForWatchTests previousGraceStatus = scanForDifferencesWithWatchIgnoreSnapshot previousGraceStatus
+
+    /// Checks whether the current runtime mode can record filesystem observations.
+    let private canCaptureFilesystemObservation () = isGraceWatchObservationCaptureLegal (currentGraceWatchRuntimeMode ())
+
+    let mutable private appendWatchJournalObservationsForWatch =
+        fun observations -> Grace.CLI.LocalStateDb.appendWatchJournalObservations (Current().GraceStatusFile) observations
+
+    let mutable private advanceWatchJournalAppliedThroughSequencesForWatch =
+        fun sequences -> Grace.CLI.LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences (Current().GraceStatusFile) sequences
+
+    let mutable private recoverWatchJournalBoundaryGapForWatch =
+        fun _ _ ->
+            task {
+                let! _ = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
+                return ()
+            }
+
+    let mutable private pruneWatchJournalRetentionForWatch = fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
+
+    let mutable private recoverWatchJournalForStartupForWatch =
+        fun scope -> Grace.CLI.LocalStateDb.recoverWatchJournalForStartup (Current().GraceStatusFile) scope
+
+    let mutable private quarantineWatchJournalSequencesForWatch =
+        fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
+
+    let mutable private readWatchJournalPendingWorkSummaryForWatch =
+        fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
+
+    let mutable private recordWatchLifecycleEventForWatch = fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
+
+    /// Installs durable journal clients used by append-before-apply ordering tests.
+    let internal setWatchJournalClientsForWatchTests appendObservations advanceAppliedSequences =
+        appendWatchJournalObservationsForWatch <- appendObservations
+        advanceWatchJournalAppliedThroughSequencesForWatch <- advanceAppliedSequences
+
+    /// Installs durable journal maintenance clients used by boundary repair and retention tests.
+    let internal setWatchJournalMaintenanceClientsForWatchTests recoverBoundaryGap pruneRetention =
+        recoverWatchJournalBoundaryGapForWatch <- recoverBoundaryGap
+        pruneWatchJournalRetentionForWatch <- pruneRetention
+
+    /// Installs startup recovery clients used by replay and quarantine ordering tests.
+    let internal setWatchJournalStartupClientsForWatchTests recoverStartup recordLifecycle =
+        recoverWatchJournalForStartupForWatch <- recoverStartup
+        recordWatchLifecycleEventForWatch <- recordLifecycle
+
+    /// Installs the durable journal status reader used by transition and status integration tests.
+    let internal setWatchJournalStatusClientForWatchTests readPendingWorkSummary = readWatchJournalPendingWorkSummaryForWatch <- readPendingWorkSummary
+
+    /// Restores durable journal clients after tests replace append or boundary behavior.
+    let internal resetWatchJournalClientsForWatchTests () =
+        appendWatchJournalObservationsForWatch <-
+            fun observations -> Grace.CLI.LocalStateDb.appendWatchJournalObservations (Current().GraceStatusFile) observations
+
+        advanceWatchJournalAppliedThroughSequencesForWatch <-
+            fun sequences -> Grace.CLI.LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences (Current().GraceStatusFile) sequences
+
+        recoverWatchJournalBoundaryGapForWatch <-
+            fun _ _ ->
+                task {
+                    let! _ = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
+                    return ()
+                }
+
+        pruneWatchJournalRetentionForWatch <- fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
+
+        recoverWatchJournalForStartupForWatch <- fun scope -> Grace.CLI.LocalStateDb.recoverWatchJournalForStartup (Current().GraceStatusFile) scope
+
+        quarantineWatchJournalSequencesForWatch <-
+            fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
+
+        readWatchJournalPendingWorkSummaryForWatch <- fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
+
+        recordWatchLifecycleEventForWatch <- fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
+
+    /// Reports that a filesystem observation was ignored because the current runtime mode cannot capture it.
+    let private logObservationSuppressed fullPath =
+        logToAnsiConsole Colors.Verbose $"Grace Watch ignored filesystem observation for {fullPath} while runtime mode is {currentGraceWatchRuntimeMode ()}."
+
     let private uploadedFileVersions = ConcurrentDictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
 
     /// Reads uploaded file version identity data needed by the command workflow without changing remote state.
     let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
+
+    /// Couples an uploaded file path with the exact observation generation whose content still needs status accounting.
+    type private ProcessedFileStatusSnapshot = { RelativePath: RelativePath; Generation: int64 }
+
+    let private processedFileRelativePathsPendingStatusLock = obj ()
+
+    let private processedFileRelativePathsPendingStatus = List<ProcessedFileStatusSnapshot>()
+
+    let private canceledFileUploadDeleteRelativePathsLock = obj ()
+
+    let private canceledFileUploadDeleteRelativePaths = List<RelativePath>()
+
+    /// Makes an uploaded identity available under the casing that status application will write to GraceStatus.
+    let private recordUploadedFileVersionForCanonicalPath (canonicalRelativePath: RelativePath) (uploadedFileVersion: FileVersion) =
+        let canonicalRelativePath = RelativePath(normalizeFilePath $"{canonicalRelativePath}")
+
+        if uploadedFileVersion.RelativePath
+           <> canonicalRelativePath then
+            let canonicalUploadedFileVersion = FileVersion()
+            canonicalUploadedFileVersion.Class <- uploadedFileVersion.Class
+            canonicalUploadedFileVersion.RelativePath <- canonicalRelativePath
+            canonicalUploadedFileVersion.Sha256Hash <- uploadedFileVersion.Sha256Hash
+            canonicalUploadedFileVersion.Blake3Hash <- uploadedFileVersion.Blake3Hash
+            canonicalUploadedFileVersion.IsBinary <- uploadedFileVersion.IsBinary
+            canonicalUploadedFileVersion.Size <- uploadedFileVersion.Size
+            canonicalUploadedFileVersion.CreatedAt <- uploadedFileVersion.CreatedAt
+            canonicalUploadedFileVersion.BlobUri <- uploadedFileVersion.BlobUri
+            canonicalUploadedFileVersion.ContentReference <- uploadedFileVersion.ContentReference
+            uploadedFileVersions[uploadedFileVersionIdentity canonicalUploadedFileVersion] <- canonicalUploadedFileVersion
+
+    /// Records uploaded file identity data for watch tests that replace the storage upload client.
+    let internal recordUploadedFileVersionForWatchTests (fileVersion: FileVersion) =
+        uploadedFileVersions[uploadedFileVersionIdentity fileVersion] <- fileVersion
+
+    /// Lists uploaded identity paths so watch tests can prove casing aliases are present or removed.
+    let internal uploadedFileVersionRelativePathsForWatchTests () =
+        uploadedFileVersions.Values
+        |> Seq.map (fun fileVersion -> $"{fileVersion.RelativePath}")
+        |> Seq.sort
+        |> Seq.toArray
 
     /// Defines the options parsed by the watch command handlers.
     module private Options =
@@ -130,32 +436,81 @@ module Watch =
     /// Evaluates is check requested against parsed options and command state.
     let isCheckRequested (parseResult: ParseResult) = parseResult.GetValue(Options.check)
 
-    /// Defines structured data exchanged by CLI helpers.
-    type private PendingFileWorkSnapshot = { FullPath: string; Generation: int64 }
+    /// Holds one file-content candidate together with the Watch identity and bounded stabilization state that owns it.
+    type private PendingFileWorkSnapshot =
+        {
+            FullPath: string
+            Generation: int64
+            RepositoryId: RepositoryId
+            RepositoryName: string
+            BranchId: BranchId
+            BranchName: string
+            RootDirectory: string
+            StabilizationAttempts: int
+            RetryNotBeforeUtc: DateTime
+        }
+
+    /// Marks a storage-side failure after Watch has already proven local file bytes and identity for this generation.
+    type private StableFileUploadFailureException(message: string, innerException: Exception) =
+        inherit Exception(message, innerException)
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
     /// The generation lets a same-path change observed during an upload remain queued after the upload removes only
     /// the snapshot it processed.
-    let private filesToProcess = ConcurrentDictionary<string, int64>()
+    let private filesToProcess = ConcurrentDictionary<string, PendingFileWorkSnapshot>()
+
+    /// Retains current-scope file work from acceptance through a trusted status boundary, including uploads no longer in the retry queue.
+    let private fileRecoveryEvidence = ConcurrentDictionary<string, PendingFileWorkSnapshot>()
 
     let mutable private fileUploadWorkGeneration = 0L
 
+    /// Bounds local file identity attempts so an unreadable or changing path cannot keep healthy incremental mode alive indefinitely.
+    let private stableFileIdentityMaximumAttempts = 3
+
+    /// Supplies deterministic time to file stabilization so tests can advance retry eligibility without sleeping.
+    let mutable private stableFileIdentityNowForWatch = fun () -> DateTime.UtcNow
+
+    /// Holds one incomplete directory inspection together with the repository and branch scope allowed to retry its bounded subtree.
+    type private PendingDirectoryWorkSnapshot =
+        {
+            FullPath: string
+            Generation: int64
+            RepositoryId: RepositoryId
+            RepositoryName: string
+            BranchId: BranchId
+            BranchName: string
+            RootDirectory: string
+        }
+
     /// Holds a list of the created or changed directories that we need to process, as determined by the FileSystemWatcher.
     ///
-    /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
-    let private directoriesToProcess = ConcurrentDictionary<string, unit>()
+    /// Each value keeps retry ownership bound to the exact repository, branch, and root that admitted the final directory observation.
+    let private directoriesToProcess = ConcurrentDictionary<string, PendingDirectoryWorkSnapshot>()
+
+    let mutable private directoryWorkGeneration = 0L
 
     /// Defines structured data exchanged by CLI helpers.
     type private StatusUpdateTriggerSnapshot = { RelativePath: string; Generation: int64 }
 
-    /// Holds a list of repo-relative paths that should trigger a Grace Status scan without uploading file content.
+    /// Holds a list of repo-relative paths that should trigger a Grace Status update without uploading file content.
     ///
-    /// FileSystemWatcher delete and rename-old events do not have durable file content to upload. They only need to
-    /// wake the timer loop so updateGraceStatus can run scanForDifferences against the current working tree.
+    /// FileSystemWatcher delete and rename-old events do not have durable file content to upload. They wake the timer
+    /// loop so status application can derive delete differences from GraceStatus and final path state.
     let mutable private statusUpdateTriggerGeneration = 0L
 
     let private statusUpdateTriggers = ConcurrentDictionary<string, int64>()
+
+    let private pendingStatusDifferencesLock = obj ()
+
+    let private pendingStatusDifferences = List<FileSystemDifference>()
+
+    /// Tracks startup-replayed journal sequences by normalized difference so status application does not append duplicates.
+    let mutable private pendingStatusDifferenceReplaySequences = Dictionary<string, Queue<int64>>(StringComparer.Ordinal)
+
+    let mutable private quarantinedWatchObservationCount = 0
+
+    let mutable private graceWatchResyncGeneration = 0L
 
     /// Defines structured data exchanged by CLI helpers.
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
@@ -172,6 +527,9 @@ module Watch =
     let mutable private graceStatusDirectoryIds = HashSet<DirectoryVersionId>()
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
+    let mutable private graceStatusRefreshGeneration = 0L
+    let private watchStatusPublishLock = obj ()
+    let mutable private lastPublishedHasPendingWatchWork: bool option = None
 
     /// Coordinates file deleted behavior for this CLI command path.
     let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
@@ -182,6 +540,160 @@ module Watch =
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     /// Coordinates update not in progress behavior for this CLI command path.
     let updateNotInProgress () = not <| updateInProgress ()
+
+    /// Reports whether the deleted callback path is an update marker path owned by any branch temp directory.
+    let private isUpdateMarkerPath (markerFileName: string) =
+        String.Equals(Path.GetFileName(markerFileName), Constants.UpdateInProgressFileName, watchPathComparison)
+
+    let private graceUpdateMarkerDeletionLock = obj ()
+    let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
+    let private recentGraceUpdateMarkerCompletedUtc = List<DateTime>()
+    let mutable private observedGraceUpdateMarkerLastWriteUtc = Dictionary<string, DateTime>(stringComparerForWatchPathComparison watchPathComparison)
+    let mutable private markerCompletionConfidenceLossActive = 0
+
+    /// Drops marker freshness captured under an obsolete path policy before later callbacks can trust it.
+    let private ensureObservedGraceUpdateMarkerPathComparer () =
+        let desiredComparer = stringComparerForWatchPathComparison watchPathComparison
+
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            if not (obj.ReferenceEquals(observedGraceUpdateMarkerLastWriteUtc.Comparer, desiredComparer)) then
+                observedGraceUpdateMarkerLastWriteUtc <- Dictionary<string, DateTime>(desiredComparer))
+
+    /// Gets the completion sidecar written before the Grace update marker is removed.
+    let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
+
+    /// Gets the completion sidecar paired with a specific update marker callback path.
+    let private updateMarkerCompletedFileNameForMarker markerFileName = markerFileName + ".completed"
+
+    /// Records the completed Grace-owned update instant so delayed callbacks can be classified by switch authority.
+    let private recordGraceUpdateMarkerCompletedUtc completedUtc =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            if completedUtc <> DateTime.MinValue then
+                let cutoffUtc =
+                    DateTime.UtcNow
+                    - graceUpdateMarkerDeletedObservationWindow
+
+                recentGraceUpdateMarkerCompletedUtc.RemoveAll(fun recordedUtc -> recordedUtc < cutoffUtc)
+                |> ignore
+
+                recentGraceUpdateMarkerCompletedUtc.Add(completedUtc))
+
+    /// Clears every recent marker-deletion fact when tests reset Watch state.
+    let private clearGraceUpdateMarkerDeletedUtcForReset () =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            recentGraceUpdateMarkerCompletedUtc.Clear()
+            observedGraceUpdateMarkerLastWriteUtc.Clear())
+
+    /// Removes the current marker sidecar when a new marker supersedes stale sidecar evidence.
+    let private clearCurrentGraceUpdateMarkerCompletedSidecar () =
+        try
+            let completedFileName = updateMarkerCompletedFileName ()
+
+            if File.Exists(completedFileName) then File.Delete(completedFileName)
+        with
+        | :? IOException -> ()
+        | :? UnauthorizedAccessException -> ()
+
+    /// Sets the recent Grace update marker deletion instant for deterministic Watch callback tests.
+    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc =
+        clearGraceUpdateMarkerDeletedUtcForReset ()
+        recordGraceUpdateMarkerCompletedUtc deletedUtc
+
+    /// Reads a marker completion sidecar for the specific marker path that produced the callback.
+    let private tryReadGraceUpdateMarkerCompletionFrom completedFileName =
+        try
+            if File.Exists(completedFileName) then
+                File.ReadAllText(completedFileName)
+                |> tryDeserializeGraceUpdateMarkerCompletion
+            else
+                None
+        with
+        | :? IOException -> None
+        | :? UnauthorizedAccessException -> None
+
+    /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
+    let private tryReadGraceUpdateMarkerCompletion () =
+        updateMarkerCompletedFileName ()
+        |> tryReadGraceUpdateMarkerCompletionFrom
+
+    /// Reads the completion instant for the marker whose deletion callback is being processed.
+    let private tryReadGraceUpdateMarkerCompletionForMarker markerFileName =
+        markerFileName
+        |> updateMarkerCompletedFileNameForMarker
+        |> tryReadGraceUpdateMarkerCompletionFrom
+
+    /// Records marker file freshness while the marker still exists so deletion cannot trust stale sidecars.
+    let private observeGraceUpdateMarkerInstance markerFileName =
+        try
+            if File.Exists(markerFileName) then
+                lock graceUpdateMarkerDeletionLock (fun () -> observedGraceUpdateMarkerLastWriteUtc[markerFileName] <- File.GetLastWriteTimeUtc(markerFileName))
+        with
+        | :? IOException -> ()
+        | :? UnauthorizedAccessException -> ()
+
+    /// Retires marker freshness state after a deletion callback consumes or rejects it.
+    let private forgetObservedGraceUpdateMarkerInstance markerFileName =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            observedGraceUpdateMarkerLastWriteUtc.Remove(markerFileName)
+            |> ignore)
+
+    /// Reports whether the completed sidecar was written for the current marker instance Watch observed.
+    let private currentUpdateMarkerMatchesCompletedSidecar completedUtc =
+        try
+            let currentMarkerFileName = updateInProgressFileName ()
+
+            if File.Exists(currentMarkerFileName) then
+                File.GetLastWriteTimeUtc(currentMarkerFileName)
+                <= completedUtc
+            else
+                lock graceUpdateMarkerDeletionLock (fun () ->
+                    match observedGraceUpdateMarkerLastWriteUtc.TryGetValue(currentMarkerFileName) with
+                    | true, markerLastWriteUtc -> markerLastWriteUtc <= completedUtc
+                    | false, _ -> false)
+        with
+        | :? IOException -> false
+        | :? UnauthorizedAccessException -> false
+
+    /// Classifies whether a deleted marker sidecar can be trusted for branch transition authority.
+    type private DeletedMarkerSidecarAuthority =
+        | ObservedCurrentMarker
+        | ObservedStaleMarker
+        | UnobservedMarker
+
+    /// Proves whether a deleted marker sidecar was written for the marker instance Watch observed.
+    let private classifyDeletedMarkerCompletedSidecar markerFileName completedUtc =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            match observedGraceUpdateMarkerLastWriteUtc.TryGetValue(markerFileName) with
+            | true, markerLastWriteUtc ->
+                observedGraceUpdateMarkerLastWriteUtc.Remove(markerFileName)
+                |> ignore
+
+                if markerLastWriteUtc <= completedUtc then
+                    ObservedCurrentMarker
+                else
+                    ObservedStaleMarker
+            | false, _ -> UnobservedMarker)
+
+    /// Reports whether a deleted marker path is the current transition marker Watch was expected to observe.
+    let private deletedMarkerIsCurrentMarker markerFileName = String.Equals(markerFileName, updateInProgressFileName (), watchPathComparison)
+
+    /// Reports whether the on-disk repository config has moved beyond Watch's cached branch identity.
+    let private persistedConfigurationChangedSinceWatchCached () =
+        try
+            let cached = Current()
+
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection ->
+                let persisted = inspection.Configuration
+
+                cached.RepositoryId <> persisted.RepositoryId
+                || not (String.Equals(cached.RepositoryName, persisted.RepositoryName, StringComparison.OrdinalIgnoreCase))
+                || cached.BranchId <> persisted.BranchId
+                || not (String.Equals(cached.BranchName, persisted.BranchName, StringComparison.OrdinalIgnoreCase))
+                || not (String.Equals(cached.RootDirectory, persisted.RootDirectory, watchPathComparison))
+            | Error _ -> false
+        with
+        | _ -> false
 
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
@@ -199,12 +711,12 @@ module Watch =
 
         let normalizedFullPath = Path.GetFullPath(fullPath)
 
-        if normalizedFullPath.Equals(rootDirectory, StringComparison.InvariantCultureIgnoreCase) then
+        if normalizedFullPath.Equals(rootDirectory, watchPathComparison) then
             Some Constants.RootDirectoryPath
         else
             let rootDirectoryWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
 
-            if normalizedFullPath.StartsWith(rootDirectoryWithSeparator, StringComparison.InvariantCultureIgnoreCase) then
+            if normalizedFullPath.StartsWith(rootDirectoryWithSeparator, watchPathComparison) then
                 normalizedFullPath
                     .Substring(rootDirectoryWithSeparator.Length)
                     .Replace(Path.DirectorySeparatorChar, '/')
@@ -218,21 +730,470 @@ module Watch =
             .Replace(Path.DirectorySeparatorChar, '/')
             .Replace(Path.AltDirectorySeparatorChar, '/')
 
+    /// Preserves first-seen normalized relative paths under the active worktree path policy.
+    let private distinctNormalizedRelativePathsForWatch (relativePaths: seq<RelativePath>) =
+        let normalizedPaths = HashSet<string>(stringComparerForWatchPathComparison watchPathComparison)
+
+        relativePaths
+        |> Seq.filter (fun relativePath -> normalizedPaths.Add(normalizeRelativePath relativePath))
+
+    /// Removes uploaded identities after their matching watch work is either applied or proven content-equivalent.
+    let private removeUploadedFileVersionsForPaths (relativePaths: seq<RelativePath>) =
+        let normalizedPaths =
+            relativePaths
+            |> Seq.map normalizeFilePath
+            |> Seq.toArray
+
+        for uploadedFileVersion in uploadedFileVersions.Values.ToArray() do
+            let normalizedUploadedPath = normalizeFilePath $"{uploadedFileVersion.RelativePath}"
+
+            if normalizedPaths
+               |> Array.exists (fun relativePath -> String.Equals(relativePath, normalizedUploadedPath, watchPathComparison)) then
+                let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+
+                uploadedFileVersions.TryRemove(uploadedFileVersionIdentity uploadedFileVersion, &removedFileVersion)
+                |> ignore
+
+    /// Checks whether the repository volume resolves differently-cased names to the same file.
+    let private detectRepositoryPathCaseInsensitiveLookup (rootDirectory: string) =
+        let mutable probePath = String.Empty
+        let mutable alternateProbePath = String.Empty
+
+        try
+            try
+                let probeDirectory =
+                    let graceDirectory = Current().GraceDirectory
+
+                    if String.IsNullOrWhiteSpace(graceDirectory) then
+                        Path.Combine(rootDirectory, Constants.GraceConfigDirectory)
+                    else
+                        graceDirectory
+
+                Directory.CreateDirectory(probeDirectory)
+                |> ignore
+
+                let probeName = $"grace-watch-case-probe-{Guid.NewGuid():N}"
+                probePath <- Path.Combine(probeDirectory, probeName.ToLowerInvariant())
+                alternateProbePath <- Path.Combine(probeDirectory, probeName.ToUpperInvariant())
+
+                File.WriteAllText(probePath, String.Empty)
+                File.Exists(alternateProbePath)
+            with
+            | _ -> OperatingSystem.IsWindows()
+        finally
+            for path in [| probePath; alternateProbePath |] do
+                try
+                    if
+                        not (String.IsNullOrWhiteSpace(path))
+                        && File.Exists(path)
+                    then
+                        File.Delete(path)
+                with
+                | _ -> ()
+
+    let mutable private repositoryPathCaseInsensitiveLookupForWatch = detectRepositoryPathCaseInsensitiveLookup
+
+    /// Aligns watch path matching with the active repository volume's case behavior.
+    let private configureWatchPathComparisonForCurrentRepository () =
+        match watchPathComparisonOverride with
+        | Some comparison -> watchPathComparison <- comparison
+        | None ->
+            let normalizedRoot = Path.GetFullPath(Current().RootDirectory)
+
+            if watchPathComparisonConfiguredRoot
+               <> Some normalizedRoot then
+                watchPathComparison <-
+                    if repositoryPathCaseInsensitiveLookupForWatch normalizedRoot then
+                        StringComparison.OrdinalIgnoreCase
+                    else
+                        StringComparison.Ordinal
+
+                watchPathComparisonConfiguredRoot <- Some normalizedRoot
+
+        ensureObservedGraceUpdateMarkerPathComparer ()
+
+    /// Identifies the origin allowed to create a local Watch scheduling candidate.
+    type internal WatchObservationOrigin =
+        | LocalFileSystem
+        | RemoteReference
+
+    /// Describes the final local observation that should be interpreted after its quiet window elapses.
+    type internal WatchObservationKind =
+        | CreatedOrChanged
+        | Changed
+        | Deleted
+        | GraceStatusArtifact
+
+    /// Captures the immutable repository and root identity that owned a raw local observation at admission.
+    type internal WatchObservationScope =
+        {
+            RepositoryId: RepositoryId
+            RepositoryName: string
+            BranchId: BranchId
+            BranchName: string
+            RootDirectory: string
+            PathComparison: StringComparison
+            RootDirectoryId: DirectoryVersionId
+            RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
+        }
+
+    /// Captures one coalesced local filesystem observation and the generation that owns its due work.
+    type internal WatchObservationCandidate =
+        {
+            FullPath: string
+            Kind: WatchObservationKind
+            RequiresRemovalProof: bool
+            Generation: int64
+            LastSeenAt: DateTime
+            DueAt: DateTime
+            Scope: WatchObservationScope option
+        }
+
+    let mutable private lastPublishedWatchObservationScope: WatchObservationScope option = None
+
+    /// Captures the current configuration and the supplied status identity for callback admission or publication tracking.
+    let private watchObservationScopeForStatus (status: GraceStatus) =
+        let current = Current()
+
+        {
+            RepositoryId = current.RepositoryId
+            RepositoryName = current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = current.BranchName
+            RootDirectory =
+                Path.GetFullPath(current.RootDirectory)
+                |> Path.TrimEndingDirectorySeparator
+            PathComparison = watchPathComparison
+            RootDirectoryId = status.RootDirectoryId
+            RootDirectorySha256Hash = status.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+        }
+
+    /// Identifies whether a status snapshot carries a root identity that can safely represent a published Watch scope.
+    let private hasWatchObservationRootIdentity (status: GraceStatus) =
+        status.RootDirectoryId
+        <> GraceStatus.Default.RootDirectoryId
+        || status.RootDirectorySha256Hash
+           <> GraceStatus.Default.RootDirectorySha256Hash
+        || status.RootDirectoryBlake3Hash
+           <> GraceStatus.Default.RootDirectoryBlake3Hash
+
+    /// Discards a published identity when its Watch lifetime ends so it cannot bridge a later configuration.
+    let private clearPublishedWatchObservationScope () = lock watchStatusPublishLock (fun () -> lastPublishedWatchObservationScope <- None)
+
+    /// Checks whether a retained publication belongs to the configuration that currently owns callback admission.
+    let private publishedWatchObservationScopeMatchesCurrentConfiguration (scope: WatchObservationScope) =
+        let current = Current()
+
+        let rootDirectory =
+            Path.GetFullPath(current.RootDirectory)
+            |> Path.TrimEndingDirectorySeparator
+
+        scope.RepositoryId = current.RepositoryId
+        && String.Equals(scope.RepositoryName, current.RepositoryName, StringComparison.Ordinal)
+        && scope.BranchId = current.BranchId
+        && String.Equals(scope.BranchName, current.BranchName, StringComparison.Ordinal)
+        && String.Equals(scope.RootDirectory, rootDirectory, scope.PathComparison)
+        && scope.PathComparison = watchPathComparison
+
+    /// Coalesces local filesystem observations until their deterministic quiet window has elapsed.
+    type internal WatchObservationCandidateScheduler(quietWindow: TimeSpan, pathComparison: StringComparison) =
+        let gate = obj ()
+
+        let pathComparer = stringComparerForWatchPathComparison pathComparison
+
+        let candidates = Dictionary<string, WatchObservationCandidate>(pathComparer)
+        let mutable nextGeneration = 0L
+        let mutable disposed = false
+
+        /// Normalizes a callback path without touching the filesystem so equivalent spellings share one candidate key.
+        let tryNormalizeCandidatePath (fullPath: string) =
+            try
+                if String.IsNullOrWhiteSpace(fullPath) then
+                    None
+                else
+                    Some(Path.GetFullPath(fullPath))
+            with
+            | :? ArgumentException
+            | :? NotSupportedException
+            | :? PathTooLongException -> None
+
+        /// Orders due candidates independently of callback arrival order when their due instants match.
+        let compareDueCandidates (left: WatchObservationCandidate) (right: WatchObservationCandidate) =
+            let dueComparison = left.DueAt.CompareTo(right.DueAt)
+
+            if dueComparison <> 0 then
+                dueComparison
+            else
+                let generationComparison = left.Generation.CompareTo(right.Generation)
+
+                if generationComparison <> 0 then
+                    generationComparison
+                else
+                    pathComparer.Compare(left.FullPath, right.FullPath)
+
+        /// Retains create or rename intent when a trailing change callback describes the same final directory state.
+        let mergeObservationKind incomingKind existingCandidate =
+            match incomingKind, existingCandidate with
+            | Changed, Some existing when existing.Kind = CreatedOrChanged -> CreatedOrChanged
+            | _ -> incomingKind
+
+        /// Records one local observation, replacing any older generation while retaining delete proof only within the same observation scope.
+        member _.ObserveScoped
+            (
+                origin: WatchObservationOrigin,
+                kind: WatchObservationKind,
+                fullPath: string,
+                seenAt: DateTime,
+                scope: WatchObservationScope option
+            ) =
+            lock gate (fun () ->
+                match origin, disposed, tryNormalizeCandidatePath fullPath with
+                | LocalFileSystem, false, Some normalizedPath ->
+                    let generation = Interlocked.Increment(&nextGeneration)
+
+                    let existingCandidate =
+                        match candidates.TryGetValue(normalizedPath) with
+                        | true, existing -> Some existing
+                        | false, _ -> None
+
+                    // Candidate state may cross the same path key only when its complete observation scope also matches.
+                    let existingCandidateInSameScope =
+                        existingCandidate
+                        |> Option.filter (fun existing -> existing.Scope = scope)
+
+                    let mergedKind = mergeObservationKind kind existingCandidateInSameScope
+
+                    let carriesRemovalProofFromSameScope =
+                        existingCandidateInSameScope
+                        |> Option.exists (fun existing -> existing.RequiresRemovalProof)
+
+                    let requiresRemovalProof = kind = Deleted || carriesRemovalProofFromSameScope
+
+                    let candidate =
+                        {
+                            FullPath = normalizedPath
+                            Kind = mergedKind
+                            RequiresRemovalProof = requiresRemovalProof
+                            Generation = generation
+                            LastSeenAt = seenAt
+                            DueAt = seenAt + quietWindow
+                            Scope = scope
+                        }
+
+                    candidates[normalizedPath] <- candidate
+                    Some candidate
+                | _ -> None)
+
+        /// Records a scheduler-only observation for tests that do not own a live repository scope.
+        member this.Observe(origin: WatchObservationOrigin, kind: WatchObservationKind, fullPath: string, seenAt: DateTime) =
+            this.ObserveScoped(origin, kind, fullPath, seenAt, None)
+
+        /// Returns the current due snapshot without consuming it so a newer generation can still supersede it before dispatch.
+        member _.SnapshotDue(now: DateTime) =
+            lock gate (fun () ->
+                candidates.Values
+                |> Seq.filter (fun candidate -> candidate.DueAt <= now)
+                |> Seq.sortWith compareDueCandidates
+                |> Seq.toArray)
+
+        /// Claims a due candidate only when the snapshot generation remains current at the dispatch boundary.
+        member _.TryClaim(candidate: WatchObservationCandidate, now: DateTime) =
+            lock gate (fun () ->
+                match candidates.TryGetValue(candidate.FullPath) with
+                | true, current when
+                    current.Generation = candidate.Generation
+                    && current.DueAt <= now
+                    ->
+                    candidates.Remove(candidate.FullPath) |> ignore
+
+                    Some current
+                | _ -> None)
+
+        /// Lists pending candidates for deterministic tests without exposing the scheduler's mutable dictionary.
+        member _.Snapshot() =
+            lock gate (fun () ->
+                candidates.Values
+                |> Seq.sortWith compareDueCandidates
+                |> Seq.toArray)
+
+        /// Reports whether local observations still await a due claim.
+        member _.HasPending = lock gate (fun () -> candidates.Count > 0)
+
+        /// Clears process-local candidates during Watch reset or shutdown.
+        member _.Clear() = lock gate (fun () -> candidates.Clear())
+
+        /// Retires all candidates and rejects later callbacks after the owning Watch lifetime ends.
+        member _.Dispose() =
+            lock gate (fun () ->
+                disposed <- true
+                candidates.Clear())
+
+        interface IDisposable with
+            member this.Dispose() = this.Dispose()
+
+    let private localObservationCandidateSchedulerLock = obj ()
+    let private liveLocalObservationQuietWindow = TimeSpan.FromSeconds(1.0)
+    let mutable private localObservationCandidateScheduler = new WatchObservationCandidateScheduler(TimeSpan.Zero, watchPathComparison)
+    let mutable private localObservationCandidateSchedulingActive = 0
+    let mutable private immediateLocalObservationProcessingForWatchTests = 0
+    let private localObservationConfidenceLossLock = obj ()
+    let mutable private localObservationConfidenceLossReason: string option = None
+    let mutable private localObservationConfidenceLossActive = 0
+
+    /// Reports whether raw-observation confidence loss still has an unconsumed diagnostic reason.
+    let private hasUnconsumedLocalObservationConfidenceLoss () = lock localObservationConfidenceLossLock (fun () -> localObservationConfidenceLossReason.IsSome)
+
+    /// Reports whether raw-observation confidence loss remains pending through its exact resync recovery boundary.
+    let private hasLocalObservationConfidenceLoss () =
+        hasUnconsumedLocalObservationConfidenceLoss ()
+        || Volatile.Read(&localObservationConfidenceLossActive)
+           <> 0
+
+    /// Reports whether marker or raw-observation confidence loss blocks all local incremental callback paths.
+    let private localObservationIncrementalWorkBlocked () =
+        Volatile.Read(&markerCompletionConfidenceLossActive)
+        <> 0
+        || hasLocalObservationConfidenceLoss ()
+
+    /// Reports whether a live Watch lifetime has activated quiet-window candidate scheduling for raw callbacks.
+    let private isLocalObservationCandidateSchedulingActive () =
+        Volatile.Read(&localObservationCandidateSchedulingActive)
+        <> 0
+
+    /// Activates or clears candidate scheduling for the live Watch lifetime.
+    let private setLocalObservationCandidateSchedulingActive active = Volatile.Write(&localObservationCandidateSchedulingActive, (if active then 1 else 0))
+
+    /// Reports whether a direct callback test intentionally preserves its immediate legacy harness behavior.
+    let private useImmediateLocalObservationProcessingForWatchTests () =
+        Volatile.Read(&immediateLocalObservationProcessingForWatchTests)
+        <> 0
+
+    /// Selects candidate scheduling or the explicit direct-callback compatibility seam for focused Watch tests.
+    let internal setLocalObservationCandidateSchedulingForWatchTests active =
+        Volatile.Write(&immediateLocalObservationProcessingForWatchTests, (if active then 0 else 1))
+        setLocalObservationCandidateSchedulingActive active
+
+    /// Aligns candidate coalescing with the active repository path comparison before Watch starts accepting callbacks.
+    let private configureLocalObservationCandidateScheduler quietWindow =
+        lock localObservationCandidateSchedulerLock (fun () ->
+            if localObservationCandidateScheduler.HasPending then
+                ()
+            else
+                localObservationCandidateScheduler.Dispose()
+                localObservationCandidateScheduler <- new WatchObservationCandidateScheduler(quietWindow, watchPathComparison))
+
+    /// Captures the current repository and exact root identity before a raw callback can be coalesced.
+    let private currentWatchObservationScope () =
+        if hasWatchObservationRootIdentity graceStatus then
+            watchObservationScopeForStatus graceStatus
+        else
+            match lastPublishedWatchObservationScope with
+            | Some scope when publishedWatchObservationScopeMatchesCurrentConfiguration scope -> scope
+            | _ -> watchObservationScopeForStatus graceStatus
+
+    /// Checks that a due raw candidate still belongs to its admission repository, branch, root, and exact root content.
+    let private watchObservationScopeMatchesCurrent (scope: WatchObservationScope) =
+        let currentScope = currentWatchObservationScope ()
+
+        scope.RepositoryId = currentScope.RepositoryId
+        && String.Equals(scope.RepositoryName, currentScope.RepositoryName, StringComparison.Ordinal)
+        && scope.BranchId = currentScope.BranchId
+        && String.Equals(scope.BranchName, currentScope.BranchName, StringComparison.Ordinal)
+        && String.Equals(scope.RootDirectory, currentScope.RootDirectory, scope.PathComparison)
+        && scope.PathComparison = currentScope.PathComparison
+        && scope.RootDirectoryId = currentScope.RootDirectoryId
+        && scope.RootDirectorySha256Hash = currentScope.RootDirectorySha256Hash
+        && scope.RootDirectoryBlake3Hash = currentScope.RootDirectoryBlake3Hash
+
+    /// Records a raw local event without reading content, enumerating paths, or scheduling remote Reference work.
+    let private recordLocalObservationCandidate kind fullPath seenAt =
+        let scope = currentWatchObservationScope ()
+
+        lock localObservationCandidateSchedulerLock (fun () ->
+            localObservationCandidateScheduler.ObserveScoped(LocalFileSystem, kind, fullPath, seenAt, Some scope))
+
+    /// Records a timestamped local candidate for deterministic Watch scheduler tests.
+    let internal recordLocalObservationCandidateForWatchTests kind fullPath seenAt = recordLocalObservationCandidate kind fullPath seenAt
+
+    /// Reads the active scheduler snapshot after a test has installed a deterministic clock or direct candidate sequence.
+    let internal localObservationCandidateSnapshotForWatchTests () =
+        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Snapshot())
+
+    /// Clears local candidate state without affecting the independent current-branch Reference catch-up scheduler.
+    let private clearLocalObservationCandidateScheduler () = lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Clear())
+
+    /// Retires candidate state when a Watch lifetime ends so later lifetimes cannot observe stale paths.
+    let private retireLocalObservationCandidateScheduler () =
+        setLocalObservationCandidateSchedulingActive false
+
+        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.Dispose())
+
+    /// Reports whether candidate metadata alone keeps the Watch process locally dirty.
+    let private hasPendingLocalObservationCandidates () = lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler.HasPending)
+
+    /// Captures due candidates while retaining generation checks for the subsequent claim boundary.
+    let private dueLocalObservationCandidates now =
+        lock localObservationCandidateSchedulerLock (fun () -> localObservationCandidateScheduler, localObservationCandidateScheduler.SnapshotDue(now))
+
+    /// Claims a due candidate only if no newer same-path raw event has superseded it.
+    let private tryClaimLocalObservationCandidate (scheduler: WatchObservationCandidateScheduler) candidate now = scheduler.TryClaim(candidate, now)
+
+    /// Classifies whether a due candidate can trust the active update marker observation boundary.
+    type private GraceUpdateMarkerObservationBoundary =
+        | NoActiveMarker
+        | ActiveMarker of DateTime
+        | AmbiguousMarkerBoundary of string
+
+    /// Reads the active Grace update marker observation boundary used to classify a due candidate before it is retired.
+    let private tryGetActiveGraceUpdateMarkerObservationBoundary () =
+        try
+            let markerFileName = updateInProgressFileName ()
+
+            if File.Exists(markerFileName) then
+                ActiveMarker(File.GetLastWriteTimeUtc(markerFileName))
+            else
+                NoActiveMarker
+        with
+        | :? IOException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
+        | :? UnauthorizedAccessException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
+
+    /// Evaluates is grace status artifact against parsed options and command state.
+    let private isGraceStatusArtifact (fullPath: string) =
+        let statusFile = Current().GraceStatusFile
+
+        fullPath.Equals(statusFile, watchPathComparison)
+        || fullPath.Equals(statusFile + "-wal", watchPathComparison)
+        || fullPath.Equals(statusFile + "-shm", watchPathComparison)
+        || fullPath.Equals(statusFile + "-journal", watchPathComparison)
+
+    /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
+    let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        status.Index.Values
+        |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+        |> Seq.tryFind (fun fileVersion -> String.Equals(normalizeRelativePath fileVersion.RelativePath, normalizedRelativePath, comparison))
+
+    /// Finds the tracked directory entry that owns a repository-relative path with the requested comparison.
+    let private tryFindTrackedDirectoryWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        status.Index.Values
+        |> Seq.tryFind (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, comparison))
+
     /// Coordinates tracked deleted path kind behavior for this CLI command path.
     let private trackedDeletedPathKind (status: GraceStatus) (relativePath: string) =
-        let deletedRelativePath = normalizeRelativePath relativePath
+        let deletedRelativePath = RelativePath(normalizeRelativePath relativePath)
 
         let isTrackedFile =
-            status.Index.Values
-            |> Seq.exists (fun directoryVersion ->
-                directoryVersion.Files
-                |> Seq.exists (fun fileVersion ->
-                    String.Equals(normalizeRelativePath fileVersion.RelativePath, deletedRelativePath, StringComparison.InvariantCultureIgnoreCase)))
+            tryFindTrackedFileWithComparison watchPathComparison status deletedRelativePath
+            |> Option.isSome
 
         let isTrackedDirectory =
-            status.Index.Values
-            |> Seq.exists (fun directoryVersion ->
-                String.Equals(normalizeRelativePath directoryVersion.RelativePath, deletedRelativePath, StringComparison.InvariantCultureIgnoreCase))
+            tryFindTrackedDirectoryWithComparison watchPathComparison status deletedRelativePath
+            |> Option.isSome
 
         match isTrackedFile, isTrackedDirectory with
         | true, _ -> DeletedFile
@@ -241,16 +1202,371 @@ module Watch =
 
     let mutable private readGraceStatusFileForDeletedPathClassification = readGraceStatusFile
 
+    let mutable private readGraceStatusFileForPendingWorkTransition = readGraceStatusFile
+    let mutable private readGraceStatusFileForTransitionCompletion = readGraceStatusFile
+
+    /// Records the branch-scoped SignalR identity that Watch currently trusts for auto-rebase events.
+    type internal SignalRBranchSubscriptionState = { BranchId: BranchId; ParentBranchId: BranchId; Generation: int64 }
+
+    /// Names the branch and generation that an in-flight SignalR parent refresh is allowed to update.
+    type internal SignalRBranchSubscriptionRefreshAuthority = { BranchId: BranchId; Generation: int64 }
+
+    let private emptySignalRBranchSubscription generation = { BranchId = BranchId.Empty; ParentBranchId = BranchId.Empty; Generation = generation }
+
+    let private signalRBranchSubscriptionLock = obj ()
+    let mutable private signalRBranchSubscription = emptySignalRBranchSubscription 0L
+    let mutable private signalRBranchSubscriptionRefreshNeededAfterTransition = false
+    let private signalRSubscriptionRefreshLock = obj ()
+    let private signalRBranchSubscriptionRefreshSemaphore = new SemaphoreSlim(1, 1)
+    let mutable private refreshSignalRBranchSubscriptionsForTransitionCompletion = ignore
+    let private transitionCatchUpRequestLock = obj ()
+    let mutable private requestCurrentBranchReferenceCatchUpAfterTransitionCompletion = ignore
+
+    /// Queues the current target branch's BranchDto catch-up only after its SignalR subscriptions are current.
+    let private requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh () =
+        let request = lock transitionCatchUpRequestLock (fun () -> requestCurrentBranchReferenceCatchUpAfterTransitionCompletion)
+        request ()
+
+    /// Clears branch-scoped SignalR trust while preserving whether transition recovery still owes a refresh attempt.
+    let private clearSignalRBranchSubscriptionWithRefreshFlag refreshNeededAfterTransition =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let generation = signalRBranchSubscription.Generation + 1L
+            signalRBranchSubscription <- emptySignalRBranchSubscription generation
+            signalRBranchSubscriptionRefreshNeededAfterTransition <- refreshNeededAfterTransition
+            generation)
+
+    /// Captures the exact branch and generation that may commit an in-flight parent refresh.
+    let private beginSignalRBranchSubscriptionRefresh () =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let generation = signalRBranchSubscription.Generation + 1L
+            let currentBranchId = Current().BranchId
+            signalRBranchSubscription <- emptySignalRBranchSubscription generation
+
+            { BranchId = currentBranchId; Generation = generation })
+
+    /// Replaces the watched SignalR branch identity only if the refresh still belongs to the current branch.
+    let private trySetSignalRBranchSubscription refreshAuthority parentBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let currentBranchId = Current().BranchId
+
+            if currentBranchId = refreshAuthority.BranchId
+               && signalRBranchSubscription.Generation = refreshAuthority.Generation then
+                signalRBranchSubscription <- { BranchId = refreshAuthority.BranchId; ParentBranchId = parentBranchId; Generation = refreshAuthority.Generation }
+
+                signalRBranchSubscriptionRefreshNeededAfterTransition <- false
+                true
+            else
+                false)
+
+    /// Reports whether a SignalR refresh still owns the current branch before it joins the same-branch delivery group.
+    let private signalRBranchSubscriptionRefreshStillCurrent refreshAuthority =
+        lock signalRBranchSubscriptionLock (fun () ->
+            Current().BranchId = refreshAuthority.BranchId
+            && signalRBranchSubscription.Generation = refreshAuthority.Generation)
+
+    /// Clears branch-scoped SignalR trust while Watch recalculates the current parent branch.
+    let private clearSignalRBranchSubscription () =
+        clearSignalRBranchSubscriptionWithRefreshFlag false
+        |> ignore
+
+    /// Clears branch-scoped SignalR trust because transition completion invalidated the old parent.
+    let private clearSignalRBranchSubscriptionForTransition () =
+        clearSignalRBranchSubscriptionWithRefreshFlag true
+        |> ignore
+
+    /// Records that a transition parent refresh was attempted and left local parent trust empty.
+    let private completeSignalRBranchSubscriptionRefreshWithoutTrust () =
+        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscriptionRefreshNeededAfterTransition <- false)
+
+    /// Reports whether transition recovery still owes a SignalR parent refresh attempt.
+    let private signalRBranchSubscriptionRefreshNeededForTransition () =
+        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscriptionRefreshNeededAfterTransition)
+
+    /// Reads the watched SignalR branch identity without exposing the mutable cell.
+    let internal signalRBranchSubscriptionForWatchTests () = lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription)
+
+    /// Replaces the watched SignalR branch identity in Watch tests without opening a HubConnection.
+    let internal setSignalRBranchSubscriptionForWatchTests branchId parentBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let generation = signalRBranchSubscription.Generation + 1L
+
+            signalRBranchSubscription <- { BranchId = branchId; ParentBranchId = parentBranchId; Generation = generation }
+
+            signalRBranchSubscriptionRefreshNeededAfterTransition <- false)
+
+    /// Begins a test-controlled SignalR parent refresh for the current branch.
+    let internal beginSignalRBranchSubscriptionRefreshForWatchTests () = beginSignalRBranchSubscriptionRefresh ()
+
+    /// Attempts to commit a test-controlled SignalR parent refresh.
+    let internal trySetSignalRBranchSubscriptionForWatchTests refreshAuthority parentBranchId = trySetSignalRBranchSubscription refreshAuthority parentBranchId
+
+    /// Clears SignalR parent trust through the same transition path used by branch switch recovery.
+    let internal clearSignalRBranchSubscriptionForTransitionForWatchTests () = clearSignalRBranchSubscriptionForTransition ()
+
+    /// Reports whether transition recovery still owes a SignalR parent refresh attempt.
+    let internal signalRBranchSubscriptionRefreshNeededForTransitionForWatchTests () = signalRBranchSubscriptionRefreshNeededForTransition ()
+
+    /// Reports whether a SignalR automation event targets the parent branch Watch currently trusts.
+    let internal signalRAutomationEventTargetsWatchedParentBranchForWatchTests targetBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            signalRBranchSubscription.ParentBranchId = targetBranchId
+            && signalRBranchSubscription.ParentBranchId
+               <> BranchId.Empty)
+
+    /// Returns the current branch-scoped SignalR trust snapshot when the event targets the watched parent.
+    let private signalRBranchSubscriptionForWatchedParentBranch targetBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            if signalRBranchSubscription.ParentBranchId = targetBranchId
+               && signalRBranchSubscription.BranchId
+                  <> BranchId.Empty
+               && signalRBranchSubscription.ParentBranchId
+                  <> BranchId.Empty then
+                Some signalRBranchSubscription
+            else
+                Option.None)
+
+    /// Reports whether the SignalR trust snapshot still belongs to the branch about to mutate its working tree.
+    let private signalRBranchSubscriptionStillTrusted trustedSubscription =
+        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription = trustedSubscription)
+
+    /// Clears branch-scoped SignalR trust only when the failing refresh still owns the local subscription authority.
+    let private clearSignalRBranchSubscriptionIfStillTrusted trustedSubscription =
+        lock signalRBranchSubscriptionLock (fun () ->
+            if signalRBranchSubscription = trustedSubscription then
+                let generation = signalRBranchSubscription.Generation + 1L
+                signalRBranchSubscription <- emptySignalRBranchSubscription generation
+                signalRBranchSubscriptionRefreshNeededAfterTransition <- false
+                true
+            else
+                false)
+
+    /// Installs the active SignalR parent-branch refresh operation used after branch identity changes.
+    let private registerSignalRSubscriptionRefresh refresh =
+        lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- refresh)
+
+        { new IDisposable with
+            member _.Dispose() = lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- ignore)
+        }
+
+    /// Runs the current SignalR subscription refresh after transition identity reloads.
+    let private refreshSignalRSubscriptionsAfterTransitionCompletion () =
+        let refresh = lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion)
+        refresh ()
+
+    /// Refreshes SignalR branch groups after reconnect or branch transition recovery.
+    let private refreshSignalRSubscriptionsForActiveConnection (refresh: unit -> Task<Result<'T, GraceError>>) =
+        try
+            match refresh().GetAwaiter().GetResult() with
+            | Ok _ -> true
+            | Error error ->
+                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                logToAnsiConsole Colors.Error $"Failed to refresh SignalR parent branch subscription: {Markup.Escape(error.ToString())}"
+                false
+        with
+        | ex ->
+            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+            logToAnsiConsole
+                Colors.Error
+                $"Failed to refresh SignalR parent branch subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+            false
+
+    /// Exposes SignalR reconnect refresh behavior to Watch tests without opening a HubConnection.
+    let internal refreshSignalRSubscriptionsForActiveConnectionForWatchTests refresh = refreshSignalRSubscriptionsForActiveConnection refresh
+
+    /// Runs lifecycle catch-up only after SignalR subscription recovery succeeds for the active connection.
+    let private completeSignalRReconnectWithCatchUp refreshSignalRSubscriptions catchUpCurrentBranchReference =
+        task {
+            if refreshSignalRSubscriptions () then
+                do! catchUpCurrentBranchReference ()
+                return true
+            else
+                return false
+        }
+
+    /// Exposes SignalR reconnect ordering to Watch tests without opening a HubConnection.
+    let internal completeSignalRReconnectWithCatchUpForWatchTests refreshSignalRSubscriptions catchUpCurrentBranchReference =
+        completeSignalRReconnectWithCatchUp refreshSignalRSubscriptions catchUpCurrentBranchReference
+
+    /// Installs the SignalR parent-branch refresh operation used by transition-completion tests.
+    let internal setSignalRSubscriptionRefreshForWatchTests refresh =
+        lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- refresh)
+
+    /// Restores SignalR subscription refresh state after transition-completion tests.
+    let internal resetSignalRSubscriptionRefreshForWatchTests () =
+        lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- ignore)
+        clearSignalRBranchSubscription ()
+
+    let private updateMarkerWatcherRebindLock = obj ()
+    let mutable private rebindUpdateMarkerWatcherForTransitionCompletion = ignore
+    let private branchTransitionCompletionProbeLock = obj ()
+    let mutable private branchTransitionCompletionAfterRetireProbe = ignore
+    let private previousBranchIpcDowngradeRetryProbeLock = obj ()
+    let mutable private previousBranchIpcDowngradeRetryProbe = ignore
+
+    /// Installs the active update-marker watcher retarget operation used after branch identity changes.
+    let private registerUpdateMarkerWatcherRebind rebind =
+        lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- rebind)
+
+        { new IDisposable with
+            member _.Dispose() = lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- ignore)
+        }
+
+    /// Runs the current update-marker watcher retarget operation after transition identity reloads.
+    let private rebindUpdateMarkerWatcherAfterTransitionCompletion () =
+        let rebind = lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion)
+        rebind ()
+
+    /// Installs the update-marker watcher retarget operation used by transition-completion tests.
+    let internal setUpdateMarkerWatcherRebindForWatchTests rebind =
+        lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- rebind)
+
+    /// Restores the default no-op update-marker watcher retarget operation after transition-completion tests.
+    let internal resetUpdateMarkerWatcherRebindForWatchTests () =
+        lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- ignore)
+
+    /// Runs the transition-boundary probe after old branch IPC retirement but before branch identity reload.
+    let private runBranchTransitionCompletionAfterRetireProbe () =
+        let probe = lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe)
+        probe ()
+
+    /// Installs a transition-boundary probe used to prove publishers cannot race old branch IPC retirement.
+    let internal setBranchTransitionCompletionAfterRetireProbeForWatchTests probe =
+        lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- probe)
+
+    /// Restores the transition-boundary probe to the production no-op behavior after Watch tests.
+    let internal resetBranchTransitionCompletionAfterRetireProbeForWatchTests () =
+        lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- ignore)
+
+    /// Runs the current previous-branch IPC downgrade retry probe after a failed verification.
+    let private runPreviousBranchIpcDowngradeRetryProbe () =
+        let probe = lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe)
+        probe ()
+
+    /// Installs a retry probe used to make previous-branch IPC downgrade verification deterministic in tests.
+    let internal setPreviousBranchIpcDowngradeRetryProbeForWatchTests probe =
+        lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe <- probe)
+
+    /// Restores the previous-branch IPC downgrade retry probe to the production no-op behavior after Watch tests.
+    let internal resetPreviousBranchIpcDowngradeRetryProbeForWatchTests () =
+        lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe <- ignore)
+
+    /// Removes stale source-branch Watch IPC before transition completion publishes under the target identity.
+    let mutable private retirePreviousBranchWatchIpcForTransitionCompletion = fun previousIpcFileName -> File.Delete(previousIpcFileName)
+
+    /// Installs the previous-branch IPC retirement operation used by transition-completion tests.
+    let internal setRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests retirePreviousBranchIpc =
+        retirePreviousBranchWatchIpcForTransitionCompletion <- retirePreviousBranchIpc
+
+    /// Restores previous-branch IPC retirement to the production file-delete behavior after Watch tests.
+    let internal resetRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests () =
+        retirePreviousBranchWatchIpcForTransitionCompletion <- fun previousIpcFileName -> File.Delete(previousIpcFileName)
+
+    /// Reloads repository configuration after another Grace process changes the current branch.
+    let private reloadConfigurationForTransitionCompletion () =
+        match tryReadWatchIgnoreSnapshot () with
+        | Error error ->
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            invalidOp error
+        | Ok snapshot ->
+            resetConfiguration ()
+            Current() |> ignore
+            clearShouldIgnoreCache ()
+            activeWatchIgnoreSnapshot <- Some snapshot
+            configureWatchPathComparisonForCurrentRepository ()
+
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
-    /// Coordinates default watch path comparison behavior for this CLI command path.
-    let private defaultWatchPathComparison () =
-        if OperatingSystem.IsWindows() then
-            StringComparison.OrdinalIgnoreCase
-        else
-            StringComparison.Ordinal
+    /// Checks whether a directory and each repository-relative ancestor remains eligible for watch indexing.
+    let private directoryAndAncestorsShouldNotBeIgnored (directoryPath: string) =
+        let rootDirectory =
+            Current().RootDirectory
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
 
-    let mutable private watchPathComparison = defaultWatchPathComparison ()
+        let rootDirectoryWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
+
+        let normalizedDirectoryPath =
+            directoryPath
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        let isInsideRepository =
+            normalizedDirectoryPath.Equals(rootDirectory, watchPathComparison)
+            || normalizedDirectoryPath.StartsWith(rootDirectoryWithSeparator, watchPathComparison)
+
+        let mutable eligible = isInsideRepository
+        let mutable currentDirectory = DirectoryInfo(normalizedDirectoryPath)
+
+        while eligible
+              && not (isNull currentDirectory)
+              && not (currentDirectory.FullName.Equals(rootDirectory, watchPathComparison)) do
+            if shouldNotIgnoreDirectoryForWatch currentDirectory.FullName then
+                currentDirectory <- currentDirectory.Parent
+            else
+                eligible <- false
+
+        eligible
+
+    /// Enumerates directory-add candidates under an affected subtree while pruning ignored directory branches.
+    let private enumerateDirectoriesForDirectoryStatusAddWithPruning directoryPath =
+        seq {
+            let pendingDirectories = Stack<string>()
+            pendingDirectories.Push(directoryPath)
+
+            while pendingDirectories.Count > 0 do
+                let parentDirectory = pendingDirectories.Pop()
+
+                for childDirectory in Directory.EnumerateDirectories(parentDirectory) do
+                    if directoryAndAncestorsShouldNotBeIgnored childDirectory then
+                        yield childDirectory
+                        pendingDirectories.Push(childDirectory)
+        }
+
+    let mutable private enumerateDirectoriesForDirectoryStatusAdd = enumerateDirectoriesForDirectoryStatusAddWithPruning
+
+    /// Records an uploaded file generation until the matching status boundary accounts for that exact observation.
+    let private addProcessedFileRelativePathPendingStatus (processedFile: ProcessedFileStatusSnapshot) =
+        lock processedFileRelativePathsPendingStatusLock (fun () ->
+            let normalizedRelativePath = normalizeRelativePath processedFile.RelativePath
+
+            let alreadyRecorded =
+                processedFileRelativePathsPendingStatus
+                |> Seq.exists (fun existing ->
+                    existing.Generation = processedFile.Generation
+                    && String.Equals(normalizeRelativePath existing.RelativePath, normalizedRelativePath, watchPathComparison))
+
+            if not alreadyRecorded then
+                processedFileRelativePathsPendingStatus.Add(processedFile))
+
+    /// Captures uploaded watch paths that still need status application.
+    let private processedFileRelativePathsPendingStatusSnapshot () =
+        lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.ToList())
+
+    /// Clears only uploaded file generations whose matching status boundary has completed or transferred responsibility.
+    let private clearProcessedFileRelativePathsPendingStatus (processedFiles: seq<ProcessedFileStatusSnapshot>) =
+        lock processedFileRelativePathsPendingStatusLock (fun () ->
+            for processedFile in processedFiles do
+                let normalizedRelativePath = normalizeRelativePath processedFile.RelativePath
+
+                processedFileRelativePathsPendingStatus.RemoveAll (fun existing ->
+                    existing.Generation = processedFile.Generation
+                    && String.Equals(normalizeRelativePath existing.RelativePath, normalizedRelativePath, watchPathComparison))
+                |> ignore)
+
+    /// Clears every processed generation for paths whose upload proof was invalidated before a status boundary.
+    let private clearProcessedFileRelativePathsPendingStatusForPaths (relativePaths: seq<RelativePath>) =
+        let normalizedRelativePaths =
+            relativePaths
+            |> Seq.map normalizeRelativePath
+            |> Seq.toArray
+
+        lock processedFileRelativePathsPendingStatusLock (fun () ->
+            processedFileRelativePathsPendingStatus.RemoveAll (fun existing ->
+                normalizedRelativePaths
+                |> Array.exists (fun relativePath -> String.Equals(normalizeRelativePath existing.RelativePath, relativePath, watchPathComparison)))
+            |> ignore)
 
     /// Reads tracked deleted path kind data needed by the CLI workflow.
     let private readTrackedDeletedPathKind (relativePath: string) =
@@ -272,38 +1588,661 @@ module Watch =
         with
         | _ -> DeletedPathStatusUnavailable
 
+    /// Reports whether a marker completion instant is recent enough to suppress delayed Watch callbacks.
+    let private isRecentGraceUpdateMarkerCompletion completedUtc =
+        completedUtc <> DateTime.MinValue
+        && DateTime.UtcNow - completedUtc
+           <= graceUpdateMarkerDeletedObservationWindow
+
+    /// Reads the switch-owned completion instant that should govern delayed Watch callback suppression.
+    let private tryRecentGraceUpdateMarkerCompletedUtc () =
+        let recordedUtc =
+            lock graceUpdateMarkerDeletionLock (fun () ->
+                let cutoffUtc =
+                    DateTime.UtcNow
+                    - graceUpdateMarkerDeletedObservationWindow
+
+                recentGraceUpdateMarkerCompletedUtc.RemoveAll(fun completedUtc -> completedUtc < cutoffUtc)
+                |> ignore
+
+                recentGraceUpdateMarkerCompletedUtc
+                |> Seq.sortDescending
+                |> Seq.tryHead)
+
+        let currentSidecarUtc =
+            match tryReadGraceUpdateMarkerCompletion () with
+            | Some (_, completedUtc) when
+                isRecentGraceUpdateMarkerCompletion completedUtc
+                && currentUpdateMarkerMatchesCompletedSidecar completedUtc
+                ->
+                Some completedUtc
+            | _ -> None
+
+        match currentSidecarUtc, recordedUtc with
+        | Some currentCompletedUtc, Some recordedCompletedUtc when isRecentGraceUpdateMarkerCompletion recordedCompletedUtc ->
+            Some(max currentCompletedUtc recordedCompletedUtc)
+        | Some currentCompletedUtc, _ -> Some currentCompletedUtc
+        | None, Some recordedCompletedUtc when isRecentGraceUpdateMarkerCompletion recordedCompletedUtc -> Some recordedCompletedUtc
+        | None, _ -> None
+
+    /// Reports whether a missing path is already absent from the post-switch GraceStatus snapshot.
+    let private completedSwitchRemovedPathFromGraceStatus fullPath =
+        match repositoryRelativePath fullPath with
+        | None -> false
+        | Some relativePath ->
+            try
+                let completedStatus =
+                    readGraceStatusFileForDeletedPathClassification()
+                        .GetAwaiter()
+                        .GetResult()
+
+                match trackedDeletedPathKind completedStatus relativePath with
+                | DeletedPathKindUnknown -> true
+                | DeletedFile
+                | DeletedDirectory
+                | DeletedPathStatusUnavailable -> false
+            with
+            | _ -> false
+
+    /// Reports whether an existing path belongs to the post-switch GraceStatus snapshot.
+    let private completedSwitchTracksExistingPathFromGraceStatus fullPath =
+        match repositoryRelativePath fullPath with
+        | None -> false
+        | Some relativePath ->
+            try
+                let completedStatus =
+                    readGraceStatusFileForDeletedPathClassification()
+                        .GetAwaiter()
+                        .GetResult()
+
+                match trackedDeletedPathKind completedStatus relativePath with
+                | DeletedFile -> File.Exists fullPath
+                | DeletedDirectory -> Directory.Exists fullPath
+                | DeletedPathKindUnknown
+                | DeletedPathStatusUnavailable -> false
+            with
+            | _ -> false
+
+    /// Identifies delayed callbacks for writes that completed while a Grace update marker was still present.
+    let private isDelayedGraceOwnedFileObservation fullPath observedAt =
+        match tryRecentGraceUpdateMarkerCompletedUtc () with
+        | None -> false
+        | Some markerCompletedUtc when observedAt < markerCompletedUtc -> false
+        | Some markerCompletedUtc when
+            not (File.Exists fullPath)
+            && not (Directory.Exists fullPath)
+            ->
+            completedSwitchRemovedPathFromGraceStatus fullPath
+        | Some markerCompletedUtc ->
+            completedSwitchTracksExistingPathFromGraceStatus fullPath
+            && (try
+                    let lastWriteTimeUtc =
+                        if File.Exists fullPath then
+                            File.GetLastWriteTimeUtc(fullPath)
+                        else
+                            Directory.GetLastWriteTimeUtc(fullPath)
+
+                    lastWriteTimeUtc <= markerCompletedUtc
+                with
+                | :? IOException -> false
+                | :? UnauthorizedAccessException -> false)
+
     /// Coordinates set grace status for watch tests behavior for this CLI command path.
-    let internal setGraceStatusForWatchTests status = graceStatus <- status
+    let internal setGraceStatusForWatchTests status =
+        graceStatus <- status
+
+        if not (hasWatchObservationRootIdentity status) then
+            clearPublishedWatchObservationScope ()
+
+    /// Replaces Watch's cached directory identity set after a trusted GraceStatus reload.
+    let internal updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
+    /// Reads the in-memory Grace Status snapshot so transition-publication tests can prove state isolation.
+    let internal graceStatusForWatchTests () = graceStatus
+    /// Reads the in-memory Grace Status directory identities so transition-publication tests can prove state isolation.
+    let internal graceStatusDirectoryIdsForWatchTests () = graceStatusDirectoryIds
+
     /// Checks whether set grace status has changed for watch tests is true for the parsed command input.
-    let internal setGraceStatusHasChangedForWatchTests hasChanged = graceStatusHasChanged <- hasChanged
+    let internal setGraceStatusHasChangedForWatchTests hasChanged =
+        if hasChanged then
+            Interlocked.Increment(&graceStatusRefreshGeneration)
+            |> ignore
+
+            graceStatusHasChanged <- true
+        else
+            Interlocked.Exchange(&graceStatusRefreshGeneration, 0L)
+            |> ignore
+
+            graceStatusHasChanged <- false
+
     /// Coordinates set read grace status file for watch tests behavior for this CLI command path.
-    let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
+    let internal setReadGraceStatusFileForWatchTests readStatusFile =
+        readGraceStatusFileForDeletedPathClassification <- readStatusFile
+        readGraceStatusFileForTransitionCompletion <- readStatusFile
+
+    /// Sets the Grace Status reader used by pending-work transition tests.
+    let internal setReadGraceStatusFileForPendingWorkTransitionForWatchTests readStatusFile = readGraceStatusFileForPendingWorkTransition <- readStatusFile
+    /// Sets the Grace Status reader used by branch-transition completion tests.
+    let internal setReadGraceStatusFileForTransitionCompletionForWatchTests readStatusFile = readGraceStatusFileForTransitionCompletion <- readStatusFile
     /// Reads set enumerate files for directory upload for watch tests data needed by the command workflow without changing remote state.
     let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
+
     /// Coordinates set watch path comparison for watch tests behavior for this CLI command path.
-    let internal setWatchPathComparisonForWatchTests comparison = watchPathComparison <- comparison
+    let internal setWatchPathComparisonForWatchTests comparison =
+        watchPathComparison <- comparison
+        watchPathComparisonOverride <- Some comparison
+        ensureObservedGraceUpdateMarkerPathComparer ()
+        configureLocalObservationCandidateScheduler TimeSpan.Zero
+
+    /// Installs the repository case-sensitivity detector used by watch tests.
+    let internal setRepositoryPathCaseInsensitiveLookupForWatchTests detector =
+        repositoryPathCaseInsensitiveLookupForWatch <- detector
+        watchPathComparisonConfiguredRoot <- None
+
+    /// Finds the tracked file entry that owns a repository-relative path in GraceStatus.
+    let private tryFindTrackedFile (status: GraceStatus) (relativePath: RelativePath) = tryFindTrackedFileWithComparison watchPathComparison status relativePath
+
+    /// Checks whether GraceStatus already tracks a repository-relative file path.
+    let private isTrackedFile (status: GraceStatus) (relativePath: RelativePath) =
+        tryFindTrackedFile status relativePath
+        |> Option.isSome
+
+    /// Checks whether GraceStatus already tracks a repository-relative directory path.
+    let private isTrackedDirectory (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        status.Index.Values
+        |> Seq.exists (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Finds the tracked directory entry that owns a repository-relative path in GraceStatus.
+    let private tryFindTrackedDirectory (status: GraceStatus) (relativePath: RelativePath) =
+        tryFindTrackedDirectoryWithComparison watchPathComparison status relativePath
+
+    /// Uses the longest tracked ancestor casing before status application performs exact path lookups.
+    let private canonicalizeTrackedAncestorCasing (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+        let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        let mutable canonicalRelativePath = relativePath
+        let mutable foundTrackedAncestor = false
+
+        if segments.Length > 0 then
+            for prefixLength in segments.Length .. -1 .. 1 do
+                if not foundTrackedAncestor then
+                    let ancestorRelativePath = RelativePath(String.Join("/", segments[0 .. prefixLength - 1]))
+
+                    match tryFindTrackedDirectory status ancestorRelativePath with
+                    | Some trackedAncestorDirectory ->
+                        let trackedAncestorPath = normalizeRelativePath trackedAncestorDirectory.RelativePath
+
+                        let canonicalPath =
+                            if prefixLength = segments.Length then
+                                trackedAncestorPath
+                            else
+                                let suffixPath = String.Join("/", segments[prefixLength..])
+                                $"{trackedAncestorPath}/{suffixPath}"
+
+                        canonicalRelativePath <- RelativePath canonicalPath
+                        foundTrackedAncestor <- true
+                    | None -> ()
+
+        canonicalRelativePath
+
+    /// Checks whether the uploaded file identity would change the tracked GraceStatus file content.
+    let private uploadedFileContentChanged (trackedFile: LocalFileVersion) (uploadedFile: FileVersion) =
+        uploadedFile.Sha256Hash <> trackedFile.Sha256Hash
+        || (trackedFile.Blake3Hash <> Blake3Hash String.Empty
+            && uploadedFile.Blake3Hash <> trackedFile.Blake3Hash)
+
+    /// Describes the final filesystem kind for a path when event-derived status work is applied.
+    type private FinalPathKind =
+        | FinalPathMissing
+        | FinalPathFile
+        | FinalPathDirectory
+
+    let mutable private fileExistsForWatchFinalPath = File.Exists
+    let mutable private directoryExistsForWatchFinalPath = Directory.Exists
+
+    /// Classifies the filesystem object currently occupying a final Watch path before recovery selects file-upload behavior.
+    let private finalPathKindForFullPath fullPath =
+        if fileExistsForWatchFinalPath fullPath then FinalPathFile
+        elif directoryExistsForWatchFinalPath fullPath then FinalPathDirectory
+        else FinalPathMissing
+
+    /// Reads the final filesystem kind for a repository-relative path.
+    let private finalPathKind (relativePath: RelativePath) =
+        let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+        finalPathKindForFullPath fullPath
+
+    /// Installs final path existence readers used by watch classification tests.
+    let internal setFinalPathExistsForWatchTests fileExists directoryExists =
+        fileExistsForWatchFinalPath <- fileExists
+        directoryExistsForWatchFinalPath <- directoryExists
+
+    /// Checks whether final path state still has the same kind as a delete difference.
+    let private finalPathMatchesEntryType entryType relativePath =
+        match entryType, finalPathKind relativePath with
+        | FileSystemEntryType.File, FinalPathFile -> true
+        | FileSystemEntryType.Directory, FinalPathDirectory -> true
+        | _ -> false
+
+    /// Checks whether a repository-relative path is inside a directory trigger.
+    let private isPathUnderDirectoryTrigger (directoryRelativePath: RelativePath) (candidateRelativePath: RelativePath) =
+        let normalizedDirectoryPath =
+            normalizeRelativePath directoryRelativePath
+            |> fun path -> path.TrimEnd('/')
+
+        let normalizedCandidatePath = normalizeRelativePath candidateRelativePath
+
+        normalizedCandidatePath.StartsWith(normalizedDirectoryPath + "/", watchPathComparison)
+
+    /// Resolves a repository-relative directory through the active worktree path policy without changing production filesystem detection.
+    let private tryResolveDirectoryUsingWatchPathComparison (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+        let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        let mutable currentDirectory = Path.GetFullPath(Current().RootDirectory)
+        let mutable exists = Directory.Exists(currentDirectory)
+        let mutable index = 0
+
+        while exists && index < segments.Length do
+            let matchingDirectory =
+                Directory.EnumerateDirectories(currentDirectory)
+                |> Seq.tryFind (fun candidate -> String.Equals(Path.GetFileName(candidate), segments[index], watchPathComparison))
+
+            match matchingDirectory with
+            | Some directory ->
+                currentDirectory <- directory
+                index <- index + 1
+            | None -> exists <- false
+
+        if exists && index = segments.Length then Some currentDirectory else None
+
+    /// Checks directory existence using the active watch path comparison so case-insensitive event paths still match disk.
+    let private directoryExistsUsingWatchPathComparison (relativePath: RelativePath) =
+        tryResolveDirectoryUsingWatchPathComparison relativePath
+        |> Option.isSome
+
+    /// Exposes active-policy directory resolution for host-independent Watch path-comparison tests.
+    let internal directoryExistsUsingWatchPathComparisonForWatchTests relativePath = directoryExistsUsingWatchPathComparison relativePath
+
+    /// Describes whether a completed upload can be matched against the current final path content.
+    type private UploadedFinalFileVersionResolution =
+        | UploadedFinalFileVersionFound of FileVersion
+        | UploadedFinalFileVersionUnavailable
+        | UploadedFinalFileVersionUnmatched
+        | UploadedFinalFileVersionMissing
+
+    let mutable private createLocalFileVersionForWatchStatus = createLocalFileVersion
+
+    /// Finds the uploaded identity that matches the final file content for a processed watch path.
+    let private tryFindUploadedFinalFileVersion (relativePath: RelativePath) =
+        task {
+            let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+            if File.Exists(fullPath) then
+                match! createLocalFileVersionForWatchStatus (FileInfo(fullPath)) with
+                | Some localFileVersion ->
+                    let identity = (localFileVersion.RelativePath, localFileVersion.Sha256Hash, localFileVersion.Blake3Hash)
+                    let mutable uploadedFileVersion = Unchecked.defaultof<FileVersion>
+
+                    if uploadedFileVersions.TryGetValue(identity, &uploadedFileVersion) then
+                        return UploadedFinalFileVersionFound uploadedFileVersion
+                    else
+                        return UploadedFinalFileVersionUnmatched
+                | None -> return UploadedFinalFileVersionUnavailable
+            else
+                return UploadedFinalFileVersionMissing
+        }
+
+    /// Installs the local file-version reader used by watch status derivation tests.
+    let internal setCreateLocalFileVersionForWatchTests createLocalFileVersionClient = createLocalFileVersionForWatchStatus <- createLocalFileVersionClient
+
+    /// Lists untracked directory add differences through the selected repository-relative path segment.
+    let private deriveDirectoryAddDifferencesThroughSegment (status: GraceStatus) (relativePath: RelativePath) lastSegmentIndex =
+        let differences = List<FileSystemDifference>()
+        let normalizedRelativePath = normalizeRelativePath relativePath
+        let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+
+        if segments.Length > 0 && lastSegmentIndex >= 0 then
+            for index in 0 .. min lastSegmentIndex (segments.Length - 1) do
+                let parentRelativePath = RelativePath(String.Join("/", segments[0..index]))
+                let parentDifferenceRelativePath = canonicalizeTrackedAncestorCasing status parentRelativePath
+
+                let alreadyAdded =
+                    differences
+                    |> Seq.exists (fun difference ->
+                        difference.FileSystemEntryType = FileSystemEntryType.Directory
+                        && difference.DifferenceType = Add
+                        && String.Equals(normalizeRelativePath difference.RelativePath, normalizeRelativePath parentDifferenceRelativePath, watchPathComparison))
+
+                if not alreadyAdded
+                   && not (isTrackedDirectory status parentDifferenceRelativePath)
+                   && directoryExistsUsingWatchPathComparison parentDifferenceRelativePath then
+                    differences.Add(FileSystemDifference.Create Add FileSystemEntryType.Directory parentDifferenceRelativePath)
+
+        differences
+
+    /// Lists missing parent directories that must be added before a new uploaded file can link into GraceStatus.
+    let private deriveParentDirectoryAddDifferences (status: GraceStatus) (relativePath: RelativePath) =
+        let segmentCount =
+            (normalizeRelativePath relativePath).Split(
+                '/',
+                StringSplitOptions.RemoveEmptyEntries
+            )
+                .Length
+
+        deriveDirectoryAddDifferencesThroughSegment status relativePath (segmentCount - 2)
+
+    /// Lists new non-ignored directories under the observed directory without scanning outside that subtree.
+    let private tryDeriveDirectorySubtreeAddDifferences (status: GraceStatus) (directoryPath: string) =
+        let differences = List<FileSystemDifference>()
+
+        /// Adds one directory add difference when GraceStatus does not already track the final path.
+        let addDirectoryDifference fullPath =
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                let canonicalRelativePath =
+                    RelativePath relativePath
+                    |> canonicalizeTrackedAncestorCasing status
+
+                let segmentCount =
+                    (normalizeRelativePath canonicalRelativePath)
+                        .Split(
+                        '/',
+                        StringSplitOptions.RemoveEmptyEntries
+                    )
+                        .Length
+
+                let directoryAddDifferences = deriveDirectoryAddDifferencesThroughSegment status canonicalRelativePath (segmentCount - 1)
+
+                for directoryAddDifference in directoryAddDifferences do
+                    let directoryDifferenceFullPath = Path.Combine(Current().RootDirectory, normalizeRelativePath directoryAddDifference.RelativePath)
+
+                    let alreadyAdded =
+                        differences
+                        |> Seq.exists (fun difference ->
+                            difference.FileSystemEntryType = FileSystemEntryType.Directory
+                            && difference.DifferenceType = Add
+                            && String.Equals(
+                                normalizeRelativePath difference.RelativePath,
+                                normalizeRelativePath directoryAddDifference.RelativePath,
+                                watchPathComparison
+                            ))
+
+                    if not alreadyAdded
+                       && directoryAndAncestorsShouldNotBeIgnored directoryDifferenceFullPath then
+                        differences.Add(directoryAddDifference)
+            | None -> ()
+
+        if
+            Directory.Exists(directoryPath)
+            && directoryAndAncestorsShouldNotBeIgnored directoryPath
+        then
+            try
+                addDirectoryDifference directoryPath
+
+                for childDirectoryPath in enumerateDirectoriesForDirectoryStatusAdd directoryPath do
+                    if shouldNotIgnoreDirectoryForWatch childDirectoryPath then
+                        addDirectoryDifference childDirectoryPath
+
+                differences, true
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Error
+                    $"Unable to enumerate directory subtree {directoryPath}; status update will retry after directory adds can be queued. {Markup.Escape(ex.Message)}"
+
+                differences, false
+        else
+            differences, true
+
+    /// Derives add and change differences from uploads already completed by the watch loop.
+    let private deriveUploadedFileDifferences (status: GraceStatus) (processedFilePaths: seq<RelativePath>) =
+        task {
+            let differences = List<FileSystemDifference>()
+            let unresolvedFilePaths = List<RelativePath>()
+
+            for relativePath in
+                processedFilePaths
+                |> distinctNormalizedRelativePathsForWatch do
+                match! tryFindUploadedFinalFileVersion relativePath with
+                | UploadedFinalFileVersionFound uploadedFileVersion ->
+                    match tryFindTrackedFile status uploadedFileVersion.RelativePath with
+                    | Some trackedFile when uploadedFileContentChanged trackedFile uploadedFileVersion ->
+                        recordUploadedFileVersionForCanonicalPath trackedFile.RelativePath uploadedFileVersion
+                        differences.Add(FileSystemDifference.Create Change FileSystemEntryType.File trackedFile.RelativePath)
+                    | Some _ -> ()
+                    | None ->
+                        differences.AddRange(deriveParentDirectoryAddDifferences status uploadedFileVersion.RelativePath)
+                        let addRelativePath = canonicalizeTrackedAncestorCasing status uploadedFileVersion.RelativePath
+                        recordUploadedFileVersionForCanonicalPath addRelativePath uploadedFileVersion
+                        differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File addRelativePath)
+                | UploadedFinalFileVersionUnavailable
+                | UploadedFinalFileVersionUnmatched -> unresolvedFilePaths.Add(relativePath)
+                | UploadedFinalFileVersionMissing -> ()
+
+            return differences, unresolvedFilePaths
+        }
+
+    /// Derives delete differences from GraceStatus while rejecting stale deletes for paths that exist again.
+    let private deriveDeleteDifferences (status: GraceStatus) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
+        let differences = List<FileSystemDifference>()
+
+        for statusTrigger in statusTriggerSnapshot do
+            let relativePath = RelativePath statusTrigger.RelativePath
+
+            match trackedDeletedPathKind status statusTrigger.RelativePath with
+            | DeletedFile ->
+                let trackedFile =
+                    match tryFindTrackedFileWithComparison StringComparison.Ordinal status relativePath with
+                    | Some exactTrackedFile -> Some exactTrackedFile
+                    | None -> tryFindTrackedFileWithComparison watchPathComparison status relativePath
+
+                match trackedFile with
+                | Some trackedFile ->
+                    if not (finalPathMatchesEntryType FileSystemEntryType.File trackedFile.RelativePath) then
+                        differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
+                | None ->
+                    if not (finalPathMatchesEntryType FileSystemEntryType.File relativePath) then
+                        differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File relativePath)
+            | DeletedDirectory ->
+                let trackedDirectoryRelativePath =
+                    match tryFindTrackedDirectoryWithComparison StringComparison.Ordinal status relativePath with
+                    | Some exactTrackedDirectory -> exactTrackedDirectory.RelativePath
+                    | None ->
+                        match tryFindTrackedDirectoryWithComparison watchPathComparison status relativePath with
+                        | Some trackedDirectory -> trackedDirectory.RelativePath
+                        | None -> relativePath
+
+                if not (finalPathMatchesEntryType FileSystemEntryType.Directory trackedDirectoryRelativePath) then
+                    differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.Directory trackedDirectoryRelativePath)
+            | DeletedPathKindUnknown
+            | DeletedPathStatusUnavailable -> ()
+
+        differences
+
+    /// Models the differences that can be applied and the queued work they resolve.
+    type private StatusDifferencesForApply = { Applicable: List<FileSystemDifference>; Resolved: List<FileSystemDifference> }
+
+    /// Returns the root BLAKE3 hash that durable Watch journal identity expects for replay.
+    let private rootDirectoryBlake3HashForWatchJournal (status: GraceStatus) =
+        let mutable rootDirectoryVersion = LocalDirectoryVersion.Default
+
+        if status.Index.TryGetValue(status.RootDirectoryId, &rootDirectoryVersion) then
+            rootDirectoryVersion.Blake3Hash
+        elif not (String.IsNullOrWhiteSpace(string status.RootDirectoryBlake3Hash)) then
+            status.RootDirectoryBlake3Hash
+        else
+            Blake3Hash String.Empty
+
+    /// Captures the current repository identity that makes normalized Watch journal rows replayable.
+    let private currentWatchJournalScope (status: GraceStatus) : Grace.CLI.LocalStateDb.WatchJournalScope =
+        {
+            RepositoryId = Current().RepositoryId
+            BranchId = Current().BranchId
+            WorkspaceRoot = Path.GetFullPath(Current().RootDirectory)
+            WatchRoot = Path.GetFullPath(Current().RootDirectory)
+            PathComparison = watchPathComparison
+            RootDirectoryId = status.RootDirectoryId
+            RootDirectorySha256Hash = status.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = rootDirectoryBlake3HashForWatchJournal status
+            WatchMode = "repository-root"
+        }
+
+    /// Persists a terminal Watch boundary diagnostic without creating replayable local work.
+    let private recordWatchBoundaryDiagnostic eventType message =
+        try
+            (recordWatchLifecycleEventForWatch (
+                { Scope = currentWatchJournalScope graceStatus; EventType = eventType; Message = message }: Grace.CLI.LocalStateDb.WatchLifecycleEvent
+            ))
+                .GetAwaiter()
+                .GetResult()
+        with
+        | ex -> logToAnsiConsole Colors.Error $"Grace Watch could not record boundary diagnostic: {ex.Message}"
+
+    /// Converts an already-normalized status difference into the replay payload owned by the local Watch journal.
+    let private journalObservationForDifference (difference: FileSystemDifference) : Grace.CLI.LocalStateDb.WatchJournalObservation =
+        {
+            Scope = currentWatchJournalScope graceStatus
+            DifferenceType = difference.DifferenceType
+            EntryType = difference.FileSystemEntryType
+            RelativePath = difference.RelativePath
+        }
+
+    /// Checks whether a pending uploaded file difference must be dropped because final path state no longer has a file.
+    let private isStaleUploadedFileDifference (difference: FileSystemDifference) =
+        difference.FileSystemEntryType = FileSystemEntryType.File
+        && (difference.DifferenceType = Add
+            || difference.DifferenceType = Change)
+        && finalPathKind difference.RelativePath
+           <> FinalPathFile
+
+    /// Checks whether a pending parent directory add no longer exists in final path state.
+    let private isStaleParentDirectoryAddDifference (difference: FileSystemDifference) =
+        difference.FileSystemEntryType = FileSystemEntryType.Directory
+        && difference.DifferenceType = Add
+        && not (directoryExistsUsingWatchPathComparison difference.RelativePath)
+
+    /// Checks whether a queued directory add was already incorporated by a fresher GraceStatus snapshot.
+    let private isAlreadyTrackedDirectoryAddDifference (status: GraceStatus) (difference: FileSystemDifference) =
+        difference.FileSystemEntryType = FileSystemEntryType.Directory
+        && difference.DifferenceType = Add
+        && isTrackedDirectory status difference.RelativePath
+
+    /// Checks whether a status-only trigger covers the same path as a pending file difference.
+    let private hasMatchingStatusTrigger (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (difference: FileSystemDifference) =
+        statusTriggerSnapshot
+        |> Array.exists (fun statusTrigger ->
+            String.Equals(normalizeRelativePath statusTrigger.RelativePath, normalizeRelativePath difference.RelativePath, watchPathComparison))
+
+    /// Checks whether a status-only directory trigger covers a pending file difference.
+    let private hasContainingStatusTrigger (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (difference: FileSystemDifference) =
+        statusTriggerSnapshot
+        |> Array.exists (fun statusTrigger -> isPathUnderDirectoryTrigger (RelativePath statusTrigger.RelativePath) difference.RelativePath)
+
+    /// Checks whether a completed file upload already waits for status application on this path.
+    let private hasProcessedFileRelativePath (processedRelativePaths: List<RelativePath>) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        processedRelativePaths
+        |> Seq.exists (fun processedPath -> String.Equals(normalizeRelativePath processedPath, normalizedRelativePath, watchPathComparison))
+
+    /// Checks whether startup recovery already owns the stale delete decision for this path.
+    let private hasMatchingStartupFileDeleteDifference (startupPendingDifferences: List<FileSystemDifference>) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        startupPendingDifferences
+        |> Seq.exists (fun difference ->
+            difference.DifferenceType = DifferenceType.Delete
+            && difference.FileSystemEntryType = FileSystemEntryType.File
+            && String.Equals(normalizeRelativePath difference.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Finds the GraceStatus file entry represented by a status-only trigger.
+    let private tryFindTrackedFileForStatusTrigger (status: GraceStatus) (relativePath: RelativePath) =
+        match tryFindTrackedFileWithComparison StringComparison.Ordinal status relativePath with
+        | Some exactTrackedFile -> Some exactTrackedFile
+        | None -> tryFindTrackedFileWithComparison watchPathComparison status relativePath
+
+    /// Checks whether a stale delete trigger's final file content differs from GraceStatus.
+    let private finalFileContentChangedFromTrackedStatus (status: GraceStatus) (relativePath: RelativePath) =
+        task {
+            match tryFindTrackedFileForStatusTrigger status relativePath with
+            | Some trackedFile when finalPathMatchesEntryType FileSystemEntryType.File relativePath ->
+                let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+                match! createLocalFileVersionForWatchStatus (FileInfo(fullPath)) with
+                | Some finalFileVersion -> return uploadedFileContentChanged trackedFile finalFileVersion.ToFileVersion
+                | None -> return false
+            | _ -> return false
+        }
+
+    /// Records a delete-triggered cancellation that may need the final file re-uploaded if the delete proves stale.
+    let private addCanceledFileUploadDeleteRelativePath (relativePath: RelativePath) =
+        lock canceledFileUploadDeleteRelativePathsLock (fun () ->
+            let normalizedRelativePath = normalizeRelativePath relativePath
+
+            let alreadyRecorded =
+                canceledFileUploadDeleteRelativePaths
+                |> Seq.exists (fun existing -> String.Equals(normalizeRelativePath existing, normalizedRelativePath, watchPathComparison))
+
+            if not alreadyRecorded then
+                canceledFileUploadDeleteRelativePaths.Add(relativePath))
+
+    /// Captures delete-triggered upload cancellations waiting for final path resolution.
+    let private canceledFileUploadDeleteRelativePathsSnapshot () =
+        lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.ToList())
+
+    /// Clears delete-triggered upload cancellations after they are requeued or their status trigger drains.
+    let private clearCanceledFileUploadDeleteRelativePaths (relativePaths: seq<RelativePath>) =
+        lock canceledFileUploadDeleteRelativePathsLock (fun () ->
+            for relativePath in relativePaths do
+                let normalizedRelativePath = normalizeRelativePath relativePath
+
+                canceledFileUploadDeleteRelativePaths.RemoveAll (fun existing ->
+                    String.Equals(normalizeRelativePath existing, normalizedRelativePath, watchPathComparison))
+                |> ignore)
+
+    /// Removes stale differences when final path state proves newer same-path work superseded them.
+    let private splitApplicableStatusDifferences
+        (status: GraceStatus)
+        (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
+        (differences: List<FileSystemDifference>)
+        =
+        let applicable = List<FileSystemDifference>()
+        let resolved = List<FileSystemDifference>()
+
+        for difference in differences do
+            if difference.DifferenceType = Delete
+               && finalPathMatchesEntryType difference.FileSystemEntryType difference.RelativePath then
+                resolved.Add(difference)
+            elif isStaleUploadedFileDifference difference
+                 && (hasMatchingStatusTrigger statusTriggerSnapshot difference
+                     || hasContainingStatusTrigger statusTriggerSnapshot difference) then
+                resolved.Add(difference)
+            elif isStaleParentDirectoryAddDifference difference then
+                resolved.Add(difference)
+            elif isAlreadyTrackedDirectoryAddDifference status difference then
+                resolved.Add(difference)
+            else
+                applicable.Add(difference)
+                resolved.Add(difference)
+
+        { Applicable = applicable; Resolved = resolved }
 
     /// Coordinates should ignore deleted path behavior for this CLI command path.
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
-        let configuration = Current()
+        let snapshot = currentWatchIgnoreSnapshot ()
         let normalizedFullPath = Path.GetFullPath(fullPath)
-        let graceDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.GraceDirectory))
+        let graceDirectory = Path.TrimEndingDirectorySeparator(snapshot.GraceDirectory)
         let fileInfo = FileInfo(fullPath)
         let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
 
-        let isInGraceDirectory =
-            normalizedFullPath.Equals(graceDirectory, StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.StartsWith(
-                graceDirectory
-                + string Path.DirectorySeparatorChar,
-                StringComparison.InvariantCultureIgnoreCase
-            )
+        let isInGraceDirectory = isPathWithinDirectoryForWatch graceDirectory normalizedFullPath
 
         let isGraceStatusArtifact =
-            normalizedFullPath.Equals(configuration.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+            normalizedFullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
+            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
 
         if isInGraceDirectory || isGraceStatusArtifact then
             true
@@ -318,18 +2257,18 @@ module Watch =
                     checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
 
             (pathKind <> DeletedDirectory
-             && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
+             && normalizedFullPath.EndsWith(".gracetmp", watchPathComparison))
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists directoryIgnoreMatches)
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
             || (pathKind <> DeletedDirectory
-                && configuration.GraceDirectoryIgnoreEntries
+                && snapshot.DirectoryEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
             || (pathKind = DeletedPathKindUnknown
-                && configuration.GraceFileIgnoreEntries
+                && snapshot.FileEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
 
     /// Coordinates enqueue status update trigger behavior for this CLI command path.
@@ -357,33 +2296,335 @@ module Watch =
             |> ignore
         | _ -> ()
 
+    /// Compares pending file work scopes, using stored repository and branch names only when their accepted identifiers were absent.
+    let private pendingFileWorkMatchesScope (acceptedPendingFile: PendingFileWorkSnapshot) (candidatePendingFile: PendingFileWorkSnapshot) =
+        let repositoryMatches =
+            if acceptedPendingFile.RepositoryId
+               <> RepositoryId.Empty then
+                acceptedPendingFile.RepositoryId = candidatePendingFile.RepositoryId
+            else
+                String.Equals(acceptedPendingFile.RepositoryName, candidatePendingFile.RepositoryName, StringComparison.Ordinal)
+
+        let branchMatches =
+            if acceptedPendingFile.BranchId <> BranchId.Empty then
+                acceptedPendingFile.BranchId = candidatePendingFile.BranchId
+            else
+                String.Equals(acceptedPendingFile.BranchName, candidatePendingFile.BranchName, StringComparison.Ordinal)
+
+        repositoryMatches
+        && branchMatches
+        && String.Equals(acceptedPendingFile.RootDirectory, candidatePendingFile.RootDirectory, watchPathComparison)
+
+    /// Tests whether queued file work still belongs to the repository, branch, and root that accepted its due local observation.
+    let private pendingFileWorkMatchesCurrentScope (pendingFile: PendingFileWorkSnapshot) =
+        let currentScope =
+            { pendingFile with
+                RepositoryId = Current().RepositoryId
+                RepositoryName = Current().RepositoryName
+                BranchId = Current().BranchId
+                BranchName = Current().BranchName
+                RootDirectory =
+                    Current().RootDirectory
+                    |> Path.GetFullPath
+                    |> Path.TrimEndingDirectorySeparator
+            }
+
+        pendingFileWorkMatchesScope pendingFile currentScope
+
+    /// Checks whether an incomplete directory inspection still belongs to the repository, branch, and root that accepted it.
+    let private pendingDirectoryWorkMatchesCurrentScope (pendingDirectory: PendingDirectoryWorkSnapshot) =
+        let current = Current()
+
+        let repositoryMatches =
+            if pendingDirectory.RepositoryId
+               <> RepositoryId.Empty then
+                pendingDirectory.RepositoryId = current.RepositoryId
+            else
+                String.Equals(pendingDirectory.RepositoryName, current.RepositoryName, StringComparison.Ordinal)
+
+        let branchMatches =
+            if pendingDirectory.BranchId <> BranchId.Empty then
+                pendingDirectory.BranchId = current.BranchId
+            else
+                String.Equals(pendingDirectory.BranchName, current.BranchName, StringComparison.Ordinal)
+
+        repositoryMatches
+        && branchMatches
+        && String.Equals(
+            pendingDirectory.RootDirectory,
+            current.RootDirectory
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator,
+            watchPathComparison
+        )
+
+    /// Converts accepted file work to the relative path owned by its recorded repository root.
+    let private relativePathForPendingFileWork (pendingFile: PendingFileWorkSnapshot) =
+        Path.GetRelativePath(pendingFile.RootDirectory, pendingFile.FullPath)
+        |> RelativePath
+        |> normalizeRelativePath
+        |> RelativePath
+
+    /// Keeps the newest accepted file state until a status boundary proves that state accounted for.
+    let private retainFileRecoveryEvidence (pendingFile: PendingFileWorkSnapshot) =
+        if pendingFileWorkMatchesCurrentScope pendingFile then
+            fileRecoveryEvidence.AddOrUpdate(
+                pendingFile.FullPath,
+                pendingFile,
+                (fun _ existing -> if pendingFile.Generation >= existing.Generation then pendingFile else existing)
+            )
+            |> ignore
+
+    /// Captures retained queue entries before confidence loss removes the untrusted incremental scheduler state.
+    let private retainFileRecoveryEvidenceFromPendingWork retainPendingFile =
+        for pendingFile in filesToProcess.Values do
+            if retainPendingFile pendingFile then retainFileRecoveryEvidence pendingFile
+
+    /// Retires evidence only for file states whose matching status paths reached a trusted terminal boundary.
+    let private retireFileRecoveryEvidenceForPaths (relativePaths: seq<RelativePath>) =
+        let normalizedRelativePaths =
+            relativePaths
+            |> Seq.map normalizeRelativePath
+            |> Seq.toArray
+
+        for evidence in fileRecoveryEvidence.ToArray() do
+            let evidenceRelativePath = relativePathForPendingFileWork evidence.Value
+
+            if pendingFileWorkMatchesCurrentScope evidence.Value
+               && (normalizedRelativePaths
+                   |> Array.exists (fun relativePath -> String.Equals(relativePath, normalizeRelativePath evidenceRelativePath, watchPathComparison))) then
+                let mutable retiredEvidence = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+                fileRecoveryEvidence.TryRemove(evidence.Key, &retiredEvidence)
+                |> ignore
+
+    /// Retires only the recovery evidence generation that a completed file status boundary actually accounted for.
+    let private retireFileRecoveryEvidenceForProcessedStatusFiles (processedFiles: seq<ProcessedFileStatusSnapshot>) =
+        let processedFileSnapshots = processedFiles |> Seq.toArray
+
+        for evidence in fileRecoveryEvidence.ToArray() do
+            let evidenceRelativePath = relativePathForPendingFileWork evidence.Value
+
+            let accountedFor =
+                processedFileSnapshots
+                |> Array.exists (fun processedFile ->
+                    evidence.Value.Generation = processedFile.Generation
+                    && String.Equals(normalizeRelativePath evidenceRelativePath, normalizeRelativePath processedFile.RelativePath, watchPathComparison))
+
+            if pendingFileWorkMatchesCurrentScope evidence.Value
+               && accountedFor then
+                (fileRecoveryEvidence :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                    .Remove(KeyValuePair(evidence.Key, evidence.Value))
+                |> ignore
+
+    /// Removes stale-scope recovery state for a path after an upload completes outside its accepted branch and root scope.
+    let private discardStaleFileRecoveryStateForScopeChangedPath (pendingFile: PendingFileWorkSnapshot) =
+        let staleRelativePath = relativePathForPendingFileWork pendingFile
+
+        for evidence in fileRecoveryEvidence.ToArray() do
+            let evidenceRelativePath = relativePathForPendingFileWork evidence.Value
+
+            if
+                not (pendingFileWorkMatchesCurrentScope evidence.Value)
+                && String.Equals(normalizeRelativePath evidenceRelativePath, normalizeRelativePath staleRelativePath, watchPathComparison)
+            then
+                let mutable discardedEvidence = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+                fileRecoveryEvidence.TryRemove(evidence.Key, &discardedEvidence)
+                |> ignore
+
+        // Uploaded identities are not scope-tagged, so retire every identity for this path before the new scope can reuse it.
+        removeUploadedFileVersionsForPaths [ staleRelativePath ]
+
+    /// Lists retained current-scope evidence for deterministic recovery lifecycle tests.
+    let internal fileRecoveryEvidencePathsForWatchTests () =
+        fileRecoveryEvidence.Values
+        |> Seq.map (fun pendingFile -> pendingFile.FullPath)
+        |> Seq.sort
+        |> Seq.toArray
+
+    /// Captures one already accepted pending file as recovery evidence for deterministic trusted-boundary tests.
+    let internal retainAcceptedFileRecoveryEvidenceForWatchTests fullPath =
+        let mutable pendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+        if filesToProcess.TryGetValue(fullPath, &pendingFile) then
+            retainFileRecoveryEvidence pendingFile
+            fileRecoveryEvidence.ContainsKey(fullPath)
+        else
+            false
+
     /// Reads enqueue file upload data needed by the command workflow without changing remote state.
     let private enqueueFileUpload fullPath =
-        let shouldIgnore = shouldIgnoreFile fullPath
+        let shouldIgnore = shouldIgnoreFileForWatch fullPath
 
         if not shouldIgnore then
             let generation = Interlocked.Increment(&fileUploadWorkGeneration)
 
-            filesToProcess.AddOrUpdate(fullPath, generation, (fun _ _ -> generation))
+            let pendingFileWork =
+                {
+                    FullPath = fullPath
+                    Generation = generation
+                    RepositoryId = Current().RepositoryId
+                    RepositoryName = Current().RepositoryName
+                    BranchId = Current().BranchId
+                    BranchName = Current().BranchName
+                    RootDirectory =
+                        Path.GetFullPath(Current().RootDirectory)
+                        |> Path.TrimEndingDirectorySeparator
+                    StabilizationAttempts = 0
+                    RetryNotBeforeUtc = stableFileIdentityNowForWatch ()
+                }
+
+            filesToProcess.AddOrUpdate(
+                fullPath,
+                pendingFileWork,
+                (fun _ existingPendingFile ->
+                    if pendingFileWorkMatchesScope existingPendingFile pendingFileWork then
+                        { pendingFileWork with
+                            StabilizationAttempts = existingPendingFile.StabilizationAttempts
+                            RetryNotBeforeUtc = existingPendingFile.RetryNotBeforeUtc
+                        }
+                    else
+                        pendingFileWork)
+            )
             |> ignore
 
             true
         else
             false
 
+    /// Retains a final directory inspection that could not enumerate every required status or file descendant yet.
+    let private enqueueDirectoryUploadRetry directoryPath =
+        if
+            Directory.Exists(directoryPath)
+            && shouldNotIgnoreDirectoryForWatch directoryPath
+        then
+            let generation = Interlocked.Increment(&directoryWorkGeneration)
+
+            let pendingDirectory =
+                {
+                    FullPath = directoryPath
+                    Generation = generation
+                    RepositoryId = Current().RepositoryId
+                    RepositoryName = Current().RepositoryName
+                    BranchId = Current().BranchId
+                    BranchName = Current().BranchName
+                    RootDirectory =
+                        Current().RootDirectory
+                        |> Path.GetFullPath
+                        |> Path.TrimEndingDirectorySeparator
+                }
+
+            directoriesToProcess.AddOrUpdate(
+                directoryPath,
+                pendingDirectory,
+                (fun _ existing ->
+                    if pendingDirectory.Generation >= existing.Generation then
+                        pendingDirectory
+                    else
+                        existing)
+            )
+            |> ignore
+
+    /// Queues every non-ignored file under a directory and reports whether enumeration reached a durable answer.
+    let private tryEnqueueDirectoryContentsForUpload directoryPath =
+        if
+            Directory.Exists(directoryPath)
+            && shouldNotIgnoreDirectoryForWatch directoryPath
+        then
+            try
+                for filePath in enumerateFilesForDirectoryUpload directoryPath do
+                    enqueueFileUpload filePath |> ignore
+
+                true
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Error
+                    $"Unable to enumerate renamed directory {directoryPath}; status update will retry after file uploads can be queued. {Markup.Escape(ex.Message)}"
+
+                false
+        else
+            true
+
+    /// Requeues uploaded paths whose final content could not be matched while the final file still exists.
+    let private reenqueueUnresolvedUploadedFinalFileVersions (relativePaths: seq<RelativePath>) =
+        let requeuedRelativePaths = List<RelativePath>()
+
+        for relativePath in
+            relativePaths
+            |> distinctNormalizedRelativePathsForWatch do
+            let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+            if finalPathMatchesEntryType FileSystemEntryType.File relativePath
+               && File.Exists(fullPath)
+               && enqueueFileUpload fullPath then
+                requeuedRelativePaths.Add(relativePath)
+
+        requeuedRelativePaths
+
+    /// Requeues uploads when stale delete triggers resolve to live final file or directory content.
+    let private reenqueueUploadsForResolvedDeletes
+        (status: GraceStatus)
+        (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
+        (canceledRelativePaths: List<RelativePath>)
+        (processedRelativePaths: List<RelativePath>)
+        (startupPendingDifferences: List<FileSystemDifference>)
+        =
+        task {
+            let requeuedRelativePaths = List<RelativePath>()
+            let mutable index = 0
+
+            while index < statusTriggerSnapshot.Length do
+                let statusTrigger = statusTriggerSnapshot[index]
+                let relativePath = RelativePath statusTrigger.RelativePath
+
+                if not (hasProcessedFileRelativePath processedRelativePaths relativePath) then
+                    let uploadWasCanceled =
+                        canceledRelativePaths
+                        |> Seq.exists (fun canceledPath ->
+                            String.Equals(normalizeRelativePath canceledPath, normalizeRelativePath relativePath, watchPathComparison))
+
+                    let! finalFileContentChanged =
+                        if uploadWasCanceled
+                           || hasMatchingStartupFileDeleteDifference startupPendingDifferences relativePath then
+                            Task.FromResult(false)
+                        else
+                            finalFileContentChangedFromTrackedStatus status relativePath
+
+                    if (uploadWasCanceled || finalFileContentChanged)
+                       && finalPathMatchesEntryType FileSystemEntryType.File relativePath then
+                        let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+                        if enqueueFileUpload fullPath then requeuedRelativePaths.Add(relativePath)
+                    elif uploadWasCanceled
+                         && finalPathMatchesEntryType FileSystemEntryType.Directory relativePath then
+                        let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+                        if tryEnqueueDirectoryContentsForUpload fullPath then
+                            requeuedRelativePaths.Add(relativePath)
+                        else
+                            enqueueDirectoryUploadRetry fullPath
+                            requeuedRelativePaths.Add(relativePath)
+
+                index <- index + 1
+
+            clearCanceledFileUploadDeleteRelativePaths requeuedRelativePaths
+            return requeuedRelativePaths
+        }
+
     /// Reads remove pending file upload data needed by the command workflow without changing remote state.
     let private removePendingFileUpload filePath =
-        let mutable generation = 0L
+        let mutable pendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
 
-        filesToProcess.TryRemove(filePath, &generation)
-        |> ignore
+        filesToProcess.TryRemove(filePath, &pendingFile)
 
-    /// Reads cancel pending uploads for deleted path data needed by the command workflow without changing remote state.
+    /// Cancels pending upload work covered by a delete or rename-old path before status observes the disappearance.
     let private cancelPendingUploadsForDeletedPath fullPath =
-        removePendingFileUpload fullPath
+        let mutable canceledFileUpload = removePendingFileUpload fullPath
 
         match repositoryRelativePath fullPath with
-        | Some relativePath -> removePendingFileUpload relativePath
+        | Some relativePath -> if removePendingFileUpload relativePath then canceledFileUpload <- true
         | None -> ()
 
         let normalizedFullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(fullPath))
@@ -398,26 +2639,1929 @@ module Watch =
             | None -> None
 
         for queuedFile in filesToProcess.Keys.ToArray() do
-            let removeQueuedFile =
-                let normalizedQueuedFile =
-                    try
-                        Path.GetFullPath(queuedFile)
-                    with
-                    | _ -> queuedFile
+            let normalizedQueuedFile =
+                try
+                    Path.GetFullPath(queuedFile)
+                with
+                | _ -> queuedFile
 
+            let removeQueuedFile =
                 normalizedQueuedFile.Equals(normalizedFullPath, watchPathComparison)
                 || normalizedQueuedFile.StartsWith(fullPathPrefix, watchPathComparison)
                 || (match relativePathPrefix with
                     | Some prefix -> queuedFile.StartsWith(prefix, watchPathComparison)
                     | None -> false)
 
-            if removeQueuedFile then removePendingFileUpload queuedFile
+            if removeQueuedFile then
+                if removePendingFileUpload queuedFile then canceledFileUpload <- true
+
+        canceledFileUpload
+
+    /// Retires same-path file stabilization and status evidence when final-state inspection proves the path is now a directory.
+    let private transferFileWorkToDirectoryProcessing directoryPath =
+        removePendingFileUpload directoryPath |> ignore
+
+        match repositoryRelativePath directoryPath with
+        | Some relativePath ->
+            let directoryRelativePath = RelativePath relativePath
+            let mutable removedRecoveryEvidence = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+            fileRecoveryEvidence.TryRemove(directoryPath, &removedRecoveryEvidence)
+            |> ignore
+
+            clearProcessedFileRelativePathsPendingStatusForPaths [ directoryRelativePath ]
+            clearCanceledFileUploadDeleteRelativePaths [ directoryRelativePath ]
+            removeUploadedFileVersionsForPaths [ directoryRelativePath ]
+        | None -> ()
+
+    /// Checks whether two status differences represent the same repository path observation.
+    let private statusDifferenceMatches (left: FileSystemDifference) (right: FileSystemDifference) =
+        left.DifferenceType = right.DifferenceType
+        && left.FileSystemEntryType = right.FileSystemEntryType
+        && String.Equals(normalizeRelativePath left.RelativePath, normalizeRelativePath right.RelativePath, watchPathComparison)
+
+    /// Records an already-derived filesystem difference so status application can retry without duplicating work.
+    let private addPendingStatusDifference (difference: FileSystemDifference) =
+        lock pendingStatusDifferencesLock (fun () ->
+            if not
+               <| pendingStatusDifferences.Exists(fun existing -> statusDifferenceMatches existing difference) then
+                pendingStatusDifferences.Add(difference))
+
+    /// Builds the stable key used to pair a startup-replayed difference with its existing journal sequence.
+    let private pendingStatusDifferenceReplayKey (difference: FileSystemDifference) =
+        $"{getDiscriminatedUnionCaseName difference.DifferenceType}|{getDiscriminatedUnionCaseName difference.FileSystemEntryType}|{normalizeRelativePath difference.RelativePath}"
+
+    /// Rebuilds the replay sequence dictionary when repository path comparison changes.
+    let private ensureStartupReplaySequenceComparer () =
+        let desiredComparer = stringComparerForWatchPathComparison watchPathComparison
+
+        if not (obj.ReferenceEquals(pendingStatusDifferenceReplaySequences.Comparer, desiredComparer)) then
+            let replacement = Dictionary<string, Queue<int64>>(desiredComparer)
+
+            for pair in pendingStatusDifferenceReplaySequences do
+                replacement[pair.Key] <- Queue<int64>(pair.Value)
+
+            pendingStatusDifferenceReplaySequences <- replacement
+
+    /// Records one replay sequence and optionally queues its difference for startup status application.
+    let private recordStartupReplaySequence queueDifference sequence (difference: FileSystemDifference) =
+        lock pendingStatusDifferencesLock (fun () ->
+            ensureStartupReplaySequenceComparer ()
+
+            if queueDifference then addPendingStatusDifference difference
+
+            let key = pendingStatusDifferenceReplayKey difference
+            let mutable queue = Unchecked.defaultof<Queue<int64>>
+
+            if not (pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue)) then
+                queue <- Queue<int64>()
+                pendingStatusDifferenceReplaySequences.Add(key, queue)
+
+            queue.Enqueue(sequence))
+
+    /// Queues one startup-replayed difference without creating a duplicate durable journal row.
+    let private addStartupReplayedStatusDifference sequence (difference: FileSystemDifference) = recordStartupReplaySequence true sequence difference
+
+    /// Remembers a row appended during deferred replay so the next retry does not append it again.
+    let private rememberDeferredStartupReplaySequence sequence (difference: FileSystemDifference) = recordStartupReplaySequence false sequence difference
+
+    /// Reads the existing startup replay sequences for a difference that should not be appended again.
+    let private startupReplaySequencesForDifference (difference: FileSystemDifference) =
+        lock pendingStatusDifferencesLock (fun () ->
+            ensureStartupReplaySequenceComparer ()
+            let key = pendingStatusDifferenceReplayKey difference
+            let mutable queue = Unchecked.defaultof<Queue<int64>>
+
+            if
+                pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue)
+                && queue.Count > 0
+            then
+                queue.ToArray()
+            else
+                Array.empty<int64>)
+
+    /// Reads the first existing startup replay sequence for tests that assert duplicate append prevention.
+    let private tryPeekStartupReplaySequence (difference: FileSystemDifference) =
+        match startupReplaySequencesForDifference difference with
+        | [||] -> None
+        | sequences -> Some sequences[0]
+
+    /// Reports the replay sequence queued for a difference in startup recovery tests.
+    let internal tryPeekStartupReplaySequenceForWatchTests difference = tryPeekStartupReplaySequence difference
+
+    /// Reads the replay sequences represented by differences that reached a durable terminal outcome.
+    let private startupReplaySequencesForTerminalDifferences (differences: seq<FileSystemDifference>) =
+        differences
+        |> Seq.collect startupReplaySequencesForDifference
+        |> Seq.toArray
+
+    /// Removes replay metadata for one pending difference and returns the durable rows it represented.
+    let private takeStartupReplaySequencesForDifference (difference: FileSystemDifference) =
+        let key = pendingStatusDifferenceReplayKey difference
+        let mutable queue = Unchecked.defaultof<Queue<int64>>
+
+        if pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue) then
+            pendingStatusDifferenceReplaySequences.Remove(key)
+            |> ignore
+
+            queue.ToArray()
+        else
+            Array.empty<int64>
+
+    /// Removes replay metadata for one pending difference after it has reached a terminal local outcome.
+    let private clearStartupReplaySequenceForDifference (difference: FileSystemDifference) =
+        takeStartupReplaySequencesForDifference difference
+        |> ignore
+
+    /// Consumes replay sequence metadata only after the corresponding pending status difference is cleared.
+    let private clearStartupReplaySequences (differences: seq<FileSystemDifference>) =
+        lock pendingStatusDifferencesLock (fun () ->
+            ensureStartupReplaySequenceComparer ()
+
+            for difference in differences do
+                clearStartupReplaySequenceForDifference difference)
+
+    /// Reads the GraceStatus snapshot that authorizes a bounded directory inspection, refusing to derive additions from an unavailable status.
+    let private readGraceStatusForDirectoryAddClassification () =
+        if (not graceStatusHasChanged)
+           && graceStatus.Index.Count > 0 then
+            Some graceStatus
+        else
+            try
+                let refreshedStatus =
+                    (readGraceStatusFileForDeletedPathClassification ())
+                        .GetAwaiter()
+                        .GetResult()
+
+                graceStatus <- refreshedStatus
+                Some refreshedStatus
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch deferred directory inspection because current Grace Status could not be read: {Markup.Escape(ex.Message)}"
+
+                None
+
+    /// Finds the first untracked directory below the tracked tree that bounds an observed directory's affected subtree.
+    let private affectedDirectorySubtreeRoot (status: GraceStatus) fullPath =
+        match repositoryRelativePath fullPath with
+        | Some relativePath ->
+            let segments =
+                (normalizeRelativePath (RelativePath relativePath))
+                    .Split('/', StringSplitOptions.RemoveEmptyEntries)
+
+            let mutable subtreeRoot = fullPath
+            let mutable foundUntrackedAncestor = false
+
+            for segmentIndex in 0 .. segments.Length - 1 do
+                if not foundUntrackedAncestor then
+                    let candidateRelativePath =
+                        RelativePath(String.Join("/", segments[0..segmentIndex]))
+                        |> canonicalizeTrackedAncestorCasing status
+
+                    let candidatePath = Path.Combine(Current().RootDirectory, normalizeRelativePath candidateRelativePath)
+
+                    if not (isTrackedDirectory status candidateRelativePath)
+                       && Directory.Exists(candidatePath)
+                       && directoryAndAncestorsShouldNotBeIgnored candidatePath then
+                        subtreeRoot <- candidatePath
+                        foundUntrackedAncestor <- true
+
+            subtreeRoot
+        | None -> fullPath
+
+    /// Queues directory add differences and reports whether final-state inspection must enumerate the affected subtree.
+    let private tryEnqueueDirectoryStatusAdds fullPath =
+        match readGraceStatusForDirectoryAddClassification () with
+        | Some status ->
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                let finalDirectoryRelativePath = RelativePath relativePath
+
+                let replacedTrackedFile = tryFindTrackedFile status finalDirectoryRelativePath
+
+                match replacedTrackedFile with
+                | Some trackedFile -> addPendingStatusDifference (FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
+                | None -> ()
+
+                let subtreeRoot = affectedDirectorySubtreeRoot status fullPath
+                let directoryAddDifferences, completedEnumeration = tryDeriveDirectorySubtreeAddDifferences status subtreeRoot
+
+                for difference in directoryAddDifferences do
+                    addPendingStatusDifference difference
+
+                directoryAddDifferences.Count > 0
+                || replacedTrackedFile.IsSome,
+                completedEnumeration,
+                true,
+                subtreeRoot
+            | None -> false, true, false, fullPath
+        | None -> false, false, false, fullPath
+
+    /// Queues the final directory state and all retained descendants, transferring stale same-path file work before bounded enumeration.
+    let private enqueueFinalDirectoryWork fullPath =
+        transferFileWorkToDirectoryProcessing fullPath
+
+        let directoryStatusAddQueued, directoryStatusEnumerationComplete, requiresSubtreeEnumeration, subtreeRoot = tryEnqueueDirectoryStatusAdds fullPath
+
+        let fileUploadWorkCountBefore = filesToProcess.Count
+
+        let fileUploadEnumerationComplete =
+            if directoryStatusEnumerationComplete
+               && requiresSubtreeEnumeration then
+                tryEnqueueDirectoryContentsForUpload subtreeRoot
+            else
+                directoryStatusEnumerationComplete
+
+        if not directoryStatusEnumerationComplete
+           || not fileUploadEnumerationComplete then
+            enqueueDirectoryUploadRetry subtreeRoot
+
+        directoryStatusAddQueued
+        || filesToProcess.Count > fileUploadWorkCountBefore
+        || not directoryStatusEnumerationComplete
+        || not fileUploadEnumerationComplete
+
+    /// Captures the already-derived differences waiting for the shared status-application path.
+    let private pendingStatusDifferencesSnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.ToList())
+
+    /// Checks whether any pre-derived filesystem differences still need status application.
+    let private hasPendingStatusDifferences () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Count > 0)
+
+    /// Clears only the differences that a successful status update already applied.
+    let private clearPendingStatusDifferences (differences: List<FileSystemDifference>) =
+        lock pendingStatusDifferencesLock (fun () ->
+            for difference in differences do
+                pendingStatusDifferences.Remove(difference)
+                |> ignore
+
+            ())
+
+    /// Clears pre-derived differences when tests reset watch module state.
+    let private clearPendingStatusDifferencesForTests () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Clear())
+
+    /// Records one pending observation as quarantined so confidence recovery never replays it implicitly.
+    let private quarantineWatchObservation reason observationKind path =
+        Interlocked.Increment(&quarantinedWatchObservationCount)
+        |> ignore
+
+        logToAnsiConsole Colors.Verbose $"Grace Watch quarantined {observationKind} observation for {path}: {reason}."
+
+    /// Moves queued Watch observations out of the trusted incremental path after confidence is lost, retaining only file snapshots whose final bytes still belong to the active recovery scope.
+    let private quarantinePendingWatchWork reason retainPendingFile =
+        let mutable quarantinedCount = 0
+        let mutable removedPendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
+        let mutable removedPendingDirectory = Unchecked.defaultof<PendingDirectoryWorkSnapshot>
+        let mutable triggerGeneration = 0L
+        let discardedEvidenceRelativePaths = List<RelativePath>()
+
+        for pendingFile in filesToProcess.ToArray() do
+            if
+                not (retainPendingFile pendingFile.Value)
+                && filesToProcess.TryRemove(pendingFile.Key, &removedPendingFile)
+            then
+                quarantineWatchObservation reason "file" pendingFile.Key
+                quarantinedCount <- quarantinedCount + 1
+
+        for evidence in fileRecoveryEvidence.ToArray() do
+            if
+                not (retainPendingFile evidence.Value)
+                && fileRecoveryEvidence.TryRemove(evidence.Key, &removedPendingFile)
+            then
+                discardedEvidenceRelativePaths.Add(relativePathForPendingFileWork evidence.Value)
+                quarantineWatchObservation reason "file-recovery-evidence" evidence.Key
+                quarantinedCount <- quarantinedCount + 1
+
+        for pendingDirectory in directoriesToProcess.ToArray() do
+            if directoriesToProcess.TryRemove(pendingDirectory.Key, &removedPendingDirectory) then
+                quarantineWatchObservation reason "directory" pendingDirectory.Key
+                quarantinedCount <- quarantinedCount + 1
+
+        for pendingTrigger in statusUpdateTriggers.ToArray() do
+            if statusUpdateTriggers.TryRemove(pendingTrigger.Key, &triggerGeneration) then
+                quarantineWatchObservation reason "status-trigger" pendingTrigger.Key
+                quarantinedCount <- quarantinedCount + 1
+
+        let pendingDifferences, startupReplaySequencesToQuarantine =
+            lock pendingStatusDifferencesLock (fun () ->
+                ensureStartupReplaySequenceComparer ()
+                let snapshot = pendingStatusDifferences.ToArray()
+                let replaySequences = ResizeArray<int64>()
+
+                for pendingDifference in snapshot do
+                    replaySequences.AddRange(takeStartupReplaySequencesForDifference pendingDifference)
+
+                pendingStatusDifferences.Clear()
+                snapshot, replaySequences.ToArray())
+
+        for pendingDifference in pendingDifferences do
+            quarantineWatchObservation reason "status-difference" $"{pendingDifference.RelativePath}"
+            quarantinedCount <- quarantinedCount + 1
+
+        let startupReplayRowsDurablyTerminal =
+            if startupReplaySequencesToQuarantine.Length > 0 then
+                try
+                    let advancedThrough =
+                        (quarantineWatchJournalSequencesForWatch startupReplaySequencesToQuarantine $"confidence loss discarded startup replay work: {reason}")
+                            .GetAwaiter()
+                            .GetResult()
+
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Grace Watch durably quarantined {startupReplaySequencesToQuarantine.Length} startup replay journal rows through applied boundary {advancedThrough} after confidence loss."
+
+                    true
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch could not durably quarantine startup replay journal rows after confidence loss; Watch will remain suspended so the old startup replay sequence cannot block later applied-boundary advancement silently: {Markup.Escape(ex.Message)}."
+
+                    false
+            else
+                true
+
+        if discardedEvidenceRelativePaths.Count > 0 then
+            removeUploadedFileVersionsForPaths discardedEvidenceRelativePaths
+
+        lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
+        lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
+
+        if quarantinedCount > 0 then
+            logToAnsiConsole Colors.Important $"Grace Watch quarantined {quarantinedCount} pending observations after confidence loss: {reason}."
+
+        startupReplayRowsDurablyTerminal
+
+    /// Requeues evidence whose final bytes cannot yet prove the uploaded state still matches before scan-derived recovery runs.
+    let private recoveryEvidenceReadyForResyncScan () =
+        task {
+            let mutable readyForScan = true
+
+            for evidence in fileRecoveryEvidence.ToArray() do
+                let pendingFile = evidence.Value
+
+                if not (pendingFileWorkMatchesCurrentScope pendingFile) then
+                    let mutable discardedEvidence = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+                    if fileRecoveryEvidence.TryRemove(evidence.Key, &discardedEvidence) then
+                        removeUploadedFileVersionsForPaths [ relativePathForPendingFileWork pendingFile ]
+                        quarantineWatchObservation "recovery evidence scope changed before scan" "file-recovery-evidence" evidence.Key
+                elif filesToProcess.ContainsKey(pendingFile.FullPath) then
+                    readyForScan <- false
+                else
+                    match! tryFindUploadedFinalFileVersion (relativePathForPendingFileWork pendingFile) with
+                    | UploadedFinalFileVersionFound _
+                    | UploadedFinalFileVersionMissing -> ()
+                    | UploadedFinalFileVersionUnavailable
+                    | UploadedFinalFileVersionUnmatched ->
+                        filesToProcess.TryAdd(pendingFile.FullPath, pendingFile)
+                        |> ignore
+
+                        readyForScan <- false
+
+            return readyForScan
+        }
+
+    /// Reads the active explicit-resync attempt token used to reject stale recovery side effects.
+    let private currentGraceWatchResyncAttempt () = Volatile.Read(&graceWatchResyncGeneration)
+
+    /// Reports whether an explicit resync scan must run before incremental observation application resumes.
+    let private isGraceWatchResyncPending () = currentGraceWatchResyncAttempt () <> 0L
+
+    /// Reports whether an explicit resync scan is pending for Watch confidence-boundary tests.
+    let internal isGraceWatchResyncPendingForWatchTests () = isGraceWatchResyncPending ()
+
+    /// Reports whether an in-flight resync attempt still owns the recovery boundary.
+    let private isGraceWatchResyncAttemptCurrent attempt =
+        attempt <> 0L
+        && currentGraceWatchResyncAttempt () = attempt
+
+    /// Reports whether an in-flight resync attempt may still apply recovery side effects.
+    let private isGraceWatchResyncAttemptActive attempt =
+        isGraceWatchResyncAttemptCurrent attempt
+        && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Resynchronizing
+
+    let mutable private statusSideEffectTrustPredicate = fun () -> true
+
+    let mutable private beforeWatchStatusCommitProbe = fun () -> ()
+
+    /// Overrides the local status-commit interleaving probe for deterministic generation handoff tests.
+    let internal setBeforeWatchStatusCommitProbeForWatchTests probe = beforeWatchStatusCommitProbe <- probe
+
+    /// Restores the local status-commit interleaving probe after deterministic generation handoff tests.
+    let internal resetBeforeWatchStatusCommitProbeForWatchTests () = beforeWatchStatusCommitProbe <- fun () -> ()
+
+    /// Reports whether Watch still trusts the current status update enough to write remote or local side effects.
+    let private statusSideEffectsStillTrusted () = statusSideEffectTrustPredicate ()
+
+    /// Reports the active status side-effect trust state for Watch confidence-boundary tests.
+    let internal statusSideEffectsStillTrustedForWatchTests () = statusSideEffectsStillTrusted ()
+
+    /// Runs status application with a confidence predicate that can be rechecked between side effects.
+    let private runWithStatusSideEffectTrustPredicate predicate operation =
+        task {
+            let previousPredicate = statusSideEffectTrustPredicate
+            statusSideEffectTrustPredicate <- predicate
+
+            try
+                return! operation ()
+            finally
+                statusSideEffectTrustPredicate <- previousPredicate
+        }
+
+    /// Stops status application before a side effect when Watch lost the confidence boundary for this update.
+    let private statusSideEffectStillAllowed sideEffectName =
+        let allowed = statusSideEffectsStillTrusted ()
+
+        if not allowed then
+            logToAnsiConsole Colors.Important $"Grace Watch skipped {sideEffectName} because confidence was lost before status side effects completed."
+
+        allowed
+
+    /// Clears the pending resync request once scan-derived status has reached the durable boundary.
+    let private clearGraceWatchResyncPending () = Volatile.Write(&graceWatchResyncGeneration, 0L)
+
+    /// Clears a specific resync attempt without losing a newer confidence-loss request.
+    let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
+
+    let private graceWatchResyncTransitionLock = obj ()
+
+    /// Clears the direct-callback marker-completion block only after this exact resync attempt reached a clean recovery boundary.
+    let private tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss attempt =
+        lock graceWatchResyncTransitionLock (fun () ->
+            if tryClearGraceWatchResyncAttempt attempt then
+                Volatile.Write(&markerCompletionConfidenceLossActive, 0)
+                Volatile.Write(&localObservationConfidenceLossActive, 0)
+                true
+            else
+                false)
+
+    let mutable private beforeGraceWatchResyncEvidenceRetirementProbe = fun () -> ()
+
+    /// Overrides the evidence-retirement interleaving probe for deterministic Watch resync transition tests.
+    let internal setBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests probe = beforeGraceWatchResyncEvidenceRetirementProbe <- probe
+
+    /// Restores the evidence-retirement interleaving probe after deterministic Watch resync transition tests.
+    let internal resetBeforeGraceWatchResyncEvidenceRetirementProbeForWatchTests () = beforeGraceWatchResyncEvidenceRetirementProbe <- fun () -> ()
+
+    /// Atomically retires recovery evidence and resumes incremental mode only while this exact attempt still owns recovery.
+    let private tryCompleteGraceWatchResyncRecovery attempt recoveredEvidencePaths =
+        lock graceWatchResyncTransitionLock (fun () ->
+            if isGraceWatchResyncAttemptActive attempt then
+                retireFileRecoveryEvidenceForPaths recoveredEvidencePaths
+                removeUploadedFileVersionsForPaths recoveredEvidencePaths
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
+                true
+            else
+                false)
+
+    let mutable private beforeGraceWatchResyncAttemptRetirementProbe = fun () -> ()
+
+    /// Overrides the exact resync-attempt retirement probe for deterministic Watch recovery race tests.
+    let internal setBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests probe = beforeGraceWatchResyncAttemptRetirementProbe <- probe
+
+    /// Restores the exact resync-attempt retirement probe after deterministic Watch recovery race tests.
+    let internal resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests () = beforeGraceWatchResyncAttemptRetirementProbe <- fun () -> ()
+
+    let mutable private afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe = fun () -> ()
+
+    /// Overrides the post-clean recovery probe for deterministic stale-attempt publication tests.
+    let internal setAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests probe =
+        afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe <- probe
+
+    /// Restores the post-clean recovery probe after deterministic stale-attempt publication tests.
+    let internal resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests () =
+        afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe <- fun () -> ()
+
+    let mutable private manualPendingWatchWorkStatusFlag = 0
+
+    /// Reports whether a coordinator-owned side effect must keep Watch IPC dirty before normal queues can observe it.
+    let private hasManualPendingWatchWorkStatusFlag () =
+        Volatile.Read(&manualPendingWatchWorkStatusFlag)
+        <> 0
+
+    /// Reads whether unresolved durable journal rows still need local Watch processing.
+    let private inspectDurableWatchJournalPendingEvidence () =
+        try
+            let summary =
+                readWatchJournalPendingWorkSummaryForWatch()
+                    .GetAwaiter()
+                    .GetResult()
+
+            Ok summary.HasPendingRows
+        with
+        | ex ->
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
+
+            Error ex.Message
+
+    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
+    let private hasPendingDurableWatchJournalEvidence () =
+        match inspectDurableWatchJournalPendingEvidence () with
+        | Ok hasPendingRows -> hasPendingRows
+        | Error _ -> true
+
+    /// Describes pending Watch work without merging process-local queues and durable journal evidence.
+    type private PendingWatchWorkEvidence =
+        {
+            HasProcessablePendingWork: bool
+            HasManualPendingStatusEvidence: bool
+            HasDurableWatchJournalEvidence: bool
+            HasLocalObservationConfidenceLoss: bool
+        }
+
+        /// Reports whether Watch work, confidence loss, or durable journal evidence must keep IPC dirty.
+        member this.HasPendingWork =
+            this.HasProcessablePendingWork
+            || this.HasManualPendingStatusEvidence
+            || this.HasDurableWatchJournalEvidence
+            || this.HasLocalObservationConfidenceLoss
+
+        /// Reports whether durable journal evidence is the only reason IPC must be dirty.
+        member this.HasDurableOnlyPendingWork =
+            this.HasDurableWatchJournalEvidence
+            && not this.HasProcessablePendingWork
+            && not this.HasManualPendingStatusEvidence
+            && not this.HasLocalObservationConfidenceLoss
+
+    /// Distinguishes exact IPC verification from the pending-work state that snapshot advertises.
+    type private PendingWatchWorkPublicationVerification =
+        /// A verified IPC snapshot advertises no pending Watch work.
+        | VerifiedCleanPendingWorkPublication
+        /// A verified IPC snapshot advertises pending Watch work.
+        | VerifiedDirtyPendingWorkPublication
+        /// No stable IPC snapshot was verified for the attempted publication.
+        | UnverifiedPendingWorkPublication
+
+    /// Distinguishes a verified clean recovery from a verified dirty recovery publication that must retain retry state.
+    type private ResyncRecoveryPublicationResult =
+        /// The recovered status is clean, inspected as usable and healthy, and has no fresh pending-work evidence.
+        | VerifiedCleanRecoveryPublication
+        /// Recovery wrote and verified a dirty IPC snapshot, so latch and resync retirement remain forbidden.
+        | VerifiedDirtyRecoveryPublication
+        /// Recovery could not prove a clean result and must retain fail-closed pending state.
+        | UnverifiedRecoveryPublication
+
+    /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
+    let private hasProcessablePendingWatchWorkExceptManual () =
+        isGraceWatchResyncPending ()
+        || hasLocalObservationConfidenceLoss ()
+        || graceStatusHasChanged
+        || hasPendingLocalObservationCandidates ()
+        || not (
+            filesToProcess.IsEmpty
+            && fileRecoveryEvidence.IsEmpty
+            && directoriesToProcess.IsEmpty
+            && statusUpdateTriggers.IsEmpty
+            && not (hasPendingStatusDifferences ())
+        )
+
+    /// Evaluates pending Watch work without counting the startup catch-up marker against its own clean publication.
+    let private hasPendingWatchWorkExceptManual () =
+        hasProcessablePendingWatchWorkExceptManual ()
+        || hasPendingDurableWatchJournalEvidence ()
+
+    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
+    let private hasProcessablePendingWatchWork () = hasProcessablePendingWatchWorkExceptManual ()
+
+    /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
+    let private hasPendingWatchWork () =
+        hasManualPendingWatchWorkStatusFlag ()
+        || hasProcessablePendingWatchWork ()
+        || hasPendingDurableWatchJournalEvidence ()
+
+    /// Reads process-local and durable pending-work facts once for a single status publication decision.
+    let private readPendingWatchWorkEvidence () =
+        let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
+
+        {
+            HasProcessablePendingWork = hasProcessablePendingWork
+            HasManualPendingStatusEvidence = hasManualPendingWatchWorkStatusFlag ()
+            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+            HasLocalObservationConfidenceLoss = hasLocalObservationConfidenceLoss ()
+        }
+
+    /// Exposes pending Watch work checks to tests without running the foreground timer loop.
+    let internal pendingWatchWorkEvidenceForWatchTests () =
+        let evidence = readPendingWatchWorkEvidence ()
+
+        evidence.HasProcessablePendingWork, evidence.HasPendingWork
+
+    /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
+    let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
+
+    /// Records that a Grace Status DB, WAL, SHM, or journal observation must be applied by a timer pass.
+    let private recordGraceStatusRefreshObservation () =
+        Interlocked.Increment(&graceStatusRefreshGeneration)
+        |> ignore
+
+        graceStatusHasChanged <- true
+
+    /// Clears exactly the Grace Status refresh generation consumed by a successful publication.
+    let private tryClearGraceStatusRefreshGeneration observedGeneration =
+        if Interlocked.CompareExchange(&graceStatusRefreshGeneration, 0L, observedGeneration) = observedGeneration then
+            graceStatusHasChanged <- false
+            true
+        else
+            graceStatusHasChanged <- true
+            false
+
+    /// Records the pending-work flag that the next Watch IPC snapshot should publish.
+    let private setGraceWatchPendingWorkStatusFlag hasPendingWork =
+        lock watchStatusPublishLock (fun () ->
+            Interlocked.Exchange(&manualPendingWatchWorkStatusFlag, (if hasPendingWork then 1 else 0))
+            |> ignore
+
+            setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+    /// Sets the materialization pending status marker for focused Watch tests.
+    let internal setGraceWatchPendingWorkStatusFlagForWatchTests hasPendingWork = setGraceWatchPendingWorkStatusFlag hasPendingWork
+
+    /// Reports whether focused Watch tests still have the manual materialization pending marker set.
+    let internal hasManualPendingWatchWorkStatusFlagForWatchTests () = hasManualPendingWatchWorkStatusFlag ()
+
+    /// Reports the cached pending-work result so recovery tests can prove failed dirty reassertion discards clean evidence.
+    let internal lastPublishedHasPendingWatchWorkForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork)
+
+    /// Returns the exact verified status scope retained for callback admission in focused Watch tests.
+    let internal lastPublishedWatchObservationScopeForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedWatchObservationScope)
+
+    /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
+    let private pendingWatchWorkTransitionNeedsPublication () =
+        File.Exists(IpcFileName())
+        && lastPublishedHasPendingWatchWork
+           <> Some((readPendingWatchWorkEvidence ()).HasPendingWork)
+
+    /// Returns the root BLAKE3 hash that Watch expects to see in the IPC snapshot it just published.
+    let private expectedRootDirectoryBlake3Hash (status: GraceStatus) =
+        let mutable rootDirectoryVersion = LocalDirectoryVersion.Default
+
+        if status.Index.TryGetValue(status.RootDirectoryId, &rootDirectoryVersion) then
+            rootDirectoryVersion.Blake3Hash
+        elif not (String.IsNullOrWhiteSpace(string status.RootDirectoryBlake3Hash)) then
+            status.RootDirectoryBlake3Hash
+        else
+            Blake3Hash String.Empty
+
+    /// Verifies the on-disk Watch IPC snapshot has the exact pending-work and content identity expected by a publication.
+    let private statusMatchesExpectedPendingWorkPublication
+        (expectedStatus: GraceStatus)
+        (expectedDirectoryIds: HashSet<DirectoryVersionId>)
+        hasPendingWork
+        (status: GraceWatchStatus)
+        =
+        status.HasPendingWatchWork = hasPendingWork
+        && status.IsWorkingTreeClean = not hasPendingWork
+        && status.RootDirectoryId = expectedStatus.RootDirectoryId
+        && status.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
+        && status.RootDirectoryBlake3Hash = expectedRootDirectoryBlake3Hash expectedStatus
+        && not (isNull status.DirectoryIds)
+        && status.DirectoryIds.SetEquals(expectedDirectoryIds)
+
+    /// Verifies the current durable GraceStatus still has the exact identity represented by a clean IPC publication.
+    let private graceStatusMatchesExpectedPendingWorkPublication
+        (expectedStatus: GraceStatus)
+        (expectedDirectoryIds: HashSet<DirectoryVersionId>)
+        (currentStatus: GraceStatus)
+        =
+        currentStatus.RootDirectoryId = expectedStatus.RootDirectoryId
+        && currentStatus.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
+        && expectedRootDirectoryBlake3Hash currentStatus = expectedRootDirectoryBlake3Hash expectedStatus
+        && expectedDirectoryIds.SetEquals(currentStatus.Index.Keys)
+
+    /// Re-reads durable GraceStatus for a clean publication return boundary and fails closed when its identity is unavailable or changed.
+    let private tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds =
+        try
+            readGraceStatusFileForPendingWorkTransition()
+                .GetAwaiter()
+                .GetResult()
+            |> graceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds
+        with
+        | _ -> false
+
+    /// Verifies the on-disk Watch IPC snapshot is the snapshot this publication attempt wrote.
+    let private statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt (status: GraceWatchStatus) =
+        status.UpdatedAt >= publicationStartedAt
+        && statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork status
+
+    /// Advances pending-work and observation-scope caches together only after the exact IPC snapshot proves it reached disk.
+    let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds expectedObservationScope hasPendingWork publicationStartedAt =
+        let transitionWasPublished =
+            try
+                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                inspection.Status
+                |> Option.exists (statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt)
+            with
+            | _ -> false
+
+        lock watchStatusPublishLock (fun () ->
+            lastPublishedHasPendingWatchWork <- if transitionWasPublished then Some hasPendingWork else None
+
+            if transitionWasPublished then
+                match expectedObservationScope with
+                | Some observationScope when publishedWatchObservationScopeMatchesCurrentConfiguration observationScope ->
+                    lastPublishedWatchObservationScope <- Some observationScope
+                | _ -> ())
+
+        if not transitionWasPublished then
+            logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
+
+        transitionWasPublished
+
+    /// Publishes Watch IPC after reading pending-work evidence inside the serialized status boundary.
+    let private tryPublishWatchIpcWithPendingWorkEvidenceProbeResult
+        (readPendingWorkEvidence: unit -> PendingWatchWorkEvidence)
+        expectedStatus
+        expectedDirectoryIds
+        (writeSnapshot: unit -> Task<unit>)
+        =
+        lock watchStatusPublishLock (fun () ->
+            let mutable attempts = 0
+            let mutable transitionWasPublished = false
+            let mutable pendingWorkChangedDuringWrite = true
+            let mutable publishedHasPendingWork = None
+
+            while pendingWorkChangedDuringWrite && attempts < 2 do
+                attempts <- attempts + 1
+                let pendingEvidence = readPendingWorkEvidence ()
+                let hasPendingWork = pendingEvidence.HasPendingWork
+                setGraceWatchHasPendingWorkForStatus hasPendingWork
+                let publicationStartedAt = getCurrentInstant ()
+
+                let statusForVerification, directoryIdsForVerification =
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        GraceStatus.Default, HashSet<DirectoryVersionId>()
+                    else
+                        expectedStatus, expectedDirectoryIds
+
+                let observationScopeForVerification =
+                    if hasWatchObservationRootIdentity statusForVerification then
+                        Some(watchObservationScopeForStatus statusForVerification)
+                    else
+                        None
+
+                try
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                        match currentGraceWatchRuntimeMode () with
+                        | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
+                        | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds)
+                        |> fun writeTask -> writeTask.GetAwaiter().GetResult()
+                    else
+                        writeSnapshot().GetAwaiter().GetResult()
+
+                    transitionWasPublished <-
+                        cachePendingWatchWorkPublicationIfVerified
+                            statusForVerification
+                            directoryIdsForVerification
+                            observationScopeForVerification
+                            hasPendingWork
+                            publicationStartedAt
+
+                    publishedHasPendingWork <- if transitionWasPublished then Some hasPendingWork else None
+                with
+                | ex ->
+                    transitionWasPublished <- false
+                    publishedHasPendingWork <- None
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
+
+                pendingWorkChangedDuringWrite <-
+                    (readPendingWorkEvidence ()).HasPendingWork
+                    <> hasPendingWork
+
+            match transitionWasPublished, pendingWorkChangedDuringWrite, publishedHasPendingWork with
+            | true, false, Some false -> VerifiedCleanPendingWorkPublication
+            | true, false, Some true -> VerifiedDirtyPendingWorkPublication
+            | _ -> UnverifiedPendingWorkPublication)
+
+    /// Reports whether a pending-work publication result proved that any exact IPC snapshot reached disk.
+    let private isPendingWatchWorkPublicationVerified publicationResult =
+        match publicationResult with
+        | VerifiedCleanPendingWorkPublication
+        | VerifiedDirtyPendingWorkPublication -> true
+        | UnverifiedPendingWorkPublication -> false
+
+    /// Publishes Watch IPC after reading pending-work evidence inside the serialized status boundary.
+    let private tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot =
+        tryPublishWatchIpcWithPendingWorkEvidenceProbeResult readPendingWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+        |> isPendingWatchWorkPublicationVerified
+
+    /// Verifies that the inspected Watch IPC snapshot is a usable healthy clean publication of the expected status.
+    let private isUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds (inspection: GraceWatchStatusInspection) =
+        inspection.IsUsable
+        && inspection.EffectiveMode = Some GraceWatchRuntimeMode.HealthyIncremental
+        && (inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds false))
+
+    /// Reads the inspected Watch IPC snapshot and proves it is usable, healthy, clean, and matches the expected status.
+    let private tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds =
+        try
+            inspectGraceWatchStatus().GetAwaiter().GetResult()
+            |> isUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds
+        with
+        | _ -> false
+
+    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
+    let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+        tryPublishWatchIpcWithPendingWorkEvidenceProbe readPendingWatchWorkEvidence expectedStatus expectedDirectoryIds writeSnapshot
+
+    /// Reads new pending work while excluding only the current recovery attempt and its materialization latch.
+    let private readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt =
+        let recoveryStillOwnsPublication =
+            isGraceWatchResyncAttemptCurrent attempt
+            && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+
+        {
+            HasProcessablePendingWork =
+                not recoveryStillOwnsPublication
+                || graceStatusHasChanged
+                || hasPendingLocalObservationCandidates ()
+                || not (
+                    filesToProcess.IsEmpty
+                    && directoriesToProcess.IsEmpty
+                    && statusUpdateTriggers.IsEmpty
+                    && not (hasPendingStatusDifferences ())
+                )
+            HasManualPendingStatusEvidence = false
+            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+            HasLocalObservationConfidenceLoss =
+                hasUnconsumedLocalObservationConfidenceLoss ()
+                || (not recoveryStillOwnsPublication
+                    && Volatile.Read(&localObservationConfidenceLossActive)
+                       <> 0)
+        }
+
+    /// Publishes clean IPC for one recovered resync attempt while retaining its own fail-closed pending anchors.
+    let private tryPublishWatchIpcForResyncRecovery attempt expectedStatus expectedDirectoryIds writeSnapshot =
+        let publicationResult =
+            tryPublishWatchIpcWithPendingWorkEvidenceProbeResult
+                (fun () -> readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt)
+                expectedStatus
+                expectedDirectoryIds
+                writeSnapshot
+
+        if publicationResult = VerifiedCleanPendingWorkPublication then
+            afterGraceWatchResyncRecoveryProvisionalCleanPublicationProbe ()
+
+        if
+            not (isGraceWatchResyncAttemptCurrent attempt)
+            || currentGraceWatchRuntimeMode ()
+               <> GraceWatchRuntimeMode.HealthyIncremental
+        then
+            UnverifiedRecoveryPublication
+        else
+            match publicationResult with
+            | VerifiedDirtyPendingWorkPublication -> VerifiedDirtyRecoveryPublication
+            | VerifiedCleanPendingWorkPublication ->
+                let postPublicationEvidence = readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt
+
+                if postPublicationEvidence.HasPendingWork then
+                    UnverifiedRecoveryPublication
+                elif tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds then
+                    let finalPendingEvidence = readPendingWatchWorkEvidenceForResyncRecoveryPublication attempt
+
+                    if finalPendingEvidence.HasPendingWork then
+                        UnverifiedRecoveryPublication
+                    elif tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds then
+                        VerifiedCleanRecoveryPublication
+                    else
+                        UnverifiedRecoveryPublication
+                else
+                    UnverifiedRecoveryPublication
+            | UnverifiedPendingWorkPublication -> UnverifiedRecoveryPublication
+
+    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
+    let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot =
+        tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot
+        |> ignore
+
+    /// Publishes a clean or dirty Watch IPC transition and reports whether the exact snapshot was verified on disk.
+    let private tryPublishPendingWatchWorkTransitionIfNeeded () =
+        lock watchStatusPublishLock (fun () ->
+            let pendingEvidence = readPendingWatchWorkEvidence ()
+            let hasPendingWork = pendingEvidence.HasPendingWork
+            let mutable transitionWasPublished = false
+
+            if
+                File.Exists(IpcFileName())
+                && lastPublishedHasPendingWatchWork
+                   <> Some hasPendingWork
+            then
+                setGraceWatchHasPendingWorkForStatus hasPendingWork
+
+                let runtimeMode = currentGraceWatchRuntimeMode ()
+
+                let shouldPublish, statusForPublish, directoryIdsForPublish =
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                    elif
+                        runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                        && not (isGraceWatchResyncPending ())
+                    then
+                        try
+                            let status =
+                                readGraceStatusFileForPendingWorkTransition()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            let statusDirectoryIds = status.Index.Keys.ToHashSet()
+                            true, status, Some statusDirectoryIds
+                        with
+                        | ex ->
+                            if hasPendingWork then
+                                logToAnsiConsole
+                                    Colors.Error
+                                    $"Grace Watch could not read Grace Status for pending-work dirty status transition; publishing non-incremental status and retrying later: {ex.Message}"
+
+                                true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                            else
+                                lastPublishedHasPendingWatchWork <- None
+
+                                logToAnsiConsole
+                                    Colors.Error
+                                    $"Grace Watch could not read Grace Status for pending-work clean status transition; retrying later: {ex.Message}"
+
+                                false, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                    else
+                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+
+                if shouldPublish then
+                    let publicationStartedAt = getCurrentInstant ()
+
+                    try
+                        let writeTask =
+                            if runtimeMode = GraceWatchRuntimeMode.Suspended then
+                                updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
+                            else
+                                updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
+
+                        writeTask.GetAwaiter().GetResult()
+                    with
+                    | ex ->
+                        lastPublishedHasPendingWatchWork <- None
+                        logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
+
+                    transitionWasPublished <-
+                        try
+                            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                            let expectedDirectoryIds =
+                                directoryIdsForPublish
+                                |> Option.defaultWith (fun () -> statusForPublish.Index.Keys.ToHashSet())
+
+                            inspection.Status
+                            |> Option.exists (statusMatchesVerifiedPublication statusForPublish expectedDirectoryIds hasPendingWork publicationStartedAt)
+                        with
+                        | _ -> false
+
+                    if transitionWasPublished then
+                        lastPublishedHasPendingWatchWork <- Some hasPendingWork
+                    else
+                        lastPublishedHasPendingWatchWork <- None
+                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
+
+            transitionWasPublished)
+
+    /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
+    let private publishPendingWatchWorkTransitionIfNeeded () =
+        tryPublishPendingWatchWorkTransitionIfNeeded ()
+        |> ignore
+
+    /// Records one non-replayable raw-observation confidence loss and immediately publishes its dirty Watch state.
+    let private recordLocalObservationConfidenceLoss reason =
+        let recorded =
+            lock localObservationConfidenceLossLock (fun () ->
+                if localObservationConfidenceLossReason.IsNone then
+                    localObservationConfidenceLossReason <- Some reason
+                    Volatile.Write(&localObservationConfidenceLossActive, 1)
+                    true
+                else
+                    false)
+
+        if recorded then publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Takes the oldest pending raw-observation confidence loss without allowing it to be rebound as local work.
+    let private takeLocalObservationConfidenceLoss () =
+        lock localObservationConfidenceLossLock (fun () ->
+            let pendingReason = localObservationConfidenceLossReason
+            localObservationConfidenceLossReason <- None
+            pendingReason)
+
+    /// Verifies the current Watch IPC file still represents the requested pending-work state and GraceStatus identity.
+    let private tryVerifyCurrentPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork =
+        try
+            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+            inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork)
+        with
+        | _ -> false
+
+    /// Verifies that the persisted IPC snapshot forces readers away from incremental shortcuts during resync.
+    let private isGraceWatchResyncRequiredStatusPublished (inspection: GraceWatchStatusInspection) =
+        inspection.Status
+        |> Option.exists (fun status ->
+            status.HasPendingWatchWork
+            && not status.IsWorkingTreeClean
+            && not inspection.IsUsable
+            && inspection.EffectiveMode
+               <> Some GraceWatchRuntimeMode.HealthyIncremental)
+
+    /// Replaces provisional clean recovery IPC with verified dirty resync IPC before a recovery attempt returns without exact retirement.
+    let private reassertDirtyResyncIpcAfterProvisionalCleanRecovery attempt writeSnapshot =
+        setGraceWatchPendingWorkStatusFlag true
+
+        if isGraceWatchResyncAttemptCurrent attempt then
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+        let dirtyPublicationVerified =
+            tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () -> writeSnapshot GraceStatus.Default emptyDirectoryIds)
+            && (try
+                    inspectGraceWatchStatus().GetAwaiter().GetResult()
+                    |> isGraceWatchResyncRequiredStatusPublished
+                with
+                | _ -> false)
+
+        if not dirtyPublicationVerified then lastPublishedHasPendingWatchWork <- None
+
+        dirtyPublicationVerified
+
+    /// Verifies an already-published clean snapshot through the inspected IPC trust boundary before final materialization success.
+    let private tryVerifyCurrentBranchMaterializationCleanPublication expectedStatus expectedDirectoryIds =
+        tryVerifyUsableHealthyCleanPendingWorkPublication expectedStatus expectedDirectoryIds
+
+    /// Publishes a final clean materialization snapshot only while pending work is empty and durable status identity remains current.
+    let private tryPublishCurrentBranchMaterializationCleanStatus () =
+        lock watchStatusPublishLock (fun () ->
+            if (readPendingWatchWorkEvidence ()).HasPendingWork then
+                false
+            elif currentGraceWatchRuntimeMode ()
+                 <> GraceWatchRuntimeMode.HealthyIncremental
+                 || isGraceWatchResyncPending () then
+                false
+            else
+                try
+                    let status =
+                        readGraceStatusFileForPendingWorkTransition()
+                            .GetAwaiter()
+                            .GetResult()
+
+                    let directoryIds = status.Index.Keys.ToHashSet()
+
+                    let cleanPublicationVerified =
+                        if tryVerifyCurrentBranchMaterializationCleanPublication status directoryIds then
+                            lastPublishedHasPendingWatchWork <- Some false
+                            true
+                        else
+                            let published =
+                                tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
+                                    updateGraceWatchInterprocessFile status (Some directoryIds))
+
+                            let usableCleanPublication =
+                                published
+                                && tryVerifyCurrentBranchMaterializationCleanPublication status directoryIds
+
+                            if not usableCleanPublication then lastPublishedHasPendingWatchWork <- None
+
+                            usableCleanPublication
+
+                    let finalPendingWorkIsEmpty = not (readPendingWatchWorkEvidence ()).HasPendingWork
+
+                    let finalCleanPublicationVerified =
+                        if cleanPublicationVerified
+                           && finalPendingWorkIsEmpty then
+                            tryVerifyCurrentGraceStatusMatchesExpectedPendingWorkPublication status directoryIds
+                        else
+                            false
+
+                    if not finalCleanPublicationVerified then
+                        lastPublishedHasPendingWatchWork <- None
+
+                    finalCleanPublicationVerified
+                with
+                | ex ->
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch could not prove final clean materialization IPC/status publication: {ex.Message}"
+                    false)
+
+    /// Replaces an unproven clean materialization snapshot with a verified dirty IPC state before degraded resync begins.
+    let private tryPublishCurrentBranchMaterializationDirtyStatus () =
+        lock watchStatusPublishLock (fun () ->
+            let pendingEvidence = readPendingWatchWorkEvidence ()
+
+            if not pendingEvidence.HasPendingWork then
+                false
+            else
+                try
+                    let runtimeMode = currentGraceWatchRuntimeMode ()
+
+                    let status, directoryIds =
+                        if pendingEvidence.HasDurableOnlyPendingWork then
+                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+                        elif
+                            runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                            && not (isGraceWatchResyncPending ())
+                        then
+                            let status =
+                                readGraceStatusFileForPendingWorkTransition()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            status, status.Index.Keys.ToHashSet()
+                        else
+                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+
+                    if tryVerifyCurrentPendingWorkPublication status directoryIds true then
+                        lastPublishedHasPendingWatchWork <- Some true
+                        true
+                    else
+                        tryPublishWatchIpcWithFreshPendingWorkProbe status directoryIds (fun () ->
+                            match runtimeMode with
+                            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode status (Some directoryIds)
+                            | _ -> updateGraceWatchInterprocessFile status (Some directoryIds))
+                with
+                | ex ->
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch could not verify dirty materialization IPC/status publication: {ex.Message}"
+                    false)
+
+    /// Publishes final clean materialization IPC through the production verification path for focused Watch tests.
+    let internal tryPublishCurrentBranchMaterializationCleanStatusForWatchTests () = tryPublishCurrentBranchMaterializationCleanStatus ()
+
+    /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
+    let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Records an accepted production candidate and immediately publishes its pending local-work transition.
+    let private acceptLocalObservationCandidate kind fullPath seenAt =
+        match recordLocalObservationCandidate kind fullPath seenAt with
+        | Some _ -> publishPendingWatchWorkTransitionIfNeeded ()
+        | None -> ()
+
+    /// Records that durable Grace Status changed and immediately advertises pending Watch work to other commands.
+    let private markGraceStatusChangedAndPublishPendingWorkTransition () =
+        recordGraceStatusRefreshObservation ()
+
+        publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Applies a due create or rename candidate after its quiet window has separated raw callbacks from filesystem work.
+    let private applyCreatedOrChangedLocalObservationCandidate fullPath observedAt =
+        if updateNotInProgress ()
+           && isGraceStatusArtifact fullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+            false
+        elif isDelayedGraceOwnedFileObservation fullPath observedAt then
+            logObservationSuppressed fullPath
+            false
+        elif Directory.Exists(fullPath) then
+            let queuedDirectoryWork = enqueueFinalDirectoryWork fullPath
+
+            if queuedDirectoryWork then
+                logToAnsiConsole Colors.Added $"I saw that directory {fullPath} was created."
+
+            queuedDirectoryWork
+        elif isNotDirectory fullPath then
+            if enqueueFileUpload fullPath then
+                logToAnsiConsole Colors.Changed $"I saw that {fullPath} changed."
+                true
+            else
+                false
+        else
+            false
+
+    /// Applies a change-only candidate, retaining unreadable directory classification as scoped retry work while rejecting proven mtime-only noise.
+    let private applyChangedLocalObservationCandidate fullPath observedAt =
+        if Directory.Exists(fullPath) then
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                match readGraceStatusForDirectoryAddClassification () with
+                | Some status when
+                    tryFindTrackedFile status (RelativePath relativePath)
+                    |> Option.isSome
+                    ->
+                    enqueueFinalDirectoryWork fullPath
+                | Some _ -> false
+                | None ->
+                    transferFileWorkToDirectoryProcessing fullPath
+                    enqueueDirectoryUploadRetry fullPath
+                    true
+            | None -> false
+        else
+            applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
+
+    /// Applies a due delete candidate after the current marker and final filesystem state can be examined safely.
+    let private applyDeletedLocalObservationCandidate fullPath observedAt =
+        if updateNotInProgress ()
+           && isGraceStatusArtifact fullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+            false
+        else
+            let canceledFileUpload = cancelPendingUploadsForDeletedPath fullPath
+
+            if isDelayedGraceOwnedFileObservation fullPath observedAt
+               && not canceledFileUpload then
+                logObservationSuppressed fullPath
+                false
+            elif enqueueStatusUpdateTrigger fullPath then
+                match repositoryRelativePath fullPath with
+                | Some relativePath ->
+                    let invalidatedRelativePath = RelativePath relativePath
+
+                    if
+                        canceledFileUpload
+                        || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
+                    then
+                        clearProcessedFileRelativePathsPendingStatusForPaths [ invalidatedRelativePath ]
+                        removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+                | None -> ()
+
+                if canceledFileUpload then
+                    match repositoryRelativePath fullPath with
+                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
+                    | None -> ()
+
+                logToAnsiConsole Colors.Deleted $"I saw that {fullPath} was deleted."
+                true
+            else
+                false
+
+    /// Claims every due candidate, then reconciles IPC from the complete post-claim pending state even when no local work was queued.
+    let private processDueLocalObservationCandidates now =
+        let scheduler, dueCandidates = dueLocalObservationCandidates now
+        let mutable queuedPendingWork = false
+        let mutable claimedCandidate = false
+
+        for dueCandidate in dueCandidates do
+            if localObservationIncrementalWorkBlocked () then
+                match tryClaimLocalObservationCandidate scheduler dueCandidate now with
+                | Some candidate ->
+                    claimedCandidate <- true
+                    logObservationSuppressed candidate.FullPath
+                | None -> ()
+            else
+                match tryGetActiveGraceUpdateMarkerObservationBoundary () with
+                | ActiveMarker markerObservedAt when dueCandidate.LastSeenAt < markerObservedAt -> logObservationSuppressed dueCandidate.FullPath
+                | markerBoundary ->
+                    match tryClaimLocalObservationCandidate scheduler dueCandidate now with
+                    | Some candidate ->
+                        claimedCandidate <- true
+
+                        let candidateQueuedWork =
+                            match markerBoundary with
+                            | AmbiguousMarkerBoundary reason ->
+                                recordLocalObservationConfidenceLoss reason
+                                logObservationSuppressed candidate.FullPath
+                                false
+                            | ActiveMarker _ ->
+                                logObservationSuppressed candidate.FullPath
+                                false
+                            | NoActiveMarker ->
+                                match candidate.Scope with
+                                | Some scope when not (watchObservationScopeMatchesCurrent scope) ->
+                                    recordLocalObservationConfidenceLoss
+                                        $"raw local observation scope changed before claim for {candidate.FullPath}; incremental work was rejected."
+
+                                    false
+                                | _ ->
+                                    match candidate.Kind with
+                                    | CreatedOrChanged ->
+                                        let removalQueuedWork =
+                                            if candidate.RequiresRemovalProof then
+                                                applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                            else
+                                                false
+
+                                        let finalQueuedWork = applyCreatedOrChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                                        removalQueuedWork || finalQueuedWork
+                                    | Changed ->
+                                        let removalQueuedWork =
+                                            if candidate.RequiresRemovalProof then
+                                                applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                            else
+                                                false
+
+                                        let finalQueuedWork = applyChangedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+
+                                        removalQueuedWork || finalQueuedWork
+                                    | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
+                                    | GraceStatusArtifact ->
+                                        markGraceStatusChangedAndPublishPendingWorkTransition ()
+                                        false
+
+                        queuedPendingWork <- queuedPendingWork || candidateQueuedWork
+                    | None -> ()
+
+        if claimedCandidate
+           || queuedPendingWork
+           || hasPendingLocalObservationCandidates () then
+            publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Drains due local candidates at a caller-supplied instant for deterministic Watch tests.
+    let internal processDueLocalObservationCandidatesForWatchTests now = processDueLocalObservationCandidates now
+
+    /// Applies an observation immediately only for direct callback harnesses that did not start the Watch lifetime.
+    let private processLocalObservationImmediately kind fullPath =
+        if localObservationIncrementalWorkBlocked () then
+            logObservationSuppressed fullPath
+        else
+            let observedAt = DateTime.UtcNow
+
+            let queuedPendingWork =
+                match kind with
+                | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
+                | Changed -> applyChangedLocalObservationCandidate fullPath observedAt
+                | Deleted -> applyDeletedLocalObservationCandidate fullPath observedAt
+                | GraceStatusArtifact ->
+                    if updateNotInProgress () then
+                        markGraceStatusChangedAndPublishPendingWorkTransition ()
+                    else
+                        logObservationSuppressed fullPath
+
+                    false
+
+            if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
+
+    /// Drains zero-window test candidates before reporting whether Watch still owes a Grace Status refresh pass.
+    let internal graceStatusHasChangedForWatchTests () =
+        processDueLocalObservationCandidates DateTime.UtcNow
+        graceStatusHasChanged
+
+    /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
+    let private promoteStartupModeIfRecoverySucceeded () =
+        if
+            currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
+            && not (isGraceWatchResyncPending ())
+        then
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
+
+    /// Completes startup for tests that verify failed recovery does not resume incremental mode.
+    let internal promoteStartupModeIfRecoverySucceededForWatchTests () = promoteStartupModeIfRecoverySucceeded ()
+
+    /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
+    let private publishGraceWatchResyncRequired () =
+        let hasPendingWork = hasPendingWatchWork ()
+
+        try
+            lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+            let writeTask =
+                match currentGraceWatchRuntimeMode () with
+                | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+                | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+
+            writeTask.GetAwaiter().GetResult()
+
+            let resyncRequiredWasPublished =
+                try
+                    inspectGraceWatchStatus().GetAwaiter().GetResult()
+                    |> isGraceWatchResyncRequiredStatusPublished
+                with
+                | _ -> false
+
+            lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- if resyncRequiredWasPublished then Some hasPendingWork else None)
+
+            if not resyncRequiredWasPublished then
+                logToAnsiConsole Colors.Important $"Grace Watch will retry resync-required status publication on the next transition check."
+        with
+        | ex ->
+            lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- None)
+            logToAnsiConsole Colors.Error $"Grace Watch could not publish resync-required status: {Markup.Escape(ex.Message)}."
+
+    /// Suspends only the resync attempt that observed the failure, preserving newer overflow requests.
+    let private suspendGraceWatchAttemptAfterFailedRecovery attempt reason =
+        if isGraceWatchResyncAttemptActive attempt then
+            retainFileRecoveryEvidenceFromPendingWork pendingFileWorkMatchesCurrentScope
+
+            quarantinePendingWatchWork reason pendingFileWorkMatchesCurrentScope
+            |> ignore
+
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+
+            if tryClearGraceWatchResyncAttempt attempt then
+                publishGraceWatchResyncRequired ()
+                logToAnsiConsole Colors.Error $"Grace Watch suspended incremental processing: {reason}."
+            else
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                logToAnsiConsole Colors.Important $"Grace Watch kept newer resync attempt pending after stale attempt {attempt} failed."
+        else
+            logToAnsiConsole Colors.Important $"Grace Watch ignored stale resync failure for attempt {attempt} because a newer resync attempt is pending."
+
+    /// Requests a scan-derived resync, retaining only file evidence selected by the caller's current recovery boundary.
+    let private requestGraceWatchExplicitResyncCore reason retainPendingFile =
+        lock graceWatchResyncTransitionLock (fun () ->
+            retainFileRecoveryEvidenceFromPendingWork retainPendingFile
+
+            let startupReplayRowsDurablyTerminal = quarantinePendingWatchWork reason retainPendingFile
+
+            Interlocked.Increment(&graceWatchResyncGeneration)
+            |> ignore
+
+            if startupReplayRowsDurablyTerminal then
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+            else
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+
+            publishGraceWatchResyncRequired ()
+
+            if startupReplayRowsDurablyTerminal then
+                logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
+            else
+                logToAnsiConsole
+                    Colors.Error
+                    $"Grace Watch suspended incremental processing because startup replay journal rows could not be made terminal after confidence loss: {reason}.")
+
+    /// Requests a scan-derived resync and quarantines stale observations while retaining current-scope file evidence through recovery.
+    let private requestGraceWatchExplicitResync reason = requestGraceWatchExplicitResyncCore reason pendingFileWorkMatchesCurrentScope
+
+    /// Blocks direct callbacks and requests exact resync after marker completion can no longer prove the source of a filesystem observation.
+    let private requestGraceWatchMarkerCompletionConfidenceLossResync reason =
+        lock graceWatchResyncTransitionLock (fun () ->
+            Volatile.Write(&markerCompletionConfidenceLossActive, 1)
+            requestGraceWatchExplicitResync reason)
+
+    /// Requests a scan-derived resync while retaining every current-scope file whose final bytes still block clean recovery.
+    let private requestGraceWatchExplicitResyncRetainingPendingFiles reason = requestGraceWatchExplicitResyncCore reason pendingFileWorkMatchesCurrentScope
+
+    /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
+    let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
+
+    let private pendingTransitionConfigurationReloadLock = obj ()
+    let mutable private pendingTransitionConfigurationReloadReason: string option = None
+    /// Advances whenever a newer branch transition supersedes an in-flight configuration retry.
+    let mutable private pendingTransitionConfigurationReloadGeneration = 0L
+    /// Prevents concurrent timer passes from activating the same pending branch configuration twice.
+    let mutable private pendingTransitionConfigurationReloadInProgress = false
+    let private pendingTransitionConfigurationReloadStatusPublicationProbeLock = obj ()
+    /// Holds the deterministic test probe that pauses a claimed retry after target activation and before IPC publication.
+    let mutable private pendingTransitionConfigurationReloadStatusPublicationProbe = ignore
+
+    /// Runs the deterministic test probe after the target configuration is active but before its required non-incremental IPC publication.
+    let private runPendingTransitionConfigurationReloadStatusPublicationProbe () =
+        let probe = lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe)
+
+        probe ()
+
+    /// Installs a deterministic retry/publication interleaving probe for Watch tests.
+    let internal setPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests probe =
+        lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe <- probe)
+
+    /// Restores the production no-op retry/publication probe after Watch tests.
+    let internal resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests () =
+        lock pendingTransitionConfigurationReloadStatusPublicationProbeLock (fun () -> pendingTransitionConfigurationReloadStatusPublicationProbe <- ignore)
+
+    /// Reports whether a target configuration retry remains pending after a deterministic Watch test interleaving.
+    let internal hasPendingTransitionConfigurationReloadForWatchTests () =
+        lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadReason.IsSome)
+
+    /// Defers target-branch configuration activation until the existing resync loop can retry it without trusting the source snapshot.
+    let private deferTransitionConfigurationReload reason =
+        lock pendingTransitionConfigurationReloadLock (fun () ->
+            pendingTransitionConfigurationReloadGeneration <-
+                pendingTransitionConfigurationReloadGeneration
+                + 1L
+
+            pendingTransitionConfigurationReloadReason <- Some reason)
+
+        requestGraceWatchExplicitResync reason
+
+    /// Retries one claimed target-branch activation without holding the pending-reload monitor across IPC publication or other side effects.
+    let private tryReloadPendingTransitionConfiguration () =
+        let mutable claimedReload: (int64 * string) option = None
+
+        let noReloadWasPending =
+            lock pendingTransitionConfigurationReloadLock (fun () ->
+                match pendingTransitionConfigurationReloadReason with
+                | None -> true
+                | Some _ when pendingTransitionConfigurationReloadInProgress -> false
+                | Some reason ->
+                    pendingTransitionConfigurationReloadInProgress <- true
+                    claimedReload <- Some(pendingTransitionConfigurationReloadGeneration, reason)
+                    false)
+
+        match claimedReload with
+        | None -> noReloadWasPending
+        | Some (generation, reason) ->
+            let wasSuspended = currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Suspended
+
+            try
+                reloadConfigurationForTransitionCompletion ()
+                rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                runPendingTransitionConfigurationReloadStatusPublicationProbe ()
+                // Current now identifies the target branch. Publish its existing non-incremental contract before recovery can block.
+                publishGraceWatchResyncRequired ()
+
+                lock pendingTransitionConfigurationReloadLock (fun () ->
+                    pendingTransitionConfigurationReloadInProgress <- false
+
+                    if pendingTransitionConfigurationReloadGeneration = generation then
+                        pendingTransitionConfigurationReloadReason <- None
+                        true
+                    else
+                        // A marker-deletion failure arrived while this retry was outside the lock; preserve its newer retry.
+                        false)
+            with
+            | ex ->
+                lock pendingTransitionConfigurationReloadLock (fun () -> pendingTransitionConfigurationReloadInProgress <- false)
+
+                if wasSuspended then
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+                else
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch retained degraded recovery because target branch configuration reload is still unavailable: {Markup.Escape(ex.Message)}. {Markup.Escape(reason)}"
+
+                false
+
+    /// Schedules the next timer-driven identity attempt or classifies the final path before bounded exhaustion selects resync recovery.
+    let private retryPendingFileStabilization (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
+        let attemptsAfterFailure = pendingFile.StabilizationAttempts + 1
+
+        if attemptsAfterFailure
+           >= stableFileIdentityMaximumAttempts then
+            let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile)
+
+            match finalPathKindForFullPath pendingFile.FullPath with
+            | FinalPathMissing ->
+                if (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                    .Remove(pendingPair) then
+                    requestGraceWatchExplicitResyncRetainingPendingFiles
+                        $"Watch could not compute stable final identity for {pendingFile.FullPath} after {stableFileIdentityMaximumAttempts} attempts because the final path remained absent: {reason}"
+            | FinalPathFile
+            | FinalPathDirectory ->
+                let exhaustedPendingFile = { pendingFile with StabilizationAttempts = attemptsAfterFailure; RetryNotBeforeUtc = now }
+
+                if filesToProcess.TryUpdate(pendingFile.FullPath, exhaustedPendingFile, pendingFile) then
+                    requestGraceWatchExplicitResyncRetainingPendingFiles
+                        $"Watch could not compute stable final identity for {pendingFile.FullPath} after {stableFileIdentityMaximumAttempts} attempts: {reason}"
+        else
+            let retryNotBeforeUtc =
+                if isLocalObservationCandidateSchedulingActive () then
+                    now.AddSeconds(float attemptsAfterFailure)
+                else
+                    now
+
+            let updatedPendingFile = { pendingFile with StabilizationAttempts = attemptsAfterFailure; RetryNotBeforeUtc = retryNotBeforeUtc }
+
+            if filesToProcess.TryUpdate(pendingFile.FullPath, updatedPendingFile, pendingFile) then
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch deferred stable identity attempt {attemptsAfterFailure + 1} for {pendingFile.FullPath}: {reason}"
+
+    /// Defers a storage-side retry without spending local stabilization attempts for bytes already proven locally.
+    let private retryPendingFileUpload (pendingFile: PendingFileWorkSnapshot) (now: DateTime) (reason: string) =
+        if not (pendingFileWorkMatchesCurrentScope pendingFile) then
+            discardStaleFileRecoveryStateForScopeChangedPath pendingFile
+
+            requestGraceWatchExplicitResyncRetainingPendingFiles $"Watch file identity scope changed after stable bytes were proven for {pendingFile.FullPath}."
+        else
+            let retryPendingFile = { pendingFile with RetryNotBeforeUtc = now.AddSeconds(1.0) }
+
+            if filesToProcess.TryUpdate(pendingFile.FullPath, retryPendingFile, pendingFile) then
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch deferred storage upload for proven bytes at {pendingFile.FullPath}; the same generation remains queued for the next timer tick: {reason}"
+
+    /// Replaces the stabilization clock for deterministic Watch retry tests.
+    let internal setStableFileIdentityNowForWatchTests (now: unit -> DateTime) = stableFileIdentityNowForWatch <- now
+
+    /// Reports the local stabilization attempts still charged to one queued file generation.
+    let internal pendingFileStabilizationAttemptsForWatchTests fullPath =
+        let mutable pendingFile = Unchecked.defaultof<PendingFileWorkSnapshot>
+
+        if filesToProcess.TryGetValue(fullPath, &pendingFile) then
+            Some pendingFile.StabilizationAttempts
+        else
+            None
+
+    /// Creates a storage-side failure for tests after the local file identity has already been established.
+    let internal stableFileUploadFailureForWatchTests message = StableFileUploadFailureException(message, null) :> Exception
+
+    /// Counts quarantined observations for tests that verify confidence loss does not replay stale work.
+    let internal quarantinedWatchObservationCountForWatchTests () = Volatile.Read(&quarantinedWatchObservationCount)
+
+    /// Verifies a reloaded branch configuration has enough identity to own a branch-scoped Watch IPC file.
+    let private isTransitionCompletionConfigurationCoherent () =
+        let current = Current()
+
+        let hasRepositoryIdentity =
+            current.RepositoryId <> RepositoryId.Empty
+            || not (String.IsNullOrWhiteSpace(string current.RepositoryName))
+
+        let hasBranchIdentity =
+            current.BranchId <> BranchId.Empty
+            || not (String.IsNullOrWhiteSpace(string current.BranchName))
+
+        hasRepositoryIdentity
+        && hasBranchIdentity
+        && not (String.IsNullOrWhiteSpace current.RootDirectory)
+        && Directory.Exists(current.RootDirectory)
+
+    /// Verifies a reloaded GraceStatus can support a trusted incremental Watch snapshot after branch switch.
+    let private isTransitionCompletionGraceStatusCoherent (status: GraceStatus) =
+        let hasRootIdentity =
+            status.RootDirectoryId <> DirectoryVersionId.Empty
+            && not (String.IsNullOrWhiteSpace($"{status.RootDirectorySha256Hash}"))
+            && not (String.IsNullOrWhiteSpace($"{status.RootDirectoryBlake3Hash}"))
+
+        let mutable rootDirectoryVersion = LocalDirectoryVersion.Default
+
+        hasRootIdentity
+        && not (isNull status.Index)
+        && status.Index.TryGetValue(status.RootDirectoryId, &rootDirectoryVersion)
+        && rootDirectoryVersion.Sha256Hash = status.RootDirectorySha256Hash
+        && rootDirectoryVersion.Blake3Hash = status.RootDirectoryBlake3Hash
+
+    /// Publishes a branch-scoped non-incremental transition snapshot when Watch cannot safely resume.
+    let private publishNonIncrementalTransitionCompletionStatus context =
+        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+            match currentGraceWatchRuntimeMode () with
+            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
+            | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds))
+
+        logToAnsiConsole Colors.Important $"Grace Watch published non-incremental IPC for branch transition completion: {context}."
+
+    /// Removes the previous branch IPC snapshot so stale healthy status cannot survive a branch transition.
+    let private retirePreviousBranchWatchIpc previousIpcFileName =
+        if File.Exists(previousIpcFileName) then
+            retirePreviousBranchWatchIpcForTransitionCompletion previousIpcFileName
+
+            logToAnsiConsole Colors.Important $"Grace Watch retired previous branch IPC before completing branch transition: {previousIpcFileName}."
+
+        not (File.Exists(previousIpcFileName))
+
+    /// Verifies that the previous branch IPC no longer exposes a healthy incremental shortcut.
+    let private previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName =
+        if not (File.Exists(previousIpcFileName)) then
+            true
+        else
+            try
+                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                String.Equals(IpcFileName(), previousIpcFileName, watchPathComparison)
+                && isGraceWatchResyncRequiredStatusPublished inspection
+            with
+            | _ -> false
+
+    /// Retries deletion or downgrades the previous branch IPC before Watch abandons that branch identity.
+    let private retryOrDowngradePreviousBranchWatchIpc previousIpcFileName failure =
+        requestGraceWatchExplicitResync $"previous branch IPC retirement failed: {failure}"
+
+        let maxAttempts = 3
+        let mutable attempt = 1
+        let mutable verified = previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName
+
+        while not verified && attempt < maxAttempts do
+            runPreviousBranchIpcDowngradeRetryProbe ()
+
+            Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 25)))
+            attempt <- attempt + 1
+
+            try
+                retirePreviousBranchWatchIpc previousIpcFileName
+                |> ignore
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch retry {attempt} could not retire previous branch IPC before transition completion: {Markup.Escape(ex.Message)}."
+
+            if File.Exists(previousIpcFileName) then publishGraceWatchResyncRequired ()
+
+            verified <- previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName
+
+        if not verified then
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch could not verify previous branch IPC was retired or downgraded after {attempt} attempts; target branch IPC publication is deferred."
+
+        verified
+
+    /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked and returns any deferred reload reason.
+    let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
+        clearSignalRBranchSubscriptionForTransition ()
+        let previousIpcFileName = IpcFileName()
+
+        logToAnsiConsole
+            Colors.Error
+            $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; verifying old IPC downgrade before target publication: {Markup.Escape(failure)}."
+
+        if retryOrDowngradePreviousBranchWatchIpc previousIpcFileName failure then
+            try
+                reloadConfigurationForTransitionCompletion ()
+                rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
+                None
+            with
+            | ex ->
+                let reason = $"branch transition completion could not reload target configuration after previous branch IPC retirement failed: {ex.Message}"
+
+                logToAnsiConsole
+                    Colors.Error
+                    $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
+
+                Some reason
+        else
+            None
+
+    /// Completes a Grace-owned branch transition, then records any failed target activation after releasing the status publication monitor.
+    let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
+        let deferredTransitionConfigurationReloadReason =
+            lock watchStatusPublishLock (fun () ->
+                let mutable deferredConfigurationReloadReason = None
+
+                recordGraceUpdateMarkerCompletedUtc completedUtc
+                clearSignalRBranchSubscriptionForTransition ()
+                let previousIpcFileName = IpcFileName()
+
+                let previousIpcRetired =
+                    try
+                        let retired = retirePreviousBranchWatchIpc previousIpcFileName
+
+                        if not retired then
+                            deferredConfigurationReloadReason <-
+                                publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc "previous branch IPC still existed after delete"
+
+                        retired
+                    with
+                    | ex ->
+                        deferredConfigurationReloadReason <- publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
+                        false
+
+                if previousIpcRetired then
+                    runBranchTransitionCompletionAfterRetireProbe ()
+
+                    let reloadedConfiguration =
+                        try
+                            reloadConfigurationForTransitionCompletion ()
+                            rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                            true
+                        with
+                        | ex ->
+                            graceStatusHasChanged <- true
+
+                            lastPublishedHasPendingWatchWork <- None
+
+                            deferredConfigurationReloadReason <-
+                                Some $"branch transition completion could not reload target configuration after marker deletion: {ex.Message}"
+
+                            logToAnsiConsole
+                                Colors.Error
+                                $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
+
+                            false
+
+                    if reloadedConfiguration then
+                        try
+                            let refreshedStatus =
+                                readGraceStatusFileForTransitionCompletion()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                            graceStatus <- refreshedStatus
+                            updateGraceStatusDirectoryIds graceStatus
+
+                            if isTransitionCompletionConfigurationCoherent ()
+                               && isTransitionCompletionGraceStatusCoherent graceStatus then
+                                if
+                                    currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                                    && not (isGraceWatchResyncPending ())
+                                then
+                                    try
+                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                        requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
+
+                                        let transitionPublicationVerified =
+                                            tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+
+                                        if transitionPublicationVerified then
+                                            logToAnsiConsole
+                                                Colors.Important
+                                                $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                                        else
+                                            requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
+                                    with
+                                    | ex ->
+                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                        requestGraceWatchExplicitResync
+                                            "branch transition completion could not refresh SignalR subscriptions and queue BranchDto catch-up"
+
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"Grace Watch completed branch transition but could not refresh SignalR subscriptions and queue current-branch catch-up before healthy target IPC publication: {Markup.Escape(ex.Message)}."
+                                else
+                                    publishNonIncrementalTransitionCompletionStatus
+                                        $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
+                            else
+                                requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
+                        with
+                        | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}"
+
+                deferredConfigurationReloadReason)
+
+        deferredTransitionConfigurationReloadReason
+        |> Option.iter deferTransitionConfigurationReload
+
+    /// Combines status differences without applying the same filesystem observation twice.
+    let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
+        let merged = List<FileSystemDifference>()
+
+        let addIfMissing (difference: FileSystemDifference) =
+            if not
+               <| merged.Exists(fun existing -> statusDifferenceMatches existing difference) then
+                merged.Add(difference)
+
+        for difference in first do
+            addIfMissing difference
+
+        for difference in second do
+            addIfMissing difference
+
+        merged
+
+    /// Checks whether a difference came from uploaded file work that newer event-derived upload state can supersede.
+    let private isUploadedFileAddOrChangeDifference (difference: FileSystemDifference) =
+        difference.FileSystemEntryType = FileSystemEntryType.File
+        && (difference.DifferenceType = DifferenceType.Add
+            || difference.DifferenceType = DifferenceType.Change)
+
+    /// Checks whether uploaded identity data exists for a repository-relative path.
+    let private hasUploadedFileVersionForPath (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        uploadedFileVersions.Values
+        |> Seq.exists (fun uploadedFileVersion ->
+            String.Equals(normalizeRelativePath uploadedFileVersion.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Combines retryable pending differences with the current event-derived result for the same watch pass.
+    let private mergeCurrentStatusDifferences
+        (processedFilePaths: RelativePath seq)
+        (pendingDifferences: List<FileSystemDifference>)
+        (eventDerivedDifferences: List<FileSystemDifference>)
+        =
+        let retainedPendingDifferences = List<FileSystemDifference>()
+
+        let processedUploadedPaths =
+            processedFilePaths
+            |> Seq.map normalizeRelativePath
+            |> Seq.toArray
+
+        for pendingDifference in pendingDifferences do
+            let supersededUploadedDifference =
+                isUploadedFileAddOrChangeDifference pendingDifference
+                && hasUploadedFileVersionForPath pendingDifference.RelativePath
+                && processedUploadedPaths
+                   |> Array.exists (fun processedPath -> String.Equals(normalizeRelativePath pendingDifference.RelativePath, processedPath, watchPathComparison))
+                && not (
+                    eventDerivedDifferences
+                    |> Seq.exists (statusDifferenceMatches pendingDifference)
+                )
+
+            if not supersededUploadedDifference then
+                retainedPendingDifferences.Add(pendingDifference)
+
+        mergeStatusDifferences retainedPendingDifferences eventDerivedDifferences
 
     /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
+        clearLocalObservationCandidateScheduler ()
+        setLocalObservationCandidateSchedulingActive false
+        Volatile.Write(&markerCompletionConfidenceLossActive, 0)
+        Volatile.Write(&localObservationConfidenceLossActive, 0)
+        lock localObservationConfidenceLossLock (fun () -> localObservationConfidenceLossReason <- None)
         filesToProcess.Clear()
+        fileRecoveryEvidence.Clear()
         directoriesToProcess.Clear()
         statusUpdateTriggers.Clear()
+        uploadedFileVersions.Clear()
+        lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
+        lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
+        setGraceWatchPendingWorkStatusFlag false
+        clearPendingStatusDifferencesForTests ()
+        lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
+        clearGraceWatchResyncPending ()
+
+        lock pendingTransitionConfigurationReloadLock (fun () ->
+            pendingTransitionConfigurationReloadReason <- None
+            pendingTransitionConfigurationReloadGeneration <- 0L
+            pendingTransitionConfigurationReloadInProgress <- false)
+
+        Interlocked.Exchange(&quarantinedWatchObservationCount, 0)
+        |> ignore
 
         Interlocked.Exchange(&statusUpdateTriggerGeneration, 0L)
         |> ignore
@@ -425,28 +4569,73 @@ module Watch =
         Interlocked.Exchange(&fileUploadWorkGeneration, 0L)
         |> ignore
 
+        Interlocked.Exchange(&directoryWorkGeneration, 0L)
+        |> ignore
+
+        Interlocked.Exchange(&graceStatusRefreshGeneration, 0L)
+        |> ignore
+
+        stableFileIdentityNowForWatch <- fun () -> DateTime.UtcNow
+
         graceStatus <- GraceStatus.Default
+        clearPublishedWatchObservationScope ()
         graceStatusHasChanged <- false
+
+        lock watchStatusPublishLock (fun () ->
+            lastPublishedHasPendingWatchWork <- None
+            setGraceWatchHasPendingWorkForStatus false)
+
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
+        readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
+        readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
+        clearShouldIgnoreCache ()
+        resetBeforeWatchStatusCommitProbeForWatchTests ()
+        resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
+        resetBeforeGraceWatchResyncAttemptRetirementProbeForWatchTests ()
+        resetAfterGraceWatchResyncRecoveryProvisionalCleanPublicationProbeForWatchTests ()
+        resetPendingTransitionConfigurationReloadStatusPublicationProbeForWatchTests ()
+        resetSignalRSubscriptionRefreshForWatchTests ()
+        resetWatchJournalClientsForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
+        enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
+        clearGraceUpdateMarkerDeletedUtcForReset ()
+        clearCurrentGraceUpdateMarkerCompletedSidecar ()
         watchPathComparison <- defaultWatchPathComparison ()
+        watchPathComparisonOverride <- None
+        watchPathComparisonConfiguredRoot <- None
+        ensureObservedGraceUpdateMarkerPathComparer ()
+        configureLocalObservationCandidateScheduler TimeSpan.Zero
+        repositoryPathCaseInsensitiveLookupForWatch <- detectRepositoryPathCaseInsensitiveLookup
+        fileExistsForWatchFinalPath <- File.Exists
+        directoryExistsForWatchFinalPath <- Directory.Exists
+        createLocalFileVersionForWatchStatus <- createLocalFileVersion
+        setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
         setLastScanForDifferencesSuccessfulForWatchTests true
 
     /// Coordinates pending watch work snapshot for tests behavior for this CLI command path.
     let internal pendingWatchWorkSnapshotForTests () =
+        processDueLocalObservationCandidates DateTime.UtcNow
+
         {
             FilesToProcess = filesToProcess.Keys.OrderBy(id).ToArray()
             DirectoriesToProcess = directoriesToProcess.Keys.OrderBy(id).ToArray()
             StatusUpdateTriggers = statusUpdateTriggers.Keys.OrderBy(id).ToArray()
         }
 
-    /// Evaluates has pending watch work against parsed options and command state.
-    let private hasPendingWatchWork () =
-        not (
-            filesToProcess.IsEmpty
-            && directoriesToProcess.IsEmpty
-            && statusUpdateTriggers.IsEmpty
-        )
+    /// Reads queued Watch work without draining a due local observation candidate for raw-callback boundary tests.
+    let internal pendingWatchWorkSnapshotWithoutCandidateDrainForTests () =
+        {
+            FilesToProcess = filesToProcess.Keys.OrderBy(id).ToArray()
+            DirectoriesToProcess = directoriesToProcess.Keys.OrderBy(id).ToArray()
+            StatusUpdateTriggers = statusUpdateTriggers.Keys.OrderBy(id).ToArray()
+        }
+
+    /// Lists processed upload paths that are waiting for GraceStatus application in watch tests.
+    let internal processedFileRelativePathsPendingStatusForWatchTests () =
+        processedFileRelativePathsPendingStatusSnapshot ()
+        |> Seq.map (fun processedFile -> string processedFile.RelativePath)
+        |> Seq.sort
+        |> Seq.toArray
 
     /// Coordinates status only trigger snapshot behavior for this CLI command path.
     let private statusOnlyTriggerSnapshot () =
@@ -456,18 +4645,12 @@ module Watch =
             .Select(fun trigger -> { RelativePath = trigger.Key; Generation = trigger.Value })
             .ToArray()
 
-    /// Coordinates reset working tree scan cache for status only triggers behavior for this CLI command path.
-    let private resetWorkingTreeScanCacheForStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
-        if directorySnapshot.Length > 0
-           || statusTriggerSnapshot.Length > 0 then
-            clearWorkingDirectoryWriteTimesForWatchRescan ()
-
     /// Coordinates drain status only triggers behavior for this CLI command path.
     let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
-        let mutable unitValue = ()
+        let mutable removedPendingDirectory = Unchecked.defaultof<PendingDirectoryWorkSnapshot>
 
         for directory in directorySnapshot do
-            directoriesToProcess.TryRemove(directory, &unitValue)
+            directoriesToProcess.TryRemove(directory, &removedPendingDirectory)
             |> ignore
 
         for statusTrigger in statusTriggerSnapshot do
@@ -476,6 +4659,50 @@ module Watch =
             (statusUpdateTriggers :> ICollection<KeyValuePair<string, int64>>)
                 .Remove(pair)
             |> ignore
+
+    /// Drains the watch work proven by either a scan-derived update or the matched pre-derived differences.
+    let private drainAppliedStatusWork
+        (directorySnapshot: string array)
+        (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
+        (appliedDifferences: List<FileSystemDifference>)
+        =
+        if appliedDifferences.Count = 0 then
+            drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+        else
+            let directoryPathsToDrain =
+                appliedDifferences
+                |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.Directory)
+                |> Seq.map (fun difference -> string difference.RelativePath)
+                |> fun paths -> HashSet<string>(paths, stringComparerForWatchPathComparison watchPathComparison)
+
+            let statusTriggerPathsToDrain =
+                appliedDifferences
+                |> Seq.map (fun difference -> string difference.RelativePath)
+                |> fun paths -> HashSet<string>(paths, stringComparerForWatchPathComparison watchPathComparison)
+
+            let mutable removedPendingDirectory = Unchecked.defaultof<PendingDirectoryWorkSnapshot>
+
+            for directory in directorySnapshot do
+                if directoryPathsToDrain.Contains(directory) then
+                    directoriesToProcess.TryRemove(directory, &removedPendingDirectory)
+                    |> ignore
+
+            for statusTrigger in statusTriggerSnapshot do
+                let statusTriggerRelativePath = RelativePath statusTrigger.RelativePath
+
+                let statusTriggerResolvedByChild =
+                    appliedDifferences
+                    |> Seq.exists (fun difference -> isPathUnderDirectoryTrigger statusTriggerRelativePath difference.RelativePath)
+
+                if
+                    statusTriggerPathsToDrain.Contains(statusTrigger.RelativePath)
+                    || statusTriggerResolvedByChild
+                then
+                    let pair = KeyValuePair(statusTrigger.RelativePath, statusTrigger.Generation)
+
+                    (statusUpdateTriggers :> ICollection<KeyValuePair<string, int64>>)
+                        .Remove(pair)
+                    |> ignore
 
     /// Resolves signal raccess token result from command options, configuration, or local state.
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
@@ -491,6 +4718,179 @@ module Watch =
             let! tokenResult = Grace.CLI.Command.Auth.tryGetAccessToken ()
             return resolveSignalRAccessTokenResult tokenResult
         }
+
+    /// Defines the machine-readable payload emitted by `grace watch --check`.
+    type private WatchCheckStatusDto =
+        {
+            IsRunning: bool
+            CanUseIncrementalStatus: bool
+            Mode: string
+            Reason: string
+            Message: string
+            SafetyFlags: string array
+            IsFresh: bool
+            HasUsableRootSnapshot: bool
+            HasDirectoryIndexSnapshot: bool
+            IsStartupClaim: bool
+            UpdatedAt: string option
+            RootDirectoryId: DirectoryVersionId option
+        }
+
+    /// Combines IPC inspection with durable journal evidence that must fail closed before status shortcuts are trusted.
+    type private WatchCheckTrustInspection =
+        {
+            Inspection: GraceWatchStatusInspection
+            DurablePendingRows: int64 option
+            DurableInspectionError: string option
+        }
+
+        /// Reports whether Watch check may advertise incremental status shortcuts.
+        member this.CanUseIncrementalStatus =
+            this.Inspection.IsUsable
+            && this.DurableInspectionError.IsNone
+            && (this.DurablePendingRows |> Option.defaultValue 0L) = 0L
+
+        /// Reports whether durable local-state evidence blocks a clean IPC snapshot.
+        member this.HasDurablePendingRows =
+            this.DurablePendingRows
+            |> Option.exists (fun pendingRows -> pendingRows > 0L)
+
+    /// Reads durable journal evidence for `watch --check` without treating a missing local-state DB as clean.
+    let private inspectWatchCheckDurableTrust (inspection: GraceWatchStatusInspection) =
+        task {
+            if inspection.IsUsable then
+                try
+                    let! pendingJournalSummary = Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+
+                    return { Inspection = inspection; DurablePendingRows = Some pendingJournalSummary.PendingRowCount; DurableInspectionError = None }
+                with
+                | ex -> return { Inspection = inspection; DurablePendingRows = None; DurableInspectionError = Some ex.Message }
+            else
+                return { Inspection = inspection; DurablePendingRows = None; DurableInspectionError = None }
+        }
+
+    /// Reports whether a Watch IPC snapshot has the root identity needed by incremental status shortcuts.
+    let private hasUsableRootSnapshotForCheck (status: GraceWatchStatus) =
+        status.RootDirectoryId <> Guid.Empty
+        && not (String.IsNullOrWhiteSpace($"{status.RootDirectorySha256Hash}"))
+        && not (String.IsNullOrWhiteSpace($"{status.RootDirectoryBlake3Hash}"))
+
+    /// Reports whether a Watch IPC snapshot includes directory identities for current-state comparisons.
+    let private hasDirectoryIndexSnapshotForCheck (status: GraceWatchStatus) =
+        not (isNull status.DirectoryIds)
+        && status.DirectoryIds.Count > 0
+
+    /// Builds safety flags for `watch --check` after combining persisted and derived mode facts.
+    let private safetyFlagsForWatchCheck (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
+        let flags = HashSet<string>(inspection.SafetyFlags, StringComparer.Ordinal)
+
+        if trustInspection.HasDurablePendingRows then
+            flags.Add("pendingWatchWork") |> ignore
+
+        if trustInspection.DurableInspectionError.IsSome then
+            flags.Add("durableJournalInspectionFailed")
+            |> ignore
+
+        if not trustInspection.CanUseIncrementalStatus then
+            flags.Remove("incrementalSafe") |> ignore
+            flags.Remove("cleanWorkingTree") |> ignore
+
+            flags.Add("requiresExplicitResync") |> ignore
+
+        flags |> Seq.sort |> Seq.toArray
+
+    /// Maps a Watch IPC inspection result to the stable status reason emitted to humans and agents.
+    let private watchCheckReason (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
+
+        match inspection.ReadError, inspection.Exists, inspection.Status, inspection.EffectiveMode with
+        | Some _, _, _, _ -> "unreadableStatus"
+        | None, false, _, _ -> "notRunning"
+        | None, true, None, _ -> "unreadableStatus"
+        | None, true, Some _, _ when not inspection.IsFresh -> "staleStatus"
+        | None, true, Some status, _ when status.IsStartupClaim -> "startingUp"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.DurableInspectionError.IsSome -> "durableStatusUnavailable"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.HasDurablePendingRows -> "resynchronizing"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.CanUseIncrementalStatus -> "running"
+        | None, true, Some _, Some GraceWatchRuntimeMode.Resynchronizing -> "resynchronizing"
+        | None, true, Some _, Some GraceWatchRuntimeMode.Suspended -> "suspended"
+        | None, true, Some _, Some GraceWatchRuntimeMode.Stopping -> "stopping"
+        | None, true, Some _, Some GraceWatchRuntimeMode.StartingUp -> "startingUp"
+        | _ -> "notReady"
+
+    /// Explains Watch check status without exposing local IPC paths, raw repository paths, or exception stacks.
+    let private watchCheckMessage reason =
+        match reason with
+        | "running" -> "GraceWatch is running in HealthyIncremental mode. Incremental status shortcuts are available."
+        | "durableStatusUnavailable" -> "GraceWatch status cannot prove incremental shortcuts because durable local-state evidence could not be inspected."
+        | "startingUp" -> "GraceWatch is starting and has not published a usable status snapshot yet."
+        | "resynchronizing" -> "GraceWatch is resynchronizing trusted state; incremental status shortcuts are suspended until resync completes."
+        | "suspended" -> "GraceWatch is suspended after confidence loss; restart watch or run an explicit resync before relying on incremental status."
+        | "stopping" -> "GraceWatch is stopping and should not be treated as a live incremental source."
+        | "staleStatus" -> "GraceWatch status is stale. The previous watcher may have exited before removing its status file."
+        | "unreadableStatus" -> "GraceWatch status exists but could not be read. Restart watch or clear the stale status file by starting watch again."
+        | "notRunning" -> "GraceWatch is not running."
+        | _ -> "GraceWatch status is not ready for incremental shortcuts."
+
+    /// Converts Watch IPC inspection into the public `watch --check` status payload.
+    let private toWatchCheckStatusDto (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
+        let status = inspection.Status
+        let reason = watchCheckReason trustInspection
+
+        let mode =
+            inspection.EffectiveMode
+            |> Option.map (fun mode -> $"{mode}")
+            |> Option.defaultValue "Unavailable"
+
+        {
+            IsRunning = inspection.IsLiveProcess
+            CanUseIncrementalStatus = trustInspection.CanUseIncrementalStatus
+            Mode = mode
+            Reason = reason
+            Message = watchCheckMessage reason
+            SafetyFlags = safetyFlagsForWatchCheck trustInspection
+            IsFresh = inspection.IsFresh
+            HasUsableRootSnapshot =
+                status
+                |> Option.map hasUsableRootSnapshotForCheck
+                |> Option.defaultValue false
+            HasDirectoryIndexSnapshot =
+                status
+                |> Option.map hasDirectoryIndexSnapshotForCheck
+                |> Option.defaultValue false
+            IsStartupClaim =
+                status
+                |> Option.map (fun status -> status.IsStartupClaim)
+                |> Option.defaultValue false
+            UpdatedAt =
+                status
+                |> Option.map (fun status -> status.UpdatedAt.ToString())
+            RootDirectoryId =
+                status
+                |> Option.map (fun status -> status.RootDirectoryId)
+        }
+
+    /// Renders `watch --check` in either human or machine-readable mode while preserving check exit semantics.
+    let private renderWatchCheckStatus parseResult (status: WatchCheckStatusDto) =
+        if parseResult |> json then
+            let renderExit =
+                Ok(GraceReturnValue.Create status (getCorrelationId parseResult))
+                |> renderOutput parseResult
+
+            if renderExit <> 0 then renderExit
+            elif status.CanUseIncrementalStatus then 0
+            else -1
+        else
+            let color =
+                if status.CanUseIncrementalStatus then Colors.Important
+                elif status.IsRunning then Colors.Important
+                else Colors.Error
+
+            logToAnsiConsole color status.Message
+
+            if status.CanUseIncrementalStatus then 0 else -1
 
     /// Renders json result results only when the selected output mode includes human-readable console text.
     let private renderJsonResult parseResult started completed message =
@@ -515,6 +4915,12 @@ module Watch =
         Error(GraceError.Create message (getCorrelationId parseResult))
         |> renderOutput parseResult
 
+    /// Applies Grace's F#-aware JSON serializer options to the SignalR protocol used by Watch.
+    let private configureGraceSignalRJsonProtocol (options: JsonHubProtocolOptions) = options.PayloadSerializerOptions <- Constants.JsonSerializerOptions
+
+    /// Exposes SignalR JSON protocol configuration to Watch tests without opening a connection.
+    let internal configureGraceSignalRJsonProtocolForWatchTests options = configureGraceSignalRJsonProtocol options
+
     /// Opens the SignalR connection Grace Watch uses to receive server-side notifications.
     let private createSignalRConnection (signalRUrl: Uri) =
         HubConnectionBuilder()
@@ -534,121 +4940,2762 @@ module Watch =
                                 | Error message -> return raise (InvalidOperationException(message))
                             })
             )
+            .AddJsonProtocol(configureGraceSignalRJsonProtocol)
             .Build()
 
-    /// Evaluates is grace status artifact against parsed options and command state.
-    let private isGraceStatusArtifact (fullPath: string) =
-        let statusFile = Current().GraceStatusFile
+    /// Reads a GUID-valued property from a SignalR automation event payload without throwing on unsupported input.
+    let private tryParseAutomationEventGuidProperty (propertyName: string) (dataJson: string) =
+        try
+            use document = JsonDocument.Parse(dataJson)
+            let root = document.RootElement
+            let mutable propertyValue = Unchecked.defaultof<JsonElement>
 
-        fullPath.Equals(statusFile, StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-        || fullPath.Equals(statusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+            if root.TryGetProperty(propertyName, &propertyValue) then
+                let propertyText = propertyValue.GetString()
+                let mutable parsedGuid = Guid.Empty
+
+                if
+                    String.IsNullOrWhiteSpace propertyText |> not
+                    && Guid.TryParse(propertyText, &parsedGuid)
+                then
+                    Some parsedGuid
+                else
+                    Option.None
+            else
+                Option.None
+        with
+        | _ -> Option.None
+
+    /// Returns a trusted SignalR branch snapshot only for promotion events targeting the watched parent.
+    let private trustedSignalRBranchSubscriptionForAutomationEvent (envelope: AutomationEventEnvelope) =
+        if envelope.EventType = AutomationEventType.PromotionSetApplied then
+            let targetBranchId =
+                tryParseAutomationEventGuidProperty "targetBranchId" envelope.DataJson
+                |> Option.defaultValue BranchId.Empty
+
+            signalRBranchSubscriptionForWatchedParentBranch targetBranchId
+        else
+            Option.None
+
+    /// Handles SignalR automation events that can drive Watch auto-rebase.
+    let private handleSignalRAutomationEvent readStatus rebaseCurrentBranch (envelope: AutomationEventEnvelope) =
+        task {
+            try
+                match trustedSignalRBranchSubscriptionForAutomationEvent envelope with
+                | Some trustedSubscription ->
+                    let terminalReferenceId =
+                        tryParseAutomationEventGuidProperty "terminalPromotionReferenceId" envelope.DataJson
+                        |> Option.defaultValue ReferenceId.Empty
+
+                    logToAnsiConsole
+                        Colors.Highlighted
+                        $"Parent branch {trustedSubscription.ParentBranchId} received terminal promotion {terminalReferenceId}; evaluating auto-rebase."
+
+                    let! currentStatus = readStatus ()
+
+                    let currentBranchId = Current().BranchId
+
+                    if currentBranchId = trustedSubscription.BranchId
+                       && signalRBranchSubscriptionStillTrusted trustedSubscription then
+                        logToAnsiConsole
+                            Colors.Highlighted
+                            $"Parent branch {trustedSubscription.ParentBranchId} still matches branch {trustedSubscription.BranchId}; starting auto-rebase."
+
+                        do! rebaseCurrentBranch currentStatus
+                    else
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Skipped auto-rebase for parent branch {trustedSubscription.ParentBranchId} because Watch branch identity changed before rebase."
+                | None -> ()
+            with
+            | ex -> logToAnsiConsole Colors.Error $"Failed to process automation event payload for {envelope.EventType}: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Exposes the SignalR automation-event path to Watch tests without opening a HubConnection.
+    let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
+        handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
+
+    /// Provides injectable operations for applying one exact current-branch Reference from local object-cache content.
+    type internal CurrentBranchRemoteMaterializationApplyClients =
+        {
+            GetRemoteDirectoryVersions: DirectoryVersionId -> CorrelationId -> Task<Result<DirectoryVersion array, GraceError>>
+            ReadGraceStatus: unit -> Task<GraceStatus>
+            WriteGraceStatus: GraceStatus -> Task<unit>
+            RequestResync: string -> unit
+            TryCreateUpdateMarker: string -> string -> bool
+            IsUpdateMarkerOwned: string -> string -> bool
+            BeforeTargetMutation: string -> unit
+            DeleteUpdateMarker: string -> unit
+            BeforeFinalVerification: unit -> Task<unit>
+            BeforeStatusReplacementVerification: unit -> Task<unit>
+        }
+
+    /// Lists the exact target paths that a remote Reference materialization will mutate.
+    type internal CurrentBranchRemoteMaterializationPlan =
+        {
+            FileDeletes: RelativePath array
+            DirectoryDeletes: RelativePath array
+            DirectoryCreates: RelativePath array
+            FileWrites: LocalFileVersion array
+            RetainedFiles: LocalFileVersion array
+            RetainedDirectories: LocalDirectoryVersion array
+        }
+
+    /// Converts the active repository path comparison into dictionary lookup semantics.
+    let private materializationStringComparer () = stringComparerForWatchPathComparison watchPathComparison
+
+    /// Normalizes paths for exact materialization target comparisons.
+    let private normalizedMaterializationPath (relativePath: RelativePath) = normalizeFilePath $"{relativePath}"
+
+    /// Verifies that the persisted status still represents the clean snapshot accepted by the serialized coordinator gate.
+    let private validateCurrentBranchMaterializationAcceptedStatus (acceptedStatus: GraceWatchStatus) (currentStatus: GraceStatus) =
+        let currentDirectoryIds = currentStatus.Index.Keys.ToHashSet()
+
+        if
+            currentStatus.RootDirectoryId
+            <> acceptedStatus.RootDirectoryId
+            || currentStatus.RootDirectorySha256Hash
+               <> acceptedStatus.RootDirectorySha256Hash
+            || currentStatus.RootDirectoryBlake3Hash
+               <> acceptedStatus.RootDirectoryBlake3Hash
+            || not (currentDirectoryIds.SetEquals(acceptedStatus.DirectoryIds))
+        then
+            invalidOp "Remote materialization persisted status no longer matches the clean snapshot accepted by the coordinator gate."
+
+    /// Rejects fetched metadata that is not an exact canonical tree for the configured repository and worktree.
+    let private validateCurrentBranchMaterializationAcceptedMetadata (remoteDirectoryVersions: DirectoryVersion array) =
+        let current = Current()
+        let rootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(current.RootDirectory))
+
+        let reservedPaths =
+            let uniquePaths = HashSet<string>(materializationStringComparer ())
+
+            [|
+                current.GraceDirectory
+                current.ObjectDirectory
+                current.DirectoryVersionCache
+                current.GraceStatusFile
+                current.GraceObjectCacheFile
+                current.ConfigurationDirectory
+            |]
+            |> Array.filter (String.IsNullOrWhiteSpace >> not)
+            |> Array.map (fun path -> Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)))
+            |> Array.choose (fun path -> if uniquePaths.Add(path) then Some path else None)
+
+        let targetFullPath (relativePath: RelativePath) =
+            let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, string relativePath))
+
+            if not (isPathWithinDirectoryForWatch rootDirectory fullPath) then
+                invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
+
+            fullPath
+
+        let pathIsReserved (relativePath: RelativePath) =
+            let fullPath =
+                targetFullPath relativePath
+                |> Path.TrimEndingDirectorySeparator
+
+            reservedPaths
+            |> Array.exists (fun reservedPath -> isPathWithinDirectoryForWatch reservedPath fullPath)
+
+        let validateCanonicalPath allowRoot (relativePath: RelativePath) =
+            let rawPath = string relativePath
+            let normalizedPath = normalizedMaterializationPath relativePath
+
+            let isCanonical =
+                if allowRoot && rawPath = Constants.RootDirectoryPath then
+                    true
+                else
+                    not (String.IsNullOrWhiteSpace(rawPath))
+                    && rawPath = normalizedPath
+                    && not (Path.IsPathRooted(rawPath))
+                    && not (rawPath.StartsWith("/", StringComparison.Ordinal))
+                    && not (rawPath.EndsWith("/", StringComparison.Ordinal))
+                    && rawPath.Split('/', StringSplitOptions.None)
+                       |> Array.forall (fun segment ->
+                           not (String.IsNullOrWhiteSpace(segment))
+                           && segment <> "."
+                           && segment <> "..")
+
+            if not isCanonical then
+                invalidOp $"Remote materialization path is not in canonical repository-relative form: '{rawPath}'."
+
+            let fullPath =
+                targetFullPath relativePath
+                |> Path.TrimEndingDirectorySeparator
+
+            if
+                not allowRoot
+                && String.Equals(fullPath, rootDirectory, watchPathComparison)
+            then
+                invalidOp $"Remote materialization non-root target resolves to the repository root: '{rawPath}'."
+
+            if pathIsReserved relativePath then
+                invalidOp $"Remote materialization target overlaps Grace local storage: '{rawPath}'."
+
+        for directoryVersion in remoteDirectoryVersions do
+            if directoryVersion.OwnerId <> current.OwnerId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched owner id."
+
+            if directoryVersion.OrganizationId
+               <> current.OrganizationId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched organization id."
+
+            if directoryVersion.RepositoryId
+               <> current.RepositoryId then
+                invalidOp $"Remote materialization DirectoryVersion {directoryVersion.DirectoryVersionId} has a mismatched repository id."
+
+            validateCanonicalPath true directoryVersion.RelativePath
+
+            for fileVersion in directoryVersion.Files do
+                validateCanonicalPath false fileVersion.RelativePath
+
+    /// Compares declared size and content hashes so equal hashes cannot conceal impossible file metadata.
+    let internal currentBranchMaterializationFileIdentityMatchesForWatchTests
+        expectedSize
+        expectedSha256Hash
+        expectedBlake3Hash
+        actualSize
+        actualSha256Hash
+        actualBlake3Hash
+        =
+        actualSize = expectedSize
+        && actualSha256Hash = expectedSha256Hash
+        && (String.IsNullOrWhiteSpace(string expectedBlake3Hash)
+            || actualBlake3Hash = expectedBlake3Hash)
+
+    /// Reports whether recursive metadata describes a normalized immediate child of its parent path.
+    let internal currentBranchMaterializationPathIsImmediateChildForWatchTests (parentPath: RelativePath) (childPath: RelativePath) =
+        let rawParentPath = string parentPath
+        let rawChildPath = string childPath
+
+        let hasTraversalSegment (path: string) =
+            path
+                .Replace('\\', '/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun segment -> segment = "." || segment = "..")
+
+        let isAbsolutePath (path: string) =
+            Path.IsPathRooted(path)
+            || path.StartsWith("/", StringComparison.Ordinal)
+            || path.StartsWith("\\", StringComparison.Ordinal)
+            || (path.Length >= 2
+                && Char.IsLetter(path[0])
+                && path[1] = ':')
+
+        let parent = normalizedMaterializationPath parentPath
+        let child = normalizedMaterializationPath childPath
+
+        not (String.IsNullOrWhiteSpace(rawChildPath))
+        && not (isAbsolutePath rawChildPath)
+        && not (hasTraversalSegment rawChildPath)
+        && (parent = Constants.RootDirectoryPath
+            && child <> Constants.RootDirectoryPath
+            && not (child.Contains('/'))
+            || parent <> Constants.RootDirectoryPath
+               && child.StartsWith(parent + "/", watchPathComparison)
+               && not (child.Substring(parent.Length + 1).Contains('/')))
+
+    /// Persists completion evidence and retires the marker while preserving the first cleanup failure.
+    let internal completeCurrentBranchMaterializationMarkerForWatchTests writeCompletion deleteMarker =
+        let mutable completionFailure = None
+
+        try
+            writeCompletion ()
+        with
+        | ex -> completionFailure <- Some ex
+
+        try
+            deleteMarker ()
+        with
+        | ex when completionFailure.IsNone -> completionFailure <- Some ex
+        | _ -> ()
+
+        match completionFailure with
+        | Some ex -> raise ex
+        | None -> ()
+
+    /// Creates the shared update marker without replacing a marker owned by another Grace command.
+    let internal tryCreateCurrentBranchMaterializationMarkerForWatchTests (markerFileName: string) (content: string) =
+        let mutable markerCreated = false
+
+        try
+            use stream = new FileStream(markerFileName, FileMode.CreateNew, FileAccess.Write, FileShare.Read)
+            markerCreated <- true
+            use writer = new StreamWriter(stream, UTF8Encoding(false))
+            writer.Write(content)
+            writer.Flush()
+            stream.Flush(true)
+            true
+        with
+        | :? IOException when not markerCreated -> false
+        | ex ->
+            if markerCreated then
+                try
+                    File.Delete(markerFileName)
+                with
+                | _ -> ()
+
+            raise ex
+
+    /// Reports whether the shared marker still contains the purpose value written by this materialization.
+    let private currentBranchMaterializationMarkerIsOwned markerFileName expectedContent =
+        try
+            File.Exists(markerFileName)
+            && String.Equals(File.ReadAllText(markerFileName), expectedContent, StringComparison.Ordinal)
+        with
+        | _ -> false
+
+    /// Reports whether a child materialization path is within a parent materialization path.
+    let private materializationPathIsUnder parentPath childPath =
+        let parentPath = normalizedMaterializationPath parentPath
+        let childPath = normalizedMaterializationPath childPath
+
+        String.Equals(parentPath, Constants.RootDirectoryPath, watchPathComparison)
+        || childPath.StartsWith(parentPath + "/", watchPathComparison)
+
+    /// Gets a full target path while rejecting relative paths that leave the repository root.
+    let private materializationTargetFullPath (relativePath: RelativePath) =
+        let rootDirectory = Path.GetFullPath(Current().RootDirectory)
+        let fullPath = Path.GetFullPath(Path.Combine(rootDirectory, $"{relativePath}"))
+
+        if not (isPathWithinDirectoryForWatch rootDirectory fullPath) then
+            invalidOp $"Remote materialization target escapes the repository root: {relativePath}."
+
+        fullPath
+
+    /// Builds a lookup keyed by repository-relative path.
+    let private materializationDirectoriesByPath (status: GraceStatus) =
+        status.Index.Values.ToDictionary(
+            (fun (directoryVersion: LocalDirectoryVersion) -> normalizedMaterializationPath directoryVersion.RelativePath),
+            id,
+            materializationStringComparer ()
+        )
+
+    /// Builds a file lookup keyed by repository-relative path.
+    let private materializationFilesByPath (status: GraceStatus) =
+        let filesByPath = Dictionary<string, LocalFileVersion>(materializationStringComparer ())
+
+        for fileVersion in
+            status.Index.Values
+            |> Seq.collect (fun (directoryVersion: LocalDirectoryVersion) -> directoryVersion.Files :> seq<LocalFileVersion>) do
+            filesByPath[normalizedMaterializationPath fileVersion.RelativePath] <- fileVersion
+
+        filesByPath
+
+    /// Chooses the local timestamp that an unchanged remote file should keep in the replacement status.
+    let private remoteMaterializationFileWriteTimeUtc
+        (currentFiles: Dictionary<string, LocalFileVersion>)
+        materializationStartedUtc
+        (fileVersion: FileVersion)
+        =
+        let path = normalizedMaterializationPath fileVersion.RelativePath
+        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+        if
+            currentFiles.TryGetValue(path, &currentFile)
+            && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                fileVersion.Size
+                fileVersion.Sha256Hash
+                fileVersion.Blake3Hash
+                currentFile.Size
+                currentFile.Sha256Hash
+                currentFile.Blake3Hash
+        then
+            let fullPath = materializationTargetFullPath fileVersion.RelativePath
+
+            if File.Exists(fullPath) then
+                File.GetLastWriteTimeUtc(fullPath)
+            else
+                currentFile.LastWriteTimeUtc
+        else
+            materializationStartedUtc
+
+    /// Creates a GraceStatus snapshot from remote DirectoryVersion metadata without scanning the working tree.
+    let private createRemoteGraceStatus (currentStatus: GraceStatus) (remoteDirectoryVersions: DirectoryVersion array) =
+        let lastWriteTimeUtc = DateTime.UtcNow
+        let currentFiles = materializationFilesByPath currentStatus
+        let index = GraceIndex()
+
+        for directoryVersion in remoteDirectoryVersions do
+            let localFiles =
+                directoryVersion.Files
+                |> Seq.map (fun fileVersion ->
+                    let fileLastWriteTimeUtc = remoteMaterializationFileWriteTimeUtc currentFiles lastWriteTimeUtc fileVersion
+                    fileVersion.ToLocalFileVersion fileLastWriteTimeUtc)
+                |> Seq.toList
+                |> List<LocalFileVersion>
+
+            let localDirectoryVersion =
+                LocalDirectoryVersion.CreateWithHashes
+                    directoryVersion.DirectoryVersionId
+                    directoryVersion.OwnerId
+                    directoryVersion.OrganizationId
+                    directoryVersion.RepositoryId
+                    directoryVersion.RelativePath
+                    directoryVersion.Sha256Hash
+                    directoryVersion.Blake3Hash
+                    directoryVersion.Directories
+                    localFiles
+                    directoryVersion.Size
+                    lastWriteTimeUtc
+
+            index.TryAdd(localDirectoryVersion.DirectoryVersionId, localDirectoryVersion)
+            |> ignore
+
+        let rootDirectoryVersion =
+            index.Values.FirstOrDefault((fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath), LocalDirectoryVersion.Default)
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootDirectoryVersion.DirectoryVersionId
+            RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash
+            RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
+            LastSuccessfulFileUpload = currentStatus.LastSuccessfulFileUpload
+            LastSuccessfulDirectoryVersionUpload = currentStatus.LastSuccessfulDirectoryVersionUpload
+        }
+
+    /// Chooses only paths that are not already covered by an ancestor directory delete.
+    let private topLevelDirectoryDeletePaths (paths: seq<RelativePath>) =
+        let uniquePaths = HashSet<string>(materializationStringComparer ())
+
+        let ordered =
+            paths
+            |> Seq.filter (fun path -> uniquePaths.Add(normalizedMaterializationPath path))
+            |> Seq.sortBy (fun path -> (normalizedMaterializationPath path).Length)
+            |> Seq.toArray
+
+        ordered
+        |> Array.filter (fun candidate ->
+            not (
+                ordered
+                |> Array.exists (fun other ->
+                    not (String.Equals(normalizedMaterializationPath other, normalizedMaterializationPath candidate, watchPathComparison))
+                    && materializationPathIsUnder other candidate)
+            ))
+
+    /// Gets the normalized repository-relative parent directory for a materialization target.
+    let private materializationParentDirectoryPath (relativePath: RelativePath) =
+        let path = normalizedMaterializationPath relativePath
+        let separatorIndex = path.LastIndexOf('/')
+
+        if separatorIndex < 0 then
+            Constants.RootDirectoryPath
+        else
+            path.Substring(0, separatorIndex)
+
+    /// Enumerates every non-root parent directory that would be recreated while materializing a target.
+    let private materializationAncestorDirectoryPaths (relativePath: RelativePath) =
+        Seq.unfold
+            (fun path ->
+                let parentPath = materializationParentDirectoryPath path
+
+                if parentPath = Constants.RootDirectoryPath then
+                    None
+                else
+                    Some(parentPath, parentPath))
+            relativePath
+
+    /// Computes the exact target set that differs between local status and the remote Reference tree.
+    let internal buildCurrentBranchRemoteMaterializationPlanForWatchTests (currentStatus: GraceStatus) (remoteStatus: GraceStatus) =
+        let currentDirectories = materializationDirectoriesByPath currentStatus
+        let currentFiles = materializationFilesByPath currentStatus
+        let remoteDirectories = materializationDirectoriesByPath remoteStatus
+        let remoteFiles = materializationFilesByPath remoteStatus
+
+        let directoryDeletes =
+            currentDirectories.Values
+            |> Seq.filter (fun (directoryVersion: LocalDirectoryVersion) ->
+                normalizedMaterializationPath directoryVersion.RelativePath
+                <> Constants.RootDirectoryPath
+                && (not (remoteDirectories.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath))
+                    || remoteFiles.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath)))
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> topLevelDirectoryDeletePaths
+
+        let directoryDeleteSet = HashSet<string>(materializationStringComparer ())
+
+        directoryDeletes
+        |> Seq.map normalizedMaterializationPath
+        |> Seq.iter (fun path -> directoryDeleteSet.Add(path) |> ignore)
+
+        let fileIsUnderDirectoryDelete (relativePath: RelativePath) =
+            directoryDeleteSet
+            |> Seq.exists (fun directoryPath -> materializationPathIsUnder (RelativePath directoryPath) relativePath)
+
+        let fileDeletes =
+            let deletedPaths = HashSet<string>(materializationStringComparer ())
+
+            currentFiles.Values
+            |> Seq.choose (fun (fileVersion: LocalFileVersion) ->
+                let path = normalizedMaterializationPath fileVersion.RelativePath
+
+                if
+                    not (fileIsUnderDirectoryDelete fileVersion.RelativePath)
+                    && (not (remoteFiles.ContainsKey path)
+                        || remoteDirectories.ContainsKey path)
+                    && deletedPaths.Add(path)
+                then
+                    Some fileVersion.RelativePath
+                else
+                    None)
+            |> Seq.toArray
+
+        let directoryCreates =
+            remoteDirectories.Values
+            |> Seq.filter (fun (directoryVersion: LocalDirectoryVersion) ->
+                normalizedMaterializationPath directoryVersion.RelativePath
+                <> Constants.RootDirectoryPath
+                && (not (currentDirectories.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath))
+                    || currentFiles.ContainsKey(normalizedMaterializationPath directoryVersion.RelativePath)))
+            |> Seq.sortBy (fun directoryVersion ->
+                (normalizedMaterializationPath directoryVersion.RelativePath)
+                    .Count(fun c -> c = '/'))
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> Seq.toArray
+
+        let fileWrites =
+            remoteFiles.Values
+            |> Seq.filter (fun (remoteFile: LocalFileVersion) ->
+                let path = normalizedMaterializationPath remoteFile.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                currentDirectories.ContainsKey path
+                || not (currentFiles.TryGetValue(path, &currentFile))
+                || not (
+                    currentBranchMaterializationFileIdentityMatchesForWatchTests
+                        remoteFile.Size
+                        remoteFile.Sha256Hash
+                        remoteFile.Blake3Hash
+                        currentFile.Size
+                        currentFile.Sha256Hash
+                        currentFile.Blake3Hash
+                ))
+            |> Seq.toArray
+
+        let retainedFiles =
+            remoteFiles.Values
+            |> Seq.filter (fun (remoteFile: LocalFileVersion) ->
+                let path = normalizedMaterializationPath remoteFile.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                not (currentDirectories.ContainsKey path)
+                && currentFiles.TryGetValue(path, &currentFile)
+                && currentBranchMaterializationFileIdentityMatchesForWatchTests
+                    remoteFile.Size
+                    remoteFile.Sha256Hash
+                    remoteFile.Blake3Hash
+                    currentFile.Size
+                    currentFile.Sha256Hash
+                    currentFile.Blake3Hash)
+            |> Seq.toArray
+
+        let retainedDirectories =
+            let retainedDirectoryPaths = HashSet<string>(materializationStringComparer ())
+
+            seq {
+                yield! directoryCreates
+
+                yield!
+                    fileWrites
+                    |> Seq.map (fun fileVersion -> fileVersion.RelativePath)
+            }
+            |> Seq.collect materializationAncestorDirectoryPaths
+            |> Seq.filter (fun path -> retainedDirectoryPaths.Add(normalizedMaterializationPath path))
+            |> Seq.choose (fun path ->
+                let mutable currentDirectory = Unchecked.defaultof<LocalDirectoryVersion>
+
+                if
+                    currentDirectories.TryGetValue(path, &currentDirectory)
+                    && remoteDirectories.ContainsKey(path)
+                then
+                    Some currentDirectory
+                else
+                    None)
+            |> Seq.toArray
+
+        {
+            FileDeletes = fileDeletes
+            DirectoryDeletes = directoryDeletes
+            DirectoryCreates = directoryCreates
+            FileWrites = fileWrites
+            RetainedFiles = retainedFiles
+            RetainedDirectories = retainedDirectories
+        }
+
+    /// Verifies a tracked target file still matches the local status snapshot.
+    let private targetFileStillMatchesStatus (fileVersion: LocalFileVersion) =
+        task {
+            let fullPath = materializationTargetFullPath fileVersion.RelativePath
+
+            if not (File.Exists(fullPath)) then
+                return false
+            else
+                match! createLocalFileVersion (FileInfo fullPath) with
+                | Some actual ->
+                    return
+                        currentBranchMaterializationFileIdentityMatchesForWatchTests
+                            fileVersion.Size
+                            fileVersion.Sha256Hash
+                            fileVersion.Blake3Hash
+                            actual.Size
+                            actual.Sha256Hash
+                            actual.Blake3Hash
+                | None -> return false
+        }
+
+    /// Verifies a deleted directory target has no local edits beyond the local status snapshot.
+    let private targetDirectoryStillMatchesStatus (currentStatus: GraceStatus) (relativePath: RelativePath) =
+        task {
+            match tryResolveDirectoryUsingWatchPathComparison relativePath with
+            | None -> return false
+            | Some fullPath ->
+                let currentDirectories = materializationDirectoriesByPath currentStatus
+                let currentFiles = materializationFilesByPath currentStatus
+
+                let expectedDirectoryPaths =
+                    let targetPath = normalizedMaterializationPath relativePath
+
+                    currentDirectories.Values
+                    |> Seq.filter (fun directoryVersion ->
+                        let directoryPath = normalizedMaterializationPath directoryVersion.RelativePath
+
+                        String.Equals(directoryPath, targetPath, watchPathComparison)
+                        || materializationPathIsUnder relativePath directoryVersion.RelativePath)
+                    |> Seq.map (fun directoryVersion -> normalizedMaterializationPath directoryVersion.RelativePath)
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
+
+                let expectedFiles =
+                    currentFiles.Values
+                    |> Seq.filter (fun fileVersion -> materializationPathIsUnder relativePath fileVersion.RelativePath)
+                    |> Seq.toArray
+
+                let expectedFilePaths =
+                    expectedFiles
+                    |> Seq.map (fun fileVersion -> normalizedMaterializationPath fileVersion.RelativePath)
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
+
+                let actualFiles =
+                    Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories)
+                    |> Seq.map (fun filePath -> RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, filePath))))
+                    |> Seq.toArray
+
+                let actualDirectoryPaths =
+                    seq {
+                        yield relativePath
+
+                        yield!
+                            Directory.EnumerateDirectories(fullPath, "*", SearchOption.AllDirectories)
+                            |> Seq.map (fun directoryPath -> RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryPath))))
+                    }
+                    |> Seq.map normalizedMaterializationPath
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
+
+                let actualFilePaths =
+                    actualFiles
+                    |> Seq.map normalizedMaterializationPath
+                    |> fun paths -> HashSet<string>(paths, materializationStringComparer ())
+
+                let hasUnexpectedDirectories =
+                    actualDirectoryPaths
+                    |> Seq.exists (expectedDirectoryPaths.Contains >> not)
+
+                let missingExpectedDirectories =
+                    expectedDirectoryPaths
+                    |> Seq.exists (actualDirectoryPaths.Contains >> not)
+
+                let hasUnexpectedFiles =
+                    actualFilePaths
+                    |> Seq.exists (expectedFilePaths.Contains >> not)
+
+                if hasUnexpectedDirectories
+                   || missingExpectedDirectories
+                   || hasUnexpectedFiles then
+                    return false
+                else
+                    let mutable allTrackedFilesMatch = true
+
+                    for fileVersion in expectedFiles do
+                        let! matchesStatus = targetFileStillMatchesStatus fileVersion
+
+                        if not matchesStatus then allTrackedFilesMatch <- false
+
+                    return allTrackedFilesMatch
+        }
+
+    /// Exposes retained-tree preflight for deterministic path-comparison tests.
+    let internal currentBranchMaterializationRetainedDirectoryMatchesStatusForWatchTests currentStatus relativePath =
+        targetDirectoryStillMatchesStatus currentStatus relativePath
+
+    /// Fails before exact target mutation when a tracked parent directory no longer matches the accepted clean snapshot.
+    let private verifyCurrentBranchMaterializationRetainedDirectories (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for directoryVersion in plan.RetainedDirectories do
+                let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus directoryVersion.RelativePath
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization retained directory changed before apply: {directoryVersion.RelativePath}."
+        }
+
+    /// Fails immediately before parent creation when a retained tracked ancestor was deleted or replaced after the final clean proof.
+    let private verifyCurrentBranchMaterializationRetainedAncestorsForTarget (plan: CurrentBranchRemoteMaterializationPlan) (relativePath: RelativePath) =
+        for directoryVersion in plan.RetainedDirectories do
+            if materializationPathIsUnder directoryVersion.RelativePath relativePath then
+                let fullPath = materializationTargetFullPath directoryVersion.RelativePath
+
+                if not (Directory.Exists(fullPath)) then
+                    invalidOp $"Remote materialization retained ancestor directory changed at mutation boundary: {directoryVersion.RelativePath}."
+
+    /// Fails before target mutation when a changed target no longer matches the trusted local status.
+    let private verifyCurrentBranchMaterializationTargetsUnchanged (currentStatus: GraceStatus) (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            let currentFiles = materializationFilesByPath currentStatus
+            let currentDirectories = materializationDirectoriesByPath currentStatus
+
+            for relativePath in plan.FileDeletes do
+                let path = normalizedMaterializationPath relativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                if currentFiles.TryGetValue(path, &currentFile) then
+                    let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                    if not matchesStatus then
+                        invalidOp $"Remote materialization target changed before apply: {relativePath}."
+
+            for relativePath in plan.DirectoryDeletes do
+                let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization directory target changed before apply: {relativePath}."
+
+            for fileVersion in plan.FileWrites do
+                let path = normalizedMaterializationPath fileVersion.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                if currentFiles.TryGetValue(path, &currentFile) then
+                    let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                    if not matchesStatus then
+                        invalidOp $"Remote materialization target changed before apply: {fileVersion.RelativePath}."
+                elif not (currentDirectories.ContainsKey path) then
+                    let fullPath = materializationTargetFullPath fileVersion.RelativePath
+
+                    if
+                        File.Exists(fullPath)
+                        || Directory.Exists(fullPath)
+                    then
+                        invalidOp $"Remote materialization create target appeared before apply: {fileVersion.RelativePath}."
+
+            for relativePath in plan.DirectoryCreates do
+                let path = normalizedMaterializationPath relativePath
+
+                if
+                    not (currentDirectories.ContainsKey path)
+                    && not (currentFiles.ContainsKey path)
+                then
+                    let fullPath = materializationTargetFullPath relativePath
+
+                    if
+                        File.Exists(fullPath)
+                        || Directory.Exists(fullPath)
+                    then
+                        invalidOp $"Remote materialization create target appeared before apply: {relativePath}."
+        }
+
+    /// Verifies files omitted from mutation still match the clean snapshot represented by replacement status.
+    let private verifyCurrentBranchMaterializationRetainedFiles (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for fileVersion in plan.RetainedFiles do
+                let! matchesStatus = targetFileStillMatchesStatus fileVersion
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization retained file changed before status replacement: {fileVersion.RelativePath}."
+        }
+
+    /// Proves the recursive response is exactly one acyclic root closure and that every directory hash matches its canonical contents.
+    let private validateCurrentBranchMaterializationDirectoryClosureAndHashes
+        (rootDirectoryId: DirectoryVersionId)
+        (remoteDirectoryVersions: DirectoryVersion array)
+        =
+        let versionsById = Dictionary<DirectoryVersionId, DirectoryVersion>()
+
+        for directoryVersion in remoteDirectoryVersions do
+            if not (versionsById.TryAdd(directoryVersion.DirectoryVersionId, directoryVersion)) then
+                invalidOp $"Remote materialization metadata contains duplicate DirectoryVersionId {directoryVersion.DirectoryVersionId}."
+
+        if not (versionsById.ContainsKey(rootDirectoryId)) then
+            invalidOp $"Remote materialization metadata did not include requested root DirectoryVersionId {rootDirectoryId}."
+
+        let rootDirectoryVersion = versionsById[rootDirectoryId]
+
+        if normalizedMaterializationPath rootDirectoryVersion.RelativePath
+           <> Constants.RootDirectoryPath then
+            invalidOp $"Remote materialization root DirectoryVersion {rootDirectoryId} has non-root path {rootDirectoryVersion.RelativePath}."
+
+        let visiting = HashSet<DirectoryVersionId>()
+        let visited = HashSet<DirectoryVersionId>()
+
+        let rec validate directoryId =
+            if visiting.Contains(directoryId) then
+                invalidOp $"Remote materialization metadata contains a cycle through DirectoryVersionId {directoryId}."
+
+            if not (visited.Contains(directoryId)) then
+                let directoryVersion = versionsById[directoryId]
+                visiting.Add(directoryId) |> ignore
+                let childIds = HashSet<DirectoryVersionId>()
+                let children = ResizeArray<DirectoryVersion>()
+
+                let expectedDirectorySize = getDirectorySize directoryVersion.Files
+
+                if directoryVersion.Size <> expectedDirectorySize then
+                    invalidOp
+                        $"Remote materialization DirectoryVersion {directoryId} has size {directoryVersion.Size}, but its direct files total {expectedDirectorySize}."
+
+                for childId in directoryVersion.Directories do
+                    if not (childIds.Add(childId)) then
+                        invalidOp $"Remote materialization metadata contains duplicate child DirectoryVersionId {childId} under {directoryId}."
+
+                    let mutable child = Unchecked.defaultof<DirectoryVersion>
+
+                    if not (versionsById.TryGetValue(childId, &child)) then
+                        invalidOp $"Remote materialization metadata is missing child DirectoryVersion entry {directoryVersion.RelativePath}->{childId}."
+
+                    if not (currentBranchMaterializationPathIsImmediateChildForWatchTests directoryVersion.RelativePath child.RelativePath) then
+                        invalidOp
+                            $"Remote materialization child DirectoryVersion path {child.RelativePath} is not an immediate descendant of {directoryVersion.RelativePath}."
+
+                    validate childId
+                    children.Add(child)
+
+                let entries =
+                    seq {
+                        for child in children do
+                            yield DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+
+                        for fileVersion in directoryVersion.Files do
+                            if not (currentBranchMaterializationPathIsImmediateChildForWatchTests directoryVersion.RelativePath fileVersion.RelativePath) then
+                                invalidOp
+                                    $"Remote materialization FileVersion path {fileVersion.RelativePath} is not an immediate child of {directoryVersion.RelativePath}."
+
+                            yield DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash
+                    }
+
+                let expectedSha256Hash = computeSha256ForDirectoryEntries directoryVersion.RelativePath entries
+                let expectedBlake3Hash = computeBlake3ForDirectory directoryVersion.RelativePath entries
+
+                if directoryVersion.Sha256Hash <> expectedSha256Hash then
+                    invalidOp $"Remote materialization DirectoryVersion {directoryId} has a mismatched SHA-256 hash."
+
+                if directoryVersion.Blake3Hash <> expectedBlake3Hash then
+                    invalidOp $"Remote materialization DirectoryVersion {directoryId} has a mismatched BLAKE3 hash."
+
+                visiting.Remove(directoryId) |> ignore
+                visited.Add(directoryId) |> ignore
+
+        validate rootDirectoryId
+
+        if visited.Count <> versionsById.Count then
+            let unreachable =
+                versionsById.Keys
+                |> Seq.filter (visited.Contains >> not)
+                |> Seq.map string
+                |> String.concat ", "
+
+            invalidOp $"Remote materialization metadata contains DirectoryVersion entries outside the accepted root closure: {unreachable}."
+
+    /// Rejects remote paths that cannot map one-to-one onto the active worktree filesystem.
+    let private validateCurrentBranchMaterializationPathRepresentability (remoteDirectoryVersions: DirectoryVersion array) =
+        let targetPaths = Dictionary<string, string>(materializationStringComparer ())
+        let collisions = ResizeArray<string>()
+
+        let remoteTargets =
+            seq {
+                for directoryVersion in remoteDirectoryVersions do
+                    yield directoryVersion.RelativePath
+
+                    for fileVersion in directoryVersion.Files do
+                        yield fileVersion.RelativePath
+            }
+
+        for relativePath in remoteTargets do
+            let normalizedPath = normalizedMaterializationPath relativePath
+            let mutable existingPath = Unchecked.defaultof<string>
+
+            if targetPaths.TryGetValue(normalizedPath, &existingPath) then
+                collisions.Add($"{existingPath} <> {relativePath}")
+            else
+                targetPaths.Add(normalizedPath, $"{relativePath}")
+
+        if collisions.Count > 0 then
+            let collisionDescription = String.concat ", " collisions
+            invalidOp $"Remote materialization metadata contains case-colliding or duplicate target paths: {collisionDescription}."
+
+    /// Verifies the fetched root metadata is the exact id and hash pair carried by the accepted Reference.
+    let private validateCurrentBranchMaterializationRootIdentity
+        (payload: CurrentBranchReferenceNotification)
+        (remoteDirectoryVersions: DirectoryVersion array)
+        =
+        match remoteDirectoryVersions
+              |> Array.tryFind (fun directoryVersion -> directoryVersion.DirectoryVersionId = payload.DirectoryId)
+            with
+        | None -> invalidOp $"Remote materialization metadata did not include requested root DirectoryVersionId {payload.DirectoryId}."
+        | Some rootDirectoryVersion ->
+            if rootDirectoryVersion.Sha256Hash
+               <> payload.Sha256Hash
+               || rootDirectoryVersion.Blake3Hash
+                  <> payload.Blake3Hash then
+                invalidOp $"Remote materialization root identity did not match accepted Reference payload for {payload.DirectoryId}."
+
+    /// Verifies every local object-cache file required by the exact file writes is already present and hash-valid.
+    let private verifyCurrentBranchMaterializationObjectCache (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            let invalidObjectCacheFiles = HashSet<string>(materializationStringComparer ())
+
+            for fileVersion in plan.FileWrites do
+                let objectCachePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+
+                if not (File.Exists objectCachePath) then
+                    invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                    |> ignore
+                else
+                    try
+                        let actualSize = FileInfo(objectCachePath).Length
+                        use stream = File.Open(objectCachePath, fileStreamOptionsRead)
+                        let! sha256Hash = computeSha256ForFile stream fileVersion.RelativePath
+                        stream.Position <- 0L
+                        let! blake3Hash = computeBlake3ForFile stream
+
+                        if
+                            not
+                                (
+                                    currentBranchMaterializationFileIdentityMatchesForWatchTests
+                                        fileVersion.Size
+                                        fileVersion.Sha256Hash
+                                        fileVersion.Blake3Hash
+                                        actualSize
+                                        sha256Hash
+                                        (Blake3Hash $"{blake3Hash}")
+                                )
+                        then
+                            invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                            |> ignore
+                    with
+                    | _ ->
+                        invalidObjectCacheFiles.Add($"{fileVersion.RelativePath}")
+                        |> ignore
+
+            if invalidObjectCacheFiles.Count > 0 then
+                let invalidPaths = invalidObjectCacheFiles |> String.concat ", "
+
+                invalidOp $"Remote materialization cannot start because object-cache content is missing or corrupt for: {invalidPaths}."
+        }
+
+    /// Verifies remote binary flags against the accepted cache or retained working-tree bytes before clean status replacement.
+    let private verifyCurrentBranchMaterializationBinaryClassifications (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for fileVersion in plan.FileWrites do
+                let objectCachePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+                use stream = File.Open(objectCachePath, fileStreamOptionsRead)
+                let! actualIsBinary = isBinaryFile stream
+
+                if actualIsBinary <> fileVersion.IsBinary then
+                    invalidOp $"Remote materialization binary classification does not match object-cache bytes for {fileVersion.RelativePath}."
+
+            for fileVersion in plan.RetainedFiles do
+                let targetPath = materializationTargetFullPath fileVersion.RelativePath
+                use stream = File.Open(targetPath, fileStreamOptionsRead)
+                let! actualIsBinary = isBinaryFile stream
+
+                if actualIsBinary <> fileVersion.IsBinary then
+                    invalidOp $"Remote materialization binary classification does not match retained working-tree bytes for {fileVersion.RelativePath}."
+        }
+
+    /// Applies exact target mutations from local object-cache files while the update marker is present.
+    let private applyCurrentBranchMaterializationTargets (clients: CurrentBranchRemoteMaterializationApplyClients) currentStatus remoteStatus plan =
+        task {
+            let markerFileName = updateInProgressFileName ()
+            let completedFileName = updateMarkerCompletedFileName ()
+            let markerContent = "`grace watch` remote materialization is in progress."
+
+            Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
+            |> ignore
+
+            let markerOwned = clients.TryCreateUpdateMarker markerFileName markerContent
+
+            if not markerOwned then
+                invalidOp "Remote materialization cannot start because another Grace command created the shared update marker."
+
+            let ensureMarkerOwned mutation =
+                clients.BeforeTargetMutation mutation
+
+                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
+                    invalidOp "Remote materialization cannot continue because its shared update marker was replaced."
+
+            let mutable applyFailure = None
+
+            try
+                try
+                    do! clients.BeforeFinalVerification()
+
+                    ensureMarkerOwned "final verification"
+
+                    do! verifyCurrentBranchMaterializationObjectCache plan
+                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+                    do! verifyCurrentBranchMaterializationRetainedDirectories currentStatus plan
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
+                    let currentFiles = materializationFilesByPath currentStatus
+
+                    for relativePath in plan.FileDeletes do
+                        let fullPath = materializationTargetFullPath relativePath
+                        let path = normalizedMaterializationPath relativePath
+                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                        if currentFiles.TryGetValue(path, &currentFile) then
+                            let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                            if not matchesStatus then
+                                invalidOp $"Remote materialization delete target changed at mutation boundary: {relativePath}."
+
+                        if File.Exists(fullPath) then
+                            ensureMarkerOwned $"delete file {relativePath}"
+                            File.Delete(fullPath)
+
+                    for relativePath in
+                        plan.DirectoryDeletes
+                        |> Array.sortByDescending (fun path -> (normalizedMaterializationPath path).Length) do
+                        let fullPath = materializationTargetFullPath relativePath
+                        let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
+
+                        if not matchesStatus then
+                            invalidOp $"Remote materialization directory target changed at mutation boundary: {relativePath}."
+
+                        if Directory.Exists(fullPath) then
+                            ensureMarkerOwned $"delete directory {relativePath}"
+                            Directory.Delete(fullPath, true)
+
+                    for relativePath in plan.DirectoryCreates do
+                        let fullPath = materializationTargetFullPath relativePath
+
+                        verifyCurrentBranchMaterializationRetainedAncestorsForTarget plan relativePath
+
+                        if
+                            File.Exists(fullPath)
+                            || Directory.Exists(fullPath)
+                        then
+                            invalidOp $"Remote materialization directory create target appeared at mutation boundary: {relativePath}."
+
+                        ensureMarkerOwned $"create directory {relativePath}"
+                        Directory.CreateDirectory(fullPath) |> ignore
+
+                    for fileVersion in plan.FileWrites do
+                        let targetPath = materializationTargetFullPath fileVersion.RelativePath
+                        let sourcePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+                        let path = normalizedMaterializationPath fileVersion.RelativePath
+                        let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                        let removedByDirectoryDelete =
+                            plan.DirectoryDeletes
+                            |> Array.exists (fun directoryPath ->
+                                normalizedMaterializationPath directoryPath = path
+                                || materializationPathIsUnder directoryPath fileVersion.RelativePath)
+
+                        if
+                            currentFiles.TryGetValue(path, &currentFile)
+                            && not removedByDirectoryDelete
+                        then
+                            let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                            if not matchesStatus then
+                                invalidOp $"Remote materialization write target changed at mutation boundary: {fileVersion.RelativePath}."
+                        elif
+                            File.Exists(targetPath)
+                            || Directory.Exists(targetPath)
+                        then
+                            invalidOp $"Remote materialization write target appeared at mutation boundary: {fileVersion.RelativePath}."
+
+                        do! verifyCurrentBranchMaterializationObjectCache { plan with FileWrites = [| fileVersion |] }
+
+                        verifyCurrentBranchMaterializationRetainedAncestorsForTarget plan fileVersion.RelativePath
+
+                        ensureMarkerOwned $"create parent directory {fileVersion.RelativePath}"
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
+                        |> ignore
+
+                        ensureMarkerOwned $"copy file {fileVersion.RelativePath}"
+                        File.Copy(sourcePath, targetPath, true)
+                        ensureMarkerOwned $"set file timestamp {fileVersion.RelativePath}"
+                        File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
+
+                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                        if not copiedTargetMatches then
+                            invalidOp $"Remote materialization copied target did not match declared identity: {fileVersion.RelativePath}."
+
+                    do! clients.BeforeStatusReplacementVerification()
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+
+                    for fileVersion in plan.FileWrites do
+                        let! copiedTargetMatches = targetFileStillMatchesStatus fileVersion
+
+                        if not copiedTargetMatches then
+                            invalidOp $"Remote materialization copied target changed before status replacement: {fileVersion.RelativePath}."
+
+                    ensureMarkerOwned "write replacement status"
+                    do! clients.WriteGraceStatus remoteStatus
+                    ensureMarkerOwned "publish replacement status in memory"
+                    graceStatus <- remoteStatus
+                    updateGraceStatusDirectoryIds remoteStatus
+                with
+                | ex -> applyFailure <- Some ex
+
+                if clients.IsUpdateMarkerOwned markerFileName markerContent then
+                    let completedUtc = DateTime.UtcNow
+
+                    try
+                        completeCurrentBranchMaterializationMarkerForWatchTests
+                            (fun () ->
+                                if not (clients.IsUpdateMarkerOwned markerFileName markerContent) then
+                                    invalidOp "Remote materialization cannot complete because its shared update marker was replaced."
+
+                                File.WriteAllText(
+                                    completedFileName,
+                                    serializeGraceUpdateMarkerCompletion GraceUpdateMarkerPurpose.ReferenceMaterialization completedUtc
+                                )
+
+                                recordGraceUpdateMarkerCompletedUtc completedUtc)
+                            (fun () ->
+                                if clients.IsUpdateMarkerOwned markerFileName markerContent then
+                                    clients.DeleteUpdateMarker markerFileName)
+                    with
+                    | ex when applyFailure.IsNone -> applyFailure <- Some ex
+                    | _ -> ()
+            with
+            | ex when applyFailure.IsNone -> applyFailure <- Some ex
+            | _ -> ()
+
+            match applyFailure with
+            | Some ex -> raise ex
+            | None -> ()
+        }
+
+    /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
+    let private applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus =
+        task {
+            configureWatchPathComparisonForCurrentRepository ()
+
+            match! clients.GetRemoteDirectoryVersions payload.DirectoryId payload.CorrelationId with
+            | Error error ->
+                clients.RequestResync $"remote materialization metadata fetch failed before exact apply: {error.Error}"
+                raise (InvalidOperationException(error.Error))
+            | Ok remoteDirectoryVersions ->
+                let! currentStatus =
+                    task {
+                        try
+                            return! clients.ReadGraceStatus()
+                        with
+                        | ex ->
+                            clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
+                            return raise ex
+                    }
+
+                try
+                    validateCurrentBranchMaterializationAcceptedStatus acceptedStatus currentStatus
+                    validateCurrentBranchMaterializationAcceptedMetadata remoteDirectoryVersions
+                    validateCurrentBranchMaterializationDirectoryClosureAndHashes payload.DirectoryId remoteDirectoryVersions
+                    validateCurrentBranchMaterializationPathRepresentability remoteDirectoryVersions
+                    validateCurrentBranchMaterializationRootIdentity payload remoteDirectoryVersions
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization metadata incomplete before exact apply: {ex.Message}"
+                    raise ex
+
+                let remoteStatus =
+                    try
+                        createRemoteGraceStatus currentStatus remoteDirectoryVersions
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization metadata invalid before exact apply: {ex.Message}"
+                        raise ex
+
+                if remoteStatus.RootDirectoryId
+                   <> payload.DirectoryId then
+                    clients.RequestResync $"remote materialization metadata missing requested root before exact apply: {payload.DirectoryId}"
+                    invalidOp $"Remote materialization metadata did not include the requested root DirectoryVersionId {payload.DirectoryId}."
+
+                let plan =
+                    try
+                        buildCurrentBranchRemoteMaterializationPlanForWatchTests currentStatus remoteStatus
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization plan construction failed before exact apply: {ex.Message}"
+                        raise ex
+
+                try
+                    do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization target changed before exact apply: {ex.Message}"
+                    raise ex
+
+                try
+                    do! verifyCurrentBranchMaterializationObjectCache plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization object cache invalid before exact apply: {ex.Message}"
+                    raise ex
+
+                try
+                    do! verifyCurrentBranchMaterializationBinaryClassifications plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization binary metadata invalid before exact apply: {ex.Message}"
+                    raise ex
+
+                try
+                    do! applyCurrentBranchMaterializationTargets clients currentStatus remoteStatus plan
+                with
+                | ex ->
+                    clients.RequestResync $"remote materialization failed during exact target apply: {ex.Message}"
+                    raise ex
+        }
+
+    /// Applies exact materialization with an explicitly supplied coordinator-accepted status snapshot.
+    let internal applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests clients payload acceptedStatus =
+        applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
+
+    /// Preserves the direct apply test boundary by deriving an equivalent accepted snapshot from its configured local status.
+    let internal applyCurrentBranchReferenceMaterializationWithClientsForWatchTests clients payload =
+        task {
+            let! currentStatus =
+                task {
+                    try
+                        return! clients.ReadGraceStatus()
+                    with
+                    | ex ->
+                        clients.RequestResync $"remote materialization local status read failed before exact apply: {ex.Message}"
+                        return raise ex
+                }
+
+            let current = Current()
+
+            let acceptedStatus =
+                { GraceWatchStatus.Default with
+                    UpdatedAt = getCurrentInstant ()
+                    RepositoryId = current.RepositoryId
+                    RepositoryName = current.RepositoryName
+                    BranchId = current.BranchId
+                    BranchName = current.BranchName
+                    RootDirectory = current.RootDirectory
+                    RootDirectoryId = currentStatus.RootDirectoryId
+                    RootDirectorySha256Hash = currentStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = currentStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = currentStatus.Index.Keys.ToHashSet()
+                }
+
+            return! applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus
+        }
+
+    /// Applies one BranchDto-confirmed current-branch Reference without downloading missing object content.
+    let private applyCurrentBranchReferenceMaterialization payload acceptedStatus =
+        applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
+            {
+                GetRemoteDirectoryVersions =
+                    fun rootDirectoryId correlationId ->
+                        task {
+                            let current = Current()
+
+                            let parameters =
+                                GetParameters(
+                                    OwnerId = $"{current.OwnerId}",
+                                    OwnerName = current.OwnerName,
+                                    OrganizationId = $"{current.OrganizationId}",
+                                    OrganizationName = current.OrganizationName,
+                                    RepositoryId = $"{current.RepositoryId}",
+                                    RepositoryName = current.RepositoryName,
+                                    DirectoryVersionId = $"{rootDirectoryId}",
+                                    CorrelationId = correlationId
+                                )
+
+                            match! DirectoryVersion.GetDirectoryVersionsRecursive parameters with
+                            | Ok returnValue ->
+                                return
+                                    Ok(
+                                        returnValue.ReturnValue
+                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                        |> Seq.toArray
+                                    )
+                            | Error error -> return Error error
+                        }
+                ReadGraceStatus = readGraceStatusFile
+                WriteGraceStatus = writeGraceStatusFile
+                RequestResync = requestGraceWatchExplicitResync
+                TryCreateUpdateMarker = tryCreateCurrentBranchMaterializationMarkerForWatchTests
+                IsUpdateMarkerOwned = currentBranchMaterializationMarkerIsOwned
+                BeforeTargetMutation = ignore
+                DeleteUpdateMarker = File.Delete
+                BeforeFinalVerification = fun () -> Task.FromResult(())
+                BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
+            }
+            payload
+            acceptedStatus
+
+    /// Publishes and verifies the dirty materialization boundary before target mutation can begin.
+    let private tryPublishCurrentBranchMaterializationPendingStatus (_status: GraceWatchStatus) =
+        try
+            let expectedStatus =
+                readGraceStatusFileForPendingWorkTransition()
+                    .GetAwaiter()
+                    .GetResult()
+
+            let directoryIds = expectedStatus.Index.Keys.ToHashSet()
+
+            tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus directoryIds (fun () ->
+                updateGraceWatchInterprocessFile expectedStatus (Some directoryIds))
+        with
+        | ex ->
+            logToAnsiConsole Colors.Error $"Grace Watch could not prove materialization-pending IPC/status publication: {ex.Message}"
+            false
+
+    /// Names the coordinator result for one exact same-branch Reference notification.
+    type internal CurrentBranchMaterializationCoordinatorOutcomeReason =
+        /// The notification was ignored because it did not target the current Watch branch.
+        | NotCurrentBranch = 0
+        /// The notification failed the concrete Reference and root-identity protocol checks.
+        | ProtocolRejected = 1
+        /// The latest eligible Reference comparison or current Watch evidence rejected the notification without mutation.
+        | LatestEligibleReferenceRejected = 2
+        /// Local Watch status is clean and trusted, so the apply seam completed for this exact Reference.
+        | Applied = 3
+        /// Local Watch status is trustworthy but currently blocks remote materialization until a later safe point.
+        | WaitingForSafePoint = 4
+        /// Watch could not trust local IPC/status authority even after degraded resync revalidation.
+        | WaitingForDegradedResync = 5
+
+    /// Carries the terminal coordinator result for one exact same-branch Reference notification.
+    type internal CurrentBranchMaterializationCoordinatorOutcome =
+        {
+            ReferenceId: ReferenceId
+            Reason: CurrentBranchMaterializationCoordinatorOutcomeReason
+            Decision: LatestCurrentBranchReferenceDecision option
+        }
+
+    /// Names the local status gate that decides whether a BranchDto-latest Reference may reach apply.
+    type internal CurrentBranchMaterializationStatusGate =
+        | NotCurrentBranch
+        | Clean of GraceWatchStatus
+        | Blocked of string
+        | Degraded of string
+
+    /// Coordinates a same-branch Reference once clean IPC and BranchDto latest authority have both been proven.
+    type private CurrentBranchMaterializationCoordinatorClients =
+        {
+            GetCurrentBranch: unit -> Task<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>
+            InspectLocalStatus: unit -> Task<GraceWatchStatusInspection>
+            RequestDegradedResync: string -> unit
+            WaitForSafePoint: CurrentBranchReferenceNotification -> CurrentBranchMaterializationStatusGate -> Task<unit>
+            ReestablishIpc: CurrentBranchReferenceNotification -> string -> Task<unit>
+            ApplyReference: CurrentBranchReferenceNotification -> GraceWatchStatus -> Task<unit>
+            PublishCleanIpcAfterApply: unit -> bool
+            ReassertDirtyIpcAfterFailedCleanPublication: unit -> bool
+            MaxAttempts: int option
+        }
+
+    /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
+    let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
+        let current = Current()
+
+        payload.RepositoryId = current.RepositoryId
+        && payload.BranchId = current.BranchId
+
+    /// Reports whether a same-branch Reference notification still matches the repository identity persisted on disk.
+    let private currentBranchReferenceNotificationTargetsPersistedCurrentBranch (payload: CurrentBranchReferenceNotification) =
+        match tryInspectCurrentDirectoryConfiguration () with
+        | Ok inspection ->
+            payload.RepositoryId = inspection.Configuration.RepositoryId
+            && payload.BranchId = inspection.Configuration.BranchId
+        | Error _ -> false
+
+    /// Reports whether cached Watch identity and persisted repository identity both still match the notification.
+    let private currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch (payload: CurrentBranchReferenceNotification) =
+        currentBranchReferenceNotificationTargetsCurrentBranch payload
+        && currentBranchReferenceNotificationTargetsPersistedCurrentBranch payload
+
+    /// Reports whether the local-state database can be opened as durable Watch authority before materialization side effects.
+    let private hasReadableLocalStateDbAuthority () =
+        let inspection = Grace.CLI.LocalStateDb.inspectReadOnly (Current().GraceStatusFile)
+
+        inspection.ParentDirectoryExists
+        && inspection.DbFileExists
+        && not inspection.DbPathIsDirectory
+        && inspection.OpenedReadOnly
+
+    /// Converts current target, local queues, durable DB evidence, and inspected IPC into the private materialization gate.
+    let private currentBranchMaterializationStatusGate ignoreOwnedMaterializationPendingLatch payload (inspection: GraceWatchStatusInspection) =
+        if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+            NotCurrentBranch
+        elif updateInProgress () then
+            Blocked "Grace update marker is present"
+        elif not ignoreOwnedMaterializationPendingLatch
+             && hasManualPendingWatchWorkStatusFlag () then
+            Blocked "materialization pending status has not reached IPC"
+        elif hasProcessablePendingWatchWork () then
+            Blocked "process-local Watch queues have pending local observations"
+        elif inspection.IsUsable then
+            if not (hasReadableLocalStateDbAuthority ()) then
+                Degraded "missing local-state DB authority"
+            else
+                match inspectDurableWatchJournalPendingEvidence () with
+                | Error _ -> Degraded "unreadable durable Watch journal authority"
+                | Ok true -> Blocked "durable Watch journal has pending local observations"
+                | Ok false -> Clean inspection.Status.Value
+        elif inspection.ReadError.IsSome then
+            Degraded "unreadable Watch IPC/status authority"
+        elif not inspection.Exists then
+            Degraded "missing Watch IPC/status authority"
+        elif not inspection.IsFresh then
+            Degraded "stale Watch IPC/status authority"
+        elif not inspection.HasCurrentRepositoryIdentity then
+            Degraded "ambiguous Watch IPC/status authority"
+        else
+            match inspection.Status, inspection.EffectiveMode with
+            | Some status, Some GraceWatchRuntimeMode.HealthyIncremental when
+                status.HasPendingWatchWork
+                || not status.IsWorkingTreeClean
+                ->
+                Blocked "local Watch status has dirty or pending work"
+            | _, Some GraceWatchRuntimeMode.StartingUp -> Blocked "Watch startup catch-up is still in progress"
+            | _, Some GraceWatchRuntimeMode.Resynchronizing -> Blocked "Watch resync is still in progress"
+            | _, Some GraceWatchRuntimeMode.Suspended -> Degraded "Watch is suspended"
+            | _, Some GraceWatchRuntimeMode.Stopping -> Degraded "Watch IPC/status authority is stopping"
+            | _ -> Degraded "ambiguous Watch IPC/status authority"
+
+    /// Runs protocol and latest-eligible BranchDto admission checks before the coordinator consults current Watch evidence.
+    let private currentBranchMaterializationDecision
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (current: Grace.Shared.Client.Configuration.GraceConfiguration)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        task {
+            match currentBranchReferenceProtocolValidationDecision current.RepositoryId current.BranchId payload with
+            | Some decision -> return Ok decision
+            | None ->
+                match! clients.GetCurrentBranch() with
+                | Error error ->
+                    let errorText = Markup.Escape(error.ToString())
+
+                    logToAnsiConsole Colors.Error $"Failed to refresh BranchDto for current-branch reference notification {payload.ReferenceId}: {errorText}."
+
+                    return Error error
+                | Ok branchReturnValue ->
+                    let branchDto = branchReturnValue.ReturnValue
+                    let! inspection = clients.InspectLocalStatus()
+
+                    let localStatus =
+                        match inspection.Status with
+                        | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
+                        | _ -> None
+
+                    return Ok(decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus branchDto payload)
+        }
+
+    /// Rechecks accepted Reference identity and root evidence while the coordinator refreshes the remaining Watch gates separately.
+    let private revalidateAcceptedCurrentBranchMaterializationDecision
+        (current: Grace.Shared.Client.Configuration.GraceConfiguration)
+        (payload: CurrentBranchReferenceNotification)
+        (inspection: GraceWatchStatusInspection)
+        =
+        let localStatus =
+            match inspection.Status with
+            | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
+            | _ -> None
+
+        revalidateAcceptedCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus payload
+
+    /// Processes one exact same-branch Reference notification behind the serialized materialization lane.
+    let private processCurrentBranchMaterializationNotification
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        task {
+            let current = Current()
+            let mutable terminalOutcome = Unchecked.defaultof<CurrentBranchMaterializationCoordinatorOutcome>
+            let mutable terminal = false
+            let mutable attempts = 0
+            let mutable degradedResyncRequestedForReason: string option = None
+            let mutable latestEligibleAdmissionAccepted = false
+            let mutable retriedAfterRecoveredLocalStatus = false
+
+            let canRetry () =
+                clients.MaxAttempts
+                |> Option.forall (fun maxAttempts -> attempts < maxAttempts)
+
+            while not terminal && canRetry () do
+                attempts <- attempts + 1
+
+                let! decisionResult =
+                    if latestEligibleAdmissionAccepted then
+                        task {
+                            let! inspection = clients.InspectLocalStatus()
+
+                            return Ok(revalidateAcceptedCurrentBranchMaterializationDecision current payload inspection)
+                        }
+                    else
+                        currentBranchMaterializationDecision clients current payload
+
+                match decisionResult with
+                | Error _ ->
+                    terminalOutcome <-
+                        {
+                            ReferenceId = payload.ReferenceId
+                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                            Decision = None
+                        }
+
+                    terminal <- true
+                | Ok decision ->
+                    match decision.Reason with
+                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                        let! inspection = clients.InspectLocalStatus()
+
+                        match currentBranchMaterializationStatusGate false payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Clean _ ->
+                            let acceptedDecision = decision
+                            latestEligibleAdmissionAccepted <- true
+                            let mutable postLeaseRetryGate: CurrentBranchMaterializationStatusGate option = None
+
+                            let! cleanOutcome =
+                                WorkingDirectoryMaterialization.runWithLease (fun () ->
+                                    task {
+                                        let! leaseInspection = clients.InspectLocalStatus()
+
+                                        if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                            return
+                                                {
+                                                    ReferenceId = payload.ReferenceId
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                    Decision = Some acceptedDecision
+                                                }
+                                        else
+                                            let leaseDecision = revalidateAcceptedCurrentBranchMaterializationDecision current payload leaseInspection
+
+                                            if leaseDecision.Reason
+                                               <> LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired then
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
+                                                        Decision = Some leaseDecision
+                                                    }
+                                            else
+                                                match currentBranchMaterializationStatusGate false payload leaseInspection with
+                                                | NotCurrentBranch ->
+                                                    return
+                                                        {
+                                                            ReferenceId = payload.ReferenceId
+                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                            Decision = Some acceptedDecision
+                                                        }
+                                                | Clean leaseStatus ->
+                                                    if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                        return
+                                                            {
+                                                                ReferenceId = payload.ReferenceId
+                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                                Decision = Some acceptedDecision
+                                                            }
+                                                    else
+                                                        setGraceWatchPendingWorkStatusFlag true
+                                                        let materializationPendingPublished = tryPublishCurrentBranchMaterializationPendingStatus leaseStatus
+
+                                                        if not materializationPendingPublished then
+                                                            setGraceWatchPendingWorkStatusFlag false
+                                                            clients.RequestDegradedResync "materialization pending Watch IPC/status publication failed"
+
+                                                            return
+                                                                {
+                                                                    ReferenceId = payload.ReferenceId
+                                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                    Decision = Some acceptedDecision
+                                                                }
+                                                        elif not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                            setGraceWatchPendingWorkStatusFlag false
+                                                            publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                            return
+                                                                {
+                                                                    ReferenceId = payload.ReferenceId
+                                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                                    Decision = Some acceptedDecision
+                                                                }
+                                                        else
+                                                            let! preApplyInspection = clients.InspectLocalStatus()
+
+                                                            if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                                setGraceWatchPendingWorkStatusFlag false
+                                                                publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                                return
+                                                                    {
+                                                                        ReferenceId = payload.ReferenceId
+                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                                        Decision = Some acceptedDecision
+                                                                    }
+                                                            else
+                                                                let preApplyDecision =
+                                                                    revalidateAcceptedCurrentBranchMaterializationDecision current payload preApplyInspection
+
+                                                                if preApplyDecision.Reason
+                                                                   <> LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired then
+                                                                    setGraceWatchPendingWorkStatusFlag false
+                                                                    publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                                    return
+                                                                        {
+                                                                            ReferenceId = payload.ReferenceId
+                                                                            Reason =
+                                                                                CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
+                                                                            Decision = Some preApplyDecision
+                                                                        }
+                                                                else
+                                                                    match currentBranchMaterializationStatusGate true payload preApplyInspection with
+                                                                    | NotCurrentBranch ->
+                                                                        setGraceWatchPendingWorkStatusFlag false
+                                                                        publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                                        return
+                                                                            {
+                                                                                ReferenceId = payload.ReferenceId
+                                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                                                Decision = Some acceptedDecision
+                                                                            }
+                                                                    | Blocked reason ->
+                                                                        setGraceWatchPendingWorkStatusFlag false
+                                                                        publishPendingWatchWorkTransitionIfNeeded ()
+                                                                        postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+
+                                                                        return
+                                                                            {
+                                                                                ReferenceId = payload.ReferenceId
+                                                                                Reason =
+                                                                                    CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                                                                Decision = Some acceptedDecision
+                                                                            }
+                                                                    | Degraded reason ->
+                                                                        setGraceWatchPendingWorkStatusFlag false
+                                                                        publishPendingWatchWorkTransitionIfNeeded ()
+                                                                        postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+
+                                                                        return
+                                                                            {
+                                                                                ReferenceId = payload.ReferenceId
+                                                                                Reason =
+                                                                                    CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                                Decision = Some acceptedDecision
+                                                                            }
+                                                                    | Clean preApplyStatus ->
+                                                                        try
+                                                                            do! clients.ApplyReference payload preApplyStatus
+
+                                                                            setGraceWatchPendingWorkStatusFlag false
+
+                                                                            if clients.PublishCleanIpcAfterApply() then
+                                                                                return
+                                                                                    {
+                                                                                        ReferenceId = payload.ReferenceId
+                                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                                                        Decision = Some acceptedDecision
+                                                                                    }
+                                                                            else
+                                                                                setGraceWatchPendingWorkStatusFlag true
+
+                                                                                let dirtyPublicationVerified =
+                                                                                    clients.ReassertDirtyIpcAfterFailedCleanPublication()
+
+                                                                                let resyncReason =
+                                                                                    if dirtyPublicationVerified then
+                                                                                        "materialization final clean Watch IPC/status publication failed"
+                                                                                    else
+                                                                                        "materialization final clean Watch IPC/status publication failed and dirty replacement was unproven"
+
+                                                                                clients.RequestDegradedResync resyncReason
+
+                                                                                return
+                                                                                    {
+                                                                                        ReferenceId = payload.ReferenceId
+                                                                                        Reason =
+                                                                                            CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                                                        Decision = Some acceptedDecision
+                                                                                    }
+                                                                        with
+                                                                        | ex ->
+                                                                            setGraceWatchPendingWorkStatusFlag true
+                                                                            publishPendingWatchWorkTransitionIfNeeded ()
+                                                                            return raise ex
+                                                | Blocked reason ->
+                                                    logToAnsiConsole
+                                                        Colors.Verbose
+                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point after lease acquisition: {reason}."
+
+                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+
+                                                    return
+                                                        {
+                                                            ReferenceId = payload.ReferenceId
+                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                                            Decision = Some acceptedDecision
+                                                        }
+                                                | Degraded reason ->
+                                                    logToAnsiConsole
+                                                        Colors.Important
+                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync after lease acquisition: {reason}."
+
+                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+
+                                                    return
+                                                        {
+                                                            ReferenceId = payload.ReferenceId
+                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                            Decision = Some acceptedDecision
+                                                        }
+                                    })
+
+                            match postLeaseRetryGate with
+                            | Some (CurrentBranchMaterializationStatusGate.Blocked reason as gate) ->
+                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                            Decision = cleanOutcome.Decision
+                                        }
+
+                                    terminal <- true
+                                elif canRetry () then
+                                    do! clients.WaitForSafePoint payload gate
+                                else
+                                    terminalOutcome <- cleanOutcome
+                                    terminal <- true
+                            | Some (CurrentBranchMaterializationStatusGate.Degraded reason) ->
+                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                            Decision = cleanOutcome.Decision
+                                        }
+
+                                    terminal <- true
+                                elif degradedResyncRequestedForReason <> Some reason then
+                                    clients.RequestDegradedResync reason
+                                    degradedResyncRequestedForReason <- Some reason
+
+                                if not terminal then
+                                    if canRetry () then
+                                        do! clients.ReestablishIpc payload reason
+                                    else
+                                        terminalOutcome <- cleanOutcome
+                                        terminal <- true
+                            | _ ->
+                                terminalOutcome <- cleanOutcome
+                                terminal <- true
+                        | Blocked reason as gate ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
+                                do! clients.WaitForSafePoint payload gate
+                            else
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                        | Degraded reason ->
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.NoApplicableReference ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.ReferenceIdUnavailable
+                    | LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.ProtocolRejected
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync ->
+                        let! inspection = clients.InspectLocalStatus()
+
+                        match currentBranchMaterializationStatusGate false payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Clean _ when
+                            not retriedAfterRecoveredLocalStatus
+                            && decision.Reason
+                               <> LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
+                            && canRetry ()
+                            ->
+                            retriedAfterRecoveredLocalStatus <- true
+                        | Clean _ ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Blocked reason as gate ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
+                                do! clients.WaitForSafePoint payload gate
+                            else
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                        | Degraded reason ->
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
+                    | _ ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+
+            return terminalOutcome
+        }
+
+    /// Serializes current-branch materialization so queued References revalidate only when they own the lane.
+    let private runCurrentBranchMaterializationCoordinator
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+
+    /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
+    let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+        let current = Current()
+
+        let parameters =
+            GetBranchParameters(
+                OwnerId = $"{current.OwnerId}",
+                OwnerName = current.OwnerName,
+                OrganizationId = $"{current.OrganizationId}",
+                OrganizationName = current.OrganizationName,
+                RepositoryId = $"{current.RepositoryId}",
+                RepositoryName = current.RepositoryName,
+                BranchId = $"{current.BranchId}",
+                BranchName = current.BranchName,
+                CorrelationId = payload.CorrelationId
+            )
+
+        Grace.SDK.Branch.Get parameters
+
+    /// Handles same-branch Reference notifications with injectable coordinator clients for focused Watch tests.
+    let private handleCurrentBranchReferenceNotificationWithCoordinatorClients clients (payload: CurrentBranchReferenceNotification) =
+        task {
+            try
+                if not
+                   <| currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Skipped current-branch reference notification {payload.ReferenceId} because it targets repository {payload.RepositoryId}, branch {payload.BranchId}, not current branch {Current().BranchId}."
+
+                    return None
+                else
+                    let! outcome = runCurrentBranchMaterializationCoordinator clients payload
+
+                    match outcome.Decision with
+                    | Some decision ->
+                        match decision.Reason with
+                        | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
+                        | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                            logToAnsiConsole
+                                Colors.Highlighted
+                                $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
+                        | reason ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
+
+                        return Some decision
+                    | None -> return None
+            with
+            | ex ->
+                logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
+                return None
+        }
+
+    /// Handles same-branch Reference notifications with injectable readers for focused Watch tests.
+    let private handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus (payload: CurrentBranchReferenceNotification) =
+        let inspectLocalStatus () =
+            task {
+                let! status = readLocalStatus ()
+
+                return
+                    match status with
+                    | Some status ->
+                        { Exists = true; Status = Some status; PersistedMode = Some status.Mode; SafetyFlags = status.SafetyFlags; ReadError = None }
+                    | None ->
+                        {
+                            Exists = false
+                            Status = None
+                            PersistedMode = None
+                            SafetyFlags =
+                                [|
+                                    "missingStatus"
+                                    "requiresExplicitResync"
+                                |]
+                            ReadError = None
+                        }
+            }
+
+        handleCurrentBranchReferenceNotificationWithCoordinatorClients
+            {
+                GetCurrentBranch = getCurrentBranch
+                InspectLocalStatus = inspectLocalStatus
+                RequestDegradedResync = ignore
+                WaitForSafePoint = fun _ _ -> Task.FromResult(())
+                ReestablishIpc = fun _ _ -> Task.FromResult(())
+                ApplyReference = fun _ _ -> Task.FromResult(())
+                PublishCleanIpcAfterApply = fun () -> true
+                ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
+                MaxAttempts = Some 3
+            }
+            payload
+
+    /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
+    let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+        task {
+            let! _ =
+                handleCurrentBranchReferenceNotificationWithCoordinatorClients
+                    {
+                        GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                        InspectLocalStatus = inspectGraceWatchStatus
+                        RequestDegradedResync = requestGraceWatchExplicitResync
+                        WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
+                        ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
+                        ApplyReference = applyCurrentBranchReferenceMaterialization
+                        PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
+                        ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
+                        MaxAttempts = Some 3
+                    }
+                    payload
+
+            return ()
+        }
+
+    /// Names the result of deriving and processing one lifecycle catch-up request from the current BranchDto.
+    type internal CurrentBranchReferenceCatchUpResult =
+        /// The BranchDto did not name a concrete current-branch Reference eligible for materialization.
+        | NoReference = 0
+        /// The BranchDto refresh did not complete, so a bounded lifecycle retry may re-read it later.
+        | RefreshFailed = 1
+        /// The existing serialized coordinator processed the exact Reference derived from BranchDto.
+        | Processed = 2
+
+    /// Builds the coordinator input from the server's current BranchDto rather than any prior SignalR payload.
+    let private tryCreateCurrentBranchReferenceCatchUpNotification (branchDto: Grace.Types.Branch.BranchDto) correlationId =
+        let current = Current()
+        let latestReference = tryLatestEligibleCurrentBranchReference branchDto
+
+        if branchDto.RepositoryId <> current.RepositoryId
+           || branchDto.BranchId <> current.BranchId then
+            None
+        else
+            latestReference
+            |> Option.map (fun reference ->
+                ({ CurrentBranchReferenceNotification.Default with
+                     ReferenceId = reference.ReferenceId
+                     OwnerId = reference.OwnerId
+                     OrganizationId = reference.OrganizationId
+                     RepositoryId = reference.RepositoryId
+                     BranchId = reference.BranchId
+                     BranchName = branchDto.BranchName
+                     DirectoryId = reference.DirectoryId
+                     Sha256Hash = reference.Sha256Hash
+                     Blake3Hash = reference.Blake3Hash
+                     ReferenceType = reference.ReferenceType
+                     ReferenceText = reference.ReferenceText
+                     CorrelationId = correlationId
+                 }: CurrentBranchReferenceNotification))
+
+    /// Re-reads BranchDto and sends its exact latest Reference through the existing serialized materialization lane.
+    let private catchUpCurrentBranchReferenceWithClients
+        (getCurrentBranch: unit -> Task<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>)
+        (processReference: CurrentBranchReferenceNotification -> Task<CurrentBranchMaterializationCoordinatorOutcome>)
+        =
+        task {
+            match! getCurrentBranch () with
+            | Error error ->
+                logToAnsiConsole Colors.Error $"Failed to refresh BranchDto for current-branch Watch catch-up: {Markup.Escape(error.ToString())}."
+
+                return CurrentBranchReferenceCatchUpResult.RefreshFailed, None
+            | Ok branchReturnValue ->
+                match tryCreateCurrentBranchReferenceCatchUpNotification branchReturnValue.ReturnValue (generateCorrelationId ()) with
+                | None -> return CurrentBranchReferenceCatchUpResult.NoReference, None
+                | Some payload ->
+                    let! outcome = processReference payload
+                    return CurrentBranchReferenceCatchUpResult.Processed, Some outcome
+        }
+
+    /// Exposes BranchDto-derived catch-up routing for deterministic Watch lifecycle tests.
+    let internal catchUpCurrentBranchReferenceWithClientsForWatchTests getCurrentBranch processReference =
+        catchUpCurrentBranchReferenceWithClients getCurrentBranch processReference
+
+    /// Identifies the one lifecycle request generation that a catch-up run may settle.
+    type internal CurrentBranchReferenceCatchUpClaim = { Generation: int64 }
+
+    /// Describes whether a terminal catch-up result settled its own request or left a newer one pending.
+    type internal CurrentBranchReferenceCatchUpCompletion =
+        /// The claimed lifecycle request completed and no later request remains.
+        | ClaimCompleted
+        /// A later lifecycle request arrived while the claim awaited BranchDto or the materialization lane.
+        | NewerRequestPending
+        /// The completion came from an obsolete or already-settled claim.
+        | ClaimNotCurrent
+
+    /// Describes the bounded retry outcome for the lifecycle request generation that requested it.
+    type internal CurrentBranchReferenceCatchUpRetry =
+        /// The claimed request remains pending until the reported bounded backoff elapses.
+        | RetryAfter of delaySeconds: int
+        /// The claimed request exhausted its bounded attempts and awaits fresh lifecycle evidence.
+        | RetryExhausted
+        /// A newer lifecycle request arrived before this claim could schedule another retry.
+        | RetrySupersededByNewerRequest
+        /// The retry came from an obsolete or already-settled claim.
+        | RetryClaimNotCurrent
+
+    /// Serializes lifecycle catch-up request generations so an older asynchronous run cannot consume newer evidence.
+    type internal CurrentBranchReferenceCatchUpScheduler(maximumAttempts: int) =
+        let schedulerLock = obj ()
+        let mutable nextGeneration = 0L
+        let mutable pendingGeneration: int64 option = None
+        let mutable claimedGeneration: int64 option = None
+        let mutable retryAttempts = 0
+        let mutable retryNotBeforeUtc = DateTime.MinValue
+
+        /// Records fresh lifecycle evidence without retaining a Reference payload as retry state.
+        member _.Request() =
+            lock schedulerLock (fun () ->
+                nextGeneration <- nextGeneration + 1L
+                pendingGeneration <- Some nextGeneration
+                retryAttempts <- 0
+                retryNotBeforeUtc <- DateTime.MinValue
+                nextGeneration)
+
+        /// Claims the due pending generation only when no earlier run is still awaiting external work.
+        member _.TryClaimDue(nowUtc: DateTime) =
+            lock schedulerLock (fun () ->
+                match claimedGeneration, pendingGeneration with
+                | None, Some generation when retryNotBeforeUtc <= nowUtc ->
+                    claimedGeneration <- Some generation
+                    Some { Generation = generation }
+                | _ -> None)
+
+        /// Settles only the pending generation held by the supplied claim.
+        member _.Complete(claim: CurrentBranchReferenceCatchUpClaim) =
+            lock schedulerLock (fun () ->
+                match claimedGeneration with
+                | Some generation when generation = claim.Generation ->
+                    claimedGeneration <- None
+
+                    match pendingGeneration with
+                    | Some pending when pending = claim.Generation ->
+                        pendingGeneration <- None
+                        retryAttempts <- 0
+                        retryNotBeforeUtc <- DateTime.MinValue
+                        ClaimCompleted
+                    | _ -> NewerRequestPending
+                | _ -> ClaimNotCurrent)
+
+        /// Retries only the pending generation held by the supplied claim and preserves newer lifecycle evidence.
+        member _.Retry(claim: CurrentBranchReferenceCatchUpClaim, nowUtc: DateTime) =
+            lock schedulerLock (fun () ->
+                match claimedGeneration with
+                | Some generation when generation = claim.Generation ->
+                    claimedGeneration <- None
+
+                    match pendingGeneration with
+                    | Some pending when pending = claim.Generation ->
+                        retryAttempts <- retryAttempts + 1
+
+                        if retryAttempts >= maximumAttempts then
+                            pendingGeneration <- None
+                            retryAttempts <- 0
+                            retryNotBeforeUtc <- DateTime.MinValue
+                            RetryExhausted
+                        else
+                            let delaySeconds = pown 2 retryAttempts
+                            retryNotBeforeUtc <- nowUtc.AddSeconds(float delaySeconds)
+                            RetryAfter delaySeconds
+                    | _ -> RetrySupersededByNewerRequest
+                | _ -> RetryClaimNotCurrent)
+
+        /// Clears all private scheduler state for isolated Watch tests.
+        member _.Reset() =
+            lock schedulerLock (fun () ->
+                nextGeneration <- 0L
+                pendingGeneration <- None
+                claimedGeneration <- None
+                retryAttempts <- 0
+                retryNotBeforeUtc <- DateTime.MinValue)
+
+        /// Reports the pending generation for false-positive-resistant lifecycle tests.
+        member _.PendingGeneration = lock schedulerLock (fun () -> pendingGeneration)
+
+    /// Limits lifecycle catch-up retries until a later local-drain, resync, startup, reconnect, or marker-deletion request obtains fresh evidence.
+    let private currentBranchReferenceCatchUpMaximumAttempts = 3
+    let private currentBranchReferenceCatchUpScheduler = CurrentBranchReferenceCatchUpScheduler(currentBranchReferenceCatchUpMaximumAttempts)
+
+    /// Requests a new BranchDto-derived catch-up without retaining a notification or Reference outside the coordinator.
+    let private requestCurrentBranchReferenceCatchUp reason =
+        currentBranchReferenceCatchUpScheduler.Request()
+        |> ignore
+
+        logToAnsiConsole Colors.Verbose $"Current-branch Watch catch-up requested after {reason}."
+
+    do
+        lock transitionCatchUpRequestLock (fun () ->
+            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
+                fun () -> requestCurrentBranchReferenceCatchUp "branch transition SignalR subscription refresh")
+
+    /// Completes a claimed lifecycle request and deliberately leaves later requests pending.
+    let private completeCurrentBranchReferenceCatchUp (scheduler: CurrentBranchReferenceCatchUpScheduler) (claim: CurrentBranchReferenceCatchUpClaim) =
+        scheduler.Complete(claim) |> ignore
+
+    /// Schedules a bounded retry only when the same claimed lifecycle request remains current.
+    let private retryCurrentBranchReferenceCatchUp
+        (scheduler: CurrentBranchReferenceCatchUpScheduler)
+        (nowUtc: DateTime)
+        (claim: CurrentBranchReferenceCatchUpClaim)
+        reason
+        =
+        match scheduler.Retry(claim, nowUtc) with
+        | RetryAfter delaySeconds ->
+            logToAnsiConsole
+                Colors.Important
+                $"Current-branch Watch catch-up remains blocked: {reason}. It will refresh BranchDto again in {delaySeconds} seconds."
+        | RetryExhausted ->
+            logToAnsiConsole
+                Colors.Important
+                $"Current-branch Watch catch-up remains blocked after {currentBranchReferenceCatchUpMaximumAttempts} attempts: {reason}. It will retry when local work drains, resync completes, SignalR reconnects, or a materialization marker is deleted."
+        | RetrySupersededByNewerRequest
+        | RetryClaimNotCurrent -> ()
+
+    /// Uses one coordinator attempt per lifecycle retry so catch-up backoff is cancellable between fresh BranchDto reads.
+    let private processCurrentBranchReferenceCatchUp payload =
+        runCurrentBranchMaterializationCoordinator
+            {
+                GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                InspectLocalStatus = inspectGraceWatchStatus
+                RequestDegradedResync = requestGraceWatchExplicitResync
+                WaitForSafePoint = fun _ _ -> Task.FromResult(())
+                ReestablishIpc = fun _ _ -> Task.FromResult(())
+                ApplyReference = applyCurrentBranchReferenceMaterialization
+                PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
+                ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
+                MaxAttempts = Some 1
+            }
+            payload
+
+    /// Runs one due claimed lifecycle request without permitting it to clear a newer request that arrives while it awaits.
+    let private runCurrentBranchReferenceCatchUpIfDueWithClientsAt
+        (scheduler: CurrentBranchReferenceCatchUpScheduler)
+        (nowUtc: DateTime)
+        getCurrentBranch
+        processReference
+        =
+        task {
+            match scheduler.TryClaimDue(nowUtc) with
+            | Some claim ->
+                try
+                    let! result, outcome = catchUpCurrentBranchReferenceWithClients getCurrentBranch processReference
+
+                    match result, outcome with
+                    | CurrentBranchReferenceCatchUpResult.NoReference, _ -> completeCurrentBranchReferenceCatchUp scheduler claim
+                    | CurrentBranchReferenceCatchUpResult.RefreshFailed, _ ->
+                        retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "BranchDto refresh failed"
+                    | CurrentBranchReferenceCatchUpResult.Processed, Some coordinatorOutcome ->
+                        match coordinatorOutcome.Reason, coordinatorOutcome.Decision with
+                        | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint, _ ->
+                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch work is still pending"
+                        | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync, _ ->
+                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch state requires resync"
+                        | CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected, Some decision when
+                            decision.Reason = LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
+                            ->
+                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "BranchDto advanced while catch-up waited for the serialized lane"
+                        | _ -> completeCurrentBranchReferenceCatchUp scheduler claim
+                    | CurrentBranchReferenceCatchUpResult.Processed, None -> completeCurrentBranchReferenceCatchUp scheduler claim
+                    | _ -> completeCurrentBranchReferenceCatchUp scheduler claim
+                with
+                | ex ->
+                    logToAnsiConsole Colors.Error $"Current-branch Watch catch-up failed before a terminal coordinator result: {Markup.Escape(ex.Message)}."
+
+                    retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "catch-up processing failed"
+            | None -> ()
+        }
+
+    /// Runs one due lifecycle request using the current instant for production Watch callbacks.
+    let private runCurrentBranchReferenceCatchUpIfDueWithClients scheduler getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClientsAt scheduler DateTime.UtcNow getCurrentBranch processReference
+
+    /// Runs a due lifecycle request only from a healthy local boundary and never after Watch cancellation begins.
+    let private runCurrentBranchReferenceCatchUpIfDue (cancellationToken: CancellationToken) =
+        task {
+            if
+                not cancellationToken.IsCancellationRequested
+                && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                && not (isGraceWatchResyncPending ())
+                && not (hasPendingWatchWork ())
+            then
+                do!
+                    runCurrentBranchReferenceCatchUpIfDueWithClients
+                        currentBranchReferenceCatchUpScheduler
+                        (fun () -> getCurrentBranchForCurrentBranchReferenceNotification CurrentBranchReferenceNotification.Default)
+                        processCurrentBranchReferenceCatchUp
+        }
+
+    /// Resets the private lifecycle scheduler before a focused Watch test creates fresh request generations.
+    let internal resetCurrentBranchReferenceCatchUpSchedulerForWatchTests () = currentBranchReferenceCatchUpScheduler.Reset()
+
+    /// Reports the private pending lifecycle generation for focused marker-deletion and interleaving proofs.
+    let internal currentBranchReferenceCatchUpPendingGenerationForWatchTests () = currentBranchReferenceCatchUpScheduler.PendingGeneration
+
+    /// Runs one claimed lifecycle request against injectable BranchDto and coordinator clients for deterministic interleaving tests.
+    let internal runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests scheduler getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClients scheduler getCurrentBranch processReference
+
+    /// Runs one lifecycle request at a deterministic instant so Watch tests can prove bounded retry timing without sleeping.
+    let internal runCurrentBranchReferenceCatchUpIfDueWithClientsAtForWatchTests scheduler nowUtc getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClientsAt scheduler nowUtc getCurrentBranch processReference
+
+    /// Runs the production lifecycle scheduler against injected clients after a real Watch callback queues fresh evidence.
+    let internal runCurrentBranchReferenceCatchUpIfDueForWatchTests getCurrentBranch processReference =
+        runCurrentBranchReferenceCatchUpIfDueWithClients currentBranchReferenceCatchUpScheduler getCurrentBranch processReference
+
+    /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
+    let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
+
+    /// Exposes same-branch Reference notification handling to Watch tests without opening a HubConnection.
+    let internal handleCurrentBranchReferenceNotificationWithClientsForWatchTests getCurrentBranch readLocalStatus payload =
+        handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus payload
+
+    /// Exposes serialized current-branch materialization coordination to Watch tests without opening a HubConnection.
+    let internal handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+        getCurrentBranch
+        inspectLocalStatus
+        requestDegradedResync
+        waitForSafePoint
+        reestablishIpc
+        applyReference
+        payload
+        =
+        task {
+            if currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                let! outcome =
+                    runCurrentBranchMaterializationCoordinator
+                        {
+                            GetCurrentBranch = getCurrentBranch
+                            InspectLocalStatus = inspectLocalStatus
+                            RequestDegradedResync = requestDegradedResync
+                            WaitForSafePoint = waitForSafePoint
+                            ReestablishIpc = reestablishIpc
+                            ApplyReference = applyReference
+                            PublishCleanIpcAfterApply = fun () -> true
+                            ReassertDirtyIpcAfterFailedCleanPublication = fun () -> true
+                            MaxAttempts = Some 3
+                        }
+                        payload
+
+                return Some outcome
+            else
+                return None
+        }
+
+    /// Exposes final clean-publication success and failure ordering to focused coordinator tests.
+    let internal handleCurrentBranchReferenceMaterializationWithPublicationForWatchTests
+        getCurrentBranch
+        inspectLocalStatus
+        requestDegradedResync
+        waitForSafePoint
+        reestablishIpc
+        applyReference
+        publishCleanIpcAfterApply
+        reassertDirtyIpcAfterFailedCleanPublication
+        payload
+        =
+        task {
+            if currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                let! outcome =
+                    runCurrentBranchMaterializationCoordinator
+                        {
+                            GetCurrentBranch = getCurrentBranch
+                            InspectLocalStatus = inspectLocalStatus
+                            RequestDegradedResync = requestDegradedResync
+                            WaitForSafePoint = waitForSafePoint
+                            ReestablishIpc = reestablishIpc
+                            ApplyReference = applyReference
+                            PublishCleanIpcAfterApply = publishCleanIpcAfterApply
+                            ReassertDirtyIpcAfterFailedCleanPublication = reassertDirtyIpcAfterFailedCleanPublication
+                            MaxAttempts = Some 3
+                        }
+                        payload
+
+                return Some outcome
+            else
+                return None
+        }
+
+    /// Registers SignalR branch groups only after the local refresh still has authority for the active branch.
+    let private registerCurrentSignalRParentBranchWithClients
+        connectionState
+        connectionId
+        (getParentBranch: GetBranchParameters -> Task<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>)
+        (registerCurrentBranch: RepositoryId -> BranchId -> CancellationToken -> Task)
+        (registerParentBranch: BranchId -> BranchId -> CancellationToken -> Task)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            do! signalRBranchSubscriptionRefreshSemaphore.WaitAsync(cancellationToken)
+
+            try
+                let refreshAuthority = beginSignalRBranchSubscriptionRefresh ()
+
+                let current = Current()
+
+                let branchGetParameters =
+                    GetBranchParameters(
+                        OwnerId = $"{current.OwnerId}",
+                        OrganizationId = $"{current.OrganizationId}",
+                        RepositoryId = $"{current.RepositoryId}",
+                        BranchId = $"{current.BranchId}"
+                    )
+
+                if signalRBranchSubscriptionRefreshStillCurrent refreshAuthority then
+                    do! registerCurrentBranch current.RepositoryId refreshAuthority.BranchId cancellationToken
+
+                    if signalRBranchSubscriptionRefreshStillCurrent refreshAuthority then
+                        match! getParentBranch branchGetParameters with
+                        | Ok returnValue ->
+                            let parentBranchDto = returnValue.ReturnValue
+
+                            if trySetSignalRBranchSubscription refreshAuthority parentBranchDto.BranchId then
+                                let trustedSubscription =
+                                    {
+                                        BranchId = refreshAuthority.BranchId
+                                        ParentBranchId = parentBranchDto.BranchId
+                                        Generation = refreshAuthority.Generation
+                                    }
+
+                                try
+                                    if signalRBranchSubscriptionStillTrusted trustedSubscription then
+                                        do! registerParentBranch refreshAuthority.BranchId parentBranchDto.BranchId cancellationToken
+
+                                        logToAnsiConsole
+                                            Colors.Highlighted
+                                            $"SignalR Hub connection state: {connectionState ()}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {connectionId ()}."
+                                with
+                                | ex ->
+                                    clearSignalRBranchSubscriptionIfStillTrusted trustedSubscription
+                                    |> ignore
+
+                                    raise ex
+
+                                return Ok(Some parentBranchDto)
+                            else
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch ignored stale SignalR parent subscription refresh for branch {refreshAuthority.BranchId}; current branch identity changed before registration completed."
+
+                                return Ok(Some parentBranchDto)
+                        | Error error when error.Error = BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist ->
+                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                            return Ok None
+                        | Error error ->
+                            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                            return Error error
+                    else
+                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Grace Watch skipped stale SignalR parent subscription lookup for branch {refreshAuthority.BranchId}; current branch identity changed after current-branch registration."
+
+                        return Ok None
+                else
+                    completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Watch skipped stale SignalR current-branch subscription registration for branch {refreshAuthority.BranchId}; current branch identity changed before hub registration."
+
+                    return Ok None
+            finally
+                signalRBranchSubscriptionRefreshSemaphore.Release()
+                |> ignore
+        }
+
+    /// Exposes SignalR branch registration ordering to Watch tests without opening a HubConnection.
+    let internal registerCurrentSignalRParentBranchWithClientsForWatchTests getParentBranch registerCurrentBranch registerParentBranch cancellationToken =
+        registerCurrentSignalRParentBranchWithClients
+            (fun () -> "Test")
+            (fun () -> "test-connection")
+            getParentBranch
+            registerCurrentBranch
+            registerParentBranch
+            cancellationToken
+
+    /// Registers the current repository branch with its parent-branch SignalR group and refreshes local event trust.
+    let private registerCurrentSignalRParentBranch (signalRConnection: HubConnection) cancellationToken =
+        registerCurrentSignalRParentBranchWithClients
+            (fun () -> $"{signalRConnection.State}")
+            (fun () -> $"{signalRConnection.ConnectionId}")
+            Branch.GetParentBranch
+            (fun repositoryId branchId cancellationToken -> signalRConnection.InvokeAsync("RegisterCurrentBranch", repositoryId, branchId, cancellationToken))
+            (fun branchId parentBranchId cancellationToken ->
+                signalRConnection.InvokeAsync("RegisterParentBranch", branchId, parentBranchId, cancellationToken))
+            cancellationToken
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
-        // Ignore directory creation; need to think about this more... should we capture new empty directories?
-        if updateNotInProgress ()
-           && isNotDirectory args.FullPath then
-            let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress () then
+            let kind =
+                if isGraceStatusArtifact args.FullPath then
+                    GraceStatusArtifact
+                else
+                    CreatedOrChanged
 
-            if not <| shouldIgnore then
-                logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
-                enqueueFileUpload args.FullPath |> ignore
-
-            if (isGraceStatusArtifact args.FullPath)
-               && (not <| graceStatusHasChanged) then
-                graceStatusHasChanged <- true
+            if isLocalObservationCandidateSchedulingActive () then
+                acceptLocalObservationCandidate kind args.FullPath DateTime.UtcNow
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                processLocalObservationImmediately kind args.FullPath
+            else
+                logObservationSuppressed args.FullPath
+        else
+            logObservationSuppressed args.FullPath
 
     /// Coordinates on changed behavior for this CLI command path.
     let OnChanged (args: FileSystemEventArgs) =
-        if updateNotInProgress ()
-           && isNotDirectory args.FullPath then
-            let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress () then
+            let kind = if isGraceStatusArtifact args.FullPath then GraceStatusArtifact else Changed
 
-            if not <| shouldIgnore then
-                logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
-                enqueueFileUpload args.FullPath |> ignore
-
-            // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
-            if (isGraceStatusArtifact args.FullPath)
-               && (not <| graceStatusHasChanged) then
-                //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
-                graceStatusHasChanged <- true
-                logToAnsiConsole Colors.Important $"Grace Status file has been updated."
+            if isLocalObservationCandidateSchedulingActive () then
+                acceptLocalObservationCandidate kind args.FullPath DateTime.UtcNow
+            elif useImmediateLocalObservationProcessingForWatchTests ()
+                 && kind = GraceStatusArtifact then
+                processLocalObservationImmediately kind args.FullPath
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                processLocalObservationImmediately kind args.FullPath
+            elif not (useImmediateLocalObservationProcessingForWatchTests ()) then
+                logObservationSuppressed args.FullPath
+        else
+            logObservationSuppressed args.FullPath
 
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
-    let private enqueueDirectoryContentsForUpload directoryPath =
-        if
-            Directory.Exists(directoryPath)
-            && shouldNotIgnoreDirectory directoryPath
-        then
-            try
-                for filePath in enumerateFilesForDirectoryUpload directoryPath do
-                    enqueueFileUpload filePath |> ignore
+    let private enqueueDirectoryContentsForUpload directoryPath = tryEnqueueDirectoryContentsForUpload directoryPath
 
-                true
-            with
-            | ex ->
-                logToAnsiConsole
-                    Colors.Error
-                    $"Unable to enumerate renamed directory {directoryPath}; status update will retry after file uploads can be queued. {Markup.Escape(ex.Message)}"
+    /// Retries a scoped directory inspection before status application consumes its related delete or rename-old trigger.
+    let private retryPendingDirectoryUploads () =
+        for pendingDirectory in directoriesToProcess.Values.ToArray() do
+            let pendingPair = KeyValuePair(pendingDirectory.FullPath, pendingDirectory)
 
-                false
-        else
-            true
+            if not (pendingDirectoryWorkMatchesCurrentScope pendingDirectory) then
+                (directoriesToProcess :> ICollection<KeyValuePair<string, PendingDirectoryWorkSnapshot>>)
+                    .Remove(pendingPair)
+                |> ignore
+
+                requestGraceWatchExplicitResync $"Watch directory inspection scope changed before bounded retry for {pendingDirectory.FullPath}."
+            else
+                let _, directoryStatusEnumerationComplete, requiresSubtreeEnumeration, subtreeRoot = tryEnqueueDirectoryStatusAdds pendingDirectory.FullPath
+
+                let fileUploadEnumerationComplete =
+                    if directoryStatusEnumerationComplete then
+                        if requiresSubtreeEnumeration then
+                            enqueueDirectoryContentsForUpload subtreeRoot
+                        else
+                            true
+                    else
+                        false
+
+                if directoryStatusEnumerationComplete
+                   && fileUploadEnumerationComplete then
+                    (directoriesToProcess :> ICollection<KeyValuePair<string, PendingDirectoryWorkSnapshot>>)
+                        .Remove(pendingPair)
+                    |> ignore
 
     /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
-        if updateNotInProgress () then
-            cancelPendingUploadsForDeletedPath args.FullPath
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress () then
+            let kind = if isGraceStatusArtifact args.FullPath then GraceStatusArtifact else Deleted
 
-            if enqueueStatusUpdateTrigger args.FullPath then
-                logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
-
-            if (isGraceStatusArtifact args.FullPath)
-               && (not <| graceStatusHasChanged) then
-                graceStatusHasChanged <- true
+            if isLocalObservationCandidateSchedulingActive () then
+                acceptLocalObservationCandidate kind args.FullPath DateTime.UtcNow
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                processLocalObservationImmediately kind args.FullPath
+            else
+                logObservationSuppressed args.FullPath
+        else
+            logObservationSuppressed args.FullPath
 
     /// Coordinates on renamed behavior for this CLI command path.
     let OnRenamed (args: RenamedEventArgs) =
-        if updateNotInProgress () then
-            let newPathIsDirectory = Directory.Exists(args.FullPath)
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress () then
+            let seenAt = DateTime.UtcNow
 
-            cancelPendingUploadsForDeletedPath args.OldFullPath
+            let kind =
+                if isGraceStatusArtifact args.FullPath then
+                    GraceStatusArtifact
+                else
+                    CreatedOrChanged
 
-            let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
-
-            if oldPathStatusQueued then
-                logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-
-            if newPathIsDirectory then
-                enqueueDirectoryContentsForUpload args.FullPath
-                |> ignore
-            elif enqueueFileUpload args.FullPath then
-                logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
+            if isLocalObservationCandidateSchedulingActive () then
+                acceptLocalObservationCandidate Deleted args.OldFullPath seenAt
+                acceptLocalObservationCandidate kind args.FullPath seenAt
+            elif useImmediateLocalObservationProcessingForWatchTests () then
+                processLocalObservationImmediately Deleted args.OldFullPath
+                processLocalObservationImmediately kind args.FullPath
+            else
+                logObservationSuppressed args.FullPath
+        else
+            logObservationSuppressed args.FullPath
 
     /// Coordinates on error behavior for this CLI command path.
     let OnError (args: ErrorEventArgs) =
         let correlationId = generateCorrelationId ()
+        let message = args.GetException().Message
 
-        logToAnsiConsole Colors.Error $"I saw that the FileSystemWatcher threw an exception: {args.GetException().Message}. grace watch should be restarted."
+        requestGraceWatchExplicitResync $"FileSystemWatcher error {correlationId}: {message}"
+
+        logToAnsiConsole
+            Colors.Error
+            $"I saw that the FileSystemWatcher threw an exception: {message}. grace watch is resynchronizing before incremental work resumes."
 
     /// Coordinates on grace update in progress created behavior for this CLI command path.
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
+        if isUpdateMarkerPath args.FullPath then
+            observeGraceUpdateMarkerInstance args.FullPath
+
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
+                let hasCurrentCompletedSidecar =
+                    match tryReadGraceUpdateMarkerCompletion () with
+                    | Some (_, completedUtc) -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
+                    | None -> false
+
+                if not hasCurrentCompletedSidecar then
+                    clearCurrentGraceUpdateMarkerCompletedSidecar ()
+
                 logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
 
+    /// Reports whether a marker deletion callback still owns branch transition completion authority.
+    let private deletedMarkerCanCompleteCurrentTransition markerFileName =
+        let currentMarkerFileName = updateInProgressFileName ()
+
+        String.Equals(markerFileName, currentMarkerFileName, watchPathComparison)
+        || not (File.Exists(currentMarkerFileName))
+
     /// Coordinates on grace update in progress deleted behavior for this CLI command path.
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
-        if args.FullPath = updateInProgressFileName () then
-            if updateNotInProgress () then
-                logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+        if isUpdateMarkerPath args.FullPath then
+            if not (File.Exists(args.FullPath)) then
+                match tryReadGraceUpdateMarkerCompletionForMarker args.FullPath with
+                | Some (GraceUpdateMarkerPurpose.BranchTransition, completedUtc) ->
+                    match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
+                    | ObservedCurrentMarker ->
+                        if deletedMarkerCanCompleteCurrentTransition args.FullPath then
+                            completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+                            logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                        else
+                            recordGraceUpdateMarkerCompletedUtc completedUtc
+                            let reason = $"stale branch-transition marker deletion for {args.FullPath} could not complete the current transition."
+
+                            recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                            requestGraceWatchMarkerCompletionConfidenceLossResync reason
+
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Ignored stale update marker deletion for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
+                    | UnobservedMarker when
+                        deletedMarkerIsCurrentMarker args.FullPath
+                        && isRecentGraceUpdateMarkerCompletion completedUtc
+                        && persistedConfigurationChangedSinceWatchCached ()
+                        ->
+                        requestGraceWatchMarkerCompletionConfidenceLossResync
+                            "branch transition marker deletion had a fresh completion sidecar but no observed marker creation"
+
+                        recordWatchBoundaryDiagnostic
+                            "marker-completion-confidence-loss"
+                            $"branch-transition marker deletion had a fresh completion sidecar but no observed marker creation for {args.FullPath}."
+
+                        completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Update marker ended with an unobserved fresh completed sidecar for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
+                    | ObservedStaleMarker
+                    | UnobservedMarker ->
+                        let reason = $"branch-transition marker deletion did not provide current observed completion evidence for {args.FullPath}."
+
+                        recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                        requestGraceWatchMarkerCompletionConfidenceLossResync reason
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Update marker ended with incomplete completion evidence for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
+                | Some (GraceUpdateMarkerPurpose.ReferenceMaterialization, completedUtc) ->
+                    match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
+                    | ObservedCurrentMarker when isRecentGraceUpdateMarkerCompletion completedUtc ->
+                        recordGraceUpdateMarkerCompletedUtc completedUtc
+                        requestCurrentBranchReferenceCatchUp "current-branch reference materialization marker deletion"
+                        logToAnsiConsole Colors.Important $"Reference materialization update has finished."
+                    | _ ->
+                        let reason = $"reference-materialization marker deletion did not provide current observed completion evidence for {args.FullPath}."
+
+                        recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                        requestGraceWatchMarkerCompletionConfidenceLossResync reason
+                | None ->
+                    forgetObservedGraceUpdateMarkerInstance args.FullPath
+                    let reason = $"update marker deletion had missing or malformed completion evidence for {args.FullPath}."
+                    recordWatchBoundaryDiagnostic "marker-completion-confidence-loss" reason
+                    requestGraceWatchMarkerCompletionConfidenceLossResync reason
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Update marker ended without trustworthy completion evidence; grace watch is resynchronizing before incremental work resumes."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
 
@@ -679,11 +7726,9 @@ module Watch =
     /// Update the Grace Object Cache file with the new DirectoryVersions.
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) = task { do! upsertObjectCache newDirectoryVersions }
 
-    /// Updates the Grace Status file's Index with updates detected from the file system.
-    let updateGraceStatus graceStatus correlationId =
+    /// Applies already-derived filesystem differences to Grace Status, object cache, and save history.
+    let updateGraceStatusFromDifferences graceStatus (differences: List<FileSystemDifference>) correlationId =
         task {
-            // Get the list of differences between what's in the working directory, and what Grace Index knows about.
-            let! differences = scanForDifferences graceStatus
             printDifferences differences
 
             // Get an updated Grace Index, and any new DirectoryVersions that were needed to build it.
@@ -734,14 +7779,15 @@ module Watch =
                     .ToList()
 
             if unuploadedFileDifferences.Count > 0 then
-                for fileDifference in unuploadedFileDifferences do
-                    let fullPath = Path.Combine(Current().RootDirectory, string fileDifference.RelativePath)
+                if statusSideEffectStillAllowed "missing-upload retry queueing" then
+                    for fileDifference in unuploadedFileDifferences do
+                        let fullPath = Path.Combine(Current().RootDirectory, string fileDifference.RelativePath)
 
-                    enqueueFileUpload fullPath |> ignore
+                        enqueueFileUpload fullPath |> ignore
 
-                logToAnsiConsole
-                    Colors.Important
-                    $"Grace Status update found {unuploadedFileDifferences.Count} file add/change differences without uploaded file content; file uploads will run before retrying the status update."
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Status update found {unuploadedFileDifferences.Count} file add/change differences without uploaded file content; file uploads will run before retrying the status update."
 
                 return None
             else
@@ -759,71 +7805,102 @@ module Watch =
                             savedDirectoryVersions
                             newDirectoryVersions
 
-                    let! result = saveDirectoryVersions directoryVersionsToSave correlationId
+                    let! result =
+                        if statusSideEffectStillAllowed "directory-version upload" then
+                            saveDirectoryVersions directoryVersionsToSave correlationId
+                        else
+                            Task.FromResult(Error(GraceError.Create "Watch confidence lost before directory-version upload." correlationId))
 
                     match result with
                     | Ok returnValue ->
                         let newGraceStatus = syncGraceStatusRootDirectoryHash newGraceStatus
 
-                        do! updateObjectCacheFile newDirectoryVersions
-
-                        let fileDifferences =
-                            differences
-                                .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
-                                .ToList()
-
-                        let message =
-                            if fileDifferences |> Seq.isEmpty then
-                                String.Empty
-                            else
-                                let sb = stringBuilderPool.Get()
-
-                                try
-                                    for fileDifference in fileDifferences do
-                                        //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
-                                        match fileDifference.DifferenceType with
-                                        | Change ->
-                                            sb.AppendLine($"{fileDifference.RelativePath}")
-                                            |> ignore
-                                        | Add ->
-                                            sb.AppendLine($"Add {fileDifference.RelativePath}")
-                                            |> ignore
-                                        | Delete ->
-                                            sb.AppendLine($"Delete {fileDifference.RelativePath}")
-                                            |> ignore
-
-                                    let saveMessage = sb.ToString()
-                                    saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
-                                finally
-                                    stringBuilderPool.Return(sb)
-
-                        // If there are changes either to files or just to directories, create a save reference.
-                        if (differences.Count > 0) then
-                            match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
-                            | Ok returnValue ->
-                                let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
-                                // Apply incremental changes to the Grace Status DB.
-                                do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
-
-                                for fileVersion in directoryUploadedFileVersions do
-                                    let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
-
-                                    uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
-                                    |> ignore
-
-                                //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
-                                graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
-                                return Some newGraceStatusWithUpdatedTime
-                            | Error error ->
-                                logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
-                                return None
+                        if not (statusSideEffectStillAllowed "object-cache update") then
+                            return None
                         else
-                            // There were no changes to process, so just return the existing GraceStatus.
-                            //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
-                            return Some graceStatus
+                            do! updateObjectCacheFile newDirectoryVersions
+
+                            let fileDifferences =
+                                differences
+                                    .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
+                                    .ToList()
+
+                            let message =
+                                if fileDifferences |> Seq.isEmpty then
+                                    String.Empty
+                                else
+                                    let sb = stringBuilderPool.Get()
+
+                                    try
+                                        for fileDifference in fileDifferences do
+                                            //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
+                                            match fileDifference.DifferenceType with
+                                            | Change ->
+                                                sb.AppendLine($"{fileDifference.RelativePath}")
+                                                |> ignore
+                                            | Add ->
+                                                sb.AppendLine($"Add {fileDifference.RelativePath}")
+                                                |> ignore
+                                            | Delete ->
+                                                sb.AppendLine($"Delete {fileDifference.RelativePath}")
+                                                |> ignore
+
+                                        let saveMessage = sb.ToString()
+                                        saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
+                                    finally
+                                        stringBuilderPool.Return(sb)
+
+                            // If there are changes either to files or just to directories, create a save reference.
+                            if (differences.Count > 0) then
+                                let! saveReferenceResult =
+                                    if statusSideEffectStillAllowed "save reference creation" then
+                                        createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId
+                                    else
+                                        Task.FromResult(Error(GraceError.Create "Watch confidence lost before save reference creation." correlationId))
+
+                                match saveReferenceResult with
+                                | Ok returnValue ->
+                                    let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+
+                                    if statusSideEffectStillAllowed "local status application" then
+                                        // Apply incremental changes to the Grace Status DB.
+                                        do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+
+                                        for fileVersion in directoryUploadedFileVersions do
+                                            let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+
+                                            uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
+                                            |> ignore
+
+                                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                                        graceStatusHasChanged <- currentGraceStatusRefreshGeneration () <> 0L // We *just* changed it ourselves, but a newer observed refresh must still be processed.
+                                        return Some newGraceStatusWithUpdatedTime
+                                    else
+                                        return None
+                                | Error error ->
+                                    logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                                    return None
+                            else
+                                // There were no changes to process, so just return the existing GraceStatus.
+                                //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
+                                return Some graceStatus
                     | Error error ->
                         logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                         return None
+        }
+
+    /// Updates the Grace Status file's Index with updates detected from the file system.
+    let updateGraceStatus graceStatus correlationId =
+        task {
+            let runtimeMode = currentGraceWatchRuntimeMode ()
+
+            if not (isGraceWatchScanLegal runtimeMode) then
+                logToAnsiConsole Colors.Verbose $"Grace Watch skipped working-tree scan while runtime mode is {runtimeMode}."
+                return Some graceStatus
+            else
+                // Get the list of differences between what's in the working directory, and what Grace Index knows about.
+                let! differences = scanForDifferencesWithWatchIgnoreSnapshot graceStatus
+                return! updateGraceStatusFromDifferences graceStatus differences correlationId
         }
 
     /// Reads cached file version for upload skip from ParseResult, local configuration, or Grace ids.
@@ -877,12 +7954,20 @@ module Watch =
         =
         task {
             //logToConsole $"*In fileChanged for {fullPath}."
-            match! copyFileToObjectCache fullPath with
-            | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
-            | None ->
-                match! getCachedFileVersion fullPath with
-                | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
-                | None -> raise (InvalidOperationException($"Failed to copy {fullPath} to the object cache before upload."))
+            let! copiedOrCachedFileVersion =
+                task {
+                    match! copyFileToObjectCache fullPath with
+                    | Some fileVersion -> return Some fileVersion
+                    | None -> return! getCachedFileVersion fullPath
+                }
+
+            match copiedOrCachedFileVersion with
+            | Some fileVersion ->
+                try
+                    do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
+                with
+                | ex -> return raise (StableFileUploadFailureException($"Failed to upload proven file bytes for {fullPath} to storage.", ex))
+            | None -> raise (InvalidOperationException($"Failed to copy {fullPath} to the object cache before upload."))
         }
 
     /// Copies a file from the working directory to the object directory, with its SHA-256 hash, and then uploads it to storage.
@@ -926,89 +8011,893 @@ module Watch =
             graceStatus <- GraceStatus.Default
         }
 
-    /// Coordinates update grace status directory ids behavior for this CLI command path.
-    let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
+    /// Publishes a trusted Watch IPC snapshot only when incremental mode is currently safe for other processes.
+    let private tryPublishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =
+        task {
+            let runtimeMode = currentGraceWatchRuntimeMode ()
+
+            let publicationVerified =
+                if
+                    runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                    && not (isGraceWatchResyncPending ())
+                then
+                    tryPublishWatchIpcWithFreshPendingWorkProbe trustedStatus directoryIds (fun () ->
+                        updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds))
+                else
+                    let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                    let verified =
+                        tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Watch published non-incremental IPC for {context} while runtime mode is {runtimeMode} and resync pending is {isGraceWatchResyncPending ()}."
+
+                    verified
+
+            return publicationVerified
+        }
+
+    /// Publishes a trusted Watch IPC snapshot only when incremental mode is currently safe for other processes.
+    let private publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =
+        task {
+            let! _ = tryPublishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context
+
+            ()
+        }
+
+    /// Publishes Watch IPC for tests that verify confidence-lost states cannot advertise incremental safety.
+    let internal publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
+        publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient "test refresh"
+
+    /// Publishes a reloaded Grace Status snapshot after clearing the refresh flag consumed by this timer tick.
+    let private publishGraceStatusRefreshSnapshot observedRefreshGeneration updatedGraceStatus updateGraceWatchInterprocessFileClient =
+        task {
+            graceStatus <- updatedGraceStatus
+            updateGraceStatusDirectoryIds graceStatus
+
+            graceStatusHasChanged <-
+                currentGraceStatusRefreshGeneration ()
+                <> observedRefreshGeneration
+
+            let! publicationVerified =
+                tryPublishGraceWatchInterprocessFileForCurrentConfidence
+                    graceStatus
+                    graceStatusDirectoryIds
+                    updateGraceWatchInterprocessFileClient
+                    "Grace Status refresh"
+
+            if publicationVerified then
+                tryClearGraceStatusRefreshGeneration observedRefreshGeneration
+                |> ignore
+            else
+                graceStatusHasChanged <- true
+        }
+
+    /// Publishes a Grace Status refresh snapshot for tests that verify clean IPC after refresh consumption.
+    let internal publishGraceStatusRefreshSnapshotForWatchTests updatedGraceStatus updateGraceWatchInterprocessFileClient =
+        publishGraceStatusRefreshSnapshot (currentGraceStatusRefreshGeneration ()) updatedGraceStatus updateGraceWatchInterprocessFileClient
+
+    /// Publishes the startup catch-up boundary as dirty so commands cannot trust pre-scan incremental status.
+    let private publishStartupCatchUpPendingStatus trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
+        task {
+            setGraceWatchPendingWorkStatusFlag true
+            let publicationStartedAt = getCurrentInstant ()
+
+            let observationScopeForPublication =
+                if hasWatchObservationRootIdentity trustedStatus then
+                    Some(watchObservationScopeForStatus trustedStatus)
+                else
+                    None
+
+            do! updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds)
+
+            cachePendingWatchWorkPublicationIfVerified trustedStatus directoryIds observationScopeForPublication true publicationStartedAt
+            |> ignore
+        }
+
+    /// Publishes startup catch-up IPC for tests that verify startup scans do not expose trusted clean state early.
+    let internal publishStartupCatchUpPendingStatusForWatchTests trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
+        publishStartupCatchUpPendingStatus trustedStatus directoryIds updateGraceWatchInterprocessFileClient
+
+    /// Keeps the batch status snapshot bounded to the same resync confidence that admitted its file uploads.
+    let private pendingFileBatchStatusApplicationStillTrusted resyncAttempt =
+        match resyncAttempt with
+        | Some attempt -> isGraceWatchResyncAttemptActive attempt
+        | None -> not (isGraceWatchResyncPending ())
+
+    /// Uploads pending file content while preserving the confidence boundary for the current Watch mode.
+    let private uploadPendingWatchFilesForStatusRetry
+        readGraceStatusMetaClient
+        copyFileToObjectDirectoryAndUploadToStorageClient
+        applyGraceStatusIncrementalClient
+        correlationId
+        recordProcessedPaths
+        resyncAttempt
+        =
+        task {
+            let! graceStatusFromDisk = readGraceStatusMetaClient ()
+            graceStatus <- graceStatusFromDisk
+
+            let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
+            let mutable processedAnyFile = false
+
+            retryPendingDirectoryUploads ()
+
+            let getUploadMetadataForFilesParameters =
+                GetUploadMetadataForFilesParameters(
+                    OwnerId = $"{Current().OwnerId}",
+                    OrganizationId = $"{Current().OrganizationId}",
+                    RepositoryId = $"{Current().RepositoryId}",
+                    CorrelationId = correlationId
+                )
+
+            for pendingFile in
+                filesToProcess
+                    .ToArray()
+                    .OrderBy(fun entry -> entry.Key, StringComparer.Ordinal)
+                    .Take(50)
+                    .Select(fun entry -> entry.Value) do
+                let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile)
+                let now = stableFileIdentityNowForWatch ()
+
+                let mayStabilizePendingFile =
+                    match resyncAttempt with
+                    | Some attempt -> isGraceWatchResyncAttemptActive attempt
+                    | None ->
+                        not (isGraceWatchResyncPending ())
+                        && currentGraceWatchRuntimeMode ()
+                           <> GraceWatchRuntimeMode.Suspended
+
+                if
+                    mayStabilizePendingFile
+                    && (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                        .Contains(pendingPair)
+                then
+                    if pendingFile.RetryNotBeforeUtc > now then
+                        ()
+                    elif not (pendingFileWorkMatchesCurrentScope pendingFile) then
+                        discardStaleFileRecoveryStateForScopeChangedPath pendingFile
+
+                        requestGraceWatchExplicitResyncRetainingPendingFiles
+                            $"Watch file identity scope changed before stabilization for {pendingFile.FullPath}."
+                    elif updateInProgress () then
+                        // A pre-marker local candidate remains pending until the marker ends; do not inspect bytes during Grace-owned mutation.
+                        ()
+                    elif Directory.Exists(pendingFile.FullPath) then
+                        (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                            .Remove(pendingPair)
+                        |> ignore
+
+                        enqueueStatusUpdateTrigger pendingFile.FullPath
+                        |> ignore
+                    elif
+                        Path.IsPathRooted(pendingFile.FullPath)
+                        && not (File.Exists(pendingFile.FullPath))
+                    then
+                        retryPendingFileStabilization pendingFile now "the final path was absent"
+                    else
+                        try
+                            logToAnsiConsole Colors.Verbose $"Stabilizing {pendingFile.FullPath}. filesToProcess.Count: {filesToProcess.Count}."
+                            do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath pendingFile.FullPath)
+
+                            let scopeStillCurrent = pendingFileWorkMatchesCurrentScope pendingFile
+                            let currentMode = currentGraceWatchRuntimeMode ()
+
+                            let uploadResultStillTrusted =
+                                scopeStillCurrent
+                                && (match resyncAttempt with
+                                    | Some attempt -> isGraceWatchResyncAttemptActive attempt
+                                    | None ->
+                                        recordProcessedPaths
+                                        && not (isGraceWatchResyncPending ())
+                                        && (isGraceWatchObservationApplicationLegal currentMode
+                                            || currentMode = GraceWatchRuntimeMode.StartingUp
+                                            || currentMode = GraceWatchRuntimeMode.Stopping))
+
+                            if not scopeStillCurrent then
+                                discardStaleFileRecoveryStateForScopeChangedPath pendingFile
+
+                                requestGraceWatchExplicitResync $"Watch file identity scope changed during stabilization for {pendingFile.FullPath}."
+                            elif
+                                uploadResultStillTrusted
+                                && (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                                    .Contains(pendingPair)
+                            then
+                                retainFileRecoveryEvidence pendingFile
+
+                                (filesToProcess :> ICollection<KeyValuePair<string, PendingFileWorkSnapshot>>)
+                                    .Remove(pendingPair)
+                                |> ignore
+
+                                if recordProcessedPaths then
+                                    match repositoryRelativePath pendingFile.FullPath with
+                                    | Some relativePath ->
+                                        addProcessedFileRelativePathPendingStatus
+                                            { RelativePath = RelativePath relativePath; Generation = pendingFile.Generation }
+                                    | None -> ()
+
+                                processedAnyFile <- true
+                                lastFileUploadInstant <- getCurrentInstant ()
+                            else
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch discarded upload completion for {pendingFile.FullPath} because runtime mode is {currentMode} and resync pending is {isGraceWatchResyncPending ()}."
+                        with
+                        | :? OperationCanceledException -> ()
+                        | :? StableFileUploadFailureException as ex -> retryPendingFileUpload pendingFile now ex.Message
+                        | ex ->
+                            retryPendingFileStabilization pendingFile now ex.Message
+
+                            match resyncAttempt with
+                            | Some _ -> raise ex
+                            | None -> ()
+
+            if recordProcessedPaths
+               && processedAnyFile
+               && pendingFileBatchStatusApplicationStillTrusted resyncAttempt then
+                graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
+                do! applyGraceStatusIncrementalClient graceStatus Seq.empty Seq.empty
+
+            return processedAnyFile
+        }
+
+    /// Invokes status application only while the caller's confidence boundary still holds.
+    let private updateGraceStatusFromDifferencesWhenTrusted trustPredicate updateGraceStatusFromDifferencesClient graceStatus differences correlationId =
+        task {
+            if trustPredicate () then
+                return!
+                    runWithStatusSideEffectTrustPredicate trustPredicate (fun () -> updateGraceStatusFromDifferencesClient graceStatus differences correlationId)
+            else
+                logToAnsiConsole Colors.Important "Grace Watch skipped status application because confidence was lost before status side effects started."
+                return None
+        }
+
+    /// Prunes applied Watch journal rows immediately after a trusted applied-boundary advance.
+    let private pruneWatchJournalAfterTrustedBoundaryAdvance (appendedWatchJournalSequences: int64 array) =
+        task {
+            if appendedWatchJournalSequences.Length > 0 then
+                try
+                    do! pruneWatchJournalRetentionForWatch ()
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Grace Watch could not prune applied journal rows after a trusted boundary advance; retention will retry after later status work: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Requests resync before fallible journal repair so non-incremental IPC is published even when repair fails.
+    let private repairWatchJournalAfterStatusTrustLoss advancedThrough requiredAppliedThrough resyncReason repairFailureContext =
+        task {
+            requestGraceWatchExplicitResync resyncReason
+
+            try
+                do! recoverWatchJournalBoundaryGapForWatch advancedThrough requiredAppliedThrough
+            with
+            | ex -> logToAnsiConsole Colors.Error $"{repairFailureContext}; resync was already requested before repair failed: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Clears appended journal rows after status returns no durable result so the pending retry can reappend them.
+    let private clearWatchJournalAfterNoDurableStatus appendedWatchJournalSequences =
+        task {
+            if Array.isEmpty appendedWatchJournalSequences then
+                return false
+            else
+                let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
+
+                try
+                    do! recoverWatchJournalBoundaryGapForWatch 0L requiredAppliedThrough
+                    return false
+                with
+                | ex ->
+                    requestGraceWatchExplicitResync $"Watch status application returned no durable status and journal repair failed: {ex.Message}"
+
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch appended normalized observations and status application returned no durable status, but journal repair failed; resync is required before incremental work can resume: {Markup.Escape(ex.Message)}."
+
+                    return true
+        }
+
+    /// Combines durable journal sequences without reordering the first observation for each sequence.
+    let private combineWatchJournalSequences (first: int64 array) (second: int64 array) =
+        seq {
+            yield! first
+            yield! second
+        }
+        |> Seq.filter (fun sequence -> sequence > 0L)
+        |> Seq.distinct
+        |> Seq.toArray
+
+    /// Converges appended journal rows after status side effects commit so recovery never resumes from stale pending rows.
+    let private convergeWatchJournalAfterStatusApplication (appendedWatchJournalSequences: int64 array) =
+        task {
+            if appendedWatchJournalSequences.Length = 0 then
+                return true
+            else
+                let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
+
+                try
+                    let! advancedThrough = advanceWatchJournalAppliedThroughSequencesForWatch appendedWatchJournalSequences
+
+                    if advancedThrough < requiredAppliedThrough then
+                        do!
+                            repairWatchJournalAfterStatusTrustLoss
+                                advancedThrough
+                                requiredAppliedThrough
+                                $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
+                                "Grace Watch applied status but could not repair the durable journal boundary through the appended observations"
+
+                        logToAnsiConsole
+                            Colors.Error
+                            $"Grace Watch applied status but could not advance the durable journal boundary through the appended observations; resync is required before status work is drained."
+
+                        return false
+                    else
+                        do! pruneWatchJournalAfterTrustedBoundaryAdvance appendedWatchJournalSequences
+                        return true
+                with
+                | ex ->
+                    do!
+                        repairWatchJournalAfterStatusTrustLoss
+                            0L
+                            requiredAppliedThrough
+                            $"Watch journal applied boundary advancement failed after status application: {ex.Message}"
+                            "Grace Watch applied status but could not repair the durable journal boundary after advancement failed"
+
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch applied status but could not advance the durable journal boundary; resync was requested before journal repair so incremental shortcuts cannot replay already-applied work: {Markup.Escape(ex.Message)}."
+
+                    return false
+        }
 
     /// Processes any changed files since the last timer tick.
     let internal processChangedFilesWithClients
         readGraceStatusMetaClient
         readGraceStatusFileClient
         copyFileToObjectDirectoryAndUploadToStorageClient
-        updateGraceStatusClient
+        _updateGraceStatusClient
+        (_scanForDifferencesClient: GraceStatus -> Task<List<FileSystemDifference>>)
+        (updateGraceStatusFromDifferencesClient: GraceStatus -> List<FileSystemDifference> -> CorrelationId -> Task<GraceStatus option>)
         applyGraceStatusIncrementalClient
         updateGraceWatchInterprocessFileClient
         =
         task {
-            // First, check if there's anything to process.
-            if hasPendingWatchWork () then
+            configureWatchPathComparisonForCurrentRepository ()
+
+            // A target branch must install its own snapshot before Watch can classify due filesystem candidates.
+            let targetConfigurationActive = tryReloadPendingTransitionConfiguration ()
+
+            if targetConfigurationActive then
+                processDueLocalObservationCandidates DateTime.UtcNow
+
+            match takeLocalObservationConfidenceLoss () with
+            | Some reason ->
+                recordWatchBoundaryDiagnostic "local-observation-confidence-loss" reason
+                requestGraceWatchExplicitResync reason
+            | None -> ()
+
+            if not targetConfigurationActive then
+                ()
+            elif isGraceWatchResyncPending () then
+                let resyncAttempt = currentGraceWatchResyncAttempt ()
+
+                if not (isGraceWatchResyncAttemptActive resyncAttempt) then
+                    logToAnsiConsole Colors.Important $"Grace Watch skipped retained-file recovery for inactive resync attempt {resyncAttempt}."
+                else
+                    try
+                        let correlationId = generateCorrelationId ()
+
+                        let! uploadedRetryContent, uploadRetryBlocked =
+                            if filesToProcess.IsEmpty then
+                                Task.FromResult(false, false)
+                            else
+                                task {
+                                    try
+                                        let! uploadedRetryContent =
+                                            uploadPendingWatchFilesForStatusRetry
+                                                readGraceStatusMetaClient
+                                                copyFileToObjectDirectoryAndUploadToStorageClient
+                                                applyGraceStatusIncrementalClient
+                                                correlationId
+                                                false
+                                                (Some resyncAttempt)
+
+                                        return uploadedRetryContent, not filesToProcess.IsEmpty
+                                    with
+                                    | ex ->
+                                        if isGraceWatchResyncAttemptActive resyncAttempt then
+                                            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"Grace Watch resync upload retry failed and will remain queued for another tick: {ex.Message}"
+
+                                        return false, true
+                                }
+
+                        let resyncStatusUpdateStillTrusted () = isGraceWatchResyncAttemptActive resyncAttempt
+
+                        let! recoveryEvidenceReady =
+                            if
+                                uploadRetryBlocked
+                                || not (resyncStatusUpdateStillTrusted ())
+                            then
+                                Task.FromResult(false)
+                            else
+                                recoveryEvidenceReadyForResyncScan ()
+
+                        if uploadRetryBlocked then
+                            logToAnsiConsole
+                                Colors.Important
+                                "Grace Watch retained pending file work during resync; scan-derived status recovery will retry after final bytes are uploadable."
+                        elif not (recoveryEvidenceReady) then
+                            logToAnsiConsole
+                                Colors.Important
+                                "Grace Watch retained recovery evidence whose final bytes are not yet safe for scan-derived status recovery."
+                        elif not (resyncStatusUpdateStillTrusted ()) then
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Grace Watch skipped stale resync attempt {resyncAttempt} because a newer resync attempt is pending."
+                        else
+                            if uploadedRetryContent then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    "Grace Watch uploaded file content queued by resync recovery; retrying the scan-derived status boundary."
+
+                            let! graceStatusSnapshot = readGraceStatusFileClient ()
+                            graceStatus <- graceStatusSnapshot
+
+                            let! scanDerivedDifferences = _scanForDifferencesClient graceStatus
+
+                            if not (wasLastScanForDifferencesSuccessful ()) then
+                                failwith "scan-derived resync did not complete successfully"
+
+                            let! statusUpdateResult =
+                                if scanDerivedDifferences.Count > 0 then
+                                    updateGraceStatusFromDifferencesWhenTrusted
+                                        resyncStatusUpdateStillTrusted
+                                        updateGraceStatusFromDifferencesClient
+                                        graceStatus
+                                        scanDerivedDifferences
+                                        correlationId
+                                else
+                                    Task.FromResult(Some graceStatus)
+
+                            match statusUpdateResult with
+                            | Some newGraceStatus when resyncStatusUpdateStillTrusted () ->
+                                graceStatus <- newGraceStatus
+                                updateGraceStatusDirectoryIds graceStatus
+
+                                let recoveredEvidencePaths =
+                                    fileRecoveryEvidence.Values
+                                    |> Seq.filter pendingFileWorkMatchesCurrentScope
+                                    |> Seq.map relativePathForPendingFileWork
+                                    |> Seq.toArray
+
+                                beforeGraceWatchResyncEvidenceRetirementProbe ()
+
+                                if tryCompleteGraceWatchResyncRecovery resyncAttempt recoveredEvidencePaths then
+                                    let materializationPendingLatchOwned = hasManualPendingWatchWorkStatusFlag ()
+
+                                    if materializationPendingLatchOwned then
+                                        let recoveryPublication =
+                                            tryPublishWatchIpcForResyncRecovery resyncAttempt graceStatus graceStatusDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+
+                                        match recoveryPublication with
+                                        | VerifiedCleanRecoveryPublication ->
+                                            beforeGraceWatchResyncAttemptRetirementProbe ()
+
+                                            if tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss resyncAttempt then
+                                                setGraceWatchPendingWorkStatusFlag false
+
+                                                if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                                    try
+                                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                                        requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
+                                                    with
+                                                    | ex ->
+                                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                                        logToAnsiConsole
+                                                            Colors.Error
+                                                            $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+                                                logToAnsiConsole
+                                                    Colors.Important
+                                                    $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                            else
+                                                let dirtyPublicationVerified =
+                                                    reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                                        updateGraceWatchInterprocessFileClient status (Some directoryIds))
+
+                                                let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                                logToAnsiConsole
+                                                    (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                                    $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                        | recoveryPublication ->
+                                            let dirtyPublicationVerified =
+                                                reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                                    updateGraceWatchInterprocessFileClient status (Some directoryIds))
+
+                                            let recoveryPublicationOutcome =
+                                                match recoveryPublication with
+                                                | VerifiedDirtyRecoveryPublication -> "verified dirty"
+                                                | UnverifiedRecoveryPublication -> "unproven"
+                                                | VerifiedCleanRecoveryPublication -> "unexpected verified clean"
+
+                                            let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                            logToAnsiConsole
+                                                (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                                $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                    else
+                                        let clearedResyncAttempt = tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss resyncAttempt
+
+                                        if clearedResyncAttempt then
+                                            setGraceWatchPendingWorkStatusFlag false
+
+                                            publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                                updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+
+                                            if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                                try
+                                                    refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                                    requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
+                                                with
+                                                | ex ->
+                                                    completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                                    logToAnsiConsole
+                                                        Colors.Error
+                                                        $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+                                            logToAnsiConsole
+                                                Colors.Important
+                                                $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                        else
+                                            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                            logToAnsiConsole
+                                                Colors.Important
+                                                $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
+                                else
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch retained recovery evidence because resync attempt {resyncAttempt} became stale before terminal recovery retirement."
+                            | Some _ ->
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch skipped stale resync commit for attempt {resyncAttempt} because confidence changed before commit."
+                            | None ->
+                                if filesToProcess.IsEmpty then
+                                    suspendGraceWatchAttemptAfterFailedRecovery resyncAttempt "scan-derived status update returned no durable status"
+                                else
+                                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch resync queued file uploads before applying scan-derived status; retry will continue after uploads complete."
+
+                            graceStatus <- GraceStatus.Default
+                            GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
+                    with
+                    | ex ->
+                        suspendGraceWatchAttemptAfterFailedRecovery resyncAttempt $"resync failed before the durable status boundary: {ex.Message}"
+
+                        logToAnsiConsole
+                            Colors.Error
+                            $"Error in processChangedFiles resync: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+            elif hasProcessablePendingWatchWork () then
                 try
                     let correlationId = generateCorrelationId ()
-                    let! graceStatusFromDisk = readGraceStatusMetaClient ()
-                    graceStatus <- graceStatusFromDisk
 
-                    let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
-                    let mutable processedAnyFile = false
-
-                    // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
-                    //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
-                    //   and clear the queue quickly without overwhelming the system.
-                    let getUploadMetadataForFilesParameters =
-                        GetUploadMetadataForFilesParameters(
-                            OwnerId = $"{Current().OwnerId}",
-                            OrganizationId = $"{Current().OrganizationId}",
-                            RepositoryId = $"{Current().RepositoryId}",
-                            CorrelationId = correlationId
-                        )
-
-                    for pendingFile in
-                        filesToProcess
-                            .ToArray()
-                            .Take(50)
-                            .Select(fun entry -> { FullPath = entry.Key; Generation = entry.Value }) do
-                        let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile.Generation)
-
-                        if (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
-                            .Contains(pendingPair) then
-                            logToAnsiConsole Colors.Verbose $"Processing {pendingFile.FullPath}. filesToProcess.Count: {filesToProcess.Count}."
-                            do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath pendingFile.FullPath)
-
-                            (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
-                                .Remove(pendingPair)
-                            |> ignore
-
-                            processedAnyFile <- true
-                            lastFileUploadInstant <- getCurrentInstant ()
-
-                    if processedAnyFile then
-                        graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
-                        do! applyGraceStatusIncrementalClient graceStatus Seq.empty Seq.empty
+                    let! _ =
+                        uploadPendingWatchFilesForStatusRetry
+                            readGraceStatusMetaClient
+                            copyFileToObjectDirectoryAndUploadToStorageClient
+                            applyGraceStatusIncrementalClient
+                            correlationId
+                            true
+                            None
 
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
-                    if filesToProcess.IsEmpty then
+                    if not (isGraceWatchResyncPending ())
+                       && filesToProcess.IsEmpty
+                       && directoriesToProcess.IsEmpty then
                         let directorySnapshot, statusTriggerSnapshot = statusOnlyTriggerSnapshot ()
                         let fileWorkGenerationBeforeStatusUpdate = Volatile.Read(&fileUploadWorkGeneration)
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
-                        resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+                        let canceledFileUploadDeleteRelativePathsForStatus = canceledFileUploadDeleteRelativePathsSnapshot ()
+                        let processedFileStatusSnapshotsForStatus = processedFileRelativePathsPendingStatusSnapshot ()
 
-                        match! (updateGraceStatusClient graceStatus correlationId) with
-                        | Some newGraceStatus ->
-                            if wasLastScanForDifferencesSuccessful ()
-                               && filesToProcess.IsEmpty
-                               && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate then
-                                graceStatus <- newGraceStatus
-                                drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+                        let processedFileRelativePathsForStatus = List<RelativePath>()
+
+                        for processedFile in processedFileStatusSnapshotsForStatus do
+                            let alreadyCaptured =
+                                processedFileRelativePathsForStatus.Exists (fun relativePath ->
+                                    String.Equals(normalizeRelativePath relativePath, normalizeRelativePath processedFile.RelativePath, watchPathComparison))
+
+                            if not alreadyCaptured then
+                                processedFileRelativePathsForStatus.Add(processedFile.RelativePath)
+
+                        let startupPendingDifferences = pendingStatusDifferencesSnapshot ()
+
+                        let! requeuedResolvedFileDeletePaths =
+                            reenqueueUploadsForResolvedDeletes
+                                graceStatus
+                                statusTriggerSnapshot
+                                canceledFileUploadDeleteRelativePathsForStatus
+                                processedFileRelativePathsForStatus
+                                startupPendingDifferences
+
+                        let! uploadedFileDifferences, unresolvedUploadedFilePaths =
+                            deriveUploadedFileDifferences graceStatus processedFileRelativePathsForStatus
+
+                        let requeuedUnresolvedUploadedFilePaths = reenqueueUnresolvedUploadedFinalFileVersions unresolvedUploadedFilePaths
+
+                        let deleteDifferences = deriveDeleteDifferences graceStatus statusTriggerSnapshot
+                        let eventDerivedDifferences = mergeStatusDifferences deleteDifferences uploadedFileDifferences
+
+                        for eventDerivedDifference in (eventDerivedDifferences :> seq<FileSystemDifference>) do
+                            addPendingStatusDifference eventDerivedDifference
+
+                        let pendingDifferencesToClear = mergeStatusDifferences startupPendingDifferences eventDerivedDifferences
+
+                        let statusDifferencesForApply =
+                            splitApplicableStatusDifferences
+                                graceStatus
+                                statusTriggerSnapshot
+                                (mergeCurrentStatusDifferences processedFileRelativePathsForStatus startupPendingDifferences eventDerivedDifferences)
+
+                        let statusApplicationModeStillTrusted () =
+                            let runtimeModeBeforeStatusApplication = currentGraceWatchRuntimeMode ()
+
+                            if runtimeModeBeforeStatusApplication = GraceWatchRuntimeMode.Stopping then
+                                false
+                            elif startupPendingDifferences.Count > 0 then
+                                runtimeModeBeforeStatusApplication = GraceWatchRuntimeMode.StartingUp
+                                || runtimeModeBeforeStatusApplication = GraceWatchRuntimeMode.HealthyIncremental
                             else
+                                isGraceWatchObservationApplicationLegal runtimeModeBeforeStatusApplication
+
+                        let statusApplicationLegal = statusApplicationModeStillTrusted ()
+                        let mutable appendedWatchJournalSequences = Array.empty<int64>
+                        let mutable newlyAppendedWatchJournalSequences = Array.empty<int64>
+                        let mutable newlyAppendedWatchJournalReplayRows = Array.empty<int64 * FileSystemDifference>
+                        let mutable startupReplayRowsParticipated = false
+                        let mutable appendedWatchJournalConverged = false
+
+                        let statusUpdateStillTrusted () =
+                            filesToProcess.IsEmpty
+                            && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
+                            && not (isGraceWatchResyncPending ())
+                            && statusApplicationModeStillTrusted ()
+
+                        let! statusUpdateResult =
+                            if requeuedResolvedFileDeletePaths.Count > 0 then
                                 logToAnsiConsole
                                     Colors.Important
-                                    $"Grace Status file update completed while file upload work or a failed scan was pending; status-only triggers will retry."
+                                    $"Grace Status stale delete differences requeued live final content; requeued uploads will finish before status application."
+
+                                Task.FromResult(None)
+                            elif requeuedUnresolvedUploadedFilePaths.Count > 0 then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Status uploaded file differences include unresolved final content; requeued uploads will finish before status application."
+
+                                Task.FromResult(None)
+                            elif not statusApplicationLegal then
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"Grace Watch deferred status application while runtime mode is {currentGraceWatchRuntimeMode ()}."
+
+                                Task.FromResult(None)
+                            elif statusDifferencesForApply.Applicable.Count > 0 then
+                                task {
+                                    let! appendResult =
+                                        task {
+                                            try
+                                                let startupReplaySequences =
+                                                    statusDifferencesForApply.Applicable
+                                                    |> Seq.collect startupReplaySequencesForDifference
+                                                    |> Seq.toArray
+
+                                                let differencesNeedingJournalAppend =
+                                                    statusDifferencesForApply.Applicable
+                                                    |> Seq.filter (fun difference ->
+                                                        tryPeekStartupReplaySequence difference
+                                                        |> Option.isNone)
+                                                    |> Seq.toArray
+
+                                                let! sequences =
+                                                    if Array.isEmpty differencesNeedingJournalAppend then
+                                                        Task.FromResult(Array.empty<int64>)
+                                                    else
+                                                        differencesNeedingJournalAppend
+                                                        |> Seq.map journalObservationForDifference
+                                                        |> appendWatchJournalObservationsForWatch
+
+                                                return Ok(startupReplaySequences, sequences, differencesNeedingJournalAppend)
+                                            with
+                                            | ex -> return Error ex
+                                        }
+
+                                    match appendResult with
+                                    | Ok (startupReplaySequences, sequences, newlyAppendedDifferences) ->
+                                        startupReplayRowsParticipated <- startupReplaySequences.Length > 0
+                                        newlyAppendedWatchJournalSequences <- sequences
+                                        newlyAppendedWatchJournalReplayRows <- Array.zip sequences newlyAppendedDifferences
+                                        appendedWatchJournalSequences <- combineWatchJournalSequences startupReplaySequences sequences
+
+                                        try
+                                            return!
+                                                updateGraceStatusFromDifferencesWhenTrusted
+                                                    statusUpdateStillTrusted
+                                                    updateGraceStatusFromDifferencesClient
+                                                    graceStatus
+                                                    statusDifferencesForApply.Applicable
+                                                    correlationId
+                                        with
+                                        | ex ->
+                                            let requiredAppliedThrough =
+                                                if appendedWatchJournalSequences.Length = 0 then
+                                                    0L
+                                                else
+                                                    appendedWatchJournalSequences |> Array.max
+
+                                            do!
+                                                repairWatchJournalAfterStatusTrustLoss
+                                                    0L
+                                                    requiredAppliedThrough
+                                                    $"Watch status application failed after journal append: {ex.Message}"
+                                                    "Grace Watch appended normalized observations but could not repair the journal after status application failed"
+
+                                            appendedWatchJournalConverged <- true
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch appended normalized observations but status application failed; resync was requested before journal repair so pending rows cannot replay as still-unapplied work: {Markup.Escape(ex.Message)}."
+
+                                            return None
+                                    | Error ex ->
+                                        requestGraceWatchExplicitResync $"Watch journal append failed before status application: {ex.Message}"
+
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"Grace Watch could not append normalized observations to the durable journal; unjournaled status application was skipped and resync is required: {Markup.Escape(ex.Message)}."
+
+                                        return None
+                                }
+                            else
+                                Task.FromResult(Some graceStatus)
+
+                        match statusUpdateResult with
+                        | Some newGraceStatus ->
+                            beforeWatchStatusCommitProbe ()
+
+                            let commitRuntimeMode = currentGraceWatchRuntimeMode ()
+
+                            let resolvedStartupReplaySequences =
+                                startupReplaySequencesForTerminalDifferences (
+                                    mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved
+                                )
+
+                            appendedWatchJournalSequences <- combineWatchJournalSequences appendedWatchJournalSequences resolvedStartupReplaySequences
+
+                            let statusUpdateCanCommit =
+                                statusUpdateStillTrusted ()
+                                && (startupPendingDifferences.Count > 0
+                                    || isGraceWatchObservationApplicationLegal commitRuntimeMode)
+
+                            let! watchJournalBoundaryTrusted = convergeWatchJournalAfterStatusApplication appendedWatchJournalSequences
+                            appendedWatchJournalConverged <- true
+
+                            if statusUpdateCanCommit then
+                                if watchJournalBoundaryTrusted then
+                                    graceStatus <- newGraceStatus
+
+                                    if startupPendingDifferences.Count = 0 then
+                                        drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+                                    else
+                                        drainAppliedStatusWork directorySnapshot statusTriggerSnapshot statusDifferencesForApply.Resolved
+
+                                    let canceledFileUploadDeletePathsToClear =
+                                        if startupPendingDifferences.Count = 0 then
+                                            statusTriggerSnapshot
+                                            |> Seq.map (fun statusTrigger -> RelativePath statusTrigger.RelativePath)
+                                        else
+                                            statusDifferencesForApply.Resolved
+                                            |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
+                                            |> Seq.map (fun difference -> difference.RelativePath)
+
+                                    clearCanceledFileUploadDeleteRelativePaths canceledFileUploadDeletePathsToClear
+
+                                    clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
+                                    clearStartupReplaySequences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
+                                    clearProcessedFileRelativePathsPendingStatus processedFileStatusSnapshotsForStatus
+
+                                    let trustedFileStatusPaths =
+                                        seq {
+                                            yield! canceledFileUploadDeletePathsToClear
+
+                                            yield!
+                                                statusDifferencesForApply.Resolved
+                                                |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
+                                                |> Seq.map (fun difference -> difference.RelativePath)
+                                        }
+
+                                    retireFileRecoveryEvidenceForProcessedStatusFiles processedFileStatusSnapshotsForStatus
+                                    retireFileRecoveryEvidenceForPaths trustedFileStatusPaths
+
+                                    removeUploadedFileVersionsForPaths (
+                                        seq {
+                                            yield! processedFileRelativePathsForStatus
+                                            yield! trustedFileStatusPaths
+                                        }
+                                    )
+                            else
+                                clearPendingStatusDifferences pendingDifferencesToClear
+                                clearStartupReplaySequences pendingDifferencesToClear
+                                clearProcessedFileRelativePathsPendingStatus processedFileStatusSnapshotsForStatus
+                                retireFileRecoveryEvidenceForProcessedStatusFiles processedFileStatusSnapshotsForStatus
+
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Status file update completed while newer file upload work was pending; status-only triggers will retry."
                         | None ->
+                            if startupReplayRowsParticipated then
+                                for sequence, difference in newlyAppendedWatchJournalReplayRows do
+                                    rememberDeferredStartupReplaySequence sequence difference
+
+                                appendedWatchJournalConverged <- true
+
+                                if newlyAppendedWatchJournalReplayRows.Length > 0 then
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch kept existing startup replay rows durable after status application deferred; newly appended rows will retry without duplicate journal append."
+                            elif newlyAppendedWatchJournalSequences.Length > 0
+                                 && not appendedWatchJournalConverged then
+                                let! noDurableStatusRepairFailed = clearWatchJournalAfterNoDurableStatus newlyAppendedWatchJournalSequences
+                                appendedWatchJournalConverged <- true
+
+                                if noDurableStatusRepairFailed then
+                                    logToAnsiConsole
+                                        Colors.Error
+                                        $"Grace Watch appended normalized observations but status application returned no durable status; repair failed and resync is required before incremental work can resume."
+                                else
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch appended normalized observations but status application returned no durable status; appended journal rows were cleared so the pending status work can retry."
+
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
 
-                    updateGraceStatusDirectoryIds graceStatus
-                    do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
+                    let runtimeModeAfterProcessing = currentGraceWatchRuntimeMode ()
+
+                    if
+                        runtimeModeAfterProcessing = GraceWatchRuntimeMode.HealthyIncremental
+                        && not (isGraceWatchResyncPending ())
+                    then
+                        updateGraceStatusDirectoryIds graceStatus
+
+                        publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+                    else
+                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Grace Watch published non-incremental IPC after processing ended in runtime mode {runtimeModeAfterProcessing} with resync pending {isGraceWatchResyncPending ()}."
 
                     // Reset the in-memory Grace Status to empty to minimize memory usage.
                     graceStatus <- GraceStatus.Default
@@ -1018,13 +8907,38 @@ module Watch =
                     logToAnsiConsole
                         Colors.Error
                         $"Error in processChangedFiles: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+            elif pendingWatchWorkTransitionNeedsPublication () then
+                publishPendingWatchWorkTransitionIfNeeded ()
             // Refresh the file every (just under) 5 minutes to indicate that `grace watch` is still alive.
             elif
                 graceWatchStatusUpdateTime
                 < getCurrentInstant().Minus(Duration.FromMinutes(4.8))
             then
-                let! graceStatusFromDisk = readGraceStatusMeta ()
-                do! updateGraceWatchInterprocessFile graceStatusFromDisk (Some graceStatusDirectoryIds)
+                let runtimeMode = currentGraceWatchRuntimeMode ()
+
+                if
+                    runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                    && not (isGraceWatchResyncPending ())
+                then
+                    let! graceStatusFromDisk = readGraceStatusMetaClient ()
+
+                    publishWatchIpcWithFreshPendingWorkProbe graceStatusFromDisk graceStatusDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds))
+                elif runtimeMode = GraceWatchRuntimeMode.Suspended then
+                    let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds))
+                else
+                    let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Watch refreshed non-incremental IPC while runtime mode is {runtimeMode} and resync pending is {isGraceWatchResyncPending ()}."
+
                 GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
         }
 
@@ -1035,14 +8949,34 @@ module Watch =
             readGraceStatusFile
             copyFileToObjectDirectoryAndUploadToStorage
             updateGraceStatus
+            scanForDifferencesWithWatchIgnoreSnapshot
+            updateGraceStatusFromDifferences
             applyGraceStatusIncremental
             updateGraceWatchInterprocessFile
 
     /// Coordinates queue startup difference for watch behavior for this CLI command path.
-    let internal queueStartupDifferenceForWatch difference =
+    let internal queueStartupDifferenceForWatch (difference: FileSystemDifference) =
+        addPendingStatusDifference difference
+
         match difference.FileSystemEntryType, difference.DifferenceType with
         | Directory, _ ->
-            directoriesToProcess.TryAdd(difference.RelativePath, ())
+            let generation = Interlocked.Increment(&directoryWorkGeneration)
+
+            directoriesToProcess.TryAdd(
+                difference.RelativePath,
+                {
+                    FullPath = difference.RelativePath
+                    Generation = generation
+                    RepositoryId = Current().RepositoryId
+                    RepositoryName = Current().RepositoryName
+                    BranchId = Current().BranchId
+                    BranchName = Current().BranchName
+                    RootDirectory =
+                        Current().RootDirectory
+                        |> Path.GetFullPath
+                        |> Path.TrimEndingDirectorySeparator
+                }
+            )
             |> ignore
         | File, Delete ->
             let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
@@ -1053,6 +8987,323 @@ module Watch =
             enqueueFileUpload difference.RelativePath
             |> ignore
 
+    /// Finds the parent directory path that must exist before a replayed directory add can be materialized.
+    let private tryParentRelativePathForDirectoryReplayAdd (relativePath: RelativePath) =
+        let segments =
+            (normalizeRelativePath relativePath)
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+
+        if segments.Length <= 1 then
+            None
+        else
+            Some(RelativePath(String.Join("/", segments[0 .. segments.Length - 2])))
+
+    /// Checks whether startup replay can provide an untracked directory add's missing parent in the same batch.
+    let private replayRowsContainDirectoryAdd (rows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        rows
+        |> Array.exists (fun row ->
+            row.EntryType = FileSystemEntryType.Directory
+            && row.DifferenceType = DifferenceType.Add
+            && String.Equals(normalizeRelativePath row.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Checks whether a replayed directory add can link to a tracked parent or one replayed by the same startup batch.
+    let private replayDirectoryAddHasParentContinuity
+        (status: GraceStatus)
+        (replayRows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array)
+        (relativePath: RelativePath)
+        =
+        match tryParentRelativePathForDirectoryReplayAdd relativePath with
+        | None -> true
+        | Some parentRelativePath ->
+            isTrackedDirectory status parentRelativePath
+            || replayRowsContainDirectoryAdd replayRows parentRelativePath
+
+    /// Classifies compatible durable replay rows against current startup scan applicability before status mutation.
+    let private tryStartupReplayRetirementReason
+        (status: GraceStatus)
+        (compatibleReplayRows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array)
+        (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay)
+        =
+        let fullPath = Path.Combine(Current().RootDirectory, $"{row.RelativePath}")
+
+        match row.EntryType, row.DifferenceType, finalPathKind row.RelativePath with
+        | FileSystemEntryType.File,
+          (DifferenceType.Add
+          | DifferenceType.Change),
+          FinalPathFile ->
+            if shouldIgnoreFileForWatch fullPath then
+                Some "current startup replay file content ignored before status application"
+            elif row.DifferenceType = DifferenceType.Add
+                 && isTrackedFile status row.RelativePath then
+                Some "startup replay file add already tracked"
+            elif
+                row.DifferenceType = DifferenceType.Change
+                && not (isTrackedFile status row.RelativePath)
+            then
+                Some "startup replay file change is not tracked"
+            else
+                None
+        | FileSystemEntryType.File,
+          (DifferenceType.Add
+          | DifferenceType.Change),
+          (FinalPathMissing
+          | FinalPathDirectory) -> Some "stale startup replay file content missing before status application"
+        | FileSystemEntryType.File, DifferenceType.Delete, FinalPathDirectory -> Some "startup replay file delete now targets a directory"
+        | FileSystemEntryType.File, DifferenceType.Delete, _ ->
+            if isTrackedFile status row.RelativePath then
+                None
+            else
+                Some "startup replay file delete is not tracked"
+        | FileSystemEntryType.Directory, DifferenceType.Add, FinalPathDirectory ->
+            if shouldIgnoreDirectoryForWatch fullPath then
+                Some "current startup replay directory ignored before status application"
+            elif isTrackedDirectory status row.RelativePath then
+                Some "startup replay directory add already tracked"
+            elif not (replayDirectoryAddHasParentContinuity status compatibleReplayRows row.RelativePath) then
+                Some "startup replay directory add parent is not tracked or replayed"
+            else
+                None
+        | FileSystemEntryType.Directory,
+          DifferenceType.Add,
+          (FinalPathMissing
+          | FinalPathFile) -> Some "stale startup replay directory missing before status application"
+        | FileSystemEntryType.Directory, DifferenceType.Change, _ -> Some "directory change rows are not emitted by Watch startup scan"
+        | FileSystemEntryType.Directory, DifferenceType.Delete, FinalPathFile -> Some "startup replay directory delete now targets a file"
+        | FileSystemEntryType.Directory, DifferenceType.Delete, _ ->
+            if isTrackedDirectory status row.RelativePath then
+                None
+            else
+                Some "startup replay directory delete is not tracked"
+
+    /// Records a startup lifecycle event as diagnostics that cannot be replayed as Watch correctness data.
+    let private recordStartupLifecycleEvent status eventType message =
+        recordWatchLifecycleEventForWatch (
+            { Scope = currentWatchJournalScope status; EventType = eventType; Message = message }: Grace.CLI.LocalStateDb.WatchLifecycleEvent
+        )
+
+    /// Replays compatible pending journal rows after startup reconciliation and quarantines rows from stale scopes.
+    let private recoverStartupWatchJournalAfterReconciliation status =
+        task {
+            do! recordStartupLifecycleEvent status "startup-reconciliation-complete" "Startup scan reconciliation completed before journal replay."
+            let! recovery = recoverWatchJournalForStartupForWatch (currentWatchJournalScope status)
+
+            if recovery.QuarantinedRows.Length > 0 then
+                Interlocked.Add(&quarantinedWatchObservationCount, recovery.QuarantinedRows.Length)
+                |> ignore
+
+                logToAnsiConsole Colors.Important $"Grace Watch quarantined {recovery.QuarantinedRows.Length} incompatible startup journal rows before replay."
+
+            let startupReplayClassifications =
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row, tryStartupReplayRetirementReason status recovery.CompatibleReplayRows row)
+
+            let retiredReplayRows =
+                startupReplayClassifications
+                |> Array.choose (fun (row, reason) ->
+                    reason
+                    |> Option.map (fun retirementReason -> row, retirementReason))
+
+            let replayRows =
+                startupReplayClassifications
+                |> Array.choose (fun (row, reason) ->
+                    match reason with
+                    | Some _ -> None
+                    | None -> Some row)
+
+            if retiredReplayRows.Length > 0 then
+                for row, reason in
+                    retiredReplayRows
+                    |> Array.sortBy (fun (row, _) -> row.Sequence) do
+                    let! _ = quarantineWatchJournalSequencesForWatch [| row.Sequence |] reason
+
+                    let lifecycleEventType, lifecycleMessage =
+                        match reason with
+                        | "stale startup replay file content missing before status application" ->
+                            "startup-stale-file-replay-retired",
+                            $"Startup replay retired stale file add/change row {row.Sequence} because its final file content was missing."
+                        | "current startup replay file content ignored before status application" ->
+                            "startup-ignored-file-replay-retired",
+                            $"Startup replay retired file add/change row {row.Sequence} because current startup ignore rules skip its final file content."
+                        | "current startup replay directory ignored before status application" ->
+                            "startup-ignored-directory-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because current startup ignore rules skip that directory."
+                        | "stale startup replay directory missing before status application" ->
+                            "startup-stale-directory-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because its final directory was missing."
+                        | "startup replay file delete now targets a directory" ->
+                            "startup-file-delete-replay-retired",
+                            $"Startup replay retired file delete row {row.Sequence} because the current path is a directory."
+                        | "startup replay directory delete now targets a file" ->
+                            "startup-directory-delete-replay-retired",
+                            $"Startup replay retired directory delete row {row.Sequence} because the current path is a file."
+                        | "startup replay file add already tracked" ->
+                            "startup-tracked-file-add-replay-retired",
+                            $"Startup replay retired file add row {row.Sequence} because GraceStatus already tracks that file."
+                        | "startup replay file change is not tracked" ->
+                            "startup-untracked-file-change-replay-retired",
+                            $"Startup replay retired file change row {row.Sequence} because GraceStatus does not track that file."
+                        | "startup replay file delete is not tracked" ->
+                            "startup-untracked-file-delete-replay-retired",
+                            $"Startup replay retired file delete row {row.Sequence} because GraceStatus does not track that file."
+                        | "startup replay directory add already tracked" ->
+                            "startup-tracked-directory-add-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because GraceStatus already tracks that directory."
+                        | "startup replay directory add parent is not tracked or replayed" ->
+                            "startup-orphan-directory-add-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because its parent directory was not tracked or replayed."
+                        | "startup replay directory delete is not tracked" ->
+                            "startup-untracked-directory-delete-replay-retired",
+                            $"Startup replay retired directory delete row {row.Sequence} because GraceStatus does not track that directory."
+                        | _ -> "startup-replay-retired", $"Startup replay retired row {row.Sequence} because current startup rules would not apply it."
+
+                    do! recordStartupLifecycleEvent status lifecycleEventType lifecycleMessage
+
+                Interlocked.Add(&quarantinedWatchObservationCount, retiredReplayRows.Length)
+                |> ignore
+
+                logToAnsiConsole Colors.Important $"Grace Watch retired {retiredReplayRows.Length} startup replay rows before status application."
+
+            for row in replayRows do
+                let difference = FileSystemDifference.Create row.DifferenceType row.EntryType row.RelativePath
+                addStartupReplayedStatusDifference row.Sequence difference
+
+            if replayRows.Length > 0 then
+                logToAnsiConsole Colors.Important $"Grace Watch replayed {replayRows.Length} compatible pending journal rows after startup reconciliation."
+
+            do!
+                recordStartupLifecycleEvent
+                    status
+                    "startup-replay-complete"
+                    $"Startup replay queued {replayRows.Length} compatible rows, retired {retiredReplayRows.Length} replay rows, and quarantined {recovery.QuarantinedRows.Length} incompatible rows."
+
+            return recovery
+        }
+
+    /// Exposes startup journal recovery to tests without starting the foreground watcher loop.
+    let internal recoverStartupWatchJournalAfterReconciliationForWatchTests status = recoverStartupWatchJournalAfterReconciliation status
+
+    /// Re-enters startup replay, publishes a verified clean local boundary, and then starts lifecycle catch-up.
+    let private completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+        readGraceStatusFileClient
+        updateGraceWatchInterprocessFileClient
+        processChangedFilesClient
+        catchUpCurrentBranchReference
+        =
+        task {
+            let mutable attemptedStartupCompletion = false
+
+            if
+                not (hasProcessablePendingWatchWorkExceptManual ())
+                && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
+            then
+                attemptedStartupCompletion <- true
+                let! reconciledStartupStatus = readGraceStatusFileClient ()
+                graceStatus <- reconciledStartupStatus
+                updateGraceStatusDirectoryIds reconciledStartupStatus
+                let! startupRecovery = recoverStartupWatchJournalAfterReconciliation reconciledStartupStatus
+
+                if startupRecovery.CompatibleReplayRows.Length > 0 then
+                    graceStatus <- GraceStatus.Default
+                    do! processChangedFilesClient ()
+
+            if
+                attemptedStartupCompletion
+                && not (hasPendingWatchWorkExceptManual ())
+            then
+                promoteStartupModeIfRecoverySucceeded ()
+
+            if
+                attemptedStartupCompletion
+                && not (hasPendingWatchWorkExceptManual ())
+            then
+                let! startupCatchUpStatus = readGraceStatusFileClient ()
+                updateGraceStatusDirectoryIds startupCatchUpStatus
+
+                setGraceWatchPendingWorkStatusFlag false
+
+                let! cleanStartupStatusPublished =
+                    tryPublishGraceWatchInterprocessFileForCurrentConfidence
+                        startupCatchUpStatus
+                        graceStatusDirectoryIds
+                        updateGraceWatchInterprocessFileClient
+                        "startup catch-up"
+
+                if cleanStartupStatusPublished then
+                    do! catchUpCurrentBranchReference ()
+                else
+                    setGraceWatchPendingWorkStatusFlag true
+        }
+
+    /// Re-enters startup replay and promotion after delayed startup work drains on a later timer pass.
+    let private completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient =
+        completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+            readGraceStatusFileClient
+            updateGraceWatchInterprocessFileClient
+            processChangedFilesClient
+            (fun () -> Task.FromResult(()))
+
+    /// Exposes delayed startup replay completion to tests without starting the foreground watcher loop.
+    let internal completeStartupRecoveryIfPendingWorkDrainedForWatchTests
+        readGraceStatusFileClient
+        updateGraceWatchInterprocessFileClient
+        processChangedFilesClient
+        =
+        completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient
+
+    /// Exposes the verified-startup-publication ordering before lifecycle catch-up for focused Watch tests.
+    let internal completeStartupRecoveryIfPendingWorkDrainedWithCatchUpForWatchTests
+        readGraceStatusFileClient
+        updateGraceWatchInterprocessFileClient
+        processChangedFilesClient
+        catchUpCurrentBranchReference
+        =
+        completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+            readGraceStatusFileClient
+            updateGraceWatchInterprocessFileClient
+            processChangedFilesClient
+            catchUpCurrentBranchReference
+
+    /// Preserves pending-work recovery evidence across GraceStatus refresh processing before queuing a lifecycle catch-up generation.
+    let private processWatchTimerLocalRecoveryWithCatchUp
+        refreshGraceStatusIfChanged
+        processChangedFilesClient
+        completeStartupRecovery
+        hasPendingWork
+        isResyncPending
+        requestCatchUp
+        =
+        task {
+            let localWorkWasPending = hasPendingWork ()
+            let resyncWasPending = isResyncPending ()
+
+            do! refreshGraceStatusIfChanged ()
+            do! processChangedFilesClient ()
+            do! completeStartupRecovery ()
+
+            if (localWorkWasPending && not (hasPendingWork ()))
+               || (resyncWasPending && not (isResyncPending ())) then
+                requestCatchUp "local Watch recovery"
+        }
+
+    /// Exposes timer recovery sequencing so Watch tests can prove a refresh cannot erase its blocked-to-safe wake-up.
+    let internal processWatchTimerLocalRecoveryWithCatchUpForWatchTests
+        refreshGraceStatusIfChanged
+        processChangedFilesClient
+        completeStartupRecovery
+        hasPendingWork
+        isResyncPending
+        requestCatchUp
+        =
+        processWatchTimerLocalRecoveryWithCatchUp
+            refreshGraceStatusIfChanged
+            processChangedFilesClient
+            completeStartupRecovery
+            hasPendingWork
+            isResyncPending
+            requestCatchUp
+
     /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
         inherit AsynchronousCommandLineAction()
@@ -1060,23 +9311,35 @@ module Watch =
         /// Runs the asynchronous watch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
+                use localObservationCandidateLifetime =
+                    { new IDisposable with
+                        member _.Dispose() = retireLocalObservationCandidateScheduler ()
+                    }
+
                 try
                     if isCheckRequested parseResult then
-                        let! existingGraceWatchStatus = getGraceWatchStatus ()
-
-                        match existingGraceWatchStatus with
-                        | Some _ ->
-                            logToAnsiConsole Colors.Important "GraceWatch is running."
-                            raise (WatchCommandExit 0)
-                        | None ->
-                            logToAnsiConsole Colors.Error "GraceWatch is not running."
-                            raise (WatchCommandExit -1)
+                        let! watchStatusInspection = inspectGraceWatchStatus ()
+                        let! trustInspection = inspectWatchCheckDurableTrust watchStatusInspection
+                        let watchCheckStatus = toWatchCheckStatusDto trustInspection
+                        raise (WatchCommandExit(renderWatchCheckStatus parseResult watchCheckStatus))
 
                     let! claimedGraceWatchStatus = tryClaimGraceWatchInterprocessFile ()
 
                     if not claimedGraceWatchStatus then
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
+
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.StartingUp
+
+                    match tryActivateWatchIgnoreSnapshot () with
+                    | Ok () -> ()
+                    | Error error -> raise (InvalidOperationException(error))
+
+                    configureWatchPathComparisonForCurrentRepository ()
+
+                    // A live watcher waits one timer interval after the most recent raw callback before it reads filesystem state.
+                    configureLocalObservationCandidateScheduler liveLocalObservationQuietWindow
+                    setLocalObservationCandidateSchedulingActive true
 
                     // Create the FileSystemWatcher, but don't enable it yet.
                     use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
@@ -1116,6 +9379,27 @@ module Watch =
 
                     use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName ()))
 
+                    use updateMarkerWatcherRebindRegistration =
+                        registerUpdateMarkerWatcherRebind (fun () ->
+                            let markerDirectory = Path.GetDirectoryName(updateInProgressFileName ())
+
+                            Directory.CreateDirectory(markerDirectory)
+                            |> ignore
+
+                            let currentPath = Path.GetFullPath(updateInProgressFileSystemWatcher.Path)
+                            let targetPath = Path.GetFullPath(markerDirectory)
+
+                            if
+                                not
+                                <| String.Equals(currentPath, targetPath, watchPathComparison)
+                            then
+                                let wasEnabled = updateInProgressFileSystemWatcher.EnableRaisingEvents
+                                updateInProgressFileSystemWatcher.EnableRaisingEvents <- false
+                                updateInProgressFileSystemWatcher.Path <- markerDirectory
+                                updateInProgressFileSystemWatcher.EnableRaisingEvents <- wasEnabled
+
+                                logToAnsiConsole Colors.Important $"Grace Watch rebound update marker watcher to {markerDirectory}.")
+
                     use updateInProgressChanged =
                         Observable
                             .FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Created")
@@ -1134,7 +9418,7 @@ module Watch =
                     updateGraceStatusDirectoryIds graceStatus
 
                     // Create the inter-process communication file.
-                    do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
+                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
 
                     // Enable the FileSystemWatcher.
                     rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
@@ -1154,7 +9438,10 @@ module Watch =
 
                     use signalRConnection = createSignalRConnection signalRUrl
 
-                    let mutable watchedParentBranchId = BranchId.Empty
+                    use refreshSignalRSubscriptions =
+                        registerSignalRSubscriptionRefresh (fun () ->
+                            refreshSignalRSubscriptionsForActiveConnection (fun () -> registerCurrentSignalRParentBranch signalRConnection cancellationToken)
+                            |> ignore)
 
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(
@@ -1173,54 +9460,21 @@ module Watch =
                         signalRConnection.On<AutomationEventEnvelope>(
                             "NotifyAutomationEvent",
                             fun envelope ->
-                                (task {
-                                    if envelope.EventType = AutomationEventType.PromotionSetApplied then
-                                        try
-                                            use document = JsonDocument.Parse(envelope.DataJson)
-                                            let root = document.RootElement
-
-                                            /// Tries to map parse guid property and returns a GraceError instead of throwing on unsupported input.
-                                            let tryParseGuidProperty (propertyName: string) : Guid option =
-                                                let mutable propertyValue = Unchecked.defaultof<JsonElement>
-
-                                                if root.TryGetProperty(propertyName, &propertyValue) then
-                                                    let propertyText = propertyValue.GetString()
-                                                    let mutable parsedGuid = Guid.Empty
-
-                                                    if
-                                                        String.IsNullOrWhiteSpace propertyText |> not
-                                                        && Guid.TryParse(propertyText, &parsedGuid)
-                                                    then
-                                                        Some parsedGuid
-                                                    else
-                                                        Option.None
-                                                else
-                                                    Option.None
-
-                                            let targetBranchId =
-                                                tryParseGuidProperty "targetBranchId"
-                                                |> Option.defaultValue BranchId.Empty
-
-                                            let terminalReferenceId =
-                                                tryParseGuidProperty "terminalPromotionReferenceId"
-                                                |> Option.defaultValue ReferenceId.Empty
-
-                                            if watchedParentBranchId = targetBranchId
-                                               && watchedParentBranchId <> BranchId.Empty then
-                                                logToAnsiConsole
-                                                    Colors.Highlighted
-                                                    $"Parent branch {watchedParentBranchId} received terminal promotion {terminalReferenceId}; starting auto-rebase."
-
-                                                let! currentStatus = readGraceStatusFile ()
-                                                let! _ = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) currentStatus
-                                                ()
-                                        with
-                                        | ex ->
-                                            logToAnsiConsole
-                                                Colors.Error
-                                                $"Failed to process automation event payload for {envelope.EventType}: {Markup.Escape(ex.Message)}."
-                                })
+                                (handleSignalRAutomationEvent
+                                    readGraceStatusFile
+                                    (fun currentStatus ->
+                                        task {
+                                            let! _ = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) currentStatus
+                                            ()
+                                        })
+                                    envelope)
                                 :> Task
+                        )
+
+                    use notifyCurrentBranchReference =
+                        signalRConnection.On<CurrentBranchReferenceNotification>(
+                            "NotifyCurrentBranchReference",
+                            fun payload -> (handleCurrentBranchReferenceNotification payload) :> Task
                         )
 
                     use notifyOnSave =
@@ -1264,54 +9518,86 @@ module Watch =
                     signalRConnection.add_Reconnecting (fun ex -> task { logToAnsiConsole Colors.Important $"SignalR connection reconnecting: {ex.Message}." })
 
                     signalRConnection.add_Reconnected (fun connectionId ->
-                        task { logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}." })
+                        task {
+                            logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}."
+
+                            let! _ =
+                                completeSignalRReconnectWithCatchUp
+                                    (fun () ->
+                                        refreshSignalRSubscriptionsForActiveConnection (fun () ->
+                                            registerCurrentSignalRParentBranch signalRConnection cancellationToken))
+                                    (fun () ->
+                                        task {
+                                            requestCurrentBranchReferenceCatchUp "SignalR subscription recovery"
+                                            do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
+                                        })
+
+                            ()
+                        })
 
                     do! signalRConnection.StartAsync(cancellationToken)
+                    // Repository-wide notifications are keyed only by RepositoryId, so same-process branch switches do not change this group.
                     do! signalRConnection.InvokeAsync("RegisterRepository", Current().RepositoryId, cancellationToken)
 
                     logToAnsiConsole
                         Colors.Highlighted
                         $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in repository {Current().RepositoryName} ({Current().RepositoryId}); connectionId: {signalRConnection.ConnectionId}."
 
-                    // Get the parent BranchId so we can tell SignalR what to notify us about.
-                    let branchGetParameters =
-                        GetBranchParameters(
-                            OwnerId = $"{Current().OwnerId}",
-                            OrganizationId = $"{Current().OrganizationId}",
-                            RepositoryId = $"{Current().RepositoryId}",
-                            BranchId = $"{Current().BranchId}"
-                        )
-
-                    match! Branch.GetParentBranch branchGetParameters with
-                    | Ok returnValue ->
-                        let parentBranchDto = returnValue.ReturnValue
-                        watchedParentBranchId <- parentBranchDto.BranchId
-
-                        do! signalRConnection.InvokeAsync("RegisterParentBranch", Current().BranchId, parentBranchDto.BranchId, cancellationToken)
-
-                        logToAnsiConsole
-                            Colors.Highlighted
-                            $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
+                    match! registerCurrentSignalRParentBranch signalRConnection cancellationToken with
+                    | Ok _ -> ()
                     | Error error ->
                         logToAnsiConsole Colors.Error $"Failed to retrieve branch metadata. Cannot connect to SignalR Hub."
 
                         logToAnsiConsole Colors.Error $"{Markup.Escape(error.ToString())}"
 
+                    let! startupRecovery = recoverStartupWatchJournalAfterReconciliation graceStatus
+
+                    if startupRecovery.CompatibleReplayRows.Length > 0 then
+                        logToAnsiConsole Colors.Verbose $"Grace Watch recovered startup journal rows before scanning for offline differences."
+
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
-                    let! differences = scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
 
-                    if differences |> Seq.isEmpty then
-                        logToAnsiConsole Colors.Verbose $"Already up-to-date."
-                    else
-                        logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
+                    let! startupScan =
+                        if isGraceWatchScanLegal (currentGraceWatchRuntimeMode ()) then
+                            tryScanForDifferencesWithWatchIgnoreSnapshot graceStatus
+                        else
+                            logToAnsiConsole Colors.Verbose $"Grace Watch skipped startup scan while runtime mode is {currentGraceWatchRuntimeMode ()}."
 
-                    for difference in differences do
-                        queueStartupDifferenceForWatch difference
+                            Task.FromResult(Error "startup working-tree scan is not legal in the current Watch runtime mode")
+
+                    match startupScan with
+                    | Ok differences ->
+                        setLastScanForDifferencesSuccessfulForWatchTests true
+
+                        if differences |> Seq.isEmpty then
+                            logToAnsiConsole Colors.Verbose $"Already up-to-date."
+                        else
+                            logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
+
+                        for difference in differences do
+                            queueStartupDifferenceForWatch difference
+                    | Error error ->
+                        setLastScanForDifferencesSuccessfulForWatchTests false
+                        requestGraceWatchExplicitResync "startup working-tree scan did not complete with the active Watch ignore snapshot"
+
+                        logToAnsiConsole Colors.Error "Grace Watch kept startup non-incremental because the working-tree scan did not complete successfully."
+                        logToAnsiConsole Colors.Error $"Grace Watch startup scan failure: {error}"
 
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
+
+                    do!
+                        completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+                            readGraceStatusFile
+                            updateGraceWatchInterprocessFile
+                            processChangedFiles
+                            (fun () ->
+                                task {
+                                    requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
+                                    do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
+                                })
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -1323,16 +9609,33 @@ module Watch =
 
                     while ticked
                           && not (cancellationToken.IsCancellationRequested) do
-                        // Grace Status may have changed from branch switch, or other commands.
-                        if graceStatusHasChanged then
-                            let! updatedGraceStatus = readGraceStatusFile ()
-                            graceStatus <- updatedGraceStatus
-                            updateGraceStatusDirectoryIds graceStatus
-                            do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
-                            //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
-                            graceStatusHasChanged <- false
+                        do!
+                            processWatchTimerLocalRecoveryWithCatchUp
+                                (fun () ->
+                                    task {
+                                        // Grace Status may have changed from branch switch, or other commands.
+                                        if graceStatusHasChanged then
+                                            let refreshGeneration = currentGraceStatusRefreshGeneration ()
+                                            let! updatedGraceStatus = readGraceStatusFile ()
 
-                        do! processChangedFiles ()
+                                            do! publishGraceStatusRefreshSnapshot refreshGeneration updatedGraceStatus updateGraceWatchInterprocessFile
+                                    })
+                                processChangedFiles
+                                (fun () ->
+                                    completeStartupRecoveryIfPendingWorkDrainedWithCatchUp
+                                        readGraceStatusFile
+                                        updateGraceWatchInterprocessFile
+                                        processChangedFiles
+                                        (fun () ->
+                                            task {
+                                                requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
+                                                do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
+                                            }))
+                                hasPendingWatchWork
+                                isGraceWatchResyncPending
+                                requestCurrentBranchReferenceCatchUp
+
+                        do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 
@@ -1355,6 +9658,8 @@ module Watch =
                             GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
                             //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
                             previousGC <- getCurrentInstant ()
+
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Stopping
 
                     if parseResult |> json then
                         return renderJsonResult parseResult true true "Watch completed because cancellation was requested or the timer stopped."

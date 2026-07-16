@@ -80,17 +80,17 @@ type ReferenceActorHashValidationTests() =
         | Ok _ -> Assert.Fail("Expected empty command Blake3Hash to fail.")
         | Error error -> Assert.That(error.Error, Does.Contain("command must include"))
 
-    /// Verifies that legacy Root Directory Version With Empty Blake3 Allows Empty Command Blake3.
+    /// Verifies that missing BLAKE3 in both the root and command still fails closed.
     [<Test>]
-    member _.LegacyRootDirectoryVersionWithEmptyBlake3AllowsEmptyCommandBlake3() =
+    member _.MissingRootAndCommandBlake3FailsBeforeReferenceCreation() =
         let directoryVersion = directoryVersionWithHashes sha256Hash (Blake3Hash String.Empty)
 
         let result =
             validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryVersionId sha256Hash (Blake3Hash String.Empty) directoryVersion
 
         match result with
-        | Ok _ -> ()
-        | Error error -> Assert.Fail($"Expected legacy empty Blake3Hash root to be tolerated, but got {error.Error}.")
+        | Ok _ -> Assert.Fail("Expected missing root and command Blake3Hash values to fail.")
+        | Error error -> Assert.That(error.Error, Does.Contain("must include Blake3Hash"))
 
     /// Verifies that non Root Directory Version Fails Before Reference Creation.
     [<Test>]
@@ -178,145 +178,41 @@ type ReferenceActorHashValidationTests() =
         Assert.That(createCommandMatchesReference referenceDto mismatchedCommand, Is.False)
         Assert.That(createCommandMatchesReference ReferenceDto.Default matchingCommand, Is.False)
 
-    /// Verifies that legacy Created Event With Empty Blake3 Hydrates From Matching Root Directory Version.
+    /// Verifies that an empty BLAKE3 hash in a persisted Created event fails projection.
     [<Test>]
-    member _.LegacyCreatedEventWithEmptyBlake3HydratesFromMatchingRootDirectoryVersion() =
-        task {
-            let directoryVersion = directoryVersionWithHashes sha256Hash blake3Hash
+    member _.CreatedEventWithoutBlake3FailsProjection() =
+        let createdEvent =
+            {
+                Event =
+                    ReferenceEventType.Created(
+                        referenceId,
+                        ownerId,
+                        organizationId,
+                        repositoryId,
+                        branchId,
+                        directoryVersionId,
+                        sha256Hash,
+                        Blake3Hash String.Empty,
+                        ReferenceType.Commit,
+                        ReferenceText "invalid commit",
+                        Seq.empty
+                    )
+                Metadata =
+                    {
+                        Timestamp = getCurrentInstant ()
+                        CorrelationId = correlationId
+                        Principal = "projection-test"
+                        ClientType = None
+                        Properties = Dictionary<string, string>()
+                    }
+            }
 
-            let legacyCreatedEvent =
-                {
-                    Event =
-                        ReferenceEventType.Created(
-                            referenceId,
-                            ownerId,
-                            organizationId,
-                            repositoryId,
-                            branchId,
-                            directoryVersionId,
-                            sha256Hash,
-                            Blake3Hash String.Empty,
-                            ReferenceType.Commit,
-                            ReferenceText "legacy commit",
-                            Seq.empty
-                        )
-                    Metadata =
-                        {
-                            Timestamp = getCurrentInstant ()
-                            CorrelationId = correlationId
-                            Principal = "legacy-replay-test"
-                            ClientType = None
-                            Properties = Dictionary<string, string>()
-                        }
-                }
-
-            /// Extracts directory Version from the scenario result so assertions stay focused on server unit reference Actor behavior.
-            let getDirectoryVersion (requestedRepositoryId: RepositoryId) (requestedDirectoryId: DirectoryVersionId) (requestedCorrelationId: CorrelationId) =
-                Assert.That(requestedRepositoryId, Is.EqualTo(repositoryId))
-                Assert.That(requestedDirectoryId, Is.EqualTo(directoryVersionId))
-                Assert.That(requestedCorrelationId, Is.EqualTo(correlationId))
-                Task.FromResult directoryVersion
-
-            let! repairedEvent, wasRepaired = repairLegacyCreatedEventBlake3 getDirectoryVersion legacyCreatedEvent
-            Assert.That(wasRepaired, Is.True)
-
-            let repairedDto = ReferenceDto.UpdateDto repairedEvent ReferenceDto.Default
-            Assert.That(repairedDto.Sha256Hash, Is.EqualTo(sha256Hash))
-            Assert.That(repairedDto.Blake3Hash, Is.EqualTo(blake3Hash))
-        }
-
-    /// Verifies that legacy Created Event With Empty Blake3 Hydrates From Root Sha Prefix.
-    [<Test>]
-    member _.LegacyCreatedEventWithEmptyBlake3HydratesFromRootShaPrefix() =
-        task {
-            let referenceId = Guid.Parse("77777777-bbbb-4444-8888-777777777777")
-            let branchId = Guid.Parse("88888888-bbbb-4444-8888-888888888888")
-            let fullSha256Hash = Sha256Hash "abcdef0123456789"
-            let prefixSha256Hash = Sha256Hash "abcdef"
-            let directoryVersion = directoryVersionWithHashes fullSha256Hash blake3Hash
-
-            let legacyCreatedEvent =
-                {
-                    Event =
-                        ReferenceEventType.Created(
-                            referenceId,
-                            ownerId,
-                            organizationId,
-                            repositoryId,
-                            branchId,
-                            directoryVersionId,
-                            prefixSha256Hash,
-                            Blake3Hash String.Empty,
-                            ReferenceType.Commit,
-                            ReferenceText "legacy prefix commit",
-                            Seq.empty
-                        )
-                    Metadata =
-                        {
-                            Timestamp = getCurrentInstant ()
-                            CorrelationId = correlationId
-                            Principal = "legacy-prefix-replay-test"
-                            ClientType = None
-                            Properties = Dictionary<string, string>()
-                        }
-                }
-
-            let getDirectoryVersion _ _ _ = Task.FromResult directoryVersion
-
-            let! repairedEvent, wasRepaired = repairLegacyCreatedEventBlake3 getDirectoryVersion legacyCreatedEvent
-            Assert.That(wasRepaired, Is.True)
-
-            let repairedDto = ReferenceDto.UpdateDto repairedEvent ReferenceDto.Default
-            Assert.That(repairedDto.Sha256Hash, Is.EqualTo(fullSha256Hash))
-            Assert.That(repairedDto.Blake3Hash, Is.EqualTo(blake3Hash))
-        }
-
-    /// Verifies that legacy Created Event With Empty Blake3 Does Not Hydrate From Non Root Or Wrong Sha Prefix.
-    [<Test>]
-    member _.LegacyCreatedEventWithEmptyBlake3DoesNotHydrateFromNonRootOrWrongShaPrefix() =
-        task {
-            let referenceId = Guid.Parse("99999999-bbbb-4444-8888-999999999999")
-            let branchId = Guid.Parse("aaaaaaaa-bbbb-4444-8888-aaaaaaaaaaaa")
-            let fullSha256Hash = Sha256Hash "abcdef0123456789"
-
-            /// Constructs event fixtures used by the server unit reference Actor assertions.
-            let createEvent storedSha256Hash =
-                {
-                    Event =
-                        ReferenceEventType.Created(
-                            referenceId,
-                            ownerId,
-                            organizationId,
-                            repositoryId,
-                            branchId,
-                            directoryVersionId,
-                            storedSha256Hash,
-                            Blake3Hash String.Empty,
-                            ReferenceType.Commit,
-                            ReferenceText "legacy mismatch commit",
-                            Seq.empty
-                        )
-                    Metadata =
-                        {
-                            Timestamp = getCurrentInstant ()
-                            CorrelationId = correlationId
-                            Principal = "legacy-mismatch-replay-test"
-                            ClientType = None
-                            Properties = Dictionary<string, string>()
-                        }
-                }
-
-            let nonRootDirectoryVersion = childDirectoryVersionWithHashes fullSha256Hash blake3Hash
-            let getNonRootDirectoryVersion _ _ _ = Task.FromResult nonRootDirectoryVersion
-            let! _, nonRootWasRepaired = repairLegacyCreatedEventBlake3 getNonRootDirectoryVersion (createEvent (Sha256Hash "abcdef"))
-
-            let rootDirectoryVersion = directoryVersionWithHashes fullSha256Hash blake3Hash
-            let getRootDirectoryVersion _ _ _ = Task.FromResult rootDirectoryVersion
-            let! _, wrongPrefixWasRepaired = repairLegacyCreatedEventBlake3 getRootDirectoryVersion (createEvent (Sha256Hash "123456"))
-
-            Assert.That(nonRootWasRepaired, Is.False)
-            Assert.That(wrongPrefixWasRepaired, Is.False)
-        }
+        Assert.Throws<ArgumentException>(
+            Action (fun () ->
+                ReferenceDto.UpdateDto createdEvent ReferenceDto.Default
+                |> ignore)
+        )
+        |> ignore
 
     /// Verifies that save Create Applies Manifest Contribution Boundary Before Created Event Persists.
     [<Test>]

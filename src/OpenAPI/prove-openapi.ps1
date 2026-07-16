@@ -75,7 +75,7 @@ function Get-DirectoryManifestHash {
     }
 
     $lines = Get-ChildItem -Path $Path -Recurse -File |
-        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache)\\' } |
+        Where-Object { $_.FullName -notmatch '\\(node_modules|target|dist|build|__pycache__|\.pytest_cache|[^\\]+\.egg-info)\\' } |
         Where-Object { $_.Name -notin @('package-lock.json', 'Cargo.lock') } |
         Sort-Object FullName |
         ForEach-Object {
@@ -1155,6 +1155,38 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         'RepositoryBooleanReturnValue must keep exists/isEmpty ReturnValue as boolean.'
 
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
+
+    Assert-TextContains $branchComponentsText 'ReferenceDefaultSentinel:' 'Type-specific latest Reference fields must expose the canonical ReferenceDto.Default sentinel.'
+    Assert-TextContains $branchComponentsText 'TypedReferenceApiDto:' 'Type-specific latest Reference fields must distinguish complete References from the canonical sentinel.'
+    Assert-TextContains $branchComponentsText 'enum: [00000000-0000-0000-0000-000000000000]' 'The canonical sentinel must use empty identifiers.'
+    Assert-TextContains $branchComponentsText "enum: ['']" 'The canonical sentinel must use empty hashes and text.'
+    Assert-TextContains $branchComponentsText 'additionalProperties: false' 'The canonical sentinel must reject arbitrary partial Reference properties.'
+
+    foreach ($auditField in @('CreatedBy', 'UpdatedAt', 'DeletedAt')) {
+        Assert-OperationTextMatches `
+            ([pscustomobject]@{ OperationText = $branchComponentsText }) `
+            "(?s)ReferenceDefaultSentinel:\s*.*?${auditField}:\s*.*?nullable:\s*true\s*.*?minLength:\s*1\s*.*?pattern:\s*'\^\$'" `
+            "ReferenceDefaultSentinel.${auditField} must admit only the null audit value from ReferenceDto.Default."
+    }
+
+    $typedReferenceCount = ([regex]::Matches($branchComponentsText, [regex]::Escape("`$ref: '#/TypedReferenceApiDto'"))).Count
+    if ($typedReferenceCount -ne 4) {
+        Add-Failure "BranchApiDto must use TypedReferenceApiDto for exactly four type-specific latest slots; found $typedReferenceCount."
+    }
+    else {
+        Add-Pass 'BranchApiDto confines the sentinel-capable union to exactly four type-specific latest slots.'
+    }
+
+    $sharedContractText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
+    $rawDirectoryRequired = [regex]::Match($sharedContractText, '(?s)DirectoryVersion:\s*.*?required:\s*(?<required>.*?)\s*example:').Groups['required'].Value
+    if ($rawDirectoryRequired -match '(?m)^\s*-\s+RecursiveSize\s*$') {
+        Add-Failure 'Raw DirectoryVersion must not require the DTO-only RecursiveSize field.'
+    }
+    else {
+        Add-Pass 'Raw DirectoryVersion leaves the DTO-only RecursiveSize field optional.'
+    }
     foreach ($requiredDirectoryContract in @(
             'DirectoryVersionId:',
             'DirectoryVersionApiDto:',
@@ -1212,7 +1244,7 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     Assert-OperationTextMatches `
         $getBySha256HashOperation `
         "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionSha256HashLookupResponse'" `
-        'GetDirectoryVersionBySha256Hash must use the SHA lookup envelope that narrowly models the no-match sentinel.'
+        'GetDirectoryVersionBySha256Hash must use the strict SHA lookup envelope; no-match is an error response.'
 
     $getByBlake3HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionByBlake3Hash'
     Assert-OperationTextMatches `
@@ -1278,15 +1310,44 @@ function Test-OpenApiSharedContractDetails {
         'Persisted DirectoryVersion.Sha256Hash must stay a strict full SHA-256 hash.'
 
     $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
-        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'" `
-        'Only the directory hash lookup response may model the DirectoryVersion.Default empty SHA-256 sentinel.'
+        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256Hash'" `
+        'Directory hash lookup success responses must carry a strict SHA-256 hash.'
 
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
         "(?s)DirectoryVersionSha256HashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/DirectoryVersionHashLookupResult'" `
-        'Only SHA directory hash lookup responses may use the sentinel-aware result schema rather than weakening persisted DirectoryVersion.'
+        'SHA directory hash lookup responses must use the complete current directory result schema.'
+
+    $shaLookupRequired = [regex]::Match(
+        $directoryComponentsText,
+        '(?s)DirectoryVersionHashLookupResult:\s*.*?required:\s*(?<required>.*?)\s*DirectoryCommandReturnValue:'
+    ).Groups['required'].Value
+
+    if ($shaLookupRequired -match '(?m)^\s*-\s+RecursiveSize\s*$') {
+        Add-Failure 'SHA-256 directory lookup results must not require the DTO-only RecursiveSize field.'
+    }
+    else {
+        Add-Pass 'SHA-256 directory lookup results leave the raw DirectoryVersion RecursiveSize field optional.'
+    }
+
+    foreach ($requiredSchemaProof in @(
+            [pscustomobject]@{ Text = $sharedText; Schema = 'FileVersion'; Properties = @('RelativePath', 'Sha256Hash', 'Blake3Hash', 'ContentReference') },
+            [pscustomobject]@{ Text = $sharedText; Schema = 'DirectoryVersion'; Properties = @('DirectoryVersionId', 'Sha256Hash', 'Blake3Hash', 'HashesValidated') },
+            [pscustomobject]@{ Text = $directoryComponentsText; Schema = 'DirectoryVersionHashLookupResult'; Properties = @('DirectoryVersionId', 'Sha256Hash', 'Blake3Hash', 'HashesValidated') },
+            [pscustomobject]@{ Text = $branchComponentsText; Schema = 'ReferenceApiDto'; Properties = @('ReferenceId', 'DirectoryId', 'Sha256Hash', 'Blake3Hash') },
+            [pscustomobject]@{ Text = $dtoComponentsText; Schema = 'ReferenceDto'; Properties = @('ReferenceId', 'DirectoryId', 'Sha256Hash', 'Blake3Hash') }
+        )) {
+        foreach ($property in $requiredSchemaProof.Properties) {
+            Assert-OperationTextMatches `
+                ([pscustomobject]@{ OperationText = $requiredSchemaProof.Text }) `
+                "(?s)$($requiredSchemaProof.Schema):\s*.*?required:\s*(?:\[[^\]]*\b$property\b[^\]]*\]|(?:\s*-\s+\w+)*\s*-\s+$property\b)" `
+                "$($requiredSchemaProof.Schema).$property must be required in the public OpenAPI schema."
+        }
+    }
 
     Assert-OperationTextMatches `
         ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
@@ -1536,9 +1597,9 @@ function Test-GeneratedClientMatrixProof {
     }
 
     foreach ($probeName in @(
-            'TypeScript generated client import/build',
-            'Python generated client import/build',
-            'Rust generated client cargo check'
+        'TypeScript generated client import/build and PascalCase wire round trip',
+        'Python generated client import/build and UUID wire round trip',
+        'Rust generated client semantic union wire round trip'
         )) {
         $probe = @($evidence.probes) | Where-Object { $_.name -eq $probeName } | Select-Object -First 1
         if ($null -eq $probe) {
@@ -1556,6 +1617,21 @@ function Test-GeneratedClientMatrixProof {
             Add-Failure "Generator matrix deterministic hash is stale for $($entry.path). Expected $($entry.manifestSha256), actual $actualHash."
         }
     }
+
+    $generatedContractProofs = @(
+        @{ Path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/BranchApiDto.ts'; Strict = 'basedOn: ReferenceApiDto;'; Typed = 'latestCommit: TypedReferenceApiDto;' },
+        @{ Path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/branch_api_dto.py'; Strict = 'based_on: ReferenceApiDto = Field(alias="BasedOn")'; Typed = 'latest_commit: TypedReferenceApiDto = Field(alias="LatestCommit")' },
+        @{ Path = 'sdk/generated/matrix/openapi-generator/rust/src/models/branch_api_dto.rs'; Strict = 'pub based_on: Box<models::ReferenceApiDto>'; Typed = 'pub latest_commit: Box<models::TypedReferenceApiDto>' }
+    )
+
+    foreach ($proof in $generatedContractProofs) {
+        $generatedText = Get-Content -LiteralPath (Join-Path $RepoRoot $proof.Path) -Raw
+        Assert-TextContains $generatedText $proof.Strict "$($proof.Path) must keep BasedOn on the strict Reference schema."
+        Assert-TextContains $generatedText $proof.Typed "$($proof.Path) must deserialize typed latest slots through the sentinel-capable union."
+    }
+
+    $generatedDirectoryVersionText = Get-Content -LiteralPath (Join-Path $RepoRoot 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/DirectoryVersion.ts') -Raw
+    Assert-TextContains $generatedDirectoryVersionText 'recursiveSize?: number;' 'Generated raw DirectoryVersion must keep RecursiveSize optional.'
 
     Add-Pass 'Generated-client matrix accepts OpenAPI Generator TypeScript, Python, and Rust raw-client proof points with guardrails; Kiota and NSwag remain explicitly rejected.'
 }

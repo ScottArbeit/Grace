@@ -9,6 +9,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
 open Grace.Types.Common
+open Grace.Types.Reference
 open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Spectre.Console
@@ -31,6 +32,16 @@ module Common =
 
     /// Clears process-local lifecycle warning suppression so tests and repeated invocations can render warnings again.
     let resetLifecycleWarningSuppression () = renderedLifecycleWarnings <- HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+    /// Selects concrete typed-slot Reference IDs so canonical absence sentinels never reach a Reference mutation or lookup boundary.
+    let concreteReferenceIds (references: seq<ReferenceDto>) =
+        references
+        |> Seq.choose (fun referenceDto ->
+            if referenceDto.ReferenceId = ReferenceId.Empty then
+                None
+            else
+                Some referenceDto.ReferenceId)
+        |> Seq.toList
 
     /// Executes the parameter base command by binding ParseResult values to the SDK request and CLI output contract.
     type ParameterBase() =
@@ -149,6 +160,43 @@ module Common =
                 Differences: MaintenanceScanDifferenceDto array
                 NewDirectoryVersionCount: int
                 NewDirectoryVersions: MaintenanceScanDirectoryVersionDto array
+            }
+
+        /// Models one durable Watch journal row emitted by maintenance show-journal.
+        type MaintenanceJournalRowDto =
+            {
+                Sequence: int64
+                CreatedAtUnixTicks: int64
+                State: string
+                DifferenceType: string
+                FileSystemEntryType: string
+                RelativePath: string option
+                QuarantineReason: string option
+            }
+
+        /// Models filtered durable Watch journal diagnostics for maintenance show-journal.
+        type MaintenanceShowJournalDto =
+            {
+                DbPath: string
+                AppliedThroughSequence: int64
+                AllocatedSequence: int64
+                TotalRows: int64
+                RowCount: int
+                StateFilter: string
+                PathFilter: string option
+                Limit: int
+                Rows: MaintenanceJournalRowDto array
+            }
+
+        /// Models the scoped durable Watch journal reset result for maintenance clear-journal.
+        type MaintenanceClearJournalDto =
+            {
+                DbPath: string
+                RowsDeleted: int64
+                AppliedThroughSequenceBefore: int64
+                AppliedThroughSequenceAfter: int64
+                AllocatedSequenceBefore: int64
+                AllocatedSequenceAfter: int64
             }
 
         /// Defines structured data exchanged by CLI helpers.

@@ -2,12 +2,16 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Types.Common
+open Microsoft.Data.Sqlite
+open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Generic
 open System.IO
 open System.Text.Json
 
@@ -68,6 +72,108 @@ module MaintenanceCliTests =
         |> should equal true
 
         JsonDocument.Parse(output)
+
+    /// Executes a scalar integer query against the local state database.
+    let private executeScalarInt (connection: SqliteConnection) (sql: string) =
+        use command = connection.CreateCommand()
+        command.CommandText <- sql
+        command.ExecuteScalar() |> Convert.ToInt32
+
+    /// Writes a SQL statement against the local state database for maintenance command setup.
+    let private executeNonQuery (connection: SqliteConnection) (sql: string) =
+        use command = connection.CreateCommand()
+        command.CommandText <- sql
+        command.ExecuteNonQuery() |> ignore
+
+    /// Seeds durable Watch journal rows without persisting raw watcher event payloads.
+    let private seedWatchJournalRows root throughSequence appliedThrough =
+        let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+        LocalStateDb.ensureDbInitialized dbPath
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
+        use connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+
+        for sequence in [| 1L .. throughSequence |] do
+            executeNonQuery
+                connection
+                $"INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES ({sequence}, {sequence}, 'Change', 'File', 'file-{sequence}.txt');"
+
+        executeNonQuery connection $"UPDATE meta SET value = '{appliedThrough}' WHERE key = 'AppliedThroughSequence';"
+
+    /// Counts local state rows so maintenance reset tests can prove destructive scope.
+    let private countRows root tableName =
+        let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+        use connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+        executeScalarInt connection $"SELECT COUNT(*) FROM {tableName};"
+
+    /// Gets corrupt backups needed by the maintenance command mutation assertions.
+    let private getCorruptBackups root =
+        let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
+
+        if Directory.Exists(graceDir) then
+            Directory.GetFiles(graceDir, "grace-local.corrupt.*.db")
+        else
+            Array.empty
+
+    /// Captures database bytes so read-only diagnostic commands can prove they did not repair local state.
+    let private snapshotFile path =
+        if File.Exists(path) then
+            use stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+            use reader = new BinaryReader(stream)
+            Some(reader.ReadBytes(int stream.Length), File.GetLastWriteTimeUtc(path))
+        else
+            None
+
+    /// Seeds only stale schema metadata so show-journal can prove read-only diagnostic behavior.
+    let private seedSchemaVersionOnly root schemaVersion =
+        let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+        use connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+        executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        executeNonQuery connection $"INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '{schemaVersion}');"
+
+    /// Writes a fresh Watch IPC snapshot so clear-journal can prove the v1 single-writer refusal.
+    let private writeLiveWatchIpc () =
+        let current = Current()
+
+        let status: Services.GraceWatchStatus =
+            {
+                UpdatedAt = Grace.Shared.Utilities.getCurrentInstant ()
+                IsStartupClaim = false
+                RepositoryId = current.RepositoryId
+                RepositoryName = RepositoryName current.RepositoryName
+                BranchId = current.BranchId
+                BranchName = BranchName current.BranchName
+                RootDirectory = current.RootDirectory
+                HasPendingWatchWork = false
+                IsWorkingTreeClean = true
+                RootDirectoryId = Guid.NewGuid()
+                RootDirectorySha256Hash = Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                RootDirectoryBlake3Hash = Blake3Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                LastFileUploadInstant = Instant.MinValue
+                LastDirectoryVersionInstant = Instant.MinValue
+                DirectoryIds = HashSet<DirectoryVersionId>()
+            }
+
+        let ipcFileName = Services.IpcFileName()
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+        |> ignore
+
+        File.WriteAllText(ipcFileName, Grace.Shared.Utilities.serialize status)
+
+    /// Writes an unreadable Watch IPC payload for conservative clear-journal refusal coverage.
+    let private writeUnreadableWatchIpc () =
+        let ipcFileName = Services.IpcFileName()
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+        |> ignore
+
+        File.WriteAllText(ipcFileName, "{")
 
     /// Asserts that clean json stdout matches the expected contract.
     let private assertCleanJsonStdout (standardOut: string) =
@@ -469,3 +575,318 @@ module MaintenanceCliTests =
                 .GetProperty("Directories")
                 .GetArrayLength()
             |> should equal 0)
+
+    /// Verifies that maintenance show journal emits filtered Watch journal rows in the JSON contract.
+    [<Test>]
+    let ``maintenance show journal json filters by pending state and limit`` () =
+        withTempRepo (fun root ->
+            seedWatchJournalRows root 4L 2L
+
+            let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            use setupConnection = new SqliteConnection($"Data Source={dbPath}")
+            setupConnection.Open()
+
+            executeNonQuery setupConnection "UPDATE watch_journal SET relative_path = 'src/file-2.txt' WHERE sequence = 2;"
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError =
+                runJsonMaintenance [| "show-journal"
+                                      "--state"
+                                      "pending"
+                                      "--limit"
+                                      "1" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue
+                .GetProperty("AppliedThroughSequence")
+                .GetInt64()
+            |> should equal 2L
+
+            returnValue
+                .GetProperty("AllocatedSequence")
+                .GetInt64()
+            |> should equal 4L
+
+            returnValue.GetProperty("TotalRows").GetInt64()
+            |> should equal 4L
+
+            returnValue.GetProperty("StateFilter").GetString()
+            |> should equal "pending"
+
+            returnValue.GetProperty("Limit").GetInt32()
+            |> should equal 1
+
+            let rows = returnValue.GetProperty("Rows")
+            rows.GetArrayLength() |> should equal 1
+
+            let row = rows[0]
+
+            row.GetProperty("Sequence").GetInt64()
+            |> should equal 4L
+
+            row.GetProperty("State").GetString()
+            |> should equal "pending"
+
+            row.GetProperty("DifferenceType").GetString()
+            |> should equal "Change"
+
+            row.GetProperty("FileSystemEntryType").GetString()
+            |> should equal "File"
+
+            row.GetProperty("RelativePath").GetString()
+            |> should equal "file-4.txt"
+
+            /// Verifies that state filtering happens before limit selection.
+            let appliedExitCode, appliedStandardOut, appliedStandardError =
+                runJsonMaintenance [| "show-journal"
+                                      "--state"
+                                      "applied"
+                                      "--limit"
+                                      "1" |]
+
+            appliedExitCode |> should equal 0
+            appliedStandardError |> should equal String.Empty
+
+            use appliedDocument = assertCleanJsonStdout appliedStandardOut
+
+            let appliedRow =
+                appliedDocument
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")[0]
+
+            appliedRow.GetProperty("Sequence").GetInt64()
+            |> should equal 2L
+
+            /// Verifies that path filtering happens before limit selection.
+            let pathExitCode, pathStandardOut, pathStandardError =
+                runJsonMaintenance [| "show-journal"
+                                      "--path"
+                                      "src\\file-2"
+                                      "--limit"
+                                      "1" |]
+
+            pathExitCode |> should equal 0
+            pathStandardError |> should equal String.Empty
+
+            use pathDocument = assertCleanJsonStdout pathStandardOut
+
+            let pathRows =
+                pathDocument
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")
+
+            pathRows.GetArrayLength() |> should equal 1
+
+            let pathRow = pathRows[0]
+
+            pathRow.GetProperty("Sequence").GetInt64()
+            |> should equal 2L
+
+            pathRow.GetProperty("RelativePath").GetString()
+            |> should equal "src/file-2.txt")
+
+    /// Verifies that maintenance show journal exposes startup quarantine diagnostics in the JSON contract.
+    [<Test>]
+    let ``maintenance show journal json exposes quarantine reason`` () =
+        withTempRepo (fun root ->
+            seedWatchJournalRows root 2L 0L
+
+            let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            use setupConnection = new SqliteConnection($"Data Source={dbPath}")
+            setupConnection.Open()
+
+            executeNonQuery setupConnection "UPDATE watch_journal SET quarantined_at_unix_ticks = 99, quarantine_reason = 'wrong branch' WHERE sequence = 1;"
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError =
+                runJsonMaintenance [| "show-journal"
+                                      "--state"
+                                      "quarantined"
+                                      "--limit"
+                                      "10" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+
+            let rows =
+                document
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")
+
+            rows.GetArrayLength() |> should equal 1
+            let row = rows[0]
+
+            row.GetProperty("Sequence").GetInt64()
+            |> should equal 1L
+
+            row.GetProperty("State").GetString()
+            |> should equal "quarantined"
+
+            row.GetProperty("QuarantineReason").GetString()
+            |> should equal "wrong branch")
+
+    /// Verifies that maintenance show journal reports unhealthy local state without repairing or rotating the DB.
+    [<Test>]
+    let ``maintenance show journal json reports stale schema without mutating local db`` () =
+        withTempRepo (fun root ->
+            seedSchemaVersionOnly root "0"
+
+            let localStateDbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+            let dbBefore = snapshotFile localStateDbPath
+            let corruptBefore = getCorruptBackups root |> Array.length
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "show-journal" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+
+            document
+                .RootElement
+                .GetProperty("Error")
+                .GetString()
+            |> should contain "healthy local state database"
+
+            snapshotFile localStateDbPath
+            |> should equal dbBefore
+
+            getCorruptBackups root
+            |> Array.length
+            |> should equal corruptBefore)
+
+    /// Verifies that maintenance clear journal resets journal state without removing status data.
+    [<Test>]
+    let ``maintenance clear journal json clears only journal rows and metadata`` () =
+        withTempRepo (fun root ->
+            createIndex ()
+            seedWatchJournalRows root 3L 2L
+
+            let statusRowsBefore = countRows root "status_meta"
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "clear-journal" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue.GetProperty("RowsDeleted").GetInt64()
+            |> should equal 3L
+
+            returnValue
+                .GetProperty("AppliedThroughSequenceBefore")
+                .GetInt64()
+            |> should equal 2L
+
+            returnValue
+                .GetProperty("AppliedThroughSequenceAfter")
+                .GetInt64()
+            |> should equal 0L
+
+            countRows root "watch_journal" |> should equal 0
+
+            countRows root "status_meta"
+            |> should equal statusRowsBefore)
+
+    /// Verifies that maintenance clear journal does not create a partial local-state database when nothing exists.
+    [<Test>]
+    let ``maintenance clear journal json no-ops without creating local db`` () =
+        withTempRepo (fun root ->
+            let localStateDbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            File.Exists(localStateDbPath)
+            |> should equal false
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "clear-journal" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue.GetProperty("RowsDeleted").GetInt64()
+            |> should equal 0L
+
+            returnValue
+                .GetProperty("AppliedThroughSequenceBefore")
+                .GetInt64()
+            |> should equal 0L
+
+            File.Exists(localStateDbPath)
+            |> should equal false)
+
+    /// Verifies that maintenance clear journal refuses while a fresh Watch process owns IPC.
+    [<Test>]
+    let ``maintenance clear journal refuses while watch is running`` () =
+        withTempRepo (fun root ->
+            seedWatchJournalRows root 2L 1L
+
+            try
+                writeLiveWatchIpc ()
+
+                /// Verifies that the CLI maintenance scenario exits with the expected process status.
+                let exitCode, standardOut, standardError = runJsonMaintenance [| "clear-journal" |]
+
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
+
+                use document = assertCleanJsonStdout standardOut
+
+                document
+                    .RootElement
+                    .GetProperty("Error")
+                    .GetString()
+                |> should contain "Grace Watch is running"
+
+                countRows root "watch_journal" |> should equal 2
+            finally
+                let ipcFileName = Services.IpcFileName()
+
+                if File.Exists(ipcFileName) then File.Delete(ipcFileName))
+
+    /// Verifies that maintenance clear journal treats unreadable Watch IPC as live to avoid racing a heartbeat write.
+    [<Test>]
+    let ``maintenance clear journal refuses when watch status exists but cannot be read`` () =
+        withTempRepo (fun root ->
+            seedWatchJournalRows root 2L 1L
+
+            try
+                writeUnreadableWatchIpc ()
+
+                /// Verifies that the CLI maintenance scenario exits with the expected process status.
+                let exitCode, standardOut, standardError = runJsonMaintenance [| "clear-journal" |]
+
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
+
+                use document = assertCleanJsonStdout standardOut
+
+                document
+                    .RootElement
+                    .GetProperty("Error")
+                    .GetString()
+                |> should contain "could not be read"
+
+                countRows root "watch_journal" |> should equal 2
+            finally
+                let ipcFileName = Services.IpcFileName()
+
+                if File.Exists(ipcFileName) then File.Delete(ipcFileName))

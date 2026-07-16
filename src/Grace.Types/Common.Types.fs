@@ -513,19 +513,8 @@ module Common =
             fileVersion.ContentReference <- FileContentReference.WholeFileContent
             fileVersion
 
-        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
-        static member Create
-            //(repositoryId: RepositoryId)
-            (relativePath: RelativePath)
-            (sha256Hash: Sha256Hash)
-            (blobUri: string)
-            (isBinary: bool)
-            (size: int64)
-            =
-            FileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) blobUri isBinary size
-
         /// Represents the deterministic default instance used when callers need an initialized contract value.
-        static member Default = FileVersion.Create String.Empty String.Empty String.Empty false 0L
+        static member Default = FileVersion()
 
         /// Converts a FileVersion to a LocalFileVersion.
         member this.ToLocalFileVersion lastWriteTimeUtc =
@@ -621,19 +610,6 @@ module Common =
                 LastWriteTimeUtc = lastWriteTimeUtc
             }
 
-        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
-        static member Create
-            //(repositoryId: RepositoryId)
-            (relativePath: RelativePath)
-            (sha256Hash: Sha256Hash)
-            (isBinary: bool)
-            (size: int64)
-            (createdAt: Instant)
-            (uploadedToObjectStorage: bool)
-            (lastWriteTimeUtc: DateTime)
-            =
-            LocalFileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) isBinary size createdAt uploadedToObjectStorage lastWriteTimeUtc
-
         /// Converts a LocalFileVersion to a FileVersion. NOTE: at this point, we don't know the BlobUri.
         [<IgnoreMember>]
         member this.ToFileVersion = FileVersion.CreateWithHashes this.RelativePath this.Sha256Hash this.Blake3Hash String.Empty this.IsBinary this.Size
@@ -725,30 +701,6 @@ module Common =
             directoryVersion.CreatedAt <- getCurrentInstant ()
             directoryVersion.HashesValidated <- false
             directoryVersion
-
-        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
-        static member Create
-            (directoryVersionId: DirectoryVersionId)
-            (ownerId: OwnerId)
-            (organizationId: OrganizationId)
-            (repositoryId: RepositoryId)
-            (relativePath: RelativePath)
-            (sha256Hash: Sha256Hash)
-            (directories: List<DirectoryVersionId>)
-            (files: List<FileVersion>)
-            (size: int64)
-            =
-            DirectoryVersion.CreateWithHashes
-                directoryVersionId
-                ownerId
-                organizationId
-                repositoryId
-                relativePath
-                sha256Hash
-                (Blake3Hash String.Empty)
-                directories
-                files
-                size
 
         /// Projects a directory-version DTO into the local index shape cached by Grace clients.
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
@@ -886,32 +838,6 @@ module Common =
             directoryVersion.CreatedAt <- getCurrentInstant ()
             directoryVersion.LastWriteTimeUtc <- lastWriteTimeUtc
             directoryVersion
-
-        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
-        static member Create
-            (directoryVersionId: DirectoryVersionId)
-            (ownerId: OwnerId)
-            (organizationId: OrganizationId)
-            (repositoryId: RepositoryId)
-            (relativePath: RelativePath)
-            (sha256Hash: Sha256Hash)
-            (directories: List<DirectoryVersionId>)
-            (files: List<LocalFileVersion>)
-            (size: int64)
-            (lastWriteTimeUtc: DateTime)
-            =
-            LocalDirectoryVersion.CreateWithHashes
-                directoryVersionId
-                ownerId
-                organizationId
-                repositoryId
-                relativePath
-                sha256Hash
-                (Blake3Hash String.Empty)
-                directories
-                files
-                size
-                lastWriteTimeUtc
 
         /// Converts a LocalDirectoryVersion to a DirectoryVersion.
         [<IgnoreMember>]

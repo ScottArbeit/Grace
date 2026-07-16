@@ -125,39 +125,6 @@ module Reference =
                 DeleteReason = String.Empty
             }
 
-        /// Recovers full root directory hashes when an older reference stored only a SHA-256 prefix.
-        static member TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
-            let rootRelativePath = directoryVersion.RelativePath
-
-            let isRootDirectoryRelativePath =
-                rootRelativePath = Constants.RootDirectoryPath
-                || rootRelativePath = RelativePath "/"
-
-            let referenceSha256Hash = string sha256Hash
-            let rootSha256Hash = string directoryVersion.Sha256Hash
-
-            let referenceSha256MatchesRoot =
-                not (String.IsNullOrWhiteSpace referenceSha256Hash)
-                && rootSha256Hash.StartsWith(referenceSha256Hash, StringComparison.OrdinalIgnoreCase)
-
-            if
-                String.IsNullOrWhiteSpace(string blake3Hash)
-                && directoryVersion.DirectoryVersionId = directoryId
-                && isRootDirectoryRelativePath
-                && referenceSha256MatchesRoot
-                && not (String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash))
-            then
-                Some(directoryVersion.Sha256Hash, directoryVersion.Blake3Hash)
-            else
-                None
-
-        /// Returns a reference DTO with repaired root directory hashes when legacy data can be matched safely.
-        static member HydrateLegacyRootDirectoryHash directoryVersion referenceDto =
-            match ReferenceDto.TryGetLegacyRootDirectoryHashRepair referenceDto.DirectoryId referenceDto.Sha256Hash referenceDto.Blake3Hash directoryVersion
-                with
-            | Some (fullSha256Hash, blake3Hash) -> { referenceDto with Sha256Hash = fullSha256Hash; Blake3Hash = blake3Hash }, true
-            | None -> referenceDto, false
-
         /// Updates the ReferenceDto based on the ReferenceEvent.
         static member UpdateDto referenceEvent currentReferenceDto =
             let newReferenceDto =
@@ -173,6 +140,12 @@ module Reference =
                            referenceType,
                            referenceText,
                            links) ->
+                    if String.IsNullOrWhiteSpace(string sha256Hash) then
+                        invalidArg (nameof Sha256Hash) "Reference Created events must include the root DirectoryVersion Sha256Hash."
+
+                    if String.IsNullOrWhiteSpace(string blake3Hash) then
+                        invalidArg (nameof Blake3Hash) "Reference Created events must include the root DirectoryVersion Blake3Hash."
+
                     { currentReferenceDto with
                         ReferenceId = referenceId
                         OwnerId = ownerId
@@ -210,3 +183,49 @@ module Reference =
                 | Undeleted -> { currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty }
 
             { newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp }
+
+    /// Describes a same-branch Reference that current-branch Watch clients may inspect after server-side recomputation.
+    [<CLIMutable; GenerateSerializer>]
+    type CurrentBranchReferenceNotification =
+        {
+            ReferenceId: ReferenceId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            BranchName: BranchName
+            DirectoryId: DirectoryVersionId
+            Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
+            ReferenceType: ReferenceType
+            ReferenceText: ReferenceText
+            CorrelationId: CorrelationId
+        }
+
+        /// Represents an initialized notification payload for serializers and tests.
+        static member Default =
+            {
+                ReferenceId = ReferenceId.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                BranchId = BranchId.Empty
+                BranchName = BranchName String.Empty
+                DirectoryId = DirectoryVersionId.Empty
+                Sha256Hash = Sha256Hash String.Empty
+                Blake3Hash = Blake3Hash String.Empty
+                ReferenceType = ReferenceType.Save
+                ReferenceText = ReferenceText String.Empty
+                CorrelationId = String.Empty
+            }
+
+        /// Reports whether the Reference can wake same-branch Watch clients for remote materialization.
+        static member IsEligibleReferenceType referenceType =
+            match referenceType with
+            | ReferenceType.Commit
+            | ReferenceType.Checkpoint
+            | ReferenceType.Save -> true
+            | ReferenceType.Promotion
+            | ReferenceType.Tag
+            | ReferenceType.External
+            | ReferenceType.Rebase -> false

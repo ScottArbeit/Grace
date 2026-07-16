@@ -14,8 +14,8 @@ open System.Net.Http
 /// Groups shared helpers for webhook test helpers.
 module private WebhookTestHelpers =
 
-    /// Restarts grace server to verify durability across process restarts.
-    let restartGraceServerAsync () =
+    /// Restarts Grace.Server with a scenario label for process-local webhook assertions.
+    let restartGraceServerAsync restartContext =
         let state =
             match App with
             | Some app ->
@@ -34,7 +34,7 @@ module private WebhookTestHelpers =
                 Assert.Fail("Aspire test host was not started by the shared setup fixture.")
                 Unchecked.defaultof<TestHostState>
 
-        AspireTestHost.restartGraceServerAsync state
+        AspireTestHost.restartGraceServerAsync state restartContext
 
     /// Builds a deterministic authenticated client for integration setup fixture for the server integration webhook assertions.
     let createAuthenticatedClient (userId: string) =
@@ -328,7 +328,7 @@ type WebhookApiIntegrationTests() =
                 Does.Contain(createdDelivery.WebhookDeliveryId)
             )
 
-            do! WebhookTestHelpers.restartGraceServerAsync ()
+            do! WebhookTestHelpers.restartGraceServerAsync "Webhook.WebhookRuleAndHttpObservableDeliveriesAreProcessLocalAcrossRestart"
 
             // Contract: webhook rules are process-local. HTTP-observable pending deliveries are intentionally
             // unavailable after restart; retry-scheduled deliveries share the same process-local store by

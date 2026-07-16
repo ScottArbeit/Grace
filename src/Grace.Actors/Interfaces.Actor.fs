@@ -130,8 +130,8 @@ module Interfaces =
         /// Retrieves the most recent promotion from this branch.
         abstract member GetLatestPromotion: correlationId: CorrelationId -> Task<ReferenceDto>
 
-        /// Retrieves the parent branch for a given branch.
-        abstract member GetParentBranch: correlationId: CorrelationId -> Task<BranchDto>
+        /// Retrieves the parent branch when this branch records one, without resolving the root-parent sentinel as an actor.
+        abstract member GetParentBranch: correlationId: CorrelationId -> Task<BranchDto option>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>

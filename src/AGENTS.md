@@ -103,6 +103,24 @@ update the issue before editing the new paths.
   top-level PR comments alone; inspect review comments attached to the bot review before merging. For high-risk slices,
   the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that is cheaper than a
   likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
+- For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
+  assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
+  reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
+  and do not broaden the current PR to absorb that future scope. Update the future sibling issue's detail gate before
+  assigning it when the finding reveals missing acceptance criteria, adversarial cases, or risk-surface traps.
+- Do not defer a finding to a future leaf issue when it challenges the current leaf's trust contract. If later leaves
+  consume a fact, authority signal, persisted field, status flag, or trust predicate produced by the current leaf, the
+  current leaf owns making that surface reliable before merge.
+- Track substantive Codex Code Review Bot cycles. After one substantive cycle, continue the normal fix loop; after two,
+  add a repeated-theme prevention note to `Review Status`; after three, stop one-off patching and post a review
+  stabilization ledger to the issue and PR; after four, hard stop until the ledger is implemented, proven, and
+  self-reviewed. Start stabilization after two substantive cycles for high-risk surfaces such as Watch state, IPC/status
+  contracts, branch-switch safety, storage, actors, authorization, public contracts, persisted shapes, concurrency,
+  recovery, or side-effect ordering.
+- If a pull request has more than three Codex Code Review Bot review sessions even without three counted substantive
+  cycles, pause before assigning another routine fix worker. Audit the timeline, separate stale/duplicate/invalid
+  sessions from fresh findings, and decide whether a missing invariant, sibling-issue deferral, or structural ledger is
+  needed before continuing.
 - After each fix subagent completes a bot-requested fix, reply to the Codex Code Review Bot comment with the outcome,
   fix commit, validation evidence, and the prevention line required by `docs/Development process.md`, resolve the
   GitHub conversation, update the PR body's `Review Status` section, and wait for the next bot review on the new head

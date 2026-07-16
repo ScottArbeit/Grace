@@ -1,7 +1,7 @@
 
 # DirectoryVersionHashLookupResult
 
-Raw directory version returned by hash lookup endpoints. Sha256Hash may be empty only when /directory/getBySha256Hash deliberately returns DirectoryVersion.Default as its no-match sentinel.
+Complete current directory version returned by hash lookup endpoints.
 
 ## Properties
 

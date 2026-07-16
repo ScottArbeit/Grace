@@ -12,16 +12,22 @@ type StorageKeysSharedTests() =
     [<Test>]
     member _.WholeFileContentObjectKeyMatchesExistingBlobKeyShape() =
         let fileVersion =
-            FileVersion.Create
+            FileVersion.CreateWithHashes
                 "src/Grace.Server/Storage.Server.fs"
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
                 "https://example.test/blob"
                 false
                 1234L
 
         let key = StorageKeys.wholeFileContentObjectKey fileVersion
 
-        Assert.That(key, Is.EqualTo("src/Grace.Server/Storage.Server.fs/Storage.Server_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.fs"))
+        Assert.That(
+            key,
+            Is.EqualTo(
+                "src/Grace.Server/Storage.Server.fs/Storage.Server_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789.fs"
+            )
+        )
 
     /// Verifies that whole file content object key includes blake3 when present.
     [<Test>]
@@ -42,11 +48,23 @@ type StorageKeysSharedTests() =
     /// Verifies that whole file content object key preserves extensionless blob key shape.
     [<Test>]
     member _.WholeFileContentObjectKeyPreservesExtensionlessBlobKeyShape() =
-        let fileVersion = FileVersion.Create "Dockerfile" "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" "" false 2048L
+        let fileVersion =
+            FileVersion.CreateWithHashes
+                "Dockerfile"
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                ""
+                false
+                2048L
 
         let key = StorageKeys.wholeFileContentObjectKey fileVersion
 
-        Assert.That(key, Is.EqualTo("Dockerfile/Dockerfile_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"))
+        Assert.That(
+            key,
+            Is.EqualTo(
+                "Dockerfile/Dockerfile_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            )
+        )
 
     /// Verifies that whole file content object key includes blake3 for extensionless files when present.
     [<Test>]

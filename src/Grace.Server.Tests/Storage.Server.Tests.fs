@@ -164,7 +164,7 @@ type StorageWholeFileCompatibility() =
             let relativePath = $"{relativeDirectory}/small.bin"
             let payload = Encoding.UTF8.GetBytes($"Grace whole-file missing BLAKE3 {Guid.NewGuid():N}")
             let sha256Hash = computeSha256Hash payload
-            let fileVersion = FileVersion.Create relativePath sha256Hash String.Empty true (int64 payload.Length)
+            let fileVersion = FileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) String.Empty true (int64 payload.Length)
 
             let! uploadResponse = Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId fileVersion))
             let! uploadContent = uploadResponse.Content.ReadAsStringAsync()
@@ -2260,7 +2260,14 @@ type StorageManifestUploadSessionRoutes() =
             let! racingResponse = racingConfirmTask
             let! racingBody = racingResponse.Content.ReadAsStringAsync()
             Assert.That(racingResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), racingBody)
-            Assert.That(racingBody, Does.Contain("RetentionPending"))
+
+            Assert.That(
+                (deserialize<GraceError> racingBody).Error,
+                Is.AnyOf(
+                    "UploadSession must be active before confirming a ContentBlock upload; current state is RetentionPending.",
+                    "UploadSession is waiting for cleanup and cannot be changed by ConfirmBlockUploaded."
+                )
+            )
 
             let! finalBlockExists = finalContentBlockExistsByAddress racingUploadUri racingBlock.Address
             Assert.That(finalBlockExists, Is.False)

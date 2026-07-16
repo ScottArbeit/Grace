@@ -95,7 +95,7 @@ type PromotionSetDirectoryHashTests() =
 
         let second = FileVersion.CreateWithHashes (RelativePath "src/conflict.txt") sameSha256 (Blake3Hash "second-blake3") String.Empty false 12L
 
-        let legacy = FileVersion.Create (RelativePath "src/conflict.txt") sameSha256 String.Empty false 12L
+        let matching = FileVersion.CreateWithHashes (RelativePath "src/conflict.txt") sameSha256 (Blake3Hash "first-blake3") String.Empty false 12L
 
         Assert.That(PromotionSet.fileVersionEquivalent (Some first) (Some second), Is.False)
-        Assert.That(PromotionSet.fileVersionEquivalent (Some first) (Some legacy), Is.True)
+        Assert.That(PromotionSet.fileVersionEquivalent (Some first) (Some matching), Is.True)
