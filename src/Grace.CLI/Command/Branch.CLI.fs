@@ -4476,6 +4476,13 @@ module Branch =
         | References of ReferenceDto array
         | FetchError of GraceError
 
+    /// Classifies the strict parent lookup result for status rendering while preserving valid parentless branches.
+    let internal classifyParentBranchForStatus parentBranchResult =
+        match parentBranchResult with
+        | Ok parentBranchReturnValue -> Ok parentBranchReturnValue.ReturnValue
+        | Error error when error.Error = BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist -> Ok BranchDto.Default
+        | Error error -> Error error
+
     /// Reads parent branch references state from ParseResult, local configuration, or Grace ids.
     let private getParentBranchReferencesState (graceIds: GraceIds) (branchDto: BranchDto) =
         if branchDto.ParentBranchId
@@ -4686,10 +4693,9 @@ module Branch =
             let! branchResult = Branch.Get(getParameters)
             let! parentBranchResult = Branch.GetParentBranch(getParameters)
 
-            match branchResult, parentBranchResult with
-            | Ok branchReturnValue, Ok parentBranchReturnValue ->
+            match branchResult, classifyParentBranchForStatus parentBranchResult with
+            | Ok branchReturnValue, Ok parentBranchDto ->
                 let branchDto = branchReturnValue.ReturnValue
-                let parentBranchDto = parentBranchReturnValue.ReturnValue
 
                 let getReferencesParameters =
                     Parameters.Branch.GetReferencesParameters(

@@ -5547,11 +5547,9 @@ module Watch =
     /// Verifies a deleted directory target has no local edits beyond the local status snapshot.
     let private targetDirectoryStillMatchesStatus (currentStatus: GraceStatus) (relativePath: RelativePath) =
         task {
-            let fullPath = materializationTargetFullPath relativePath
-
-            if not (Directory.Exists(fullPath)) then
-                return false
-            else
+            match tryResolveDirectoryUsingWatchPathComparison relativePath with
+            | None -> return false
+            | Some fullPath ->
                 let currentDirectories = materializationDirectoriesByPath currentStatus
                 let currentFiles = materializationFilesByPath currentStatus
 

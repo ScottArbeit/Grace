@@ -8,6 +8,7 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Utilities
+open Grace.Shared.Validation.Errors
 open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.Reference
@@ -79,6 +80,29 @@ module BranchCommandTests =
             Source = ExplicitReference
             CreatedSaveMessage = None
         }
+
+    /// Verifies status accepts the specific parentless result without weakening unrelated SDK failures.
+    [<Test>]
+    let ``branch status maps only parentless result to no-parent rendering input`` () =
+        let realParent = { Grace.Types.Branch.BranchDto.Default with BranchId = Guid.NewGuid(); BranchName = BranchName "main" }
+
+        let parentlessError = GraceError.Create (BranchError.getErrorMessage BranchError.ParentBranchDoesNotExist) correlationId
+
+        let unrelatedError = GraceError.Create "Parent branch lookup failed." correlationId
+
+        match Branch.classifyParentBranchForStatus (Ok(GraceReturnValue.Create realParent correlationId)) with
+        | Ok actualParent -> actualParent |> should equal realParent
+        | Error error -> Assert.Fail($"Expected real parent branch status input, got: {error.Error}")
+
+        match Branch.classifyParentBranchForStatus (Error parentlessError) with
+        | Ok parentBranch ->
+            parentBranch
+            |> should equal Grace.Types.Branch.BranchDto.Default
+        | Error error -> Assert.Fail($"Expected parentless branch status input, got: {error.Error}")
+
+        match Branch.classifyParentBranchForStatus (Error unrelatedError) with
+        | Ok _ -> Assert.Fail("Expected unrelated parent branch SDK error to remain fatal.")
+        | Error error -> error |> should equal unrelatedError
 
     /// Verifies canonical typed-slot sentinels remain absent after JSON round-tripping while concrete References stay eligible for lookup.
     [<Test>]

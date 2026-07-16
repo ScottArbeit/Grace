@@ -22892,8 +22892,8 @@ module WatchTests =
         finally
             Watch.clearPendingWatchWorkForTests ()
 
-    /// Verifies retained-tree path sets compare status and disk casing only when the active worktree policy permits it.
-    [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
+    /// Verifies retained-tree validation resolves disk casing through the active policy before comparing status paths.
+    [<Test; Category("CurrentBranchMaterializationApplyBoundary"); Category("CurrentBranchMaterializationRetainedTreePathComparison")>]
     let ``current branch remote materialization retained tree respects active path comparison`` () =
         withTempRepo (fun root ->
             let directoryName = "CaseDirectory"
