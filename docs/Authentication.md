@@ -769,10 +769,13 @@ when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endp
 the exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
 transport choice. `grace cache status` emits only redacted lifecycle, `CacheId`, and transport information. `grace cache
 rotate-now` requests immediate current-key-proven rotation; the running host separately requests the same rotation every
-four hours. Neither command prints or exports private key material, tokens, grants, repository assignments, server URLs,
-or secret configuration. Server-issued cache plans and their signed artifact grants bind the exact endpoint, so clients
-reject scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI behavior
-is unchanged.
+four hours. The host independently refreshes the live registration every hour, before its two-hour active lifetime
+expires. Before replacing a key, the host durably records the current and replacement opaque key references; after an
+interrupted rotation, it reconciles that narrow pending transition through the existing registration proof before normal
+cache work resumes. Neither command prints or exports private key material, tokens, grants, repository assignments,
+server URLs, or secret configuration. Server-issued cache plans and their signed artifact grants bind the exact endpoint,
+so clients reject scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI
+behavior is unchanged.
 
 Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
 negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this

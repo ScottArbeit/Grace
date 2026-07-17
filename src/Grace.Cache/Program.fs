@@ -18,9 +18,7 @@ module Program =
         | Ok lease ->
             use _lease = lease
 
-            match CacheHostSettings.fromEnvironment Environment.GetEnvironmentVariable,
-                  CacheMachineConfiguration.tryRead (CacheMachineConfiguration.configurationPath ())
-                with
+            match CacheHostSettings.fromEnvironment Environment.GetEnvironmentVariable, CacheRuntimeControl.getReadyConfiguration () with
             | Error message, _
             | _, Error message -> Error message
             | Ok settings, Ok configuration ->

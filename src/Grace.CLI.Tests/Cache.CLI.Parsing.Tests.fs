@@ -15,6 +15,22 @@ module CacheCommandParsingTests =
         let parseResult = GraceCommand.rootCommand.Parse([| "cache"; commandName |])
         Assert.That(parseResult.Errors.Count, Is.EqualTo(0))
 
+    /// Verifies machine-scoped cache commands are eligible outside a repository while unrelated commands retain the repository gate.
+    [<Test>]
+    let ``cache bypasses only the repository configuration gate`` () =
+        Assert.That(GraceCommand.isAllowedWithoutRepositoryConfiguration "cache" true, Is.True)
+        Assert.That(GraceCommand.isAllowedWithoutRepositoryConfiguration "CACHE" true, Is.True)
+        Assert.That(GraceCommand.isAllowedWithoutRepositoryConfiguration "branch" true, Is.False)
+
+    /// Verifies root help presents the supported cache workflow with local machine utilities rather than the fallback section.
+    [<Test>]
+    let ``cache belongs to the local utilities root help section`` () =
+        let localUtilities =
+            GraceCommand.rootHelpSections
+            |> List.find (fun section -> section.Heading = "Local utilities")
+
+        Assert.That(localUtilities.CommandNames, Does.Contain("cache"))
+
     /// Verifies enrollment requires exact explicit stable identifiers and an endpoint.
     [<Test>]
     let ``cache enroll parses explicit stable inputs`` () =
@@ -58,6 +74,31 @@ module CacheCommandParsingTests =
                     "33333333-3333-3333-3333-333333333333"
                     "--repository-organization-id"
                     "22222222-2222-2222-2222-222222222222"
+                |]
+            )
+
+        Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+
+    /// Verifies System.CommandLine rejects an explicit false value after the marker-only HTTP exception before process invocation.
+    [<Test>]
+    let ``cache enroll rejects explicit false allow http value`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "cache"
+                    "enroll"
+                    "--display-name"
+                    "edge-cache"
+                    "--owner-id"
+                    "11111111-1111-1111-1111-111111111111"
+                    "--repository-id"
+                    "33333333-3333-3333-3333-333333333333"
+                    "--repository-organization-id"
+                    "22222222-2222-2222-2222-222222222222"
+                    "--endpoint"
+                    "http://cache.example.test"
+                    "--allow-http"
+                    "false"
                 |]
             )
 

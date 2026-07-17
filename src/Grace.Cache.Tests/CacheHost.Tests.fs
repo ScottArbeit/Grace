@@ -29,6 +29,13 @@ type CacheHostTests() =
     member _.HostUsesTheFourHourRegistrationRotationInterval() =
         Assert.That(CacheHost.keyRotationInterval, Is.EqualTo(RegistrationLifetime.KeyRotationInterval.ToTimeSpan()))
 
+    /// Verifies registration refresh has an independent one-hour schedule that runs before the two-hour active lifetime expires.
+    [<Test>]
+    member _.HostUsesTheOneHourRegistrationRefreshInterval() =
+        Assert.That(CacheHost.registrationRefreshInterval, Is.EqualTo(RegistrationLifetime.RefreshAfter.ToTimeSpan()))
+        Assert.That(CacheHost.registrationRefreshInterval, Is.LessThan(RegistrationLifetime.ActiveLifetime.ToTimeSpan()))
+        Assert.That(CacheHost.registrationRefreshInterval, Is.Not.EqualTo(CacheHost.keyRotationInterval))
+
     /// Verifies that a missing required process setting rejects startup without exposing the supplied configuration value.
     [<Test>]
     member _.MissingInstanceNameIsRejected() =
@@ -72,6 +79,7 @@ type CacheHostTests() =
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test/private"
                 IdentityKeyName = "Grace.Cache.Identity.test"
+                PendingKeyTransition = None
             }
 
         let status = CacheMachineConfiguration.toStatus configuration
@@ -80,6 +88,151 @@ type CacheHostTests() =
         Assert.That(status.Transport, Is.EqualTo(Some "https"))
         Assert.That(status.ToString(), Does.Not.Contain(configuration.ServerUri))
         Assert.That(status.ToString(), Does.Not.Contain(configuration.IdentityKeyName))
+
+    /// Verifies a restart before remote acceptance removes the pending replacement and retains the currently accepted key.
+    [<Test>]
+    member _.PendingKeyBeforeRemoteAcceptanceRollsBackOnRecovery() =
+        let writes = ResizeArray<CacheMachineConfiguration>()
+        let deletes = ResizeArray<string>()
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test"
+                IdentityKeyName = "old"
+                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement" }
+            }
+
+        let effects: PendingKeyTransitionEffects =
+            {
+                WriteConfiguration =
+                    fun value ->
+                        writes.Add value
+                        Ok()
+                DeleteKey =
+                    fun value ->
+                        deletes.Add value
+                        Ok()
+                ProbeAcceptedKey = fun _ keyName -> Ok(keyName = "old")
+            }
+
+        match PendingKeyTransition.reconcile effects configuration with
+        | Error error -> Assert.Fail(error)
+        | Ok recovered ->
+            Assert.That(recovered.IdentityKeyName, Is.EqualTo("old"))
+            Assert.That(recovered.PendingKeyTransition, Is.EqualTo(None))
+            Assert.That(deletes, Is.EquivalentTo([ "replacement" ]))
+            Assert.That(writes.Count, Is.EqualTo(1))
+
+    /// Verifies a restart after server acceptance finalizes the local replacement before retiring the old key.
+    [<Test>]
+    member _.PendingAcceptedKeyFinalizesBeforeOldKeyCleanup() =
+        let writes = ResizeArray<CacheMachineConfiguration>()
+        let deletes = ResizeArray<string>()
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test"
+                IdentityKeyName = "old"
+                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement" }
+            }
+
+        let effects: PendingKeyTransitionEffects =
+            {
+                WriteConfiguration =
+                    fun value ->
+                        writes.Add value
+                        Ok()
+                DeleteKey =
+                    fun value ->
+                        deletes.Add value
+                        Ok()
+                ProbeAcceptedKey = fun _ keyName -> Ok(keyName = "replacement")
+            }
+
+        match PendingKeyTransition.reconcile effects configuration with
+        | Error error -> Assert.Fail(error)
+        | Ok recovered ->
+            Assert.That(recovered.IdentityKeyName, Is.EqualTo("replacement"))
+            Assert.That(recovered.PendingKeyTransition, Is.EqualTo(None))
+            Assert.That(deletes, Is.EquivalentTo([ "old" ]))
+            Assert.That(writes.Count, Is.EqualTo(2))
+            Assert.That(writes[0].IdentityKeyName, Is.EqualTo("replacement"))
+            Assert.That(writes[0].PendingKeyTransition, Is.Not.EqualTo(None))
+
+    /// Verifies a cleanup failure retains the durable pending transition and blocks a normal-work conclusion.
+    [<Test>]
+    member _.PendingAcceptedKeyCleanupFailureStaysUnresolved() =
+        let writes = ResizeArray<CacheMachineConfiguration>()
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test"
+                IdentityKeyName = "replacement"
+                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement" }
+            }
+
+        let effects: PendingKeyTransitionEffects =
+            {
+                WriteConfiguration =
+                    fun value ->
+                        writes.Add value
+                        Ok()
+                DeleteKey = fun _ -> Error "cleanup failed"
+                ProbeAcceptedKey = fun _ keyName -> Ok(keyName = "replacement")
+            }
+
+        PendingKeyTransition.reconcile effects configuration
+        |> Result.isError
+        |> Assert.That
+
+        Assert.That(writes.Count, Is.EqualTo(1))
+        Assert.That(writes[0].PendingKeyTransition, Is.Not.EqualTo(None))
+
+    /// Verifies a completed transition has no further recovery probes, cleanup, or writes on restart.
+    [<Test>]
+    member _.CompletedKeyTransitionDoesNotRunRecoveryAgain() =
+        let mutable effectsCalled = false
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test"
+                IdentityKeyName = "replacement"
+                PendingKeyTransition = None
+            }
+
+        let effects: PendingKeyTransitionEffects =
+            {
+                WriteConfiguration =
+                    fun _ ->
+                        effectsCalled <- true
+                        Ok()
+                DeleteKey =
+                    fun _ ->
+                        effectsCalled <- true
+                        Ok()
+                ProbeAcceptedKey =
+                    fun _ _ ->
+                        effectsCalled <- true
+                        Ok true
+            }
+
+        match PendingKeyTransition.reconcile effects configuration with
+        | Error error -> Assert.Fail(error)
+        | Ok recovered -> Assert.That(recovered, Is.EqualTo(configuration))
+
+        Assert.That(effectsCalled, Is.False)
 
     /// Verifies simultaneous cache starts have exactly one operating-system guard winner and the loser can cause no later effects.
     [<Test>]

@@ -505,7 +505,7 @@ module GraceCommand =
     /// Defines structured data exchanged by CLI helpers.
     type HelpSection = { Heading: string; CommandNames: string list }
 
-    let private rootHelpSections =
+    let rootHelpSections =
         [
             { Heading = "Getting started"; CommandNames = [ "authenticate"; "connect"; "config" ] }
             {
@@ -547,6 +547,7 @@ module GraceCommand =
                 Heading = "Local utilities"
                 CommandNames =
                     [
+                        "cache"
                         "doctor"
                         "history"
                         "maintenance"
@@ -554,6 +555,25 @@ module GraceCommand =
                     ]
             }
         ]
+
+    /// Returns true only for command groups that own machine-scoped state and must run outside a repository configuration.
+    let isAllowedWithoutRepositoryConfiguration commandName isCaseInsensitive =
+        let comparison =
+            if isCaseInsensitive then
+                StringComparison.InvariantCultureIgnoreCase
+            else
+                StringComparison.InvariantCulture
+
+        [
+            "config"
+            "history"
+            "authenticate"
+            "connect"
+            "alias"
+            "doctor"
+            "cache"
+        ]
+        |> List.exists (fun allowed -> allowed.Equals(commandName, comparison))
 
     let private repositoryHelpSections =
         [
@@ -1449,33 +1469,13 @@ module GraceCommand =
                                     AnsiConsole.WriteLine()
                     else
                         // We don't have a config file, so write an error message and exit.
-                        let comparison =
-                            if isCaseInsensitive then
-                                StringComparison.InvariantCultureIgnoreCase
-                            else
-                                StringComparison.InvariantCulture
-
-                        let allowedCommands =
-                            [
-                                "config"
-                                "history"
-                                "authenticate"
-                                "connect"
-                                "alias"
-                                "doctor"
-                            ]
-
                         let isAllowed =
                             let command = parseResult.CommandResult.Command
 
                             Seq.append [ command ] (command.Parents.OfType<Command>())
-                            |> Seq.exists (fun cmd ->
-                                allowedCommands
-                                |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
+                            |> Seq.exists (fun cmd -> isAllowedWithoutRepositoryConfiguration cmd.Name isCaseInsensitive)
                             || (tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive
-                                |> Option.exists (fun topLevel ->
-                                    allowedCommands
-                                    |> List.exists (fun allowed -> topLevel.Equals(allowed, comparison))))
+                                |> Option.exists (fun topLevel -> isAllowedWithoutRepositoryConfiguration topLevel isCaseInsensitive))
 
                         if isAllowed then
                             let! invokedReturnValue = parseResult.InvokeAsync()

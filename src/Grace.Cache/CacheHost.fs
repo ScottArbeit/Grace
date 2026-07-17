@@ -28,6 +28,9 @@ module CacheHost =
     /// Holds the server-defined four-hour interval for cache identity key rotation.
     let keyRotationInterval = RegistrationLifetime.KeyRotationInterval.ToTimeSpan()
 
+    /// Holds the server-defined one-hour interval that refreshes registration before its two-hour active lifetime expires.
+    let registrationRefreshInterval = RegistrationLifetime.RefreshAfter.ToTimeSpan()
+
     /// Lists the only routes available before cache enrollment, storage, or artifact serving exists.
     let routeInventory =
         [
@@ -60,9 +63,16 @@ module CacheHost =
         )
         |> ignore
 
+        let refreshTimer =
+            new Timer(TimerCallback(fun _ -> CacheRuntimeControl.refreshNow () |> ignore), null, registrationRefreshInterval, registrationRefreshInterval)
+
         let rotationTimer = new Timer(TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore), null, keyRotationInterval, keyRotationInterval)
 
-        app.Lifetime.ApplicationStopping.Register(Action rotationTimer.Dispose)
+        app.Lifetime.ApplicationStopping.Register(
+            Action (fun () ->
+                refreshTimer.Dispose()
+                rotationTimer.Dispose())
+        )
         |> ignore
 
         app

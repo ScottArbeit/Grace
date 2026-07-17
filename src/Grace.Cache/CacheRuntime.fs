@@ -17,8 +17,19 @@ open Grace.Shared.Utilities
 open Grace.Types.CacheRegistration
 open Grace.Types.Common
 
+/// Records the two opaque service-key references involved in one recoverable Cache key rotation.
+type PendingKeyTransition = { CurrentKeyName: string; ReplacementKeyName: string }
+
 /// Holds the machine-scoped operational facts that a registered Grace Cache may retain locally.
-type CacheMachineConfiguration = { CacheId: Guid; Endpoint: string; AllowHttpEndpoint: bool; ServerUri: string; IdentityKeyName: string }
+type CacheMachineConfiguration =
+    {
+        CacheId: Guid
+        Endpoint: string
+        AllowHttpEndpoint: bool
+        ServerUri: string
+        IdentityKeyName: string
+        PendingKeyTransition: PendingKeyTransition option
+    }
 
 /// Represents the safe operational facts that may be returned by the local cache control surface.
 type CacheRuntimeStatus = { Lifecycle: string; CacheId: string option; Transport: string option }
@@ -164,23 +175,35 @@ module CacheProcessCommand =
     let private parseEnrollment arguments =
         let allowHttp = arguments |> Array.contains "--allow-http"
 
-        let knownOptions =
-            set [ "--enroll"
-                  "--endpoint"
+        let valueOptions =
+            set [ "--endpoint"
                   "--display-name"
                   "--owner-id"
                   "--organization-id"
                   "--repository-id"
-                  "--repository-organization-id"
-                  "--allow-http" ]
+                  "--repository-organization-id" ]
 
-        let hasUnknownOption =
-            arguments
-            |> Array.exists (fun argument ->
-                argument.StartsWith("--", StringComparison.Ordinal)
-                && not (knownOptions.Contains argument))
+        /// Rejects positional values and unrecognized options so marker-only switches cannot silently consume a false value.
+        let hasOnlyRecognizedTokens =
+            let rec loop index =
+                if index >= arguments.Length then
+                    true
+                elif arguments[index] = "--enroll"
+                     || arguments[index] = "--allow-http" then
+                    loop (index + 1)
+                elif valueOptions.Contains arguments[index] then
+                    if index + 1 >= arguments.Length
+                       || arguments[index + 1]
+                           .StartsWith("--", StringComparison.Ordinal) then
+                        false
+                    else
+                        loop (index + 2)
+                else
+                    false
 
-        match hasUnknownOption,
+            loop 0
+
+        match hasOnlyRecognizedTokens,
               requiredSingle "--endpoint" arguments,
               requiredSingle "--display-name" arguments,
               requiredGuid "--owner-id" arguments,
@@ -188,8 +211,8 @@ module CacheProcessCommand =
               requiredGuids "--repository-id" arguments,
               requiredGuids "--repository-organization-id" arguments
             with
-        | true, _, _, _, _, _, _ -> Error "Cache enrollment input is invalid."
-        | false, Ok endpoint, Ok displayName, Ok ownerId, Ok organizationValues, Ok repositoryIds, Ok repositoryOrganizationIds ->
+        | false, _, _, _, _, _, _ -> Error "Cache enrollment input is invalid."
+        | true, Ok endpoint, Ok displayName, Ok ownerId, Ok organizationValues, Ok repositoryIds, Ok repositoryOrganizationIds ->
             let organizationId =
                 match organizationValues with
                 | [||] -> Ok None
@@ -250,10 +273,17 @@ module CacheProcessCommand =
             Ok Run
 
     /// Converts a successful runtime result to redacted machine-readable JSON.
-    let private success status = { ExitCode = 0; Payload = JsonSerializer.Serialize status }
+    let private success status = { ExitCode = 0; Payload = JsonSerializer.Serialize(status, Constants.JsonSerializerOptions) }
 
     /// Converts any parser or runtime error to a stable redacted process failure without reflecting sensitive input.
-    let private failure operation = { ExitCode = 1; Payload = JsonSerializer.Serialize({| Lifecycle = "failed"; Error = $"Cache {operation} failed." |}) }
+    let private failure operation =
+        let error =
+            if operation = "enrollment" then
+                "Cache enrollment failed. Inspect registration status or explicitly begin a new enrollment."
+            else
+                $"Cache {operation} failed."
+
+        { ExitCode = 1; Payload = JsonSerializer.Serialize({| Lifecycle = "failed"; Error = error |}, Constants.JsonSerializerOptions) }
 
     /// Executes one parsed process verb, holding the existing machine-wide guard for stateful one-shot runtime operations.
     let execute (effects: CacheProcessEffects) arguments =
@@ -322,6 +352,12 @@ module CacheMachineConfiguration =
             Error "Grace Server URI is required."
         elif String.IsNullOrWhiteSpace configuration.IdentityKeyName then
             Error "Grace Cache identity key reference is required."
+        elif configuration.PendingKeyTransition
+             |> Option.exists (fun pending ->
+                 String.IsNullOrWhiteSpace pending.CurrentKeyName
+                 || String.IsNullOrWhiteSpace pending.ReplacementKeyName
+                 || pending.CurrentKeyName = pending.ReplacementKeyName) then
+            Error "Grace Cache pending key transition is invalid."
         else
             match validateEndpoint configuration.Endpoint configuration.AllowHttpEndpoint, Uri.TryCreate(configuration.ServerUri, UriKind.Absolute) with
             | Error error, _ -> Error error
@@ -338,7 +374,7 @@ module CacheMachineConfiguration =
             if not (File.Exists path) then
                 Error "Grace Cache is not enrolled on this machine."
             else
-                let configuration = JsonSerializer.Deserialize<CacheMachineConfiguration>(File.ReadAllText path)
+                let configuration = JsonSerializer.Deserialize<CacheMachineConfiguration>(File.ReadAllText path, Constants.JsonSerializerOptions)
 
                 match validate configuration with
                 | Ok () -> Ok configuration
@@ -363,7 +399,7 @@ module CacheMachineConfiguration =
                     let temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp"
 
                     try
-                        File.WriteAllText(temporaryPath, JsonSerializer.Serialize configuration)
+                        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(configuration, Constants.JsonSerializerOptions))
                         File.Move(temporaryPath, path, true)
                         Ok()
                     finally
@@ -381,6 +417,65 @@ module CacheMachineConfiguration =
             | _ -> None
 
         { Lifecycle = "registered"; CacheId = Some(configuration.CacheId.ToString("D")); Transport = transport }
+
+/// Supplies the durable effects required to finish or roll back one pending service-key transition.
+type PendingKeyTransitionEffects =
+    {
+        WriteConfiguration: CacheMachineConfiguration -> Result<unit, string>
+        DeleteKey: string -> Result<unit, string>
+        ProbeAcceptedKey: CacheMachineConfiguration -> string -> Result<bool, string>
+    }
+
+/// Coordinates the small durable state machine that prevents Cache and Grace Server key references from diverging.
+module PendingKeyTransition =
+
+    /// Persists the current and replacement opaque references before a rotation request can reach Grace Server.
+    let beginTransition effects (configuration: CacheMachineConfiguration) replacementKeyName =
+        let pending = { CurrentKeyName = configuration.IdentityKeyName; ReplacementKeyName = replacementKeyName }
+
+        let pendingConfiguration = { configuration with PendingKeyTransition = Some pending }
+
+        effects.WriteConfiguration pendingConfiguration
+        |> Result.map (fun () -> pendingConfiguration)
+
+    /// Clears a rejected replacement only after removing its certificate while retaining the established current key.
+    let rejectReplacement effects (configuration: CacheMachineConfiguration) (pending: PendingKeyTransition) =
+        match effects.DeleteKey pending.ReplacementKeyName with
+        | Error error -> Error error
+        | Ok () ->
+            let recovered = { configuration with IdentityKeyName = pending.CurrentKeyName; PendingKeyTransition = None }
+
+            effects.WriteConfiguration recovered
+            |> Result.map (fun () -> recovered)
+
+    /// Durably switches to the server-accepted key before retiring the prior key and finally clearing the transition.
+    let acceptReplacement effects (configuration: CacheMachineConfiguration) (pending: PendingKeyTransition) =
+        let switched = { configuration with IdentityKeyName = pending.ReplacementKeyName; PendingKeyTransition = Some pending }
+
+        match effects.WriteConfiguration switched with
+        | Error error -> Error error
+        | Ok () ->
+            match effects.DeleteKey pending.CurrentKeyName with
+            | Error error -> Error error
+            | Ok () ->
+                let finalized = { switched with PendingKeyTransition = None }
+
+                effects.WriteConfiguration finalized
+                |> Result.map (fun () -> finalized)
+
+    /// Resolves a persisted incomplete transition using the key currently accepted by Grace Server before normal cache work resumes.
+    let reconcile effects (configuration: CacheMachineConfiguration) =
+        match configuration.PendingKeyTransition with
+        | None -> Ok configuration
+        | Some pending ->
+            match effects.ProbeAcceptedKey configuration pending.CurrentKeyName with
+            | Error error -> Error error
+            | Ok true -> rejectReplacement effects configuration pending
+            | Ok false ->
+                match effects.ProbeAcceptedKey configuration pending.ReplacementKeyName with
+                | Error error -> Error error
+                | Ok true -> acceptReplacement effects configuration pending
+                | Ok false -> Error "Grace Cache key transition could not be reconciled."
 
 /// Runs transient cache-control attempts with a fixed upper bound and no durable retry state.
 module CacheRetry =
@@ -406,6 +501,44 @@ module CacheRetry =
             if retry then pause attempt
 
         result |> Option.defaultValue (Error true)
+
+/// Distinguishes an enrollment failure proven to occur before dispatch from an outcome that may have reached Grace Server.
+type EnrollmentAttemptResult<'T> =
+    | PreSendFailure
+    | MayHaveReachedServer
+    | EnrollmentCompleted of 'T
+
+/// Retries enrollment only before an HTTP request can reach Grace Server, preventing duplicate immutable Cache registrations.
+module EnrollmentRetry =
+
+    /// Executes bounded pre-send retries and stops immediately for any response, timeout, or connection loss after dispatch.
+    let execute send pause =
+        let mutable attempt = 0
+        let mutable result = MayHaveReachedServer
+        let mutable retry = true
+
+        while attempt < 3 && retry do
+            attempt <- attempt + 1
+            result <- send ()
+
+            match result with
+            | PreSendFailure when attempt < 3 -> pause attempt
+            | PreSendFailure -> retry <- false
+            | MayHaveReachedServer
+            | EnrollmentCompleted _ -> retry <- false
+
+        result
+
+/// Opens the established service identity before any replacement certificate can be created during key rotation.
+module KeyRotationPreparation =
+
+    /// Returns both usable key handles only when the current key opens before replacement creation begins.
+    let openCurrentBeforeCreatingReplacement openCurrent createReplacement =
+        match openCurrent () with
+        | Error error -> Error error
+        | Ok currentKey ->
+            createReplacement ()
+            |> Result.map (fun replacementKey -> currentKey, replacementKey)
 
 /// Owns service-account P-256 keys without exporting private parameters and calls that use the completed #600 contracts.
 module CacheRuntimeControl =
@@ -517,7 +650,7 @@ module CacheRuntimeControl =
         else
             Ok value
 
-    /// Posts one #600 cache DTO and retries only transient failures a fixed number of times without retaining workflow state.
+    /// Posts one idempotent #600 cache DTO and preserves the existing bounded retry behavior for refresh and rotation.
     let private postWithRetry<'request> (serverUri: Uri) (route: string) (token: string) (request: 'request) =
         let requestUri = Uri(serverUri, route)
 
@@ -560,7 +693,65 @@ module CacheRuntimeControl =
             | :? TaskCanceledException -> Error true
 
         CacheRetry.execute send (fun attempt -> Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 50))))
-        |> Result.mapError (fun _ -> "Grace Server did not complete the cache request.")
+
+    /// Sends enrollment once per post-dispatch attempt, retrying only request construction failures that cannot have reached Grace Server.
+    let private postEnrollment (serverUri: Uri) token (request: CacheEnrollmentRequest) =
+        let requestUri = Uri(serverUri, "cache/enroll")
+
+        let send () =
+            let prepared =
+                try
+                    let client = new HttpClient()
+
+                    if not (String.IsNullOrWhiteSpace token) then
+                        client.DefaultRequestHeaders.Authorization <- AuthenticationHeaderValue("Bearer", token)
+
+                    let content = JsonContent.Create(request, options = Constants.JsonSerializerOptions)
+                    Ok(client, content)
+                with
+                | :? HttpRequestException
+                | :? InvalidOperationException -> Error()
+
+            match prepared with
+            | Error () -> PreSendFailure
+            | Ok (client, content) ->
+                use client = client
+                use content = content
+
+                try
+                    use response =
+                        client
+                            .PostAsync(requestUri, content :> HttpContent)
+                            .GetAwaiter()
+                            .GetResult()
+
+                    if response.IsSuccessStatusCode then
+                        let body =
+                            response
+                                .Content
+                                .ReadAsStringAsync()
+                                .GetAwaiter()
+                                .GetResult()
+
+                        let envelope = JsonSerializer.Deserialize<GraceReturnValue<CacheRegistrationResult>>(body, Constants.JsonSerializerOptions)
+
+                        if
+                            isNull (box envelope)
+                            || isNull (box envelope.ReturnValue)
+                        then
+                            MayHaveReachedServer
+                        else
+                            EnrollmentCompleted envelope.ReturnValue
+                    else
+                        MayHaveReachedServer
+                with
+                | :? HttpRequestException
+                | :? TaskCanceledException -> MayHaveReachedServer
+
+        match EnrollmentRetry.execute send (fun attempt -> Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 50)))) with
+        | EnrollmentCompleted result -> Ok result
+        | PreSendFailure -> Error "Grace Cache enrollment could not be sent. Explicitly begin a new enrollment after correcting the local failure."
+        | MayHaveReachedServer -> Error "Grace Cache enrollment outcome is unknown. Inspect registration status or explicitly begin a new enrollment."
 
     /// Prepares an enrollment target before server mutation without creating a durable enrollment record.
     let private prepareEnrollmentTarget path =
@@ -588,6 +779,85 @@ module CacheRuntimeControl =
         | true, uri when uri.Scheme = Uri.UriSchemeHttps -> "https"
         | true, uri when uri.Scheme = Uri.UriSchemeHttp -> "http-approved"
         | _ -> "unknown"
+
+    /// Builds the fixed operational facts permitted on cache-authenticated registration refresh.
+    let private refreshRequest (configuration: CacheMachineConfiguration) (key: ECDsa) =
+        let observedAt = NodaTime.SystemClock.Instance.GetCurrentInstant()
+
+        let unsignedRequest: CacheRegistrationRefreshRequest =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = configuration.CacheId
+                Endpoint = configuration.Endpoint
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion =
+                    typeof<CacheMachineConfiguration>
+                        .Assembly.GetName()
+                        .Version.ToString()
+                ProtocolVersion = "1"
+                PrefetchSupported = false
+                ObservedAt = observedAt
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let proof =
+            CacheRegistrationProof.createProof
+                key
+                configuration.CacheId
+                CacheRegistrationProof.RefreshOperation
+                (CacheRegistrationProof.refreshRequestDigest unsignedRequest)
+                observedAt
+
+        { unsignedRequest with Proof = proof }
+
+    /// Sends one existing #618 refresh proof with the supplied opaque key reference.
+    let private refreshWithKey (configuration: CacheMachineConfiguration) keyReference =
+        match openKey keyReference with
+        | Error _ -> Error false
+        | Ok key ->
+            use key = key
+            let request = refreshRequest configuration key.Key
+            postWithRetry (Uri(configuration.ServerUri)) "cache/refresh" String.Empty request
+
+    /// Determines whether Grace Server currently accepts one candidate key without treating an ambiguous transport failure as rejection.
+    let private probeAcceptedKey configuration keyReference =
+        match refreshWithKey configuration keyReference with
+        | Error true -> Error "Grace Cache key transition could not be reconciled because Grace Server did not complete the proof request."
+        | Error false -> Ok false
+        | Ok result ->
+            match result.Status with
+            | CacheRegistrationRefreshStatus.Refreshed
+            | CacheRegistrationRefreshStatus.RefreshNotDue
+            | CacheRegistrationRefreshStatus.Expired -> Ok true
+            | _ -> Ok false
+
+    /// Reconciles a pending key transition before listener startup, refresh, signing, cache-store work, or a further rotation.
+    let resolvePendingKeyTransition configurationPath configuration =
+        let effects: PendingKeyTransitionEffects =
+            { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey; ProbeAcceptedKey = probeAcceptedKey }
+
+        PendingKeyTransition.reconcile effects configuration
+
+    /// Reads configuration only after any pending rotation has reached a durable, server-confirmed outcome.
+    let getReadyConfiguration () =
+        let configurationPath = CacheMachineConfiguration.configurationPath ()
+
+        match CacheMachineConfiguration.tryRead configurationPath with
+        | Error error -> Error error
+        | Ok configuration -> resolvePendingKeyTransition configurationPath configuration
+
+    /// Refreshes the current cache registration under #618's bounded retry and health-publication behavior.
+    let refreshNow () =
+        match getReadyConfiguration () with
+        | Error error -> Error error
+        | Ok configuration ->
+            match refreshWithKey configuration configuration.IdentityKeyName with
+            | Error _ -> Error "Grace Cache registration refresh was not accepted."
+            | Ok result ->
+                match result.Status with
+                | CacheRegistrationRefreshStatus.Refreshed
+                | CacheRegistrationRefreshStatus.RefreshNotDue -> Ok(CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
+                | _ -> Error "Grace Cache registration refresh was not accepted."
 
     /// Enrolls one cache through the #600 administrator route and writes no local configuration until the server accepts its immutable CacheId.
     let enroll input =
@@ -642,7 +912,7 @@ module CacheRuntimeControl =
                         deleteKey keyName |> ignore
                         Error "Cache enrollment input is invalid."
                     | Ok () ->
-                        match postWithRetry serverUri "cache/enroll" token request with
+                        match postEnrollment serverUri token request with
                         | Ok result when result.Status = CacheRegistrationRefreshStatus.Enrolled ->
                             match result.Registration with
                             | Some registration when registration.CacheId <> Guid.Empty ->
@@ -653,6 +923,7 @@ module CacheRuntimeControl =
                                         AllowHttpEndpoint = input.AllowHttpEndpoint
                                         ServerUri = serverUri.AbsoluteUri
                                         IdentityKeyName = keyName
+                                        PendingKeyTransition = None
                                     }
 
                                 match CacheMachineConfiguration.write configurationPath configuration with
@@ -668,56 +939,70 @@ module CacheRuntimeControl =
                             deleteKey keyName |> ignore
                             Error "Grace Cache enrollment was not accepted."
 
-    /// Rotates the service key through #600's current-key proof route before retiring the locally retained prior key.
+    /// Rotates the service key through #600's current-key proof route with a crash-safe local transition before retiring the prior key.
     let rotateNow () =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
         match CacheMachineConfiguration.tryRead configurationPath with
         | Error error -> Error error
         | Ok configuration ->
-            match openKey configuration.IdentityKeyName, createKey () with
-            | Error error, _
-            | _, Error error -> Error error
-            | Ok oldKey, Ok (newKeyName, newKey) ->
-                use oldKey = oldKey
-                use newKey = newKey
+            match resolvePendingKeyTransition configurationPath configuration with
+            | Error error -> Error error
+            | Ok configuration ->
+                match KeyRotationPreparation.openCurrentBeforeCreatingReplacement (fun () -> openKey configuration.IdentityKeyName) createKey with
+                | Error error -> Error error
+                | Ok (oldKey, (newKeyName, newKey)) ->
+                    use oldKey = oldKey
+                    use newKey = newKey
 
-                match publicKey newKey.Key with
-                | Error error ->
-                    deleteKey newKeyName |> ignore
-                    Error error
-                | Ok newPublicKey ->
-                    let unsignedRequest: CacheKeyRotationRequest =
-                        {
-                            Class = nameof CacheKeyRotationRequest
-                            CacheId = configuration.CacheId
-                            NewPublicKey = newPublicKey
-                            Proof = Unchecked.defaultof<SignedCacheRequestProof>
-                        }
-
-                    let digest = CacheRegistrationProof.rotationRequestDigest unsignedRequest
-
-                    let proof =
-                        CacheRegistrationProof.createProof
-                            oldKey.Key
-                            configuration.CacheId
-                            CacheRegistrationProof.RotateKeyOperation
-                            digest
-                            (NodaTime.SystemClock.Instance.GetCurrentInstant())
-
-                    let request = { unsignedRequest with Proof = proof }
-
-                    match postWithRetry (Uri(configuration.ServerUri)) "cache/rotate-key" String.Empty request with
-                    | Ok result when result.Status = CacheRegistrationRefreshStatus.Rotated ->
-                        let updatedConfiguration = { configuration with IdentityKeyName = newKeyName }
-
-                        match CacheMachineConfiguration.write configurationPath updatedConfiguration with
-                        | Error error -> Error error
-                        | Ok () ->
-                            match deleteKey configuration.IdentityKeyName with
-                            | Ok () -> Ok(CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
-                            | Error error -> Error error
-                    | Ok _
-                    | Error _ ->
+                    let cleanupReplacement error =
                         deleteKey newKeyName |> ignore
-                        Error "Grace Cache key rotation was not accepted."
+                        Error error
+
+                    match publicKey newKey.Key with
+                    | Error error -> cleanupReplacement error
+                    | Ok newPublicKey ->
+                        let effects: PendingKeyTransitionEffects =
+                            {
+                                WriteConfiguration = CacheMachineConfiguration.write configurationPath
+                                DeleteKey = deleteKey
+                                ProbeAcceptedKey = probeAcceptedKey
+                            }
+
+                        match PendingKeyTransition.beginTransition effects configuration newKeyName with
+                        | Error error -> cleanupReplacement error
+                        | Ok pendingConfiguration ->
+                            let unsignedRequest: CacheKeyRotationRequest =
+                                {
+                                    Class = nameof CacheKeyRotationRequest
+                                    CacheId = configuration.CacheId
+                                    NewPublicKey = newPublicKey
+                                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                                }
+
+                            let proof =
+                                CacheRegistrationProof.createProof
+                                    oldKey.Key
+                                    configuration.CacheId
+                                    CacheRegistrationProof.RotateKeyOperation
+                                    (CacheRegistrationProof.rotationRequestDigest unsignedRequest)
+                                    (NodaTime.SystemClock.Instance.GetCurrentInstant())
+
+                            let request = { unsignedRequest with Proof = proof }
+
+                            match postWithRetry (Uri(configuration.ServerUri)) "cache/rotate-key" String.Empty request with
+                            | Ok result when result.Status = CacheRegistrationRefreshStatus.Rotated ->
+                                match pendingConfiguration.PendingKeyTransition with
+                                | Some pending ->
+                                    PendingKeyTransition.acceptReplacement effects pendingConfiguration pending
+                                    |> Result.map (fun updated -> CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint))
+                                | None -> Error "Grace Cache key transition could not be finalized."
+                            | Ok _
+                            | Error false ->
+                                match pendingConfiguration.PendingKeyTransition with
+                                | Some pending ->
+                                    PendingKeyTransition.rejectReplacement effects pendingConfiguration pending
+                                    |> Result.mapError id
+                                | None -> Error "Grace Cache key transition could not be rolled back."
+                                |> Result.bind (fun _ -> Error "Grace Cache key rotation was not accepted.")
+                            | Error true -> Error "Grace Cache key rotation outcome is unknown and requires operator inspection."

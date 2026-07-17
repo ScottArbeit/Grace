@@ -132,6 +132,62 @@ type CacheProcessDispatchTests() =
         Assert.That(result.ExitCode, Is.EqualTo(1))
         Assert.That(result.Payload, Does.Not.Contain("super-secret"))
         Assert.That(result.Payload, Does.Contain("Cache enrollment failed."))
+        Assert.That(result.Payload, Does.Contain("Inspect registration status"))
+
+    /// Verifies status output uses Grace's F# serializer so optional values have the stable string-or-null JSON shape.
+    [<Test>]
+    member _.SuccessfulStatusUsesStringOrNullJsonFields() =
+        let effects: CacheProcessEffects =
+            {
+                Enroll = fun _ -> failwith "Enrollment must not run for status."
+                RotateNow = fun () -> failwith "Rotation must not run for status."
+                Status = fun () -> Ok(CacheRuntimeStatus.registered (Guid.Parse "44444444-4444-4444-4444-444444444444") "https")
+                Run = fun () -> failwith "Host startup must not run for status."
+            }
+
+        let result = CacheProcessCommand.execute effects [| "--status" |]
+
+        Assert.That(
+            result.Payload,
+            Is.EqualTo("{\r\n  \"Lifecycle\": \"registered\",\r\n  \"CacheId\": \"44444444-4444-4444-4444-444444444444\",\r\n  \"Transport\": \"https\"\r\n}")
+        )
+
+    /// Verifies explicit false and stray positional input after the marker-only HTTP exception cannot reach enrollment effects.
+    [<Test>]
+    member _.AllowHttpRejectsExplicitFalseAndStrayTokensBeforeEnrollment() =
+        let mutable calls = 0
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll =
+                    fun _ ->
+                        calls <- calls + 1
+                        failwith "Malformed marker-only input must not enroll."
+                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
+                Status = fun () -> failwith "Status must not run for enrollment."
+                Run = fun () -> failwith "Host startup must not run for enrollment."
+            }
+
+        let httpArguments =
+            enrollmentArguments
+            |> Array.map (fun argument ->
+                if argument = "https://cache.example.test" then
+                    "http://cache.example.test"
+                else
+                    argument)
+
+        let explicitFalse = CacheProcessCommand.execute effects (Array.append httpArguments [| "--allow-http"; "false" |])
+        let strayToken = CacheProcessCommand.execute effects (Array.append httpArguments [| "stray" |])
+
+        let validMarker =
+            CacheProcessCommand.execute
+                { effects with Enroll = fun _ -> Ok(CacheRuntimeStatus.registered Guid.Empty "http-approved") }
+                (Array.append httpArguments [| "--allow-http" |])
+
+        Assert.That(explicitFalse.ExitCode, Is.EqualTo(1))
+        Assert.That(strayToken.ExitCode, Is.EqualTo(1))
+        Assert.That(validMarker.ExitCode, Is.EqualTo(0))
+        Assert.That(calls, Is.EqualTo(0))
 
     /// Verifies cache control retries only explicitly transient server failures and retains no retry workflow state.
     [<Test>]
@@ -164,6 +220,49 @@ type CacheProcessDispatchTests() =
 
         Assert.That(result, Is.EqualTo(Error false))
         Assert.That(calls, Is.EqualTo(1))
+
+    /// Verifies missing or corrupt current-key references fail before replacement creation can orphan a certificate.
+    [<Test>]
+    member _.RotationNeverCreatesReplacementWhenCurrentKeyCannotOpen() =
+        let mutable replacementsCreated = 0
+
+        let result =
+            KeyRotationPreparation.openCurrentBeforeCreatingReplacement
+                (fun () -> Error "current key is missing or corrupt")
+                (fun () ->
+                    replacementsCreated <- replacementsCreated + 1
+                    Ok "replacement")
+
+        match result with
+        | Ok _ -> Assert.Fail("A missing or corrupt current key must prevent replacement creation.")
+        | Error error -> Assert.That(error, Is.EqualTo("current key is missing or corrupt"))
+
+        Assert.That(replacementsCreated, Is.EqualTo(0))
+
+    /// Verifies enrollment retries only failures proven before dispatch and never repeats an ambiguous post-dispatch outcome.
+    [<Test>]
+    member _.EnrollmentRetryStopsAfterOneAmbiguousDispatch() =
+        let mutable preSendCalls = 0
+        let mutable ambiguousCalls = 0
+
+        let preSendResult =
+            EnrollmentRetry.execute
+                (fun () ->
+                    preSendCalls <- preSendCalls + 1
+                    PreSendFailure)
+                ignore
+
+        let ambiguousResult =
+            EnrollmentRetry.execute
+                (fun () ->
+                    ambiguousCalls <- ambiguousCalls + 1
+                    MayHaveReachedServer)
+                ignore
+
+        Assert.That(preSendResult, Is.EqualTo(PreSendFailure))
+        Assert.That(preSendCalls, Is.EqualTo(3))
+        Assert.That(ambiguousResult, Is.EqualTo(MayHaveReachedServer))
+        Assert.That(ambiguousCalls, Is.EqualTo(1))
 
     /// Verifies the portable ES256 helper emits only the public #600 DTO shape needed by cache enrollment and rotation.
     [<Test>]

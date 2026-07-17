@@ -20,7 +20,7 @@ module CacheCommand =
             )
 
         let endpoint = new Option<string>("--endpoint", Required = true, Description = "The exact public cache endpoint.")
-        let allowHttp = new Option<bool>("--allow-http", Description = "Allow only the explicitly enrolled HTTP endpoint.")
+        let allowHttp = new Option<bool>("--allow-http", Description = "Allow only the explicitly enrolled HTTP endpoint.", Arity = ArgumentArity.Zero)
         let displayName = new Option<string>("--display-name", Required = true, Description = "Non-unique cache display name.")
         let ownerId = new Option<string>("--owner-id", Required = true, Description = "Owner ID <Guid> for cache enrollment.")
         let organizationId = new Option<string>("--organization-id", Required = false, Description = "Optional Organization ID <Guid> for cache enrollment.")
