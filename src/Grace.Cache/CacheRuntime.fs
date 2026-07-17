@@ -7,6 +7,8 @@ open System.IO.Pipes
 open System.Net.Http
 open System.Net.Http.Headers
 open System.Net.Http.Json
+open System.Net.Sockets
+open System.Runtime.InteropServices
 open System.Security.Cryptography
 open System.Security.Cryptography.X509Certificates
 open System.Security.AccessControl
@@ -34,6 +36,16 @@ type CacheMachineConfiguration =
         PendingKeyTransition: PendingKeyTransition option
     }
 
+/// Records the only durable local evidence permitted while a cache enrollment reaches a confirmed or ambiguous outcome.
+type CacheEnrollmentRecovery =
+    {
+        Endpoint: string
+        RepositoryScopes: (Guid * Guid) array
+        IdentityKeyName: string
+        RecoveryStatus: string
+        CacheId: Guid option
+    }
+
 /// Represents the safe operational facts that may be returned by the local cache control surface.
 type CacheRuntimeStatus = { Lifecycle: string; CacheId: string option; Transport: string option }
 
@@ -42,6 +54,9 @@ module CacheRuntimeStatus =
 
     /// Builds a stable registered result for cache process control verbs.
     let registered (cacheId: Guid) transport = { Lifecycle = "registered"; CacheId = Some(cacheId.ToString("D")); Transport = Some transport }
+
+    /// Builds the redacted status returned while ambiguous enrollment evidence blocks every normal cache operation.
+    let enrollmentRecoveryRequired = { Lifecycle = "enrollment-recovery-required"; CacheId = None; Transport = None }
 
 /// Holds the operating-system mutex lease that makes one active cache process machine-wide.
 type MachineInstanceLease internal (mutex: Mutex) =
@@ -311,7 +326,7 @@ module CacheProcessCommand =
     let private failure operation =
         let error =
             if operation = "enrollment" then
-                "Cache enrollment failed. Inspect registration status or explicitly begin a new enrollment."
+                "Cache enrollment failed. Administrator inspection or revocation is required before another enrollment."
             else
                 $"Cache {operation} failed."
 
@@ -457,6 +472,87 @@ module CacheMachineConfiguration =
 
         { Lifecycle = "registered"; CacheId = Some(configuration.CacheId.ToString("D")); Transport = transport }
 
+/// Persists one narrow enrollment-recovery record without becoming a retry ledger or general workflow engine.
+module CacheEnrollmentRecovery =
+
+    [<Literal>]
+    let private preparedStatus = "prepared"
+
+    [<Literal>]
+    let private acceptedStatus = "accepted-cache-id"
+
+    [<Literal>]
+    let private unknownStatus = "unknown-cache-id"
+
+    /// Resolves the companion recovery path alongside the machine-scoped cache configuration.
+    let recoveryPath (configurationPath: string) = Path.Combine(Path.GetDirectoryName(configurationPath), "cache.enrollment-recovery.json")
+
+    /// Creates the evidence that must exist before the enrollment request can reach Grace Server.
+    let prepare endpoint repositoryScopes identityKeyName =
+        { Endpoint = endpoint; RepositoryScopes = repositoryScopes; IdentityKeyName = identityKeyName; RecoveryStatus = preparedStatus; CacheId = None }
+
+    /// Marks a record with the immutable server-generated CacheId before local registration finalization begins.
+    let accept cacheId recovery = { recovery with RecoveryStatus = acceptedStatus; CacheId = Some cacheId }
+
+    /// Preserves the permitted evidence when enrollment may have reached Grace Server without a valid CacheId.
+    let unknown recovery = { recovery with RecoveryStatus = unknownStatus; CacheId = None }
+
+    /// Identifies the only record state that blocks automatic recovery and requires administrator inspection or revocation.
+    let isUnknown recovery =
+        recovery.RecoveryStatus = unknownStatus
+        && recovery.CacheId.IsNone
+
+    /// Atomically writes local recovery evidence before remote enrollment or after a confirmed CacheId response.
+    let write (path: string) (recovery: CacheEnrollmentRecovery) =
+        try
+            let directory = Path.GetDirectoryName path
+
+            if String.IsNullOrWhiteSpace directory then
+                Error "Grace Cache enrollment recovery could not be written."
+            else
+                Directory.CreateDirectory directory |> ignore
+                let temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp"
+
+                try
+                    File.WriteAllText(temporaryPath, JsonSerializer.Serialize(recovery, Constants.JsonSerializerOptions))
+                    File.Move(temporaryPath, path, true)
+                    Ok()
+                finally
+                    if File.Exists temporaryPath then File.Delete temporaryPath
+        with
+        | :? IOException
+        | :? UnauthorizedAccessException -> Error "Grace Cache enrollment recovery could not be written."
+
+    /// Reads existing recovery evidence without creating a record or treating malformed data as an enrollment retry opportunity.
+    let tryRead (path: string) =
+        try
+            if not (File.Exists path) then
+                Ok None
+            else
+                let recovery = JsonSerializer.Deserialize<CacheEnrollmentRecovery>(File.ReadAllText path, Constants.JsonSerializerOptions)
+
+                if isNull (box recovery)
+                   || String.IsNullOrWhiteSpace recovery.Endpoint
+                   || isNull recovery.RepositoryScopes
+                   || String.IsNullOrWhiteSpace recovery.IdentityKeyName
+                   || String.IsNullOrWhiteSpace recovery.RecoveryStatus then
+                    Error "Grace Cache enrollment recovery is invalid."
+                else
+                    Ok(Some recovery)
+        with
+        | :? JsonException -> Error "Grace Cache enrollment recovery is invalid."
+        | :? IOException
+        | :? UnauthorizedAccessException -> Error "Grace Cache enrollment recovery could not be read."
+
+    /// Removes recovery evidence only after local finalization or remote compensation has reached a confirmed outcome.
+    let clear (path: string) =
+        try
+            if File.Exists path then File.Delete path
+            Ok()
+        with
+        | :? IOException
+        | :? UnauthorizedAccessException -> Error "Grace Cache enrollment recovery could not be cleared."
+
 /// Composes cache routes beneath a separately configured Grace Server path base.
 module CacheServerRoute =
 
@@ -553,11 +649,51 @@ module CacheRetry =
 
         result |> Option.defaultValue (Error true)
 
+/// Distinguishes a retryable transport failure from a server rejection and a committed-or-unreadable result.
+type CachePostFailure =
+    | Retryable
+    | Rejected
+    | Ambiguous
+
+/// Reissues only transport-safe post attempts while preserving ambiguous success outcomes for reconciliation.
+module CachePostRetry =
+    /// Executes at most three attempts and rebuilds the request payload for every retry.
+    let execute<'T> (send: unit -> Result<'T, CachePostFailure>) (pause: int -> unit) =
+        let mutable attempt = 0
+        let mutable retry = true
+        let mutable result: Result<'T, CachePostFailure> option = None
+
+        while attempt < 3 && retry do
+            attempt <- attempt + 1
+
+            match send () with
+            | Ok value ->
+                retry <- false
+                result <- Some(Ok value)
+            | Error Retryable when attempt < 3 -> pause attempt
+            | Error failure ->
+                retry <- false
+                result <- Some(Error failure)
+
+        result |> Option.defaultValue (Error Retryable)
+
+    /// Rebuilds a request for every send attempt so signed timestamps cannot be replayed after a lost response.
+    let executeWithRequest<'request, 'result> (buildRequest: unit -> 'request) (send: 'request -> Result<'result, CachePostFailure>) (pause: int -> unit) =
+        execute (fun () -> send (buildRequest ())) pause
+
 /// Distinguishes an enrollment failure proven to occur before dispatch from an outcome that may have reached Grace Server.
 type EnrollmentAttemptResult<'T> =
     | PreSendFailure
     | MayHaveReachedServer
+    | RejectedByServer
     | EnrollmentCompleted of 'T
+
+/// Classifies the one enrollment dispatch outcome without granting an ambiguous registration an automatic recovery path.
+type EnrollmentPostOutcome =
+    | EnrollmentAccepted of CacheRegistrationResult
+    | EnrollmentRejected
+    | EnrollmentNotSent
+    | EnrollmentUnknown
 
 /// Retries enrollment only before an HTTP request can reach Grace Server, preventing duplicate immutable Cache registrations.
 module EnrollmentRetry =
@@ -576,6 +712,7 @@ module EnrollmentRetry =
             | PreSendFailure when attempt < 3 -> pause attempt
             | PreSendFailure -> retry <- false
             | MayHaveReachedServer
+            | RejectedByServer
             | EnrollmentCompleted _ -> retry <- false
 
         result
@@ -722,11 +859,11 @@ module CacheRuntimeControl =
         else
             Ok value
 
-    /// Posts one idempotent #600 cache DTO and preserves the existing bounded retry behavior for refresh and rotation.
-    let private postWithRetry<'request> (serverUri: Uri) (route: string) (token: string) (request: 'request) =
+    /// Posts one cache DTO, rebuilding the payload for every transport retry and preserving ambiguous successful responses.
+    let private postWithRetry<'request> (serverUri: Uri) (route: string) (token: string) (buildRequest: unit -> 'request) =
         let requestUri = CacheServerRoute.append serverUri route
 
-        let send () =
+        let send request =
             try
                 use client = new HttpClient()
 
@@ -750,14 +887,16 @@ module CacheRuntimeControl =
                             .GetResult()
 
                     CacheServerResponse.tryReadRegistrationResult body
-                    |> Result.mapError (fun () -> false)
+                    |> Result.mapError (fun () -> Ambiguous)
+                else if int response.StatusCode >= 500 then
+                    Error Retryable
                 else
-                    Error(int response.StatusCode >= 500)
+                    Error Rejected
             with
             | :? HttpRequestException
-            | :? TaskCanceledException -> Error true
+            | :? TaskCanceledException -> Error Retryable
 
-        CacheRetry.execute send (fun attempt -> Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 50))))
+        CachePostRetry.executeWithRequest buildRequest send (fun attempt -> Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 50))))
 
     /// Sends enrollment once per post-dispatch attempt, retrying only request construction failures that cannot have reached Grace Server.
     let private postEnrollment (serverUri: Uri) token (request: CacheEnrollmentRequest) =
@@ -802,21 +941,26 @@ module CacheRuntimeControl =
                         | Ok result -> EnrollmentCompleted result
                         | Error () -> MayHaveReachedServer
                     else
-                        MayHaveReachedServer
+                        RejectedByServer
                 with
                 | :? HttpRequestException
                 | :? TaskCanceledException -> MayHaveReachedServer
 
         match EnrollmentRetry.execute send (fun attempt -> Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 50)))) with
-        | EnrollmentCompleted result -> Ok result
-        | PreSendFailure -> Error "Grace Cache enrollment could not be sent. Explicitly begin a new enrollment after correcting the local failure."
-        | MayHaveReachedServer -> Error "Grace Cache enrollment outcome is unknown. Inspect registration status or explicitly begin a new enrollment."
+        | EnrollmentCompleted result -> EnrollmentAccepted result
+        | PreSendFailure -> EnrollmentNotSent
+        | RejectedByServer -> EnrollmentRejected
+        | MayHaveReachedServer -> EnrollmentUnknown
 
-    /// Prepares an enrollment target before server mutation without creating a durable enrollment record.
+    /// Rejects a new enrollment when existing configuration or recovery evidence must be resolved first.
     let private prepareEnrollmentTarget path =
         try
+            let recoveryPath = CacheEnrollmentRecovery.recoveryPath path
+
             if File.Exists path then
                 Error "Grace Cache is already enrolled on this machine."
+            elif File.Exists recoveryPath then
+                Error "Grace Cache enrollment recovery requires administrator inspection or revocation before a new enrollment."
             else
                 let directory = Path.GetDirectoryName path
 
@@ -839,8 +983,8 @@ module CacheRuntimeControl =
         | true, uri when uri.Scheme = Uri.UriSchemeHttp -> "http-approved"
         | _ -> "unknown"
 
-    /// Builds the fixed operational facts permitted on cache-authenticated registration refresh.
-    let private refreshRequest (configuration: CacheMachineConfiguration) (key: ECDsa) =
+    /// Builds the fixed operational facts permitted on one cache-authenticated registration refresh.
+    let private refreshRequest (configuration: CacheMachineConfiguration) (key: ECDsa) health =
         let observedAt = NodaTime.SystemClock.Instance.GetCurrentInstant()
 
         let unsignedRequest: CacheRegistrationRefreshRequest =
@@ -848,7 +992,7 @@ module CacheRuntimeControl =
                 Class = nameof CacheRegistrationRefreshRequest
                 CacheId = configuration.CacheId
                 Endpoint = configuration.Endpoint
-                Health = CacheHealthStatus.Healthy
+                Health = health
                 SoftwareVersion =
                     typeof<CacheMachineConfiguration>
                         .Assembly.GetName()
@@ -869,20 +1013,20 @@ module CacheRuntimeControl =
 
         { unsignedRequest with Proof = proof }
 
-    /// Sends one existing #618 refresh proof with the supplied opaque key reference.
-    let private refreshWithKey (configuration: CacheMachineConfiguration) keyReference =
+    /// Sends a refresh proof with a new observation timestamp and signature for every retry attempt.
+    let private refreshWithKey (configuration: CacheMachineConfiguration) keyReference health =
         match openKey keyReference with
-        | Error _ -> Error false
+        | Error _ -> Error Rejected
         | Ok key ->
             use key = key
-            let request = refreshRequest configuration key.Key
-            postWithRetry (Uri(configuration.ServerUri)) "cache/refresh" String.Empty request
+            postWithRetry (Uri(configuration.ServerUri)) "cache/refresh" String.Empty (fun () -> refreshRequest configuration key.Key health)
 
     /// Determines whether Grace Server currently accepts one candidate key without treating an ambiguous transport failure as rejection.
     let private probeAcceptedKey configuration keyReference =
-        match refreshWithKey configuration keyReference with
-        | Error true -> Error "Grace Cache key transition could not be reconciled because Grace Server did not complete the proof request."
-        | Error false -> Ok false
+        match refreshWithKey configuration keyReference CacheHealthStatus.Unhealthy with
+        | Error Retryable
+        | Error Ambiguous -> Error "Grace Cache key transition could not be reconciled because Grace Server did not complete the proof request."
+        | Error Rejected -> Ok false
         | Ok result ->
             match result.Status with
             | CacheRegistrationRefreshStatus.Refreshed
@@ -897,20 +1041,63 @@ module CacheRuntimeControl =
 
         PendingKeyTransition.reconcile effects configuration
 
-    /// Reads configuration only after any pending rotation has reached a durable, server-confirmed outcome.
+    /// Finalizes a known accepted enrollment from durable evidence before cache startup or normal control work can proceed.
+    let private finalizeAcceptedEnrollment (configurationPath: string) (serverUri: Uri) (recovery: CacheEnrollmentRecovery) cacheId =
+        let endpoint = Uri(recovery.Endpoint)
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = cacheId
+                Endpoint = recovery.Endpoint
+                AllowHttpEndpoint = endpoint.Scheme = Uri.UriSchemeHttp
+                ServerUri = serverUri.AbsoluteUri
+                IdentityKeyName = recovery.IdentityKeyName
+                PendingKeyTransition = None
+            }
+
+        match CacheMachineConfiguration.write configurationPath configuration with
+        | Error error -> Error error
+        | Ok () ->
+            CacheEnrollmentRecovery.clear (CacheEnrollmentRecovery.recoveryPath configurationPath)
+            |> Result.map (fun () -> configuration)
+
+    /// Reconciles narrow enrollment evidence before any cache work and stops unknown registrations without retrying them.
+    let private reconcileEnrollmentRecovery configurationPath =
+        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
+
+        match CacheEnrollmentRecovery.tryRead recoveryPath with
+        | Error error -> Error error
+        | Ok None -> Ok None
+        | Ok (Some recovery) when CacheEnrollmentRecovery.isUnknown recovery ->
+            Error "Grace Cache enrollment outcome is unknown. Administrator inspection or revocation is required before normal cache work or a new enrollment."
+        | Ok (Some recovery) ->
+            match recovery.CacheId, serverUri () with
+            | Some cacheId, Ok currentServerUri ->
+                finalizeAcceptedEnrollment configurationPath currentServerUri recovery cacheId
+                |> Result.map Some
+            | Some _, Error error -> Error error
+            | None, _ ->
+                Error
+                    "Grace Cache enrollment outcome is unknown. Administrator inspection or revocation is required before normal cache work or a new enrollment."
+
+    /// Reads configuration only after accepted enrollment and pending rotation recovery have reached durable outcomes.
     let private getReadyConfigurationCore () =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
-        match CacheMachineConfiguration.tryRead configurationPath with
+        match reconcileEnrollmentRecovery configurationPath with
         | Error error -> Error error
-        | Ok configuration -> resolvePendingKeyTransition configurationPath configuration
+        | Ok (Some configuration) -> resolvePendingKeyTransition configurationPath configuration
+        | Ok None ->
+            match CacheMachineConfiguration.tryRead configurationPath with
+            | Error error -> Error error
+            | Ok configuration -> resolvePendingKeyTransition configurationPath configuration
 
     /// Reconciles pending key work before any caller uses the registered machine configuration.
     let getReadyConfiguration () = serializeLifecycle getReadyConfigurationCore
 
-    /// Refreshes one prepared configuration without taking the lifecycle gate recursively.
-    let private refreshConfiguration configuration =
-        match refreshWithKey configuration configuration.IdentityKeyName with
+    /// Refreshes one prepared configuration without taking the lifecycle gate recursively or making a scaffold selectable.
+    let private refreshConfiguration configuration health =
+        match refreshWithKey configuration configuration.IdentityKeyName health with
         | Error _ -> Error "Grace Cache registration refresh was not accepted."
         | Ok result ->
             match result.Status with
@@ -918,22 +1105,28 @@ module CacheRuntimeControl =
             | CacheRegistrationRefreshStatus.RefreshNotDue -> Ok(CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
             | _ -> Error "Grace Cache registration refresh was not accepted."
 
-    /// Refreshes the current cache registration under #618's bounded retry and health-publication behavior.
+    /// Refreshes the current cache registration while preserving an unhealthy scaffold until artifact serving is available.
     let refreshNow () =
         serializeLifecycle (fun () ->
             getReadyConfigurationCore ()
-            |> Result.bind refreshConfiguration)
+            |> Result.bind (fun configuration -> refreshConfiguration configuration CacheHealthStatus.Unhealthy))
 
-    /// Reconciles and refreshes before host readiness so a restarted cache cannot wait past the active registration lifetime.
-    let startupRefresh () =
+    /// Refreshes after the protected control channel and Kestrel listener are ready, publishing healthy only when artifacts are served.
+    let startupRefresh artifactServingAvailable =
         serializeLifecycle (fun () ->
             match getReadyConfigurationCore () with
             | Error error -> Error error
             | Ok configuration ->
-                refreshConfiguration configuration
+                let health =
+                    if artifactServingAvailable then
+                        CacheHealthStatus.Healthy
+                    else
+                        CacheHealthStatus.Unhealthy
+
+                refreshConfiguration configuration health
                 |> Result.map (fun _ -> configuration))
 
-    /// Enrolls one cache through the #600 administrator route and writes no local configuration until the server accepts its immutable CacheId.
+    /// Enrolls one cache through the #600 administrator route while preserving only the approved recovery evidence.
     let enroll input =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
@@ -972,7 +1165,7 @@ module CacheRuntimeControl =
                             PublicKey = publicKey
                             Endpoint = input.Endpoint
                             AllowHttpEndpoint = input.AllowHttpEndpoint
-                            Health = CacheHealthStatus.Healthy
+                            Health = CacheHealthStatus.Unhealthy
                             SoftwareVersion =
                                 typeof<CacheMachineConfiguration>
                                     .Assembly.GetName()
@@ -986,32 +1179,43 @@ module CacheRuntimeControl =
                         deleteKey keyName |> ignore
                         Error "Cache enrollment input is invalid."
                     | Ok () ->
-                        match postEnrollment serverUri token request with
-                        | Ok result when result.Status = CacheRegistrationRefreshStatus.Enrolled ->
-                            match result.Registration with
-                            | Some registration when registration.CacheId <> Guid.Empty ->
-                                let configuration =
-                                    {
-                                        CacheId = registration.CacheId
-                                        Endpoint = input.Endpoint
-                                        AllowHttpEndpoint = input.AllowHttpEndpoint
-                                        ServerUri = serverUri.AbsoluteUri
-                                        IdentityKeyName = keyName
-                                        PendingKeyTransition = None
-                                    }
+                        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
+                        let recovery = CacheEnrollmentRecovery.prepare input.Endpoint input.RepositoryScopes keyName
 
-                                match CacheMachineConfiguration.write configurationPath configuration with
-                                | Ok () -> Ok(CacheRuntimeStatus.registered registration.CacheId (transport input.Endpoint))
-                                | Error error ->
-                                    deleteKey keyName |> ignore
-                                    Error error
-                            | _ ->
-                                deleteKey keyName |> ignore
-                                Error "Grace Server returned an invalid cache enrollment result."
-                        | Ok _
-                        | Error _ ->
+                        match CacheEnrollmentRecovery.write recoveryPath recovery with
+                        | Error error ->
                             deleteKey keyName |> ignore
-                            Error "Grace Cache enrollment was not accepted."
+                            Error error
+                        | Ok () ->
+                            let preserveUnknown () =
+                                CacheEnrollmentRecovery.write recoveryPath (CacheEnrollmentRecovery.unknown recovery)
+                                |> ignore
+
+                                Error "Grace Cache enrollment outcome is unknown. Administrator inspection or revocation is required before a new enrollment."
+
+                            match postEnrollment serverUri token request with
+                            | EnrollmentAccepted result when result.Status = CacheRegistrationRefreshStatus.Enrolled ->
+                                match result.Registration with
+                                | Some registration when registration.CacheId <> Guid.Empty ->
+                                    let acceptedRecovery = CacheEnrollmentRecovery.accept registration.CacheId recovery
+
+                                    match CacheEnrollmentRecovery.write recoveryPath acceptedRecovery with
+                                    | Error _ ->
+                                        Error "Grace Cache enrollment recovery requires administrator inspection or revocation before normal cache work."
+                                    | Ok () ->
+                                        finalizeAcceptedEnrollment configurationPath serverUri acceptedRecovery registration.CacheId
+                                        |> Result.map (fun configuration ->
+                                            CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
+                                | _ -> preserveUnknown ()
+                            | EnrollmentAccepted _
+                            | EnrollmentRejected
+                            | EnrollmentNotSent ->
+                                CacheEnrollmentRecovery.clear recoveryPath
+                                |> ignore
+
+                                deleteKey keyName |> ignore
+                                Error "Grace Cache enrollment was not accepted."
+                            | EnrollmentUnknown -> preserveUnknown ()
 
     /// Rotates the service key through #600's current-key proof route with a crash-safe local transition before retiring the prior key.
     let private rotateNowCore () =
@@ -1064,7 +1268,7 @@ module CacheRuntimeControl =
 
                             let request = { unsignedRequest with Proof = proof }
 
-                            match postWithRetry (Uri(configuration.ServerUri)) "cache/rotate-key" String.Empty request with
+                            match postWithRetry (Uri(configuration.ServerUri)) "cache/rotate-key" String.Empty (fun () -> request) with
                             | Ok result when result.Status = CacheRegistrationRefreshStatus.Rotated ->
                                 match pendingConfiguration.PendingKeyTransition with
                                 | Some pending ->
@@ -1072,14 +1276,15 @@ module CacheRuntimeControl =
                                     |> Result.map (fun updated -> CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint))
                                 | None -> Error "Grace Cache key transition could not be finalized."
                             | Ok _
-                            | Error false ->
+                            | Error Rejected ->
                                 match pendingConfiguration.PendingKeyTransition with
                                 | Some pending ->
                                     PendingKeyTransition.rejectReplacement effects pendingConfiguration pending
                                     |> Result.mapError id
                                 | None -> Error "Grace Cache key transition could not be rolled back."
                                 |> Result.bind (fun _ -> Error "Grace Cache key rotation was not accepted.")
-                            | Error true -> Error "Grace Cache key rotation outcome is unknown and requires operator inspection."
+                            | Error Retryable
+                            | Error Ambiguous -> Error "Grace Cache key rotation outcome is unknown and requires operator inspection."
 
     /// Rotates only after obtaining the lifecycle gate shared with refresh and recovery.
     let rotateNow () = serializeLifecycle rotateNowCore
@@ -1089,6 +1294,30 @@ module CacheLocalControl =
 
     [<Literal>]
     let private rotationPipeName = "Grace.Cache.RotateNow.v1"
+
+    [<Literal>]
+    let private socketOptionPeerCredentials = 17
+
+    [<Literal>]
+    let private socketLevel = 1
+
+    /// Reads the effective Unix user identifier used to authorize the service account and root callers.
+    [<DllImport("libc", SetLastError = true)>]
+    extern uint32 private geteuid()
+
+    /// Reads Linux peer credentials from the accepted local-domain socket before control work is invoked.
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private getsockopt(IntPtr socket, int level, int optionName, byte [] optionValue, int& optionLength)
+
+    /// Reads macOS peer identifiers from the accepted local-domain socket before control work is invoked.
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private getpeereid(int socket, uint32& effectiveUserId, uint32& effectiveGroupId)
+
+    /// Admits only the running cache account or Unix root to the protected local rotation channel.
+    let isUnixCallerAuthorized serviceUserId callerUserId = callerUserId = 0u || callerUserId = serviceUserId
+
+    /// Resolves the fixed local-domain socket path without exposing a network endpoint.
+    let private unixSocketPath () = Path.Combine(Path.GetTempPath(), "grace-cache-rotate-now-v1.sock")
 
     /// Holds the background accept loop and cancels it when the active cache host shuts down.
     type private RotationServer(cancellation: CancellationTokenSource, ready: ManualResetEventSlim, worker: Task) =
@@ -1138,35 +1367,61 @@ module CacheLocalControl =
         | :? PlatformNotSupportedException
         | :? IdentityNotMappedException -> Error "Grace Cache local control authorization could not be established."
 
-    /// Creates the Unix user-mode pipe, whose owner-only mode admits the service account and root without a network listener.
-    let private createUnixPipe () =
+    /// Reads the authenticated Unix peer user identifier when the platform supplies local socket credentials.
+    let private tryGetUnixPeerUserId (socket: Socket) =
         try
-            new NamedPipeServerStream(
-                rotationPipeName,
-                PipeDirection.InOut,
-                1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous
-                ||| PipeOptions.CurrentUserOnly
-            )
-            |> Ok
-        with
-        | :? UnauthorizedAccessException
-        | :? PlatformNotSupportedException
-        | :? IOException -> Error "Grace Cache local control authorization could not be established."
+            if OperatingSystem.IsLinux() then
+                let credentials = Array.zeroCreate<byte> 12
+                let mutable length = credentials.Length
 
-    /// Creates a local-only server with the platform's approved access restriction and no network fallback.
-    let private createPipe () =
-        if OperatingSystem.IsWindows() then
-            createWindowsPipe ()
-        elif OperatingSystem.IsLinux()
-             || OperatingSystem.IsMacOS() then
-            createUnixPipe ()
-        else
-            Error "Grace Cache local control authorization could not be established."
+                if getsockopt (socket.Handle, socketLevel, socketOptionPeerCredentials, credentials, &length) = 0
+                   && length >= 12 then
+                    Ok(BitConverter.ToUInt32(credentials, 4))
+                else
+                    Error "Grace Cache local control authorization could not be established."
+            elif OperatingSystem.IsMacOS() then
+                let mutable userId = 0u
+                let mutable groupId = 0u
+
+                if getpeereid (socket.Handle.ToInt32(), &userId, &groupId) = 0 then
+                    Ok userId
+                else
+                    Error "Grace Cache local control authorization could not be established."
+            else
+                Error "Grace Cache local control authorization could not be established."
+        with
+        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
+
+    /// Creates a local Unix socket whose peer credentials are checked for the service account or root before rotation.
+    let private createUnixSocket () =
+        try
+            let path = unixSocketPath ()
+
+            if File.Exists path then File.Delete path
+
+            let listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+            listener.Bind(UnixDomainSocketEndPoint(path))
+
+            File.SetUnixFileMode(
+                path,
+                UnixFileMode.UserRead
+                ||| UnixFileMode.UserWrite
+                ||| UnixFileMode.GroupRead
+                ||| UnixFileMode.GroupWrite
+                ||| UnixFileMode.OtherRead
+                ||| UnixFileMode.OtherWrite
+            )
+
+            listener.Listen(1)
+            Ok(path, listener)
+        with
+        | :? SocketException
+        | :? UnauthorizedAccessException
+        | :? IOException
+        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
 
     /// Accepts only the exact rotate marker after the platform ACL or mode has admitted the local caller.
-    let private handleRequest rotate (pipe: NamedPipeServerStream) =
+    let private handleRequest rotate (pipe: Stream) =
         let requestBuffer = Array.zeroCreate<byte> 32
         let bytesRead = pipe.Read(requestBuffer, 0, requestBuffer.Length)
         let request = Text.Encoding.UTF8.GetString(requestBuffer, 0, bytesRead)
@@ -1183,9 +1438,9 @@ module CacheLocalControl =
         pipe.Write(responseBytes, 0, responseBytes.Length)
         pipe.Flush()
 
-    /// Starts protected request processing before listener readiness and fails closed when the operating-system restriction is unavailable.
-    let startWith rotate =
-        match createPipe () with
+    /// Starts the Windows ACL-protected request channel before listener readiness.
+    let private startWindowsWith rotate =
+        match createWindowsPipe () with
         | Error error -> Error error
         | Ok probe ->
             probe.Dispose()
@@ -1196,7 +1451,7 @@ module CacheLocalControl =
                 Task.Run(
                     Action (fun () ->
                         while not cancellation.IsCancellationRequested do
-                            match createPipe () with
+                            match createWindowsPipe () with
                             | Error _ -> cancellation.Cancel()
                             | Ok pipe ->
                                 use pipe = pipe
@@ -1222,14 +1477,83 @@ module CacheLocalControl =
                 cancellation.Dispose()
                 Error "Grace Cache local control authorization could not be established."
 
+    /// Holds the Unix socket listener and removes its local file when the active host stops.
+    type private UnixRotationServer(path: string, listener: Socket, cancellation: CancellationTokenSource, worker: Task) =
+        interface IDisposable with
+            /// Stops Unix control acceptance and removes the socket before the cache host releases its machine guard.
+            member _.Dispose() =
+                cancellation.Cancel()
+                listener.Dispose()
+
+                try
+                    worker.Wait(TimeSpan.FromSeconds 2.0) |> ignore
+                with
+                | :? AggregateException -> ()
+
+                if File.Exists path then File.Delete path
+                cancellation.Dispose()
+
+    /// Starts a Unix-domain control channel that authorizes each caller from kernel peer credentials.
+    let private startUnixWith rotate =
+        match createUnixSocket () with
+        | Error error -> Error error
+        | Ok (path, listener) ->
+            let cancellation = new CancellationTokenSource()
+            let serviceUserId = geteuid ()
+
+            let worker =
+                Task.Run(
+                    Action (fun () ->
+                        while not cancellation.IsCancellationRequested do
+                            try
+                                use accepted =
+                                    listener
+                                        .AcceptAsync(cancellation.Token)
+                                        .GetAwaiter()
+                                        .GetResult()
+
+                                match tryGetUnixPeerUserId accepted with
+                                | Ok callerUserId when isUnixCallerAuthorized serviceUserId callerUserId ->
+                                    use stream = new NetworkStream(accepted, false)
+                                    handleRequest rotate stream
+                                | _ -> ()
+                            with
+                            | :? OperationCanceledException -> ()
+                            | :? ObjectDisposedException -> ()
+                            | :? SocketException -> ())
+                )
+
+            Ok(new UnixRotationServer(path, listener, cancellation, worker) :> IDisposable)
+
+    /// Starts protected request processing with the operating-system-specific local authorization mechanism.
+    let startWith rotate =
+        if OperatingSystem.IsWindows() then
+            startWindowsWith rotate
+        elif OperatingSystem.IsLinux()
+             || OperatingSystem.IsMacOS() then
+            startUnixWith rotate
+        else
+            Error "Grace Cache local control authorization could not be established."
+
     /// Starts the active-process rotation channel using the shared serialized runtime operation.
     let start () = startWith CacheRuntimeControl.rotateNow
 
     /// Sends one local-only rotation request to the active cache process without attempting a direct singleton-guard bypass.
     let requestRotation () =
         try
-            use pipe = new NamedPipeClientStream(".", rotationPipeName, PipeDirection.InOut, PipeOptions.None)
-            pipe.Connect(2000)
+            use pipe: Stream =
+                if OperatingSystem.IsWindows() then
+                    let namedPipe = new NamedPipeClientStream(".", rotationPipeName, PipeDirection.InOut, PipeOptions.None)
+                    namedPipe.Connect(2000)
+                    namedPipe :> Stream
+                elif OperatingSystem.IsLinux()
+                     || OperatingSystem.IsMacOS() then
+                    let socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+                    socket.Connect(UnixDomainSocketEndPoint(unixSocketPath ()))
+                    new NetworkStream(socket, true) :> Stream
+                else
+                    raise (new PlatformNotSupportedException())
+
             let request = Text.Encoding.UTF8.GetBytes "rotate-now"
             pipe.Write(request, 0, request.Length)
             pipe.Flush()

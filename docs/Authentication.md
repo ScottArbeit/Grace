@@ -785,9 +785,21 @@ server URLs, or secret configuration. Server-issued cache plans and their signed
 so clients reject scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI
 behavior is unchanged.
 
+Grace Cache enrollment begins as `Unhealthy` and remains non-selectable until protected local control, Kestrel readiness,
+and the artifact-serving contract are all available. The current scaffold therefore does not publish a healthy cache. Before
+the enrollment request, Cache writes one narrow machine-local recovery record with the endpoint, explicit repository inputs,
+opaque signing-key reference, and recovery status. A valid server `CacheId` completes that record before local configuration
+is finalized. If finalization fails, a later start finalizes the known registration before normal work. If a request
+may have
+reached Grace Server without a valid `CacheId`, Grace retains only the permitted evidence, stops with a redacted operator
+result, and requires administrator inspection or revocation before another explicit enrollment. It never retries,
+looks up,
+refreshes, rotates, or compensates an unknown registration automatically.
+
 When the cache is running, `grace cache rotate-now` sends a request to the active process over protected machine-local
 IPC, never through a LAN-reachable control route. Windows admits the cache account and built-in local administrators;
-Unix uses the owner-only local mode that admits the cache account and root. The active process validates the request and
+Unix uses a local-domain socket that validates kernel peer credentials for the cache account or root. The active process
+validates the request and
 serializes rotation with startup recovery and registration refresh. Grace Cache fails closed when it cannot establish the
 platform restriction and does not persist an operator list or caller identity.
 

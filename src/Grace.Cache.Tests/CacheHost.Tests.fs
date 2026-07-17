@@ -36,6 +36,42 @@ type CacheHostTests() =
         Assert.That(CacheHost.registrationRefreshInterval, Is.LessThan(RegistrationLifetime.ActiveLifetime.ToTimeSpan()))
         Assert.That(CacheHost.registrationRefreshInterval, Is.Not.EqualTo(CacheHost.keyRotationInterval))
 
+    /// Verifies the pre-artifact scaffold never represents itself as ready to serve selected cache materialization work.
+    [<Test>]
+    member _.ScaffoldDoesNotPublishArtifactServingReadiness() = Assert.That(CacheHost.artifactServingAvailable, Is.False)
+
+    /// Verifies the Unix local-control policy admits the service account and root while rejecting unrelated callers.
+    [<Test>]
+    member _.UnixLocalControlAuthorizesOnlyServiceAccountOrRoot() =
+        Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 1001u, Is.True)
+        Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 0u, Is.True)
+        Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 1002u, Is.False)
+
+    /// Verifies ambiguous enrollment evidence keeps only the approved fields and blocks automatic recovery.
+    [<Test>]
+    member _.UnknownEnrollmentRecoveryPreservesEvidenceAndBlocksAutomaticWork() =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-cache-recovery-{Guid.NewGuid():N}")
+        let configurationPath = Path.Combine(root, "cache.runtime.json")
+        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
+        let repositoryScopes = [| Guid.NewGuid(), Guid.NewGuid() |]
+        let recovery = CacheEnrollmentRecovery.prepare "https://cache.example.test" repositoryScopes "opaque-key-reference"
+
+        try
+            match CacheEnrollmentRecovery.write recoveryPath (CacheEnrollmentRecovery.unknown recovery) with
+            | Error error -> Assert.Fail(error)
+            | Ok () ->
+                match CacheEnrollmentRecovery.tryRead recoveryPath with
+                | Error error -> Assert.Fail(error)
+                | Ok None -> Assert.Fail("Expected durable enrollment recovery evidence.")
+                | Ok (Some persisted) ->
+                    Assert.That(CacheEnrollmentRecovery.isUnknown persisted, Is.True)
+                    Assert.That(persisted.Endpoint, Is.EqualTo(recovery.Endpoint))
+                    Assert.That(persisted.RepositoryScopes = repositoryScopes, Is.True)
+                    Assert.That(persisted.IdentityKeyName, Is.EqualTo(recovery.IdentityKeyName))
+                    Assert.That(persisted.CacheId, Is.EqualTo(None))
+        finally
+            if Directory.Exists root then Directory.Delete(root, true)
+
     /// Verifies that a missing required process setting rejects startup without exposing the supplied configuration value.
     [<Test>]
     member _.MissingInstanceNameIsRejected() =

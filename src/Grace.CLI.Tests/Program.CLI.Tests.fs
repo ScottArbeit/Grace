@@ -75,6 +75,15 @@ module CommandParsingTests =
 
         parseResult.Errors.Count |> should equal 0
 
+    /// Verifies cache commands bypass repository presentation so the child process keeps its JSON stream clean in every directory.
+    [<Test>]
+    let ``cache command is identified as machine scoped before repository invocation`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "cache"; "status" |])
+        parseResult.Errors.Count |> should equal 0
+
+        GraceCommand.isGraceCache parseResult
+        |> should equal true
+
     /// Builds grant role args test data used to exercise CLI program behavior.
     let private grantRoleArgs roleId =
         [|

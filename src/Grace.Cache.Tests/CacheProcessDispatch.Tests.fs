@@ -133,7 +133,7 @@ type CacheProcessDispatchTests() =
         Assert.That(result.ExitCode, Is.EqualTo(1))
         Assert.That(result.Payload, Does.Not.Contain("super-secret"))
         Assert.That(result.Payload, Does.Contain("Cache enrollment failed."))
-        Assert.That(result.Payload, Does.Contain("Inspect registration status"))
+        Assert.That(result.Payload, Does.Contain("Administrator inspection or revocation"))
 
     /// Verifies status output uses Grace's F# serializer so optional values have the stable string-or-null JSON shape on every platform.
     [<Test>]
@@ -310,6 +310,41 @@ type CacheProcessDispatchTests() =
         Assert.That(preSendCalls, Is.EqualTo(3))
         Assert.That(ambiguousResult, Is.EqualTo(MayHaveReachedServer))
         Assert.That(ambiguousCalls, Is.EqualTo(1))
+
+    /// Verifies retryable refresh transport failures rebuild the request so later proof attempts have a new observation value.
+    [<Test>]
+    member _.RefreshRetryBuildsFreshRequestForEveryAttempt() =
+        let built = ResizeArray<int>()
+        let mutable nextRequest = 0
+
+        let result =
+            CachePostRetry.executeWithRequest
+                (fun () ->
+                    nextRequest <- nextRequest + 1
+                    nextRequest)
+                (fun request ->
+                    built.Add request
+
+                    if request = 1 then Error Retryable else Ok "refreshed")
+                ignore
+
+        Assert.That(result, Is.EqualTo(Ok "refreshed": Result<string, CachePostFailure>))
+        Assert.That(built.ToArray() = [| 1; 2 |], Is.True)
+
+    /// Verifies a malformed successful rotation result is ambiguous and cannot be retried or treated as a definite rejection.
+    [<Test>]
+    member _.AmbiguousPostResultRetainsRecoveryDecisionWithoutRetry() =
+        let mutable calls = 0
+
+        let result =
+            CachePostRetry.execute
+                (fun () ->
+                    calls <- calls + 1
+                    Error Ambiguous)
+                ignore
+
+        Assert.That(result, Is.EqualTo(Error Ambiguous))
+        Assert.That(calls, Is.EqualTo(1))
 
     /// Verifies the portable ES256 helper emits only the public #600 DTO shape needed by cache enrollment and rotation.
     [<Test>]

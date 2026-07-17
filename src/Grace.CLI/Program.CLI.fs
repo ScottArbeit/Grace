@@ -1018,6 +1018,14 @@ module GraceCommand =
     /// Checks if the command is a `grace watch` command.
     let isGraceWatch (parseResult: ParseResult) = if (parseResult.CommandResult.Command.Name = "watch") then true else false
 
+    /// Identifies machine-scoped cache commands so repository presentation and local-state behavior cannot alter child JSON output.
+    let isGraceCache (parseResult: ParseResult) =
+        if isNull parseResult then
+            false
+        else
+            Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
+            |> Seq.exists (fun command -> command.Name.Equals("cache", StringComparison.OrdinalIgnoreCase))
+
     /// Checks if the command is a `grace doctor` command.
     let isGraceDoctor (parseResult: ParseResult) =
         if isNull parseResult then
@@ -1396,6 +1404,9 @@ module GraceCommand =
                         returnValue <- invokeResult
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
+                        returnValue <- invokedReturnValue
+                    else if parseResult |> isGraceCache then
+                        let! invokedReturnValue = parseResult.InvokeAsync()
                         returnValue <- invokedReturnValue
                     else if configurationFileExists () then
                         match tryGetJsonConfigurationError parseResult with

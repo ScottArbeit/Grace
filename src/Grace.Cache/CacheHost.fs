@@ -26,6 +26,9 @@ module CacheHostSettings =
 /// Owns the fixed, non-serving HTTP surface of the Grace Cache tracer process.
 module CacheHost =
 
+    /// Marks this scaffold as non-serving until #625 installs the authorized artifact-serving contract.
+    let artifactServingAvailable = false
+
     /// Holds the server-defined four-hour interval for cache identity key rotation.
     let keyRotationInterval = RegistrationLifetime.KeyRotationInterval.ToTimeSpan()
 
