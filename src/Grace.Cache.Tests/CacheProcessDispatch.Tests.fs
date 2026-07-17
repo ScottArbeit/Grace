@@ -1,0 +1,176 @@
+namespace Grace.Cache.Tests
+
+open System
+open System.Security.Cryptography
+open Grace.Cache
+open Grace.Shared.ArtifactGrant
+open Grace.Shared
+open Grace.Types.CacheRegistration
+open NUnit.Framework
+
+/// Verifies cache-process control verbs reach only the cache runtime boundary.
+[<TestFixture>]
+type CacheProcessDispatchTests() =
+
+    /// Builds one complete enrollment argument vector with explicit repository-to-organization pairing.
+    let enrollmentArguments =
+        [|
+            "--enroll"
+            "--endpoint"
+            "https://cache.example.test"
+            "--display-name"
+            "edge-cache"
+            "--owner-id"
+            "11111111-1111-1111-1111-111111111111"
+            "--repository-id"
+            "33333333-3333-3333-3333-333333333333"
+            "--repository-organization-id"
+            "22222222-2222-2222-2222-222222222222"
+        |]
+
+    /// Verifies enrollment reaches the runtime boundary once with canonical explicit input.
+    [<Test>]
+    member _.EnrollmentDispatchesToRuntimeBoundary() =
+        let mutable received = None
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll =
+                    fun input ->
+                        received <- Some input
+                        Ok(CacheRuntimeStatus.registered (Guid.Parse "44444444-4444-4444-4444-444444444444") "https")
+                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
+                Status = fun () -> failwith "Status must not run for enrollment."
+                Run = fun () -> failwith "Host startup must not run for enrollment."
+            }
+
+        let result = CacheProcessCommand.execute effects enrollmentArguments
+
+        Assert.That(result.ExitCode, Is.EqualTo(0))
+        Assert.That(Option.isSome received, Is.True)
+        Assert.That(result.Payload, Does.Not.Contain("private"))
+
+    /// Verifies malformed enrollment is rejected before the runtime can create a key, write configuration, or call Grace Server.
+    [<Test>]
+    member _.MalformedEnrollmentHasNoRuntimeSideEffects() =
+        let mutable sideEffects = 0
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll =
+                    fun _ ->
+                        sideEffects <- sideEffects + 1
+                        failwith "Malformed enrollment must not reach the runtime boundary."
+                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
+                Status = fun () -> failwith "Status must not run for enrollment."
+                Run = fun () -> failwith "Host startup must not run for enrollment."
+            }
+
+        let result =
+            CacheProcessCommand.execute
+                effects
+                [|
+                    "--enroll"
+                    "--endpoint"
+                    "https://cache.example.test"
+                |]
+
+        Assert.That(result.ExitCode, Is.EqualTo(1))
+        Assert.That(sideEffects, Is.EqualTo(0))
+        Assert.That(result.Payload, Does.Not.Contain("https://cache.example.test"))
+
+    /// Verifies unrecognized process options cannot silently broaden enrollment input before any runtime side effect.
+    [<Test>]
+    member _.UnknownEnrollmentOptionHasNoRuntimeSideEffects() =
+        let effects: CacheProcessEffects =
+            {
+                Enroll = fun _ -> failwith "Unknown enrollment input must not reach the runtime boundary."
+                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
+                Status = fun () -> failwith "Status must not run for enrollment."
+                Run = fun () -> failwith "Host startup must not run for enrollment."
+            }
+
+        let result = CacheProcessCommand.execute effects (Array.append enrollmentArguments [| "--unexpected" |])
+
+        Assert.That(result.ExitCode, Is.EqualTo(1))
+
+    /// Verifies immediate rotation reaches its proof-only runtime boundary without reading enrollment input.
+    [<Test>]
+    member _.RotationDispatchesToRuntimeBoundary() =
+        let mutable rotations = 0
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll = fun _ -> failwith "Enrollment must not run for rotation."
+                RotateNow =
+                    fun () ->
+                        rotations <- rotations + 1
+                        Ok(CacheRuntimeStatus.registered (Guid.Parse "44444444-4444-4444-4444-444444444444") "https")
+                Status = fun () -> failwith "Status must not run for rotation."
+                Run = fun () -> failwith "Host startup must not run for rotation."
+            }
+
+        let result = CacheProcessCommand.execute effects [| "--rotate-now" |]
+
+        Assert.That(result.ExitCode, Is.EqualTo(0))
+        Assert.That(rotations, Is.EqualTo(1))
+        Assert.That(result.Payload, Does.Not.Contain("private"))
+
+    /// Verifies secret-bearing runtime failures are replaced with a stable redacted process result.
+    [<Test>]
+    member _.RuntimeFailureIsRedacted() =
+        let effects: CacheProcessEffects =
+            {
+                Enroll = fun _ -> Error "server rejected token super-secret"
+                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
+                Status = fun () -> failwith "Status must not run for enrollment."
+                Run = fun () -> failwith "Host startup must not run for enrollment."
+            }
+
+        let result = CacheProcessCommand.execute effects enrollmentArguments
+
+        Assert.That(result.ExitCode, Is.EqualTo(1))
+        Assert.That(result.Payload, Does.Not.Contain("super-secret"))
+        Assert.That(result.Payload, Does.Contain("Cache enrollment failed."))
+
+    /// Verifies cache control retries only explicitly transient server failures and retains no retry workflow state.
+    [<Test>]
+    member _.TransientServerFailuresUseExactlyThreeAttempts() =
+        let mutable calls = 0
+        let pauses = ResizeArray<int>()
+
+        let result =
+            CacheRetry.execute
+                (fun () ->
+                    calls <- calls + 1
+                    Error true)
+                pauses.Add
+
+        Assert.That(result, Is.EqualTo(Error true))
+        Assert.That(calls, Is.EqualTo(3))
+        Assert.That(pauses, Is.EquivalentTo([ 1; 2 ]))
+
+    /// Verifies a non-transient server rejection never retries or turns into pending local work.
+    [<Test>]
+    member _.NonTransientServerFailureDoesNotRetry() =
+        let mutable calls = 0
+
+        let result =
+            CacheRetry.execute
+                (fun () ->
+                    calls <- calls + 1
+                    Error false)
+                ignore
+
+        Assert.That(result, Is.EqualTo(Error false))
+        Assert.That(calls, Is.EqualTo(1))
+
+    /// Verifies the portable ES256 helper emits only the public #600 DTO shape needed by cache enrollment and rotation.
+    [<Test>]
+    member _.PortableEs256PublicKeyUsesTheApprovedContract() =
+        use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let parameters = key.ExportParameters(false)
+
+        let publicKey = CacheIdentityPublicKey.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y)
+
+        Assert.That(CacheRegistrationProof.isValidPublicKey publicKey, Is.True)

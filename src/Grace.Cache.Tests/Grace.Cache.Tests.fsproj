@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <Compile Include="CacheHost.Tests.fs" />
+    <Compile Include="CacheProcessDispatch.Tests.fs" />
     <Compile Include="CacheStore.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

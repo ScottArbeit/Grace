@@ -3,6 +3,7 @@ namespace Grace.Cache.Tests
 open System
 open System.IO
 open Grace.Cache
+open Grace.Types.CacheRegistration
 open NUnit.Framework
 
 /// Verifies the cache tracer exposes only its fixed safe route inventory.
@@ -22,6 +23,11 @@ type CacheHostTests() =
                 ]
             )
         )
+
+    /// Verifies the host uses the #600 registration contract interval for automatic rotation rather than a local timer default.
+    [<Test>]
+    member _.HostUsesTheFourHourRegistrationRotationInterval() =
+        Assert.That(CacheHost.keyRotationInterval, Is.EqualTo(RegistrationLifetime.KeyRotationInterval.ToTimeSpan()))
 
     /// Verifies that a missing required process setting rejects startup without exposing the supplied configuration value.
     [<Test>]
@@ -65,6 +71,7 @@ type CacheHostTests() =
                 Endpoint = "https://cache.example.test"
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test/private"
+                IdentityKeyName = "Grace.Cache.Identity.test"
             }
 
         let status = CacheMachineConfiguration.toStatus configuration
@@ -72,6 +79,7 @@ type CacheHostTests() =
         Assert.That(status.CacheId, Is.EqualTo(Some "11111111-1111-1111-1111-111111111111"))
         Assert.That(status.Transport, Is.EqualTo(Some "https"))
         Assert.That(status.ToString(), Does.Not.Contain(configuration.ServerUri))
+        Assert.That(status.ToString(), Does.Not.Contain(configuration.IdentityKeyName))
 
     /// Verifies simultaneous cache starts have exactly one operating-system guard winner and the loser can cause no later effects.
     [<Test>]

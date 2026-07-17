@@ -2,8 +2,10 @@ namespace Grace.Cache
 
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
+open Grace.Types.CacheRegistration
 open System
 open System.Net
+open System.Threading
 
 /// Represents the minimal private process identity required before the cache host listens.
 type CacheHostSettings = private { InstanceName: string }
@@ -22,6 +24,9 @@ module CacheHostSettings =
 
 /// Owns the fixed, non-serving HTTP surface of the Grace Cache tracer process.
 module CacheHost =
+
+    /// Holds the server-defined four-hour interval for cache identity key rotation.
+    let keyRotationInterval = RegistrationLifetime.KeyRotationInterval.ToTimeSpan()
 
     /// Lists the only routes available before cache enrollment, storage, or artifact serving exists.
     let routeInventory =
@@ -53,6 +58,11 @@ module CacheHost =
                 else
                     Results.NotFound())
         )
+        |> ignore
+
+        let rotationTimer = new Timer(TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore), null, keyRotationInterval, keyRotationInterval)
+
+        app.Lifetime.ApplicationStopping.Register(Action rotationTimer.Dispose)
         |> ignore
 
         app

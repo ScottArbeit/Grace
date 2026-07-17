@@ -29,8 +29,8 @@
 		<Compile Include="SelectProjection.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
-		<Compile Include="Command\Cache.CLI.fs" />
 		<Compile Include="Command\Auth.CLI.fs" />
+		<Compile Include="Command\Cache.CLI.fs" />
 		<Compile Include="Command\Config.CLI.fs" />
 		<Compile Include="Command\Owner.CLI.fs" />
 		<Compile Include="Command\Connect.CLI.fs" />

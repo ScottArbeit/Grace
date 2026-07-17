@@ -33,6 +33,14 @@ module CacheCommand =
                 Description = "One or more explicit repository IDs <Guid>."
             )
 
+        let repositoryOrganizationId =
+            new Option<string []>(
+                "--repository-organization-id",
+                Required = true,
+                AllowMultipleArgumentsPerToken = true,
+                Description = "One explicit Organization ID <Guid> for each --repository-id, in the same order."
+            )
+
     /// Resolves the deployed cache executable without consulting repository configuration or local state.
     let private resolveExecutable (parseResult: ParseResult) =
         let configured = parseResult.GetValue Options.executable
@@ -48,9 +56,13 @@ module CacheCommand =
                 fromEnvironment
 
     /// Starts the cache executable with already validated command tokens and returns its exit code.
-    let private invokeProcess executable arguments =
+    let private invokeProcess executable arguments enrollmentToken =
         let startInfo = ProcessStartInfo(executable)
         startInfo.UseShellExecute <- false
+
+        match enrollmentToken with
+        | Some token -> startInfo.Environment[ "GRACE_CACHE_ENROLLMENT_TOKEN" ] <- token
+        | None -> ()
 
         arguments |> List.iter startInfo.ArgumentList.Add
 
@@ -72,14 +84,14 @@ module CacheCommand =
         | true, _ -> Error "Cache endpoint must use HTTP or HTTPS."
 
     /// Executes a cache executable verb without letting the CLI open cache configuration, databases, or key storage.
-    let private invokeCache parseResult arguments = invokeProcess (resolveExecutable parseResult) arguments
+    let private invokeCache parseResult arguments enrollmentToken = invokeProcess (resolveExecutable parseResult) arguments enrollmentToken
 
     /// Executes the foreground cache host process.
     type Run() =
         inherit SynchronousCommandLineAction()
 
         /// Starts the registered cache process and holds the CLI only for the child process lifetime.
-        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--run" ]
+        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--run" ] None
 
     /// Executes explicit enrollment through the deployed cache process boundary.
     type Enroll() =
@@ -98,6 +110,15 @@ module CacheCommand =
                 let repositoryArguments =
                     parseResult.GetValue Options.repositoryId
                     |> Array.collect (fun repositoryId -> [| "--repository-id"; repositoryId |])
+                    |> Array.toList
+
+                let repositoryOrganizationArguments =
+                    parseResult.GetValue Options.repositoryOrganizationId
+                    |> Array.collect (fun organizationId ->
+                        [|
+                            "--repository-organization-id"
+                            organizationId
+                        |])
                     |> Array.toList
 
                 let allowHttpArguments = if allowHttp then [ "--allow-http" ] else []
@@ -119,23 +140,28 @@ module CacheCommand =
                         parseResult.GetValue Options.ownerId
                     ]
                     @ repositoryArguments
-                      @ allowHttpArguments @ organizationArguments
+                      @ repositoryOrganizationArguments
+                        @ allowHttpArguments @ organizationArguments
 
-                invokeCache parseResult arguments
+                match Auth.tryGetAccessToken().GetAwaiter().GetResult() with
+                | Ok (Some token) -> invokeCache parseResult arguments (Some token)
+                | _ ->
+                    Console.Error.WriteLine "Current Grace login is unavailable."
+                    1
 
     /// Executes a safe cache status query through the deployed process boundary.
     type Status() =
         inherit SynchronousCommandLineAction()
 
         /// Queries the cache executable without reading its machine configuration from the CLI.
-        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--status" ]
+        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--status" ] None
 
     /// Executes an immediate key-rotation request through the deployed cache process boundary.
     type RotateNow() =
         inherit SynchronousCommandLineAction()
 
         /// Requests immediate rotation without exposing or handling private key material in the CLI.
-        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--rotate-now" ]
+        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--rotate-now" ] None
 
     /// Builds the normal operator command group without advertising prefetch, artifact serving, or cache-selection modes.
     let Build =
@@ -156,6 +182,7 @@ module CacheCommand =
             |> addOption Options.ownerId
             |> addOption Options.organizationId
             |> addOption Options.repositoryId
+            |> addOption Options.repositoryOrganizationId
 
         enrollCommand.Action <- Enroll()
 

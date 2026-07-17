@@ -754,18 +754,25 @@ stable repository IDs within that boundary. Grace Server revalidates the adminis
 permissions before the atomic enrollment or assignment change; no installation-wide service-principal allowlist or
 global cache-scope configuration exists.
 
-The future Cache host generates a canonical P-256 key pair and sends only its public key to `/cache/enroll`. Grace Server
-stores that public key, the display name, operational facts, explicit repository assignments, and enrollment audit identity.
-It never receives or stores the private key. A refresh or key rotation proves possession of the currently accepted key by
-signing the canonical request payload that binds `CacheId`, operation, request digest, and Unix-millisecond timestamp.
-Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration state.
+Use `grace cache enroll` on the target cache machine with an explicit display name, Owner, optional Organization boundary,
+matching `--repository-id` and `--repository-organization-id` values, and exact endpoint. The CLI resolves the current
+Grace login and passes it only as transient child-process environment state. The cache host generates a canonical P-256
+service identity and sends only its public key to `/cache/enroll`; its persisted machine configuration keeps only an
+opaque key reference, never tokens or private-key data. Grace Server stores the public key, display name, operational
+facts, explicit repository assignments, and enrollment audit identity. A refresh or key rotation proves possession of the
+currently accepted key by signing the canonical request payload that binds `CacheId`, operation, request digest, and
+Unix-millisecond timestamp. Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration
+state.
 
 Cache endpoints use HTTPS by default. An administrator may explicitly approve one exact HTTP endpoint during enrollment
-when the future `grace cache --allow-http` host is deliberately configured for it. Grace persists that approval with the
-exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
-transport choice. Server-issued cache plans and their signed artifact grants bind the exact endpoint, so clients reject
-scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI behavior is
-unchanged.
+when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endpoint. Grace persists that approval with
+the exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
+transport choice. `grace cache status` emits only redacted lifecycle, `CacheId`, and transport information. `grace cache
+rotate-now` requests immediate current-key-proven rotation; the running host separately requests the same rotation every
+four hours. Neither command prints or exports private key material, tokens, grants, repository assignments, server URLs,
+or secret configuration. Server-issued cache plans and their signed artifact grants bind the exact endpoint, so clients
+reject scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI behavior
+is unchanged.
 
 Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
 negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this
