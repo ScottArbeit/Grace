@@ -1,6 +1,7 @@
 namespace Grace.Cache.Tests
 
 open System
+open System.Net.Sockets
 open System.Security.Cryptography
 open System.Text.Json
 open Grace.Cache
@@ -310,6 +311,48 @@ type CacheProcessDispatchTests() =
         Assert.That(preSendCalls, Is.EqualTo(3))
         Assert.That(ambiguousResult, Is.EqualTo(MayHaveReachedServer))
         Assert.That(ambiguousCalls, Is.EqualTo(1))
+
+    /// Verifies only a 4xx response is a definite cache contract rejection while post-dispatch 5xx outcomes remain unknown.
+    [<Test>]
+    member _.PostDispatchEnrollmentFiveXxIsNotDefiniteRejection() =
+        Assert.That(CacheHttpFailure.isDefiniteContractRejection 400, Is.True)
+        Assert.That(CacheHttpFailure.isDefiniteContractRejection 499, Is.True)
+        Assert.That(CacheHttpFailure.isDefiniteContractRejection 500, Is.False)
+        Assert.That(CacheHttpFailure.isDefiniteContractRejection 503, Is.False)
+
+    /// Verifies rotation retries only pre-send failures and never resends after a transport outcome that may follow acceptance.
+    [<Test>]
+    member _.RotationRetryStopsAfterOneAmbiguousDispatch() =
+        let mutable preSendCalls = 0
+        let mutable ambiguousCalls = 0
+
+        let preSendResult =
+            RotationRetry.execute
+                (fun () ->
+                    preSendCalls <- preSendCalls + 1
+                    RotationPreSendFailure)
+                ignore
+
+        let ambiguousResult =
+            RotationRetry.execute
+                (fun () ->
+                    ambiguousCalls <- ambiguousCalls + 1
+                    RotationMayHaveReachedServer)
+                ignore
+
+        Assert.That(preSendResult, Is.EqualTo(RotationPreSendFailure))
+        Assert.That(preSendCalls, Is.EqualTo(3))
+        Assert.That(ambiguousResult, Is.EqualTo(RotationMayHaveReachedServer))
+        Assert.That(ambiguousCalls, Is.EqualTo(1))
+
+    /// Verifies an absent or refused Unix control socket becomes the stable redacted local-control rejection.
+    [<Test>]
+    member _.UnixControlSocketFailureIsRedacted() =
+        let result = CacheLocalControl.requestRotationWith (fun () -> raise (SocketException()))
+
+        match result with
+        | Ok _ -> Assert.Fail("An unavailable Unix control socket must not return a cache status.")
+        | Error error -> Assert.That(error, Is.EqualTo("Grace Cache rotation request was not accepted."))
 
     /// Verifies retryable refresh transport failures rebuild the request so later proof attempts have a new observation value.
     [<Test>]

@@ -6,12 +6,32 @@ open System.CommandLine
 open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Diagnostics
+open Grace.Shared
 
 /// Provides the thin Grace Cache process launcher without referencing cache implementation assemblies.
 module CacheCommand =
 
     [<Literal>]
     let private cacheInstanceMarker = "grace-cache-service"
+
+    [<Literal>]
+    let private enrollmentTokenEnvironmentVariable = "GRACE_CACHE_ENROLLMENT_TOKEN"
+
+    /// Lists inherited credential variables that must never reach a long-lived cache child process.
+    let private authenticationEnvironmentVariables =
+        [
+            Constants.EnvironmentVariables.GraceToken
+            Constants.EnvironmentVariables.GraceTokenFile
+            Constants.EnvironmentVariables.GraceAuthOidcAuthority
+            Constants.EnvironmentVariables.GraceAuthOidcAudience
+            Constants.EnvironmentVariables.GraceAuthOidcCliClientId
+            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort
+            Constants.EnvironmentVariables.GraceAuthOidcCliScopes
+            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId
+            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
+            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes
+            enrollmentTokenEnvironmentVariable
+        ]
 
     /// Defines process-boundary options accepted by the cache command group.
     module private Options =
@@ -58,16 +78,29 @@ module CacheCommand =
             else
                 fromEnvironment
 
-    /// Starts the cache executable with already validated command tokens and returns its exit code.
-    let private invokeProcess executable arguments enrollmentToken =
+    /// Removes inherited Grace credentials before a cache child receives only the explicit transient enrollment token.
+    let removeAuthenticationEnvironment (startInfo: ProcessStartInfo) =
+        authenticationEnvironmentVariables
+        |> List.iter (fun variableName ->
+            startInfo.Environment.Remove(variableName)
+            |> ignore)
+
+    /// Creates a cache process start configuration that retains operational settings while excluding inherited credentials.
+    let createProcessStartInfo executable enrollmentToken =
         let startInfo = ProcessStartInfo(executable)
         startInfo.UseShellExecute <- false
+        removeAuthenticationEnvironment startInfo
         startInfo.Environment[ "GRACE_CACHE_INSTANCE_NAME" ] <- cacheInstanceMarker
 
         match enrollmentToken with
-        | Some token -> startInfo.Environment[ "GRACE_CACHE_ENROLLMENT_TOKEN" ] <- token
+        | Some token -> startInfo.Environment[ enrollmentTokenEnvironmentVariable ] <- token
         | None -> ()
 
+        startInfo
+
+    /// Starts the cache executable with already validated command tokens and returns its exit code.
+    let private invokeProcess executable arguments enrollmentToken =
+        let startInfo = createProcessStartInfo executable enrollmentToken
         arguments |> List.iter startInfo.ArgumentList.Add
 
         use childProcess = Process.Start startInfo

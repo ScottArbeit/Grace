@@ -1,6 +1,9 @@
 namespace Grace.CLI.Tests
 
+open System.Diagnostics
 open Grace.CLI
+open Grace.CLI.Command
+open Grace.Shared
 open NUnit.Framework
 
 /// Verifies parse-only Grace Cache command registration and transport safeguards.
@@ -30,6 +33,40 @@ module CacheCommandParsingTests =
             |> List.find (fun section -> section.Heading = "Local utilities")
 
         Assert.That(localUtilities.CommandNames, Does.Contain("cache"))
+
+    /// Verifies non-enrollment cache children receive no inherited Grace credentials while enrollment gets only its resolved transient token.
+    [<Test>]
+    let ``cache child environment removes inherited credentials`` () =
+        let child = ProcessStartInfo("Grace.Cache")
+        child.UseShellExecute <- false
+
+        child.Environment[
+            Constants.EnvironmentVariables.GraceToken
+        ] <- "operator-token"
+
+        child.Environment[
+            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
+        ] <- "m2m-secret"
+
+        child.Environment[ "GRACE_CACHE_ENROLLMENT_TOKEN" ] <- "stale-enrollment-token"
+
+        child.Environment[
+            Constants.EnvironmentVariables.GraceServerUri
+        ] <- "https://server.example.test/grace/"
+
+        CacheCommand.removeAuthenticationEnvironment child
+
+        Assert.That(child.Environment.ContainsKey(Constants.EnvironmentVariables.GraceToken), Is.False)
+        Assert.That(child.Environment.ContainsKey(Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret), Is.False)
+        Assert.That(child.Environment.ContainsKey("GRACE_CACHE_ENROLLMENT_TOKEN"), Is.False)
+        Assert.That(child.Environment[Constants.EnvironmentVariables.GraceServerUri], Is.EqualTo("https://server.example.test/grace/"))
+
+        let enrollment = CacheCommand.createProcessStartInfo "Grace.Cache" (Some "resolved-enrollment-token")
+        let nonEnrollment = CacheCommand.createProcessStartInfo "Grace.Cache" None
+
+        Assert.That(enrollment.Environment["GRACE_CACHE_ENROLLMENT_TOKEN"], Is.EqualTo("resolved-enrollment-token"))
+        Assert.That(nonEnrollment.Environment.ContainsKey("GRACE_CACHE_ENROLLMENT_TOKEN"), Is.False)
+        Assert.That(nonEnrollment.Environment.ContainsKey(Constants.EnvironmentVariables.GraceToken), Is.False)
 
     /// Verifies enrollment requires exact explicit stable identifiers and an endpoint.
     [<Test>]

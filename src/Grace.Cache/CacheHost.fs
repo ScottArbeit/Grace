@@ -23,6 +23,17 @@ module CacheHostSettings =
         else
             Ok { InstanceName = instanceName.Trim() }
 
+/// Converts listener startup exceptions into the stable redacted failure expected at the cache process boundary.
+module CacheHostStartup =
+
+    /// Runs the Kestrel start action without allowing bind or certificate details to escape the process result.
+    let start startHost =
+        try
+            startHost ()
+            Ok()
+        with
+        | _ -> Error "Grace Cache host could not start."
+
 /// Owns the fixed, non-serving HTTP surface of the Grace Cache tracer process.
 module CacheHost =
 

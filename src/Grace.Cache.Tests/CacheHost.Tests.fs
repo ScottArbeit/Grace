@@ -54,7 +54,7 @@ type CacheHostTests() =
         let configurationPath = Path.Combine(root, "cache.runtime.json")
         let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
         let repositoryScopes = [| Guid.NewGuid(), Guid.NewGuid() |]
-        let recovery = CacheEnrollmentRecovery.prepare "https://cache.example.test" repositoryScopes "opaque-key-reference"
+        let recovery = CacheEnrollmentRecovery.prepare "https://cache.example.test" "https://server.example.test/grace/" repositoryScopes "opaque-key-reference"
 
         try
             match CacheEnrollmentRecovery.write recoveryPath (CacheEnrollmentRecovery.unknown recovery) with
@@ -66,11 +66,103 @@ type CacheHostTests() =
                 | Ok (Some persisted) ->
                     Assert.That(CacheEnrollmentRecovery.isUnknown persisted, Is.True)
                     Assert.That(persisted.Endpoint, Is.EqualTo(recovery.Endpoint))
+                    Assert.That(persisted.ServerUri, Is.EqualTo(recovery.ServerUri))
                     Assert.That(persisted.RepositoryScopes = repositoryScopes, Is.True)
                     Assert.That(persisted.IdentityKeyName, Is.EqualTo(recovery.IdentityKeyName))
                     Assert.That(persisted.CacheId, Is.EqualTo(None))
         finally
             if Directory.Exists root then Directory.Delete(root, true)
+
+    /// Verifies known-CacheId recovery finalizes against the immutable original server URI even after the environment changes.
+    [<Test>]
+    member _.KnownEnrollmentRecoveryUsesRecordedServerUri() =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-cache-recovery-uri-{Guid.NewGuid():N}")
+        let configurationPath = Path.Combine(root, "cache.runtime.json")
+        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
+        let cacheId = Guid.NewGuid()
+
+        let recovery =
+            CacheEnrollmentRecovery.prepare
+                "https://cache.example.test"
+                "https://original-server.example.test/grace/"
+                [| Guid.NewGuid(), Guid.NewGuid() |]
+                "opaque-key-reference"
+            |> CacheEnrollmentRecovery.accept cacheId
+
+        try
+            match CacheEnrollmentRecovery.write recoveryPath recovery with
+            | Error error -> Assert.Fail(error)
+            | Ok () ->
+                let previous = Environment.GetEnvironmentVariable("GRACE_SERVER_URI")
+                Environment.SetEnvironmentVariable("GRACE_SERVER_URI", "https://changed-server.example.test/")
+
+                try
+                    match CacheRuntimeControl.finalizeAcceptedEnrollment configurationPath recovery cacheId with
+                    | Error error -> Assert.Fail(error)
+                    | Ok _ ->
+                        match CacheMachineConfiguration.tryRead configurationPath with
+                        | Error error -> Assert.Fail(error)
+                        | Ok configuration -> Assert.That(configuration.ServerUri, Is.EqualTo("https://original-server.example.test/grace/"))
+
+                        match CacheEnrollmentRecovery.tryRead recoveryPath with
+                        | Error error -> Assert.Fail(error)
+                        | Ok persisted -> Assert.That(persisted, Is.EqualTo(None))
+                finally
+                    Environment.SetEnvironmentVariable("GRACE_SERVER_URI", previous)
+        finally
+            if Directory.Exists root then Directory.Delete(root, true)
+
+    /// Verifies status reads a pending transition without probing Grace Server, deleting either key, or reconciling state.
+    [<Test>]
+    member _.StatusReadIsPureWhileRotationIsPending() =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-cache-status-{Guid.NewGuid():N}")
+        let configurationPath = Path.Combine(root, "cache.runtime.json")
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                IdentityKeyName = "old-key"
+                PendingKeyTransition = Some { CurrentKeyName = "old-key"; ReplacementKeyName = "replacement-key" }
+            }
+
+        try
+            match CacheMachineConfiguration.write configurationPath configuration with
+            | Error error -> Assert.Fail(error)
+            | Ok () ->
+                match CacheRuntimeControl.readStatus configurationPath with
+                | Error error -> Assert.Fail(error)
+                | Ok status -> Assert.That(status.Lifecycle, Is.EqualTo("registered"))
+
+                match CacheMachineConfiguration.tryRead configurationPath with
+                | Error error -> Assert.Fail(error)
+                | Ok persisted -> Assert.That(persisted.PendingKeyTransition, Is.EqualTo(configuration.PendingKeyTransition))
+        finally
+            if Directory.Exists root then Directory.Delete(root, true)
+
+    /// Verifies startup exceptions become a stable cache process failure without exposing bind or certificate details.
+    [<Test>]
+    member _.StartupExceptionBecomesRedactedProcessFailure() =
+        let secret = "kestrel-bind-certificate-secret"
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll = fun _ -> failwith "Enrollment must not run for startup."
+                RotateNow = fun () -> failwith "Rotation must not run for startup."
+                Status = fun () -> failwith "Status must not run for startup."
+                Run =
+                    fun () ->
+                        CacheHostStartup.start (fun () -> raise (InvalidOperationException(secret)))
+                        |> Result.bind (fun () -> Error "Cache host unexpectedly started.")
+            }
+
+        let result = CacheProcessCommand.execute effects [| "--run" |]
+
+        Assert.That(result.ExitCode, Is.EqualTo(1))
+        Assert.That(result.Payload, Does.Contain("Cache startup failed."))
+        Assert.That(result.Payload, Does.Not.Contain(secret))
 
     /// Verifies that a missing required process setting rejects startup without exposing the supplied configuration value.
     [<Test>]
