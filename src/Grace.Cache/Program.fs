@@ -18,17 +18,18 @@ module Program =
         | Ok lease ->
             use _lease = lease
 
-            match CacheHostSettings.fromEnvironment Environment.GetEnvironmentVariable, CacheRuntimeControl.getReadyConfiguration () with
+            match CacheHostSettings.fromEnvironment Environment.GetEnvironmentVariable, CacheRuntimeControl.startupRefresh () with
             | Error message, _
             | _, Error message -> Error message
             | Ok settings, Ok configuration ->
-                CacheHost.build settings configuration [||]
-                |> fun app -> app.Run()
-
-                Ok(CacheMachineConfiguration.toStatus configuration)
+                match CacheHost.build settings configuration [||] with
+                | Error message -> Error message
+                | Ok app ->
+                    app.Run()
+                    Ok(CacheMachineConfiguration.toStatus configuration)
 
     /// Keeps process dispatch thin while preserving key custody and server calls inside CacheRuntimeControl.
-    let private effects = { Enroll = CacheRuntimeControl.enroll; RotateNow = CacheRuntimeControl.rotateNow; Status = showStatus; Run = runHost }
+    let private effects = { Enroll = CacheRuntimeControl.enroll; RotateNow = CacheLocalControl.requestRotation; Status = showStatus; Run = runHost }
 
     /// Executes exactly one supported cache process verb and writes its redacted machine-readable result.
     [<EntryPoint>]

@@ -69,6 +69,37 @@ type CacheHostTests() =
         |> Result.isOk
         |> Assert.That
 
+    /// Verifies a cache listening address is an origin and cannot carry a Kestrel-incompatible path, query, or fragment.
+    [<TestCase("https://cache.example.test/cache")>]
+    [<TestCase("https://cache.example.test/?preview=true")>]
+    [<TestCase("https://cache.example.test/#fragment")>]
+    [<TestCase("ftp://cache.example.test/")>]
+    member _.CacheEndpointRejectsNonOriginInputs(endpoint) =
+        CacheMachineConfiguration.validateEndpoint endpoint false
+        |> Result.isError
+        |> Assert.That
+
+    /// Verifies an active host owns protected machine-local rotation and executes exactly one request through the shared runtime boundary.
+    [<Test>]
+    member _.LocalRotationControlUsesTheActiveProcess() =
+        let mutable rotations = 0
+        let expected = CacheRuntimeStatus.registered (Guid.Parse "11111111-1111-1111-1111-111111111111") "https"
+
+        match
+            CacheLocalControl.startWith (fun () ->
+                rotations <- rotations + 1
+                Ok expected)
+            with
+        | Error error -> Assert.Fail(error)
+        | Ok server ->
+            use server = server
+
+            match CacheLocalControl.requestRotation () with
+            | Error error -> Assert.Fail(error)
+            | Ok actual ->
+                Assert.That(actual, Is.EqualTo(expected))
+                Assert.That(rotations, Is.EqualTo(1))
+
     /// Verifies redacted status retains a stable cache identity and transport state without exposing the Grace Server URI.
     [<Test>]
     member _.StatusRedactsServerConfiguration() =

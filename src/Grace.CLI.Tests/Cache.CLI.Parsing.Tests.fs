@@ -103,3 +103,12 @@ module CacheCommandParsingTests =
             )
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+
+    /// Verifies cache-enrollment endpoint paths, queries, and fragments are rejected by the CLI before it starts a child process.
+    [<TestCase("https://cache.example.test/cache")>]
+    [<TestCase("https://cache.example.test/?preview=true")>]
+    [<TestCase("https://cache.example.test/#fragment")>]
+    let ``cache enroll rejects non-origin endpoints`` endpoint =
+        Grace.CLI.Command.CacheCommand.validateEndpoint endpoint false
+        |> Result.isError
+        |> Assert.That

@@ -764,6 +764,14 @@ currently accepted key by signing the canonical request payload that binds `Cach
 Unix-millisecond timestamp. Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration
 state.
 
+Run `grace cache enroll` under the same local OS account that will run `grace cache run`. The non-exportable P-256
+signing key is created in that account's `CurrentUser` X.509 store and is reopened before enrollment sends its public
+key, so a cache started under another account fails closed rather than creating a replacement identity. `GRACE_TOKEN`
+PATs, M2M credentials, and interactive login authenticate the Grace principal through the normal CLI resolver; the
+resolved bearer token is transient and is never stored or logged by Grace Cache. Changing the service OS account requires
+an administrator to revoke the existing Cache and explicitly enroll again. Grace does not migrate a private key, mutate
+key access, retain the previous `CacheId`, or persist an OS-account or service identity for an in-place account change.
+
 Cache endpoints use HTTPS by default. An administrator may explicitly approve one exact HTTP endpoint during enrollment
 when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endpoint. Grace persists that approval with
 the exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
@@ -776,6 +784,12 @@ cache work resumes. Neither command prints or exports private key material, toke
 server URLs, or secret configuration. Server-issued cache plans and their signed artifact grants bind the exact endpoint,
 so clients reject scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI
 behavior is unchanged.
+
+When the cache is running, `grace cache rotate-now` sends a request to the active process over protected machine-local
+IPC, never through a LAN-reachable control route. Windows admits the cache account and built-in local administrators;
+Unix uses the owner-only local mode that admits the cache account and root. The active process validates the request and
+serializes rotation with startup recovery and registration refresh. Grace Cache fails closed when it cannot establish the
+platform restriction and does not persist an operator list or caller identity.
 
 Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
 negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this

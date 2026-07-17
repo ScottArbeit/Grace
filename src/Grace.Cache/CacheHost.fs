@@ -3,6 +3,7 @@ namespace Grace.Cache
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open Grace.Types.CacheRegistration
+open Grace.Shared
 open System
 open System.Net
 open System.Threading
@@ -39,40 +40,43 @@ module CacheHost =
             "/control/status"
         ]
 
-    /// Builds the cache HTTP host after startup settings have already been validated.
+    /// Builds the cache HTTP host only after protected local control has been established for the active process.
     let build (settings: CacheHostSettings) (configuration: CacheMachineConfiguration) (args: string array) =
-        let builder = WebApplication.CreateBuilder(args)
-        let app = builder.Build()
+        match CacheLocalControl.start () with
+        | Error error -> Error error
+        | Ok localControl ->
+            let builder = WebApplication.CreateBuilder(args)
+            let app = builder.Build()
 
-        app.Urls.Add(configuration.Endpoint)
-        app.Urls.Add(CacheMachineConfiguration.ControlEndpoint.AbsoluteUri)
+            app.Urls.Add(configuration.Endpoint)
 
-        app.MapGet("/healthz", Func<string>(fun () -> "Grace Cache scaffold healthy."))
-        |> ignore
+            app.MapGet("/healthz", Func<string>(fun () -> "Grace Cache scaffold healthy."))
+            |> ignore
 
-        app.MapGet("/status", Func<IResult>(fun () -> Results.Json(CacheMachineConfiguration.toStatus configuration)))
-        |> ignore
+            app.MapGet("/status", Func<IResult>(fun () -> Results.Json(CacheMachineConfiguration.toStatus configuration, Constants.JsonSerializerOptions)))
+            |> ignore
 
-        app.MapGet(
-            "/control/status",
-            Func<HttpContext, IResult> (fun context ->
-                if IPAddress.IsLoopback context.Connection.RemoteIpAddress then
-                    Results.Json(CacheMachineConfiguration.toStatus configuration)
-                else
-                    Results.NotFound())
-        )
-        |> ignore
+            app.MapGet(
+                "/control/status",
+                Func<HttpContext, IResult> (fun context ->
+                    if IPAddress.IsLoopback context.Connection.RemoteIpAddress then
+                        Results.Json(CacheMachineConfiguration.toStatus configuration, Constants.JsonSerializerOptions)
+                    else
+                        Results.NotFound())
+            )
+            |> ignore
 
-        let refreshTimer =
-            new Timer(TimerCallback(fun _ -> CacheRuntimeControl.refreshNow () |> ignore), null, registrationRefreshInterval, registrationRefreshInterval)
+            let refreshTimer =
+                new Timer(TimerCallback(fun _ -> CacheRuntimeControl.refreshNow () |> ignore), null, registrationRefreshInterval, registrationRefreshInterval)
 
-        let rotationTimer = new Timer(TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore), null, keyRotationInterval, keyRotationInterval)
+            let rotationTimer = new Timer(TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore), null, keyRotationInterval, keyRotationInterval)
 
-        app.Lifetime.ApplicationStopping.Register(
-            Action (fun () ->
-                refreshTimer.Dispose()
-                rotationTimer.Dispose())
-        )
-        |> ignore
+            app.Lifetime.ApplicationStopping.Register(
+                Action (fun () ->
+                    refreshTimer.Dispose()
+                    rotationTimer.Dispose()
+                    localControl.Dispose())
+            )
+            |> ignore
 
-        app
+            Ok app

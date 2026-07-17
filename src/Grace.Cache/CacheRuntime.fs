@@ -3,11 +3,14 @@ namespace Grace.Cache
 open System
 open System.Collections.Generic
 open System.IO
+open System.IO.Pipes
 open System.Net.Http
 open System.Net.Http.Headers
 open System.Net.Http.Json
 open System.Security.Cryptography
 open System.Security.Cryptography.X509Certificates
+open System.Security.AccessControl
+open System.Security.Principal
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
@@ -102,6 +105,25 @@ type CacheProcessEffects =
 /// Carries the redacted machine-readable result of one cache process command.
 type CacheProcessResult = { ExitCode: int; Payload: string }
 
+/// Decodes only the established cache-registration result envelope and treats malformed successful responses as rejected.
+module CacheServerResponse =
+
+    /// Returns the server registration result only when the response has the expected non-null Grace envelope.
+    let tryReadRegistrationResult (body: string) =
+        try
+            let envelope = JsonSerializer.Deserialize<GraceReturnValue<CacheRegistrationResult>>(body, Constants.JsonSerializerOptions)
+
+            if
+                isNull (box envelope)
+                || isNull (box envelope.ReturnValue)
+            then
+                Error()
+            else
+                Ok envelope.ReturnValue
+        with
+        | :? JsonException
+        | :? NotSupportedException -> Error()
+
 /// Parses and dispatches cache process verbs without letting the CLI reach cache configuration or identity storage.
 module CacheProcessCommand =
 
@@ -166,6 +188,12 @@ module CacheProcessCommand =
     let private validateEnrollmentEndpoint endpoint allowHttp =
         match Uri.TryCreate(endpoint, UriKind.Absolute) with
         | false, _ -> Error "Cache endpoint must be an absolute HTTP or HTTPS URI."
+        | true, uri when
+            uri.AbsolutePath <> "/"
+            || not (String.IsNullOrEmpty uri.Query)
+            || not (String.IsNullOrEmpty uri.Fragment)
+            ->
+            Error "Cache endpoint must be an HTTP or HTTPS origin with path '/'."
         | true, uri when uri.Scheme = Uri.UriSchemeHttps && not allowHttp -> Ok()
         | true, uri when uri.Scheme = Uri.UriSchemeHttp && allowHttp -> Ok()
         | true, uri when uri.Scheme = Uri.UriSchemeHttp -> Error "HTTP cache endpoints require the explicit --allow-http exception."
@@ -265,12 +293,16 @@ module CacheProcessCommand =
             Error "Specify exactly one of --run, --enroll, --rotate-now, or --status."
         elif arguments |> Array.contains "--enroll" then
             parseEnrollment arguments |> Result.map Enroll
-        elif arguments |> Array.contains "--rotate-now" then
-            Ok RotateNow
-        elif arguments |> Array.contains "--status" then
-            Ok Status
         else
-            Ok Run
+            let oneShotMarker =
+                if arguments |> Array.contains "--rotate-now" then "--rotate-now", RotateNow
+                elif arguments |> Array.contains "--status" then "--status", Status
+                else "--run", Run
+
+            if arguments = [| fst oneShotMarker |] then
+                Ok(snd oneShotMarker)
+            else
+                Error "Cache process control verbs do not accept additional arguments."
 
     /// Converts a successful runtime result to redacted machine-readable JSON.
     let private success status = { ExitCode = 0; Payload = JsonSerializer.Serialize(status, Constants.JsonSerializerOptions) }
@@ -300,7 +332,11 @@ module CacheProcessCommand =
         match parse arguments with
         | Error _ -> failure "command"
         | Ok (Enroll input) -> guarded "enrollment" (fun () -> effects.Enroll input)
-        | Ok RotateNow -> guarded "rotation" effects.RotateNow
+        | Ok RotateNow ->
+            // Rotation is owned by the active host through its protected local IPC channel, not a competing singleton claimant.
+            match effects.RotateNow() with
+            | Ok status -> success status
+            | Error _ -> failure "rotation"
         | Ok Status ->
             match effects.Status() with
             | Ok status -> success status
@@ -313,9 +349,6 @@ module CacheProcessCommand =
 /// Provides machine-scoped Grace Cache configuration without consulting repository configuration or CLI local state.
 module CacheMachineConfiguration =
 
-    /// The loopback-only control address shared by the cache host and the CLI launcher.
-    let ControlEndpoint = Uri("http://127.0.0.1:48731")
-
     /// Resolves the service-account configuration path outside every repository working copy.
     let configurationPath () = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Grace", "Cache", "cache.runtime.json")
 
@@ -323,6 +356,12 @@ module CacheMachineConfiguration =
     let validateEndpoint (endpoint: string) allowHttpEndpoint =
         match Uri.TryCreate(endpoint, UriKind.Absolute) with
         | false, _ -> Error "Cache endpoint must be an absolute HTTP or HTTPS URI."
+        | true, uri when
+            uri.AbsolutePath <> "/"
+            || not (String.IsNullOrEmpty uri.Query)
+            || not (String.IsNullOrEmpty uri.Fragment)
+            ->
+            Error "Cache endpoint must be an HTTP or HTTPS origin with path '/'."
         | true, uri when
             uri.Scheme = Uri.UriSchemeHttps
             && not allowHttpEndpoint
@@ -417,6 +456,18 @@ module CacheMachineConfiguration =
             | _ -> None
 
         { Lifecycle = "registered"; CacheId = Some(configuration.CacheId.ToString("D")); Transport = transport }
+
+/// Composes cache routes beneath a separately configured Grace Server path base.
+module CacheServerRoute =
+
+    /// Appends a route without letting Uri file semantics discard a configured server path base.
+    let append (serverUri: Uri) (route: string) =
+        let builder = UriBuilder(serverUri)
+        let basePath = builder.Path.TrimEnd('/')
+        builder.Path <- $"{basePath}/{route.TrimStart('/')}"
+        builder.Query <- String.Empty
+        builder.Fragment <- String.Empty
+        builder.Uri
 
 /// Supplies the durable effects required to finish or roll back one pending service-key transition.
 type PendingKeyTransitionEffects =
@@ -546,6 +597,18 @@ module CacheRuntimeControl =
     [<Literal>]
     let private enrollmentTokenEnvironmentVariable = "GRACE_CACHE_ENROLLMENT_TOKEN"
 
+    /// Serializes every refresh, pending-key recovery, and rotation so no callback can observe a half-finished key transition.
+    let private lifecycleGate = new SemaphoreSlim(1, 1)
+
+    /// Runs one lifecycle operation exclusively while ensuring every caller releases the shared gate.
+    let private serializeLifecycle operation =
+        lifecycleGate.Wait()
+
+        try
+            operation ()
+        finally
+            lifecycleGate.Release() |> ignore
+
     /// Holds one portable service-account certificate and its private ES256 operation without exposing private parameters.
     type private ServiceIdentityKey(certificate: X509Certificate2, key: ECDsa) =
         member _.Key = key
@@ -569,7 +632,12 @@ module CacheRuntimeControl =
                 let certificate = new X509Certificate2(matches[0])
                 let key = certificate.GetECDsaPrivateKey()
 
-                if isNull key then
+                let isP256 =
+                    not (isNull key)
+                    && key.ExportParameters(false).Curve.Oid.Value = "1.2.840.10045.3.1.7"
+
+                if not isP256 then
+                    if not (isNull key) then key.Dispose()
                     certificate.Dispose()
                     Error "Grace Cache service identity is unavailable."
                 else
@@ -578,7 +646,7 @@ module CacheRuntimeControl =
         | :? CryptographicException
         | :? PlatformNotSupportedException -> Error "Grace Cache service identity is unavailable."
 
-    /// Creates a portable P-256 service-account certificate and persists only its opaque thumbprint reference in configuration.
+    /// Creates a P-256 identity in the executing account store, then reopens it before enrollment can send its public key.
     let private createKey () =
         try
             use generatedKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
@@ -594,13 +662,17 @@ module CacheRuntimeControl =
                 use store = new X509Store(StoreName.My, StoreLocation.CurrentUser)
                 store.Open(OpenFlags.ReadWrite)
                 store.Add(certificate)
-                let privateKey = certificate.GetECDsaPrivateKey()
+                certificate.Dispose()
 
-                if isNull privateKey then
-                    certificate.Dispose()
-                    Error "Grace Cache service identity could not be created."
-                else
-                    Ok(keyReference, new ServiceIdentityKey(certificate, privateKey))
+                match openKey keyReference with
+                | Ok key -> Ok(keyReference, key)
+                | Error _ ->
+                    let matches = store.Certificates.Find(X509FindType.FindByThumbprint, keyReference, false)
+
+                    for storedCertificate in matches do
+                        store.Remove(storedCertificate)
+
+                    Error "Grace Cache service identity could not be reopened."
         with
         | :? CryptographicException
         | :? PlatformNotSupportedException -> Error "Grace Cache service identity could not be created."
@@ -652,7 +724,7 @@ module CacheRuntimeControl =
 
     /// Posts one idempotent #600 cache DTO and preserves the existing bounded retry behavior for refresh and rotation.
     let private postWithRetry<'request> (serverUri: Uri) (route: string) (token: string) (request: 'request) =
-        let requestUri = Uri(serverUri, route)
+        let requestUri = CacheServerRoute.append serverUri route
 
         let send () =
             try
@@ -677,15 +749,8 @@ module CacheRuntimeControl =
                             .GetAwaiter()
                             .GetResult()
 
-                    let envelope = JsonSerializer.Deserialize<GraceReturnValue<CacheRegistrationResult>>(body, Constants.JsonSerializerOptions)
-
-                    if
-                        isNull (box envelope)
-                        || isNull (box envelope.ReturnValue)
-                    then
-                        Error false
-                    else
-                        Ok envelope.ReturnValue
+                    CacheServerResponse.tryReadRegistrationResult body
+                    |> Result.mapError (fun () -> false)
                 else
                     Error(int response.StatusCode >= 500)
             with
@@ -696,7 +761,7 @@ module CacheRuntimeControl =
 
     /// Sends enrollment once per post-dispatch attempt, retrying only request construction failures that cannot have reached Grace Server.
     let private postEnrollment (serverUri: Uri) token (request: CacheEnrollmentRequest) =
-        let requestUri = Uri(serverUri, "cache/enroll")
+        let requestUri = CacheServerRoute.append serverUri "cache/enroll"
 
         let send () =
             let prepared =
@@ -733,15 +798,9 @@ module CacheRuntimeControl =
                                 .GetAwaiter()
                                 .GetResult()
 
-                        let envelope = JsonSerializer.Deserialize<GraceReturnValue<CacheRegistrationResult>>(body, Constants.JsonSerializerOptions)
-
-                        if
-                            isNull (box envelope)
-                            || isNull (box envelope.ReturnValue)
-                        then
-                            MayHaveReachedServer
-                        else
-                            EnrollmentCompleted envelope.ReturnValue
+                        match CacheServerResponse.tryReadRegistrationResult body with
+                        | Ok result -> EnrollmentCompleted result
+                        | Error () -> MayHaveReachedServer
                     else
                         MayHaveReachedServer
                 with
@@ -839,25 +898,40 @@ module CacheRuntimeControl =
         PendingKeyTransition.reconcile effects configuration
 
     /// Reads configuration only after any pending rotation has reached a durable, server-confirmed outcome.
-    let getReadyConfiguration () =
+    let private getReadyConfigurationCore () =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
         match CacheMachineConfiguration.tryRead configurationPath with
         | Error error -> Error error
         | Ok configuration -> resolvePendingKeyTransition configurationPath configuration
 
+    /// Reconciles pending key work before any caller uses the registered machine configuration.
+    let getReadyConfiguration () = serializeLifecycle getReadyConfigurationCore
+
+    /// Refreshes one prepared configuration without taking the lifecycle gate recursively.
+    let private refreshConfiguration configuration =
+        match refreshWithKey configuration configuration.IdentityKeyName with
+        | Error _ -> Error "Grace Cache registration refresh was not accepted."
+        | Ok result ->
+            match result.Status with
+            | CacheRegistrationRefreshStatus.Refreshed
+            | CacheRegistrationRefreshStatus.RefreshNotDue -> Ok(CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
+            | _ -> Error "Grace Cache registration refresh was not accepted."
+
     /// Refreshes the current cache registration under #618's bounded retry and health-publication behavior.
     let refreshNow () =
-        match getReadyConfiguration () with
-        | Error error -> Error error
-        | Ok configuration ->
-            match refreshWithKey configuration configuration.IdentityKeyName with
-            | Error _ -> Error "Grace Cache registration refresh was not accepted."
-            | Ok result ->
-                match result.Status with
-                | CacheRegistrationRefreshStatus.Refreshed
-                | CacheRegistrationRefreshStatus.RefreshNotDue -> Ok(CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
-                | _ -> Error "Grace Cache registration refresh was not accepted."
+        serializeLifecycle (fun () ->
+            getReadyConfigurationCore ()
+            |> Result.bind refreshConfiguration)
+
+    /// Reconciles and refreshes before host readiness so a restarted cache cannot wait past the active registration lifetime.
+    let startupRefresh () =
+        serializeLifecycle (fun () ->
+            match getReadyConfigurationCore () with
+            | Error error -> Error error
+            | Ok configuration ->
+                refreshConfiguration configuration
+                |> Result.map (fun _ -> configuration))
 
     /// Enrolls one cache through the #600 administrator route and writes no local configuration until the server accepts its immutable CacheId.
     let enroll input =
@@ -940,7 +1014,7 @@ module CacheRuntimeControl =
                             Error "Grace Cache enrollment was not accepted."
 
     /// Rotates the service key through #600's current-key proof route with a crash-safe local transition before retiring the prior key.
-    let rotateNow () =
+    let private rotateNowCore () =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
         match CacheMachineConfiguration.tryRead configurationPath with
@@ -1006,3 +1080,174 @@ module CacheRuntimeControl =
                                 | None -> Error "Grace Cache key transition could not be rolled back."
                                 |> Result.bind (fun _ -> Error "Grace Cache key rotation was not accepted.")
                             | Error true -> Error "Grace Cache key rotation outcome is unknown and requires operator inspection."
+
+    /// Rotates only after obtaining the lifecycle gate shared with refresh and recovery.
+    let rotateNow () = serializeLifecycle rotateNowCore
+
+/// Hosts the protected machine-local rotation request channel owned only by the active cache process.
+module CacheLocalControl =
+
+    [<Literal>]
+    let private rotationPipeName = "Grace.Cache.RotateNow.v1"
+
+    /// Holds the background accept loop and cancels it when the active cache host shuts down.
+    type private RotationServer(cancellation: CancellationTokenSource, ready: ManualResetEventSlim, worker: Task) =
+        interface IDisposable with
+            /// Stops local-control acceptance before the cache process releases its machine-wide instance lease.
+            member _.Dispose() =
+                cancellation.Cancel()
+
+                try
+                    worker.Wait(TimeSpan.FromSeconds 2.0) |> ignore
+                with
+                | :? AggregateException -> ()
+
+                ready.Dispose()
+                cancellation.Dispose()
+
+    /// Creates the Windows pipe ACL that admits only the cache account and built-in local administrators.
+    let private createWindowsPipe () =
+        try
+            use serviceIdentity = WindowsIdentity.GetCurrent()
+            let serviceSid = serviceIdentity.User
+
+            if isNull serviceSid then
+                Error "Grace Cache local control authorization could not be established."
+            else
+                let security = PipeSecurity()
+                security.AddAccessRule(PipeAccessRule(serviceSid, PipeAccessRights.ReadWrite, AccessControlType.Allow))
+
+                let administrators = SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null)
+                security.AddAccessRule(PipeAccessRule(administrators, PipeAccessRights.ReadWrite, AccessControlType.Allow))
+
+                NamedPipeServerStreamAcl.Create(
+                    rotationPipeName,
+                    PipeDirection.InOut,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous,
+                    256,
+                    256,
+                    security,
+                    HandleInheritability.None,
+                    PipeAccessRights.ChangePermissions
+                )
+                |> Ok
+        with
+        | :? UnauthorizedAccessException
+        | :? PlatformNotSupportedException
+        | :? IdentityNotMappedException -> Error "Grace Cache local control authorization could not be established."
+
+    /// Creates the Unix user-mode pipe, whose owner-only mode admits the service account and root without a network listener.
+    let private createUnixPipe () =
+        try
+            new NamedPipeServerStream(
+                rotationPipeName,
+                PipeDirection.InOut,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous
+                ||| PipeOptions.CurrentUserOnly
+            )
+            |> Ok
+        with
+        | :? UnauthorizedAccessException
+        | :? PlatformNotSupportedException
+        | :? IOException -> Error "Grace Cache local control authorization could not be established."
+
+    /// Creates a local-only server with the platform's approved access restriction and no network fallback.
+    let private createPipe () =
+        if OperatingSystem.IsWindows() then
+            createWindowsPipe ()
+        elif OperatingSystem.IsLinux()
+             || OperatingSystem.IsMacOS() then
+            createUnixPipe ()
+        else
+            Error "Grace Cache local control authorization could not be established."
+
+    /// Accepts only the exact rotate marker after the platform ACL or mode has admitted the local caller.
+    let private handleRequest rotate (pipe: NamedPipeServerStream) =
+        let requestBuffer = Array.zeroCreate<byte> 32
+        let bytesRead = pipe.Read(requestBuffer, 0, requestBuffer.Length)
+        let request = Text.Encoding.UTF8.GetString(requestBuffer, 0, bytesRead)
+
+        let response =
+            if request = "rotate-now" then
+                match rotate () with
+                | Ok status -> JsonSerializer.Serialize(status, Constants.JsonSerializerOptions)
+                | Error _ -> "failed"
+            else
+                "denied"
+
+        let responseBytes = Text.Encoding.UTF8.GetBytes response
+        pipe.Write(responseBytes, 0, responseBytes.Length)
+        pipe.Flush()
+
+    /// Starts protected request processing before listener readiness and fails closed when the operating-system restriction is unavailable.
+    let startWith rotate =
+        match createPipe () with
+        | Error error -> Error error
+        | Ok probe ->
+            probe.Dispose()
+            let cancellation = new CancellationTokenSource()
+            let ready = new ManualResetEventSlim(false)
+
+            let worker =
+                Task.Run(
+                    Action (fun () ->
+                        while not cancellation.IsCancellationRequested do
+                            match createPipe () with
+                            | Error _ -> cancellation.Cancel()
+                            | Ok pipe ->
+                                use pipe = pipe
+                                ready.Set()
+
+                                try
+                                    pipe
+                                        .WaitForConnectionAsync(cancellation.Token)
+                                        .GetAwaiter()
+                                        .GetResult()
+
+                                    if not cancellation.IsCancellationRequested then handleRequest rotate pipe
+                                with
+                                | :? OperationCanceledException -> ()
+                                | :? IOException -> ())
+                )
+
+            if ready.Wait(TimeSpan.FromSeconds 2.0) then
+                Ok(new RotationServer(cancellation, ready, worker) :> IDisposable)
+            else
+                cancellation.Cancel()
+                ready.Dispose()
+                cancellation.Dispose()
+                Error "Grace Cache local control authorization could not be established."
+
+    /// Starts the active-process rotation channel using the shared serialized runtime operation.
+    let start () = startWith CacheRuntimeControl.rotateNow
+
+    /// Sends one local-only rotation request to the active cache process without attempting a direct singleton-guard bypass.
+    let requestRotation () =
+        try
+            use pipe = new NamedPipeClientStream(".", rotationPipeName, PipeDirection.InOut, PipeOptions.None)
+            pipe.Connect(2000)
+            let request = Text.Encoding.UTF8.GetBytes "rotate-now"
+            pipe.Write(request, 0, request.Length)
+            pipe.Flush()
+            let responseBuffer = Array.zeroCreate<byte> 1024
+            let bytesRead = pipe.Read(responseBuffer, 0, responseBuffer.Length)
+            let response = Text.Encoding.UTF8.GetString(responseBuffer, 0, bytesRead)
+
+            try
+                let status = JsonSerializer.Deserialize<CacheRuntimeStatus>(response, Constants.JsonSerializerOptions)
+
+                if isNull (box status) then
+                    Error "Grace Cache rotation request was not accepted."
+                else
+                    Ok status
+            with
+            | :? JsonException
+            | :? NotSupportedException -> Error "Grace Cache rotation request was not accepted."
+        with
+        | :? TimeoutException
+        | :? IOException
+        | :? UnauthorizedAccessException -> Error "Grace Cache rotation request was not accepted."

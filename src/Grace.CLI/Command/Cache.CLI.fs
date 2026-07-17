@@ -10,6 +10,9 @@ open System.Diagnostics
 /// Provides the thin Grace Cache process launcher without referencing cache implementation assemblies.
 module CacheCommand =
 
+    [<Literal>]
+    let private cacheInstanceMarker = "grace-cache-service"
+
     /// Defines process-boundary options accepted by the cache command group.
     module private Options =
         let executable =
@@ -59,6 +62,7 @@ module CacheCommand =
     let private invokeProcess executable arguments enrollmentToken =
         let startInfo = ProcessStartInfo(executable)
         startInfo.UseShellExecute <- false
+        startInfo.Environment[ "GRACE_CACHE_INSTANCE_NAME" ] <- cacheInstanceMarker
 
         match enrollmentToken with
         | Some token -> startInfo.Environment[ "GRACE_CACHE_ENROLLMENT_TOKEN" ] <- token
@@ -75,9 +79,15 @@ module CacheCommand =
             childProcess.ExitCode
 
     /// Validates that the selected endpoint uses HTTPS unless the explicit HTTP exception was supplied.
-    let private validateEndpoint (parseResult: ParseResult) endpoint allowHttp =
+    let validateEndpoint endpoint allowHttp =
         match Uri.TryCreate(endpoint, UriKind.Absolute) with
         | false, _ -> Error "Cache endpoint must be an absolute HTTP or HTTPS URI."
+        | true, uri when
+            uri.AbsolutePath <> "/"
+            || not (String.IsNullOrEmpty uri.Query)
+            || not (String.IsNullOrEmpty uri.Fragment)
+            ->
+            Error "Cache endpoint must be an HTTP or HTTPS origin with path '/'."
         | true, uri when uri.Scheme = Uri.UriSchemeHttps && not allowHttp -> Ok()
         | true, uri when uri.Scheme = Uri.UriSchemeHttp && allowHttp -> Ok()
         | true, uri when uri.Scheme = Uri.UriSchemeHttp -> Error "HTTP cache endpoints require --allow-http."
@@ -102,7 +112,7 @@ module CacheCommand =
             let endpoint = parseResult.GetValue Options.endpoint
             let allowHttp = parseResult.GetValue Options.allowHttp
 
-            match validateEndpoint parseResult endpoint allowHttp with
+            match validateEndpoint endpoint allowHttp with
             | Error message ->
                 Console.Error.WriteLine message
                 1

@@ -2,6 +2,7 @@ namespace Grace.Cache.Tests
 
 open System
 open System.Security.Cryptography
+open System.Text.Json
 open Grace.Cache
 open Grace.Shared.ArtifactGrant
 open Grace.Shared
@@ -134,7 +135,7 @@ type CacheProcessDispatchTests() =
         Assert.That(result.Payload, Does.Contain("Cache enrollment failed."))
         Assert.That(result.Payload, Does.Contain("Inspect registration status"))
 
-    /// Verifies status output uses Grace's F# serializer so optional values have the stable string-or-null JSON shape.
+    /// Verifies status output uses Grace's F# serializer so optional values have the stable string-or-null JSON shape on every platform.
     [<Test>]
     member _.SuccessfulStatusUsesStringOrNullJsonFields() =
         let effects: CacheProcessEffects =
@@ -147,10 +148,56 @@ type CacheProcessDispatchTests() =
 
         let result = CacheProcessCommand.execute effects [| "--status" |]
 
-        Assert.That(
-            result.Payload,
-            Is.EqualTo("{\r\n  \"Lifecycle\": \"registered\",\r\n  \"CacheId\": \"44444444-4444-4444-4444-444444444444\",\r\n  \"Transport\": \"https\"\r\n}")
-        )
+        use document = JsonDocument.Parse(result.Payload)
+        let status = document.RootElement
+        Assert.That(status.GetProperty("Lifecycle").GetString(), Is.EqualTo("registered"))
+        Assert.That(status.GetProperty("CacheId").GetString(), Is.EqualTo("44444444-4444-4444-4444-444444444444"))
+        Assert.That(status.GetProperty("Transport").GetString(), Is.EqualTo("https"))
+
+    /// Verifies every one-shot process verb rejects trailing input before reaching a runtime or local-control effect.
+    [<TestCase("--run")>]
+    [<TestCase("--status")>]
+    [<TestCase("--rotate-now")>]
+    member _.OneShotVerbsRejectTrailingTokensBeforeEffects(marker) =
+        let mutable calls = 0
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll = fun _ -> failwith "Enrollment must not run."
+                RotateNow =
+                    fun () ->
+                        calls <- calls + 1
+                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
+                Status =
+                    fun () ->
+                        calls <- calls + 1
+                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
+                Run =
+                    fun () ->
+                        calls <- calls + 1
+                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
+            }
+
+        let result = CacheProcessCommand.execute effects [| marker; "--unsupported" |]
+
+        Assert.That(result.ExitCode, Is.EqualTo(1))
+        Assert.That(calls, Is.EqualTo(0))
+
+    /// Verifies malformed and wrong-envelope successful bodies become stable rejected results before a runtime boundary can surface them.
+    [<TestCase("{")>]
+    [<TestCase("{\"ReturnValue\": null}")>]
+    [<TestCase("{\"unexpected\": true}")>]
+    member _.MalformedSuccessfulServerBodyIsRejected(body) =
+        CacheServerResponse.tryReadRegistrationResult body
+        |> Result.isError
+        |> Assert.That
+
+    /// Verifies route composition retains the configured Grace Server path base while cache endpoints remain independent origins.
+    [<Test>]
+    member _.ServerRoutePreservesPathBase() =
+        let route = CacheServerRoute.append (Uri("https://gateway.example/grace")) "cache/refresh"
+
+        Assert.That(route.AbsoluteUri, Is.EqualTo("https://gateway.example/grace/cache/refresh"))
 
     /// Verifies explicit false and stray positional input after the marker-only HTTP exception cannot reach enrollment effects.
     [<Test>]
