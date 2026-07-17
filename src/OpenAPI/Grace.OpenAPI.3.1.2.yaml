@@ -1828,6 +1828,46 @@ paths:
           $ref: '#/components/responses/401'
         '500':
           $ref: '#/components/responses/500'
+  /cache/rotate-key/outcome:
+    post:
+      tags:
+        - Cache
+      summary: Read an exact durable Cache key-rotation outcome after cache-key proof.
+      operationId: GetCacheKeyRotationOutcome
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheKeyRotationOutcomeRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /cache/rotate-key/complete:
+    post:
+      tags:
+        - Cache
+      summary: Acknowledge an exact durable Cache key-rotation outcome after local finalization.
+      operationId: CompleteCacheKeyRotation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CacheKeyRotationCompletionRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/CacheRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /cache/validation-keys:
     get:
       tags:
@@ -4468,6 +4508,9 @@ components:
         CacheId:
           type: string
           format: uuid
+        OperationId:
+          type: string
+          format: uuid
         NewPublicKey:
           $ref: '#/components/schemas/CacheIdentityPublicKey'
         Proof:
@@ -4475,6 +4518,7 @@ components:
       required:
         - Class
         - CacheId
+        - OperationId
         - NewPublicKey
         - Proof
     CacheRegistrationRefreshStatus:
@@ -7108,6 +7152,44 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    CacheKeyRotationOutcomeRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheKeyRotationOutcomeRequest
+        CacheId:
+          type: string
+          format: uuid
+        OperationId:
+          type: string
+          format: uuid
+        Proof:
+          $ref: '#/components/schemas/SignedCacheRequestProof'
+      required:
+        - Class
+        - CacheId
+        - OperationId
+        - Proof
+    CacheKeyRotationCompletionRequest:
+      type: object
+      properties:
+        Class:
+          type: string
+          example: CacheKeyRotationCompletionRequest
+        CacheId:
+          type: string
+          format: uuid
+        OperationId:
+          type: string
+          format: uuid
+        Proof:
+          $ref: '#/components/schemas/SignedCacheRequestProof'
+      required:
+        - Class
+        - CacheId
+        - OperationId
+        - Proof
     OrganizationCommandReturnValue:
       description: Grace response envelope returned by organization command endpoints.
       type: object

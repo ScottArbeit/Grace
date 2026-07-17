@@ -99,9 +99,26 @@ CacheKeyRotationRequest:
   properties:
     Class: { type: string, example: CacheKeyRotationRequest }
     CacheId: { type: string, format: uuid }
+    OperationId: { type: string, format: uuid }
     NewPublicKey: { $ref: '#/CacheIdentityPublicKey' }
     Proof: { $ref: '#/SignedCacheRequestProof' }
-  required: [Class, CacheId, NewPublicKey, Proof]
+  required: [Class, CacheId, OperationId, NewPublicKey, Proof]
+CacheKeyRotationOutcomeRequest:
+  type: object
+  properties:
+    Class: { type: string, example: CacheKeyRotationOutcomeRequest }
+    CacheId: { type: string, format: uuid }
+    OperationId: { type: string, format: uuid }
+    Proof: { $ref: '#/SignedCacheRequestProof' }
+  required: [Class, CacheId, OperationId, Proof]
+CacheKeyRotationCompletionRequest:
+  type: object
+  properties:
+    Class: { type: string, example: CacheKeyRotationCompletionRequest }
+    CacheId: { type: string, format: uuid }
+    OperationId: { type: string, format: uuid }
+    Proof: { $ref: '#/SignedCacheRequestProof' }
+  required: [Class, CacheId, OperationId, Proof]
 CacheRegistrationRefreshStatus:
   description: Result classification for Cache enrollment and lifecycle operations.
   type: string

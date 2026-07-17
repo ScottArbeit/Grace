@@ -180,6 +180,10 @@ paths:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1revoke'
   /cache/rotate-key:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1rotate-key'
+  /cache/rotate-key/outcome:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1rotate-key~1outcome'
+  /cache/rotate-key/complete:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1rotate-key~1complete'
   /cache/validation-keys:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1validation-keys'
       

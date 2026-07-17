@@ -1495,6 +1495,7 @@ type EndpointAuthorizationTests() =
                 {
                     Class = nameof CacheKeyRotationRequest
                     CacheId = cacheId
+                    OperationId = Guid.NewGuid()
                     NewPublicKey = invalidKey
                     Proof = invalidCacheProof cacheId CacheRegistrationProof.RotateKeyOperation "invalid-rotation-digest"
                 }

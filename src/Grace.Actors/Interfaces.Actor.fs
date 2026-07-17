@@ -624,6 +624,14 @@ module Interfaces =
         /// Rotates an identity key only after the actor validates a proof from the currently accepted key.
         abstract member RotateKey: request: CacheKeyRotationRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
 
+        /// Returns one durable final rotation outcome after the cache proves possession of the currently accepted identity key.
+        abstract member GetRotationOutcome:
+            request: CacheKeyRotationOutcomeRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
+        /// Acknowledges an exact durable rotation outcome after the cache has finalized matching local identity material.
+        abstract member CompleteRotation:
+            request: CacheKeyRotationCompletionRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+
         /// Returns one stored registration, including terminal lifecycle state, for administrator authorization preflight.
         abstract member Get: cacheId: Guid * correlationId: CorrelationId -> Task<CacheRegistration option>
 

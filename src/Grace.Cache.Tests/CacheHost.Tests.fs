@@ -407,7 +407,15 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test/grace/"
                 IdentityKeyName = "old-key"
                 IdentityPublicKey = testPublicKey
-                PendingKeyTransition = Some { CurrentKeyName = "old-key"; ReplacementKeyName = "replacement-key"; ReplacementPublicKey = testPublicKey }
+                PendingKeyTransition =
+                    Some
+                        {
+                            OperationId = Guid.NewGuid()
+                            CurrentKeyName = "old-key"
+                            CurrentPublicKey = testPublicKey
+                            ReplacementKeyName = "replacement-key"
+                            ReplacementPublicKey = testPublicKey
+                        }
             }
 
         try
@@ -549,7 +557,15 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test"
                 IdentityKeyName = "old"
                 IdentityPublicKey = testPublicKey
-                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement"; ReplacementPublicKey = testPublicKey }
+                PendingKeyTransition =
+                    Some
+                        {
+                            OperationId = Guid.NewGuid()
+                            CurrentKeyName = "old"
+                            CurrentPublicKey = testPublicKey
+                            ReplacementKeyName = "replacement"
+                            ReplacementPublicKey = testPublicKey
+                        }
             }
 
         let effects: PendingKeyTransitionEffects =
@@ -587,7 +603,15 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test"
                 IdentityKeyName = "old"
                 IdentityPublicKey = testPublicKey
-                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement"; ReplacementPublicKey = testPublicKey }
+                PendingKeyTransition =
+                    Some
+                        {
+                            OperationId = Guid.NewGuid()
+                            CurrentKeyName = "old"
+                            CurrentPublicKey = testPublicKey
+                            ReplacementKeyName = "replacement"
+                            ReplacementPublicKey = testPublicKey
+                        }
             }
 
         let effects: PendingKeyTransitionEffects =
@@ -627,7 +651,15 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test"
                 IdentityKeyName = "replacement"
                 IdentityPublicKey = testPublicKey
-                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement"; ReplacementPublicKey = testPublicKey }
+                PendingKeyTransition =
+                    Some
+                        {
+                            OperationId = Guid.NewGuid()
+                            CurrentKeyName = "old"
+                            CurrentPublicKey = testPublicKey
+                            ReplacementKeyName = "replacement"
+                            ReplacementPublicKey = testPublicKey
+                        }
             }
 
         let effects: PendingKeyTransitionEffects =

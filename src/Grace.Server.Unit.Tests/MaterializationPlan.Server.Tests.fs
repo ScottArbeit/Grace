@@ -1211,7 +1211,7 @@ type MaterializationPlanRouteTests() =
         task {
             let selected = cacheRegistration MaterializationExecutionMode.CacheRequired
 
-            let initialState = { Class = nameof CacheRegistrationState; Registrations = [| selected |] }
+            let initialState = { Class = nameof CacheRegistrationState; Registrations = [| selected |]; RotationOutcomes = Array.empty }
 
             let mutable laterState = initialState
             let mutable selectionCalls = 0
@@ -1312,7 +1312,7 @@ type MaterializationPlanRouteTests() =
 
         let eligible =
             Grace.Types.CacheRegistration.Lifecycle.selectEligible
-                { Class = nameof CacheRegistrationState; Registrations = [| current; unhealthy; unrelated |] }
+                { Class = nameof CacheRegistrationState; Registrations = [| current; unhealthy; unrelated |]; RotationOutcomes = Array.empty }
                 (CacheRegistrationSelectionQuery.Create(Some repositoryId, false))
                 (Instant.FromUtc(2026, 7, 11, 20, 30))
 

@@ -262,7 +262,17 @@ module GraceCommand =
     /// Evaluates has blocking introspection parse errors against parsed options and command state.
     let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =
         parseResult.Errors
-        |> Seq.exists (isIgnorableIntrospectionParseError >> not)
+        |> Seq.exists (fun error ->
+            let command = parseResult.CommandResult.Command
+
+            let cacheMissingRequiredOption =
+                command.Name.Equals("enroll", StringComparison.OrdinalIgnoreCase)
+                && (command.Parents
+                    |> Seq.exists (fun parent -> parent.Name.Equals("cache", StringComparison.OrdinalIgnoreCase)))
+                && error.Message.StartsWith("Required option missing", StringComparison.Ordinal)
+
+            not cacheMissingRequiredOption
+            && not (isIgnorableIntrospectionParseError error))
 
     /// Writes introspection parse error data through the CLI output contract.
     let private writeIntrospectionParseError (parseResult: ParseResult) =

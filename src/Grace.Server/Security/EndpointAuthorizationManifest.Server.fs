@@ -208,6 +208,8 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/cache/assign-repositories" Authenticated
             endpoint "POST" "/cache/revoke" Authenticated
             endpoint "POST" "/cache/rotate-key" AllowAnonymous
+            endpoint "POST" "/cache/rotate-key/outcome" AllowAnonymous
+            endpoint "POST" "/cache/rotate-key/complete" AllowAnonymous
             endpoint "GET" "/cache/validation-keys" AllowAnonymous
             endpoint "GET" "/healthz" AllowAnonymous
             endpoint

@@ -136,9 +136,17 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRevocationRequest = { Class: string; CacheId: Guid }
 
-    /// Represents a current-key-proven Cache identity rotation. The server accepts the new public key before retiring the old key.
+    /// Represents a current-key-proven Cache identity rotation with a client-generated idempotency identity.
     [<CLIMutable; GenerateSerializer>]
-    type CacheKeyRotationRequest = { Class: string; CacheId: Guid; NewPublicKey: CacheIdentityPublicKey; Proof: SignedCacheRequestProof }
+    type CacheKeyRotationRequest = { Class: string; CacheId: Guid; OperationId: Guid; NewPublicKey: CacheIdentityPublicKey; Proof: SignedCacheRequestProof }
+
+    /// Represents one cache-key-authenticated request for an exact durable rotation outcome.
+    [<CLIMutable; GenerateSerializer>]
+    type CacheKeyRotationOutcomeRequest = { Class: string; CacheId: Guid; OperationId: Guid; Proof: SignedCacheRequestProof }
+
+    /// Represents one cache-key-authenticated acknowledgement that permits retirement of an exact rotation outcome.
+    [<CLIMutable; GenerateSerializer>]
+    type CacheKeyRotationCompletionRequest = { Class: string; CacheId: Guid; OperationId: Guid; Proof: SignedCacheRequestProof }
 
     /// Represents the server-owned durable registration for one Cache identity.
     [<CLIMutable; GenerateSerializer>]
@@ -192,6 +200,10 @@ module CacheRegistration =
         static member Create(status, registration, message) =
             { Class = nameof CacheRegistrationResult; Status = status; Registration = registration; Message = message }
 
+    /// Retains one cache-scoped final rotation outcome until the cache acknowledges its exact operation id.
+    [<CLIMutable; GenerateSerializer>]
+    type CacheKeyRotationOutcome = { Class: string; CacheId: Guid; OperationId: Guid; RequestDigest: string; Result: CacheRegistrationResult }
+
     /// Represents the exact repository and optional prefetch capability required during plan selection.
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationSelectionQuery =
@@ -213,9 +225,10 @@ module CacheRegistration =
         {
             Class: string
             Registrations: CacheRegistration array
+            RotationOutcomes: CacheKeyRotationOutcome array
         }
         /// Represents the empty durable Cache registration state.
-        static member Empty = { Class = nameof CacheRegistrationState; Registrations = Array.empty }
+        static member Empty = { Class = nameof CacheRegistrationState; Registrations = Array.empty; RotationOutcomes = Array.empty }
 
     /// Contains deterministic Cache registration validation and state transitions.
     module Lifecycle =
@@ -389,7 +402,11 @@ module CacheRegistration =
                |> Array.exists (fun existing -> existing.CacheId = cacheId) then
                 current, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, None, "CacheId already exists.")
             else
-                { Class = nameof CacheRegistrationState; Registrations = Array.append current.Registrations [| registration |] },
+                {
+                    Class = nameof CacheRegistrationState
+                    Registrations = Array.append current.Registrations [| registration |]
+                    RotationOutcomes = current.RotationOutcomes
+                },
                 CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Enrolled, Some registration, "Cache enrollment is current.")
 
         /// Extends only operational facts for a current Cache after its existing registration has been loaded and proof-validated.
@@ -436,6 +453,7 @@ module CacheRegistration =
                         Registrations =
                             current.Registrations
                             |> Array.map (fun existing -> if existing.CacheId = request.CacheId then unhealthy else existing)
+                        RotationOutcomes = current.RotationOutcomes
                     }
 
                 next,
@@ -465,6 +483,7 @@ module CacheRegistration =
                         Registrations =
                             current.Registrations
                             |> Array.map (fun existing -> if existing.CacheId = request.CacheId then refreshed else existing)
+                        RotationOutcomes = current.RotationOutcomes
                     }
 
                 next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Refreshed, Some refreshed, "Cache registration was refreshed.")
@@ -501,6 +520,7 @@ module CacheRegistration =
                             Registrations =
                                 current.Registrations
                                 |> Array.map (fun existing -> if existing.CacheId = cacheId then updated else existing)
+                            RotationOutcomes = current.RotationOutcomes
                         }
 
                     next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Updated, Some updated, "Cache repository assignments were updated.")
@@ -524,6 +544,7 @@ module CacheRegistration =
                         Registrations =
                             current.Registrations
                             |> Array.map (fun existing -> if existing.CacheId = cacheId then revoked else existing)
+                        RotationOutcomes = current.RotationOutcomes
                     }
 
                 next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Revoked, Some revoked, "Cache registration was revoked.")
@@ -554,6 +575,7 @@ module CacheRegistration =
                         Registrations =
                             current.Registrations
                             |> Array.map (fun existing -> if existing.CacheId = request.CacheId then rotated else existing)
+                        RotationOutcomes = current.RotationOutcomes
                     }
 
                 next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Rotated, Some rotated, "Cache identity key was rotated.")

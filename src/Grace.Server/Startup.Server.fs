@@ -1367,6 +1367,13 @@ module Application =
 
                                route "/rotate-key" CacheRegistration.RotateKey
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationRequest>
+
+                               route "/rotate-key/outcome" CacheRegistration.GetRotationOutcome
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationOutcomeRequest>
+                               |> addMetadata (AllowAnonymousAttribute())
+
+                               route "/rotate-key/complete" CacheRegistration.CompleteRotation
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationCompletionRequest>
                                |> addMetadata (AllowAnonymousAttribute()) ]
                     ]
                 subRoute "/notifications" [ GET [] ]

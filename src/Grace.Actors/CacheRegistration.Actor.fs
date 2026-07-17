@@ -58,6 +58,19 @@ module CacheRegistrationActor =
             currentState.Registrations
             |> Array.tryFind (fun registration -> registration.CacheId = cacheId)
 
+        /// Finds the exact cache-scoped final rotation result retained until a matching authenticated completion acknowledgement.
+        member private _.TryGetRotationOutcome(cacheId: Guid, operationId: Guid) =
+            let outcomes =
+                if isNull currentState.RotationOutcomes then
+                    Array.empty
+                else
+                    currentState.RotationOutcomes
+
+            outcomes
+            |> Array.tryFind (fun outcome ->
+                outcome.CacheId = cacheId
+                && outcome.OperationId = operationId)
+
         interface ICacheRegistrationActor with
             /// Enrolls a Cache only after its public key and administrator-approved boundary have reached this singleton actor.
             member this.Enroll(cacheId, request, enrolledBy, now, correlationId) =
@@ -125,32 +138,94 @@ module CacheRegistrationActor =
             /// Replaces the accepted identity key only after verifying the request against the pre-rotation key.
             member this.RotateKey(request, now, correlationId) =
                 task {
-                    match this.TryGet(request.CacheId) with
+                    let requestDigest = CacheRegistrationProof.rotationRequestDigest request
+
+                    match this.TryGetRotationOutcome(request.CacheId, request.OperationId) with
+                    | Some outcome when outcome.RequestDigest = requestDigest -> return Ok(this.ReturnResult(outcome.Result, correlationId))
+                    | Some _ -> return Error(GraceError.Create "Cache key rotation operation id conflicts with its original canonical request." correlationId)
                     | None ->
-                        let _, result = Lifecycle.rotateKey currentState request now
-                        return Ok(this.ReturnResult(result, correlationId))
-                    | Some registration when
-                        not
-                            (
-                                CacheRegistrationProof.validate
-                                    now
-                                    registration.PublicKey
-                                    request.CacheId
-                                    CacheRegistrationProof.RotateKeyOperation
-                                    (CacheRegistrationProof.rotationRequestDigest request)
-                                    request.Proof
-                            )
+                        match this.TryGet(request.CacheId) with
+                        | None ->
+                            let _, result = Lifecycle.rotateKey currentState request now
+                            return Ok(this.ReturnResult(result, correlationId))
+                        | Some registration when
+                            not
+                                (
+                                    CacheRegistrationProof.validate
+                                        now
+                                        registration.PublicKey
+                                        request.CacheId
+                                        CacheRegistrationProof.RotateKeyOperation
+                                        requestDigest
+                                        request.Proof
+                                )
+                            ->
+                            return
+                                Error(GraceError.Create "Cache key-rotation proof is invalid, stale, or does not match the current identity key." correlationId)
+                        | Some _ when not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey) ->
+                            return Error(GraceError.Create "Cache key rotation requires a canonical P-256 public key." correlationId)
+                        | Some _ ->
+                            let nextState, result = Lifecycle.rotateKey currentState request now
+
+                            let outcome =
+                                {
+                                    Class = nameof CacheKeyRotationOutcome
+                                    CacheId = request.CacheId
+                                    OperationId = request.OperationId
+                                    RequestDigest = requestDigest
+                                    Result = result
+                                }
+
+                            let withOutcome = { nextState with RotationOutcomes = Array.append nextState.RotationOutcomes [| outcome |] }
+                            do! this.Save withOutcome
+
+                            return Ok(this.ReturnResult(result, correlationId))
+                }
+
+            /// Returns the exact retained result only after proof by the currently accepted cache key.
+            member this.GetRotationOutcome(request, now, correlationId) =
+                task {
+                    match this.TryGet(request.CacheId), this.TryGetRotationOutcome(request.CacheId, request.OperationId) with
+                    | Some registration, Some outcome when
+                        CacheRegistrationProof.validate
+                            now
+                            registration.PublicKey
+                            request.CacheId
+                            CacheRegistrationProof.RotationOutcomeOperation
+                            (CacheRegistrationProof.rotationOutcomeRequestDigest request)
+                            request.Proof
                         ->
-                        return Error(GraceError.Create "Cache key-rotation proof is invalid, stale, or does not match the current identity key." correlationId)
-                    | Some _ when not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey) ->
-                        return Error(GraceError.Create "Cache key rotation requires a canonical P-256 public key." correlationId)
-                    | Some _ ->
-                        let nextState, result = Lifecycle.rotateKey currentState request now
+                        return Ok(this.ReturnResult(outcome.Result, correlationId))
+                    | Some _, Some _ -> return Error(GraceError.Create "Cache key-rotation outcome proof is invalid." correlationId)
+                    | _ -> return Error(GraceError.Create "Cache key-rotation outcome is unavailable." correlationId)
+                }
 
-                        if result.Status = CacheRegistrationRefreshStatus.Rotated then
-                            do! this.Save nextState
+            /// Deletes only the exact completed durable result after proof by the selected cache identity key.
+            member this.CompleteRotation(request, now, correlationId) =
+                task {
+                    match this.TryGet(request.CacheId), this.TryGetRotationOutcome(request.CacheId, request.OperationId) with
+                    | Some registration, Some outcome when
+                        CacheRegistrationProof.validate
+                            now
+                            registration.PublicKey
+                            request.CacheId
+                            CacheRegistrationProof.RotationCompletionOperation
+                            (CacheRegistrationProof.rotationCompletionRequestDigest request)
+                            request.Proof
+                        ->
+                        let next =
+                            { currentState with
+                                RotationOutcomes =
+                                    currentState.RotationOutcomes
+                                    |> Array.filter (fun stored ->
+                                        stored.OperationId <> outcome.OperationId
+                                        || stored.CacheId <> outcome.CacheId)
+                            }
 
-                        return Ok(this.ReturnResult(result, correlationId))
+                        do! this.Save next
+                        return Ok(this.ReturnResult(outcome.Result, correlationId))
+                    | Some _, Some _ -> return Error(GraceError.Create "Cache key-rotation completion proof is invalid." correlationId)
+                    | _ -> return Error(GraceError.Create "Cache key-rotation outcome is unavailable." correlationId)
                 }
 
             /// Returns the authoritative stored record without applying selection eligibility filters.

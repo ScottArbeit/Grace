@@ -98,6 +98,44 @@
         '401': { $ref: './Responses.OpenAPI.yaml#/401' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/rotate-key/outcome:
+    post:
+      tags:
+        - Cache
+      summary: Read an exact durable Cache key-rotation outcome after cache-key proof.
+      operationId: GetCacheKeyRotationOutcome
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheKeyRotationOutcomeRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+  /cache/rotate-key/complete:
+    post:
+      tags:
+        - Cache
+      summary: Acknowledge an exact durable Cache key-rotation outcome after local finalization.
+      operationId: CompleteCacheKeyRotation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheKeyRotationCompletionRequest'
+      responses:
+        '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
   /cache/validation-keys:
     get:
       tags:
