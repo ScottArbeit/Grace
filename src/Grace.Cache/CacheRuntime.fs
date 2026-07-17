@@ -22,8 +22,8 @@ open Grace.Shared.Utilities
 open Grace.Types.CacheRegistration
 open Grace.Types.Common
 
-/// Records the two opaque service-key references involved in one recoverable Cache key rotation.
-type PendingKeyTransition = { CurrentKeyName: string; ReplacementKeyName: string }
+/// Records the durable key references and public verification material involved in one recoverable Cache key rotation.
+type PendingKeyTransition = { CurrentKeyName: string; ReplacementKeyName: string; ReplacementPublicKey: CacheIdentityPublicKey }
 
 /// Holds the machine-scoped operational facts that a registered Grace Cache may retain locally.
 type CacheMachineConfiguration =
@@ -33,6 +33,7 @@ type CacheMachineConfiguration =
         AllowHttpEndpoint: bool
         ServerUri: string
         IdentityKeyName: string
+        IdentityPublicKey: CacheIdentityPublicKey
         PendingKeyTransition: PendingKeyTransition option
     }
 
@@ -43,6 +44,7 @@ type CacheEnrollmentRecovery =
         ServerUri: string
         RepositoryScopes: (Guid * Guid) array
         IdentityKeyName: string
+        IdentityPublicKey: CacheIdentityPublicKey
         RecoveryStatus: string
         CacheId: Guid option
     }
@@ -58,6 +60,14 @@ type AcceptedEnrollmentFinalizationEffects<'configuration> =
 /// Represents the safe operational facts that may be returned by the local cache control surface.
 type CacheRuntimeStatus = { Lifecycle: string; CacheId: string option; Transport: string option }
 
+/// Carries the one-time nonce sent by a Windows local-control client to prove the responder holds the active Cache key.
+[<CLIMutable>]
+type CacheLocalControlChallenge = { Nonce: string }
+
+/// Carries a nonce-bound Cache status response whose signature is verified from protected machine configuration.
+[<CLIMutable>]
+type CacheLocalControlChallengeResponse = { Nonce: string; Signature: string; Status: CacheRuntimeStatus }
+
 /// Provides safe runtime-result values without carrying cache key, token, repository, or server configuration data.
 module CacheRuntimeStatus =
 
@@ -66,6 +76,75 @@ module CacheRuntimeStatus =
 
     /// Builds the redacted status returned while ambiguous enrollment evidence blocks every normal cache operation.
     let enrollmentRecoveryRequired = { Lifecycle = "enrollment-recovery-required"; CacheId = None; Transport = None }
+
+/// Selects the supported Unix lstat field layout without treating one CPU ABI as interchangeable with another.
+module CacheUnixPathIdentity =
+
+    /// Returns mode and owner field offsets for the explicit Linux and macOS x64 and arm64 lstat layouts.
+    let tryGetStatOffsets isLinux isMacOS architecture =
+        match isLinux, isMacOS, architecture with
+        | true, false, Architecture.X64 -> Ok(24, 28, false)
+        | true, false, Architecture.Arm64 -> Ok(16, 24, false)
+        | false, true, Architecture.X64
+        | false, true, Architecture.Arm64 -> Ok(4, 16, true)
+        | _ -> Error()
+
+/// Creates and verifies Windows local-control nonce challenges without exposing cache private-key material.
+module CacheLocalControlAuthentication =
+
+    [<Literal>]
+    let private nonceLength = 32
+
+    /// Generates the exact fresh random challenge size accepted by the protected Windows pipe protocol.
+    let createChallenge () = RandomNumberGenerator.GetBytes nonceLength
+
+    /// Decodes a nonce only when it is the fixed random challenge size required to prevent stale or malformed responses.
+    let tryDecodeNonce value =
+        match Base64Url.tryDecode value with
+        | Some nonce when nonce.Length = nonceLength -> Ok nonce
+        | _ -> Error "Grace Cache rotation request was not accepted."
+
+    /// Signs a fresh local-control challenge together with the already-serialized status response.
+    let sign (key: ECDsa) (nonce: byte array) (status: CacheRuntimeStatus) =
+        let signature =
+            key.SignData(nonce, HashAlgorithmName.SHA256)
+            |> Base64Url.encode
+
+        { Nonce = Base64Url.encode nonce; Signature = signature; Status = status }
+
+    /// Verifies that a response is fresh for this request and was signed by the public Cache key recorded in protected machine configuration.
+    let verify (expectedNonce: byte array) publicKey (response: CacheLocalControlChallengeResponse) =
+        try
+            if
+                isNull (box response)
+                || isNull (box response.Status)
+                || String.IsNullOrWhiteSpace response.Status.Lifecycle
+                || not (CacheRegistrationProof.isValidPublicKey publicKey)
+            then
+                Error "Grace Cache rotation request was not accepted."
+            else
+                match tryDecodeNonce response.Nonce,
+                      Base64Url.tryDecode response.Signature,
+                      Base64Url.tryDecode publicKey.PublicKeyX,
+                      Base64Url.tryDecode publicKey.PublicKeyY
+                    with
+                | Ok responseNonce, Some signature, Some x, Some y when CryptographicOperations.FixedTimeEquals(expectedNonce, responseNonce) ->
+                    let mutable parameters = ECParameters()
+                    parameters.Curve <- ECCurve.NamedCurves.nistP256
+                    let mutable point = ECPoint()
+                    point.X <- x
+                    point.Y <- y
+                    parameters.Q <- point
+                    use verifier = ECDsa.Create(parameters)
+
+                    if verifier.VerifyData(expectedNonce, signature, HashAlgorithmName.SHA256) then
+                        Ok response.Status
+                    else
+                        Error "Grace Cache rotation request was not accepted."
+                | _ -> Error "Grace Cache rotation request was not accepted."
+        with
+        | :? CryptographicException
+        | :? ArgumentException -> Error "Grace Cache rotation request was not accepted."
 
 /// Holds the operating-system mutex lease that makes one active cache process machine-wide.
 type MachineInstanceLease internal (mutex: Mutex) =
@@ -342,6 +421,9 @@ module CacheProcessCommand =
 
         { ExitCode = 1; Payload = JsonSerializer.Serialize({| Lifecycle = "failed"; Error = error |}, Constants.JsonSerializerOptions) }
 
+    /// Returns the stable redacted failure used when the private cache-process marker is missing or invalid before runtime dispatch.
+    let processFailure () = failure "process"
+
     /// Executes one parsed process verb, holding the existing machine-wide guard for stateful one-shot runtime operations.
     let execute (effects: CacheProcessEffects) arguments =
         let guarded operation action =
@@ -374,15 +456,118 @@ module CacheProcessCommand =
 /// Provides machine-scoped Grace Cache configuration without consulting repository configuration or CLI local state.
 module CacheMachineConfiguration =
 
+    [<Literal>]
+    let private directoryFileType = 0x4000
+
+    [<Literal>]
+    let private regularFileType = 0x8000
+
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private lstat(string path, byte [] statBuffer)
+
+    [<DllImport("libc", SetLastError = true)>]
+    extern uint32 private geteuid()
+
+    /// Captures Unix ownership and mode metadata read with the ABI layout selected for a supported operating system and CPU.
+    type private UnixPathIdentity = { OwnerUserId: uint32; Mode: int }
+
+    /// Reads Linux and macOS stat metadata on their supported x64 and arm64 layouts without accepting malformed native output.
+    let private tryReadUnixPathIdentity path =
+        try
+            let architecture = RuntimeInformation.ProcessArchitecture
+
+            match CacheUnixPathIdentity.tryGetStatOffsets (OperatingSystem.IsLinux()) (OperatingSystem.IsMacOS()) architecture with
+            | Error () -> Error "Grace Cache machine configuration is not securely provisioned."
+            | Ok (modeOffset, ownerOffset, modeIsUInt16) ->
+                let bytes = Array.zeroCreate<byte> 256
+
+                if lstat (path, bytes) <> 0 then
+                    Error "Grace Cache machine configuration is not securely provisioned."
+                else
+                    let mode =
+                        if modeIsUInt16 then
+                            int (BitConverter.ToUInt16(bytes, modeOffset))
+                        else
+                            BitConverter.ToInt32(bytes, modeOffset)
+
+                    Ok { OwnerUserId = BitConverter.ToUInt32(bytes, ownerOffset); Mode = mode }
+        with
+        | :? PlatformNotSupportedException
+        | :? DllNotFoundException
+        | :? EntryPointNotFoundException
+        | :? BadImageFormatException -> Error "Grace Cache machine configuration is not securely provisioned."
+
+    /// Verifies a Unix path is the exact owner, type, and mode selected by the machine deployment contract.
+    let private validateUnixPath expectedOwner expectedType expectedMode path =
+        match tryReadUnixPathIdentity path with
+        | Ok identity when
+            (identity.Mode &&& 0xF000) = expectedType
+            && (identity.Mode &&& 0o777) = expectedMode
+            && identity.OwnerUserId = expectedOwner
+            ->
+            Ok()
+        | _ -> Error "Grace Cache machine configuration is not securely provisioned."
+
+    /// Resolves the one system-wide Unix leaf that deployment provisions for the configured cache service account.
+    let private unixConfigurationDirectory () = "/var/lib/grace/cache"
+
     /// Resolves the service-account configuration path outside every repository working copy.
-    let configurationPath () = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Grace", "Cache", "cache.runtime.json")
+    let configurationPath () =
+        if OperatingSystem.IsLinux()
+           || OperatingSystem.IsMacOS() then
+            Path.Combine(unixConfigurationDirectory (), "cache.runtime.json")
+        else
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Grace", "Cache", "cache.runtime.json")
+
+    /// Validates the provisioned Unix parent and service-owned leaf before any recovery, configuration, key, listener, or server effect.
+    let validateProvisionedStorage (path: string) =
+        if OperatingSystem.IsLinux()
+           || OperatingSystem.IsMacOS() then
+            try
+                let leaf = Path.GetDirectoryName path
+
+                if String.IsNullOrWhiteSpace leaf then
+                    Error "Grace Cache machine configuration is not securely provisioned."
+                else
+                    let parent = Directory.GetParent(leaf)
+
+                    if isNull parent then
+                        Error "Grace Cache machine configuration is not securely provisioned."
+                    else
+                        match validateUnixPath 0u directoryFileType 0o755 parent.FullName, validateUnixPath (geteuid ()) directoryFileType 0o700 leaf with
+                        | Ok (), Ok () -> Ok()
+                        | _ -> Error "Grace Cache machine configuration is not securely provisioned."
+            with
+            | :? IOException
+            | :? UnauthorizedAccessException -> Error "Grace Cache machine configuration is not securely provisioned."
+        else
+            Ok()
+
+    /// Validates an existing Unix machine-configuration file after its protected parent and leaf have already been accepted.
+    let validateProvisionedFile path =
+        if OperatingSystem.IsLinux()
+           || OperatingSystem.IsMacOS() then
+            match validateProvisionedStorage path with
+            | Error error -> Error error
+            | Ok () ->
+                let file = FileInfo(path)
+
+                if not (isNull file.LinkTarget) then
+                    Error "Grace Cache machine configuration is insecure. Ask an administrator to repair the provisioned cache directory."
+                elif file.Exists then
+                    validateUnixPath (geteuid ()) regularFileType 0o600 path
+                else
+                    Ok()
+        else
+            Ok()
 
     /// Validates the exact endpoint and explicit HTTP exception before a cache process can use it.
     let validateEndpoint (endpoint: string) allowHttpEndpoint =
         match Uri.TryCreate(endpoint, UriKind.Absolute) with
         | false, _ -> Error "Cache endpoint must be an absolute HTTP or HTTPS URI."
         | true, uri when
-            uri.AbsolutePath <> "/"
+            not (String.IsNullOrEmpty uri.UserInfo)
+            || uri.AbsolutePath <> "/"
             || not (String.IsNullOrEmpty uri.Query)
             || not (String.IsNullOrEmpty uri.Fragment)
             ->
@@ -416,11 +601,18 @@ module CacheMachineConfiguration =
             Error "Grace Server URI is required."
         elif String.IsNullOrWhiteSpace configuration.IdentityKeyName then
             Error "Grace Cache identity key reference is required."
+        elif
+            isNull (box configuration.IdentityPublicKey)
+            || not (CacheRegistrationProof.isValidPublicKey configuration.IdentityPublicKey)
+        then
+            Error "Grace Cache identity public verification key is invalid."
         elif configuration.PendingKeyTransition
              |> Option.exists (fun pending ->
                  String.IsNullOrWhiteSpace pending.CurrentKeyName
                  || String.IsNullOrWhiteSpace pending.ReplacementKeyName
-                 || pending.CurrentKeyName = pending.ReplacementKeyName) then
+                 || pending.CurrentKeyName = pending.ReplacementKeyName
+                 || isNull (box pending.ReplacementPublicKey)
+                 || not (CacheRegistrationProof.isValidPublicKey pending.ReplacementPublicKey)) then
             Error "Grace Cache pending key transition is invalid."
         else
             match validateEndpoint configuration.Endpoint configuration.AllowHttpEndpoint, Uri.TryCreate(configuration.ServerUri, UriKind.Absolute) with
@@ -434,19 +626,22 @@ module CacheMachineConfiguration =
 
     /// Reads the registered machine configuration without creating files or recovering missing enrollment state.
     let tryRead (path: string) =
-        try
-            if not (File.Exists path) then
-                Error "Grace Cache is not enrolled on this machine."
-            else
-                let configuration = JsonSerializer.Deserialize<CacheMachineConfiguration>(File.ReadAllText path, Constants.JsonSerializerOptions)
+        match validateProvisionedFile path with
+        | Error error -> Error error
+        | Ok () ->
+            try
+                if not (File.Exists path) then
+                    Error "Grace Cache is not enrolled on this machine."
+                else
+                    let configuration = JsonSerializer.Deserialize<CacheMachineConfiguration>(File.ReadAllText path, Constants.JsonSerializerOptions)
 
-                match validate configuration with
-                | Ok () -> Ok configuration
-                | Error error -> Error $"Grace Cache configuration is invalid: {error}"
-        with
-        | :? JsonException -> Error "Grace Cache configuration is invalid."
-        | :? IOException -> Error "Grace Cache configuration could not be read."
-        | :? UnauthorizedAccessException -> Error "Grace Cache configuration could not be read."
+                    match validate configuration with
+                    | Ok () -> Ok configuration
+                    | Error error -> Error $"Grace Cache configuration is invalid: {error}"
+            with
+            | :? JsonException -> Error "Grace Cache configuration is invalid."
+            | :? IOException -> Error "Grace Cache configuration could not be read."
+            | :? UnauthorizedAccessException -> Error "Grace Cache configuration could not be read."
 
     /// Atomically persists only the server-accepted cache identity and safe machine operational settings.
     let write (path: string) (configuration: CacheMachineConfiguration) =
@@ -459,11 +654,22 @@ module CacheMachineConfiguration =
                 if String.IsNullOrWhiteSpace directory then
                     Error "Grace Cache configuration path is invalid."
                 else
-                    Directory.CreateDirectory directory |> ignore
+                    if not (Directory.Exists directory) then
+                        if OperatingSystem.IsLinux()
+                           || OperatingSystem.IsMacOS() then
+                            raise (new DirectoryNotFoundException())
+                        else
+                            Directory.CreateDirectory directory |> ignore
+
                     let temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp"
 
                     try
                         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(configuration, Constants.JsonSerializerOptions))
+
+                        if OperatingSystem.IsLinux()
+                           || OperatingSystem.IsMacOS() then
+                            File.SetUnixFileMode(temporaryPath, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+
                         File.Move(temporaryPath, path, true)
                         Ok()
                     finally
@@ -498,12 +704,13 @@ module CacheEnrollmentRecovery =
     let recoveryPath (configurationPath: string) = Path.Combine(Path.GetDirectoryName(configurationPath), "cache.enrollment-recovery.json")
 
     /// Creates the evidence that must exist before enrollment reaches Grace Server, including its normalized recovery URI.
-    let prepare endpoint serverUri repositoryScopes identityKeyName =
+    let prepare endpoint serverUri repositoryScopes identityKeyName identityPublicKey =
         {
             Endpoint = endpoint
             ServerUri = serverUri
             RepositoryScopes = repositoryScopes
             IdentityKeyName = identityKeyName
+            IdentityPublicKey = identityPublicKey
             RecoveryStatus = preparedStatus
             CacheId = None
         }
@@ -527,11 +734,22 @@ module CacheEnrollmentRecovery =
             if String.IsNullOrWhiteSpace directory then
                 Error "Grace Cache enrollment recovery could not be written."
             else
-                Directory.CreateDirectory directory |> ignore
+                if not (Directory.Exists directory) then
+                    if OperatingSystem.IsLinux()
+                       || OperatingSystem.IsMacOS() then
+                        raise (new DirectoryNotFoundException())
+                    else
+                        Directory.CreateDirectory directory |> ignore
+
                 let temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp"
 
                 try
                     File.WriteAllText(temporaryPath, JsonSerializer.Serialize(recovery, Constants.JsonSerializerOptions))
+
+                    if OperatingSystem.IsLinux()
+                       || OperatingSystem.IsMacOS() then
+                        File.SetUnixFileMode(temporaryPath, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+
                     File.Move(temporaryPath, path, true)
                     Ok()
                 finally
@@ -553,6 +771,8 @@ module CacheEnrollmentRecovery =
                    || String.IsNullOrWhiteSpace recovery.ServerUri
                    || isNull recovery.RepositoryScopes
                    || String.IsNullOrWhiteSpace recovery.IdentityKeyName
+                   || isNull (box recovery.IdentityPublicKey)
+                   || not (CacheRegistrationProof.isValidPublicKey recovery.IdentityPublicKey)
                    || String.IsNullOrWhiteSpace recovery.RecoveryStatus then
                     Error "Grace Cache enrollment recovery is invalid."
                 elif
@@ -638,8 +858,8 @@ type PendingKeyTransitionEffects =
 module PendingKeyTransition =
 
     /// Persists the current and replacement opaque references before a rotation request can reach Grace Server.
-    let beginTransition effects (configuration: CacheMachineConfiguration) replacementKeyName =
-        let pending = { CurrentKeyName = configuration.IdentityKeyName; ReplacementKeyName = replacementKeyName }
+    let beginTransition effects (configuration: CacheMachineConfiguration) replacementKeyName replacementPublicKey =
+        let pending = { CurrentKeyName = configuration.IdentityKeyName; ReplacementKeyName = replacementKeyName; ReplacementPublicKey = replacementPublicKey }
 
         let pendingConfiguration = { configuration with PendingKeyTransition = Some pending }
 
@@ -658,7 +878,12 @@ module PendingKeyTransition =
 
     /// Durably switches to the server-accepted key before retiring the prior key and finally clearing the transition.
     let acceptReplacement effects (configuration: CacheMachineConfiguration) (pending: PendingKeyTransition) =
-        let switched = { configuration with IdentityKeyName = pending.ReplacementKeyName; PendingKeyTransition = Some pending }
+        let switched =
+            { configuration with
+                IdentityKeyName = pending.ReplacementKeyName
+                IdentityPublicKey = pending.ReplacementPublicKey
+                PendingKeyTransition = Some pending
+            }
 
         match effects.WriteConfiguration switched with
         | Error error -> Error error
@@ -941,6 +1166,20 @@ module CacheRuntimeControl =
         else
             Ok(CacheIdentityPublicKey.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y))
 
+    /// Signs a Windows local-control nonce with the currently durable service key after a rotation has finalized its public verification material.
+    let signLocalControlChallenge nonce status =
+        let configurationPath = CacheMachineConfiguration.configurationPath ()
+
+        match CacheMachineConfiguration.tryRead configurationPath, CacheLocalControlAuthentication.tryDecodeNonce (Base64Url.encode nonce) with
+        | Error error, _ -> Error error
+        | _, Error error -> Error error
+        | Ok configuration, Ok _ ->
+            match openKey configuration.IdentityKeyName with
+            | Error error -> Error error
+            | Ok key ->
+                use key = key
+                Ok(CacheLocalControlAuthentication.sign key.Key nonce status)
+
     /// Reads the current server URI only from machine process configuration, never a repository-local Grace configuration file.
     let private serverUri () =
         let value = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.GraceServerUri
@@ -1111,27 +1350,24 @@ module CacheRuntimeControl =
 
     /// Rejects a new enrollment when existing configuration or recovery evidence must be resolved first.
     let private prepareEnrollmentTarget path =
-        try
-            let recoveryPath = CacheEnrollmentRecovery.recoveryPath path
+        match CacheMachineConfiguration.validateProvisionedStorage path,
+              CacheMachineConfiguration.validateProvisionedFile (CacheEnrollmentRecovery.recoveryPath path)
+            with
+        | Error error, _
+        | _, Error error -> Error error
+        | Ok (), Ok () ->
+            try
+                let recoveryPath = CacheEnrollmentRecovery.recoveryPath path
 
-            if File.Exists path then
-                Error "Grace Cache is already enrolled on this machine."
-            elif File.Exists recoveryPath then
-                Error "Grace Cache enrollment recovery requires administrator inspection or revocation before a new enrollment."
-            else
-                let directory = Path.GetDirectoryName path
-
-                if String.IsNullOrWhiteSpace directory then
-                    Error "Grace Cache configuration path is invalid."
+                if File.Exists path then
+                    Error "Grace Cache is already enrolled on this machine."
+                elif File.Exists recoveryPath then
+                    Error "Grace Cache enrollment recovery requires administrator inspection or revocation before a new enrollment."
                 else
-                    Directory.CreateDirectory directory |> ignore
-                    let probePath = Path.Combine(directory, $".{Guid.NewGuid():N}.probe")
-                    File.WriteAllText(probePath, String.Empty)
-                    File.Delete(probePath)
                     Ok()
-        with
-        | :? IOException
-        | :? UnauthorizedAccessException -> Error "Grace Cache configuration cannot be prepared."
+            with
+            | :? IOException
+            | :? UnauthorizedAccessException -> Error "Grace Cache configuration cannot be prepared."
 
     /// Maps a validated machine endpoint to its safe status transport label.
     let private transport endpoint =
@@ -1212,6 +1448,7 @@ module CacheRuntimeControl =
                         AllowHttpEndpoint = endpoint.Scheme = Uri.UriSchemeHttp
                         ServerUri = serverUri.AbsoluteUri
                         IdentityKeyName = acceptedRecovery.IdentityKeyName
+                        IdentityPublicKey = acceptedRecovery.IdentityPublicKey
                         PendingKeyTransition = None
                     }
 
@@ -1245,26 +1482,37 @@ module CacheRuntimeControl =
     /// Reads configuration only after accepted enrollment and pending rotation recovery have reached durable outcomes.
     let private getReadyConfigurationCore () =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
+        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
 
-        match reconcileEnrollmentRecovery configurationPath with
-        | Error error -> Error error
-        | Ok (Some configuration) -> resolvePendingKeyTransition configurationPath configuration
-        | Ok None ->
-            match CacheMachineConfiguration.tryRead configurationPath with
+        match CacheMachineConfiguration.validateProvisionedStorage configurationPath, CacheMachineConfiguration.validateProvisionedFile recoveryPath with
+        | Error error, _
+        | _, Error error -> Error error
+        | Ok (), Ok () ->
+            match reconcileEnrollmentRecovery configurationPath with
             | Error error -> Error error
-            | Ok configuration -> resolvePendingKeyTransition configurationPath configuration
+            | Ok (Some configuration) -> resolvePendingKeyTransition configurationPath configuration
+            | Ok None ->
+                match CacheMachineConfiguration.tryRead configurationPath with
+                | Error error -> Error error
+                | Ok configuration -> resolvePendingKeyTransition configurationPath configuration
 
     /// Reconciles pending key work before any caller uses the registered machine configuration.
     let getReadyConfiguration () = serializeLifecycle getReadyConfigurationCore
 
     /// Reads safe machine status without reconciling pending keys, contacting Grace Server, or mutating local recovery state.
     let readStatus configurationPath =
-        match CacheEnrollmentRecovery.tryRead (CacheEnrollmentRecovery.recoveryPath configurationPath) with
-        | Ok (Some recovery) when CacheEnrollmentRecovery.isUnknown recovery -> Ok CacheRuntimeStatus.enrollmentRecoveryRequired
-        | Error message -> Error message
-        | Ok _ ->
-            CacheMachineConfiguration.tryRead configurationPath
-            |> Result.map CacheMachineConfiguration.toStatus
+        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
+
+        match CacheMachineConfiguration.validateProvisionedStorage configurationPath, CacheMachineConfiguration.validateProvisionedFile recoveryPath with
+        | Error error, _
+        | _, Error error -> Error error
+        | Ok (), Ok () ->
+            match CacheEnrollmentRecovery.tryRead recoveryPath with
+            | Ok (Some recovery) when CacheEnrollmentRecovery.isUnknown recovery -> Ok CacheRuntimeStatus.enrollmentRecoveryRequired
+            | Error message -> Error message
+            | Ok _ ->
+                CacheMachineConfiguration.tryRead configurationPath
+                |> Result.map CacheMachineConfiguration.toStatus
 
     /// Reads only safe cache status from the machine configuration path used by the active service account.
     let status () = readStatus (CacheMachineConfiguration.configurationPath ())
@@ -1322,11 +1570,16 @@ module CacheRuntimeControl =
     let enroll input =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
-        match prepareEnrollmentTarget configurationPath, serverUri (), enrollmentToken () with
-        | Error error, _, _
-        | _, Error error, _
-        | _, _, Error error -> Error error
-        | Ok (), Ok serverUri, Ok token ->
+        match CacheMachineConfiguration.validateProvisionedStorage configurationPath,
+              prepareEnrollmentTarget configurationPath,
+              serverUri (),
+              enrollmentToken ()
+            with
+        | Error error, _, _, _
+        | _, Error error, _, _
+        | _, _, Error error, _
+        | _, _, _, Error error -> Error error
+        | Ok (), Ok (), Ok serverUri, Ok token ->
             match createKey () with
             | Error error -> Error error
             | Ok (keyName, key) ->
@@ -1372,7 +1625,7 @@ module CacheRuntimeControl =
                         Error "Cache enrollment input is invalid."
                     | Ok () ->
                         let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
-                        let recovery = CacheEnrollmentRecovery.prepare input.Endpoint serverUri.AbsoluteUri input.RepositoryScopes keyName
+                        let recovery = CacheEnrollmentRecovery.prepare input.Endpoint serverUri.AbsoluteUri input.RepositoryScopes keyName publicKey
 
                         match CacheEnrollmentRecovery.write recoveryPath recovery with
                         | Error error ->
@@ -1432,7 +1685,7 @@ module CacheRuntimeControl =
                                 ProbeAcceptedKey = probeAcceptedKey
                             }
 
-                        match PendingKeyTransition.beginTransition effects configuration newKeyName with
+                        match PendingKeyTransition.beginTransition effects configuration newKeyName newPublicKey with
                         | Error error -> cleanupReplacement error
                         | Ok pendingConfiguration ->
                             let unsignedRequest: CacheKeyRotationRequest =
@@ -1513,28 +1766,34 @@ module CacheLocalControl =
     /// Captures the ownership and access bits that make a Unix runtime path safe to trust.
     type UnixRuntimePathIdentity = { OwnerUserId: uint32; Mode: int }
 
+    /// Identifies Unix CPU layouts whose native stat offsets are explicitly supported by the local-control boundary.
+    let supportsUnixStatLayout architecture =
+        CacheUnixPathIdentity.tryGetStatOffsets true false architecture
+        |> Result.isOk
+
     /// Admits a response only when the connected listener is the protected socket owner or root.
     let isUnixResponderAuthorized socketOwnerUserId responderUserId =
         responderUserId = 0u
         || responderUserId = socketOwnerUserId
 
-    /// Reads the platform-native stat layout only on supported x64 Unix runtimes and rejects every other layout.
+    /// Reads the platform-native stat layout only on supported x64 and arm64 Unix runtimes and rejects every other layout.
     let private tryReadUnixRuntimePathIdentity path =
         try
-            if RuntimeInformation.ProcessArchitecture
-               <> Architecture.X64 then
-                Error "Grace Cache local control authorization could not be established."
-            else
+            match CacheUnixPathIdentity.tryGetStatOffsets (OperatingSystem.IsLinux()) (OperatingSystem.IsMacOS()) RuntimeInformation.ProcessArchitecture with
+            | Error () -> Error "Grace Cache local control authorization could not be established."
+            | Ok (modeOffset, ownerOffset, modeIsUInt16) ->
                 let bytes = Array.zeroCreate<byte> 256
 
                 if lstat (path, bytes) <> 0 then
                     Error "Grace Cache local control authorization could not be established."
-                elif OperatingSystem.IsLinux() then
-                    Ok { OwnerUserId = BitConverter.ToUInt32(bytes, 28); Mode = BitConverter.ToInt32(bytes, 24) }
-                elif OperatingSystem.IsMacOS() then
-                    Ok { OwnerUserId = BitConverter.ToUInt32(bytes, 16); Mode = int (BitConverter.ToUInt16(bytes, 4)) }
                 else
-                    Error "Grace Cache local control authorization could not be established."
+                    let mode =
+                        if modeIsUInt16 then
+                            int (BitConverter.ToUInt16(bytes, modeOffset))
+                        else
+                            BitConverter.ToInt32(bytes, modeOffset)
+
+                    Ok { OwnerUserId = BitConverter.ToUInt32(bytes, ownerOffset); Mode = mode }
         with
         | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
         | :? DllNotFoundException
@@ -1698,8 +1957,8 @@ module CacheLocalControl =
         | :? IOException
         | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
 
-    /// Accepts only the exact rotate marker after the platform ACL or mode has admitted the local caller.
-    let private handleRequest rotate (pipe: Stream) =
+    /// Accepts only the exact Unix rotate marker after kernel credentials and protected socket ownership have admitted the local caller.
+    let private handleUnixRequest rotate (pipe: Stream) =
         let requestBuffer = Array.zeroCreate<byte> 32
         let bytesRead = pipe.Read(requestBuffer, 0, requestBuffer.Length)
         let request = Text.Encoding.UTF8.GetString(requestBuffer, 0, bytesRead)
@@ -1711,6 +1970,36 @@ module CacheLocalControl =
                 | Error _ -> "failed"
             else
                 "denied"
+
+        let responseBytes = Text.Encoding.UTF8.GetBytes response
+        pipe.Write(responseBytes, 0, responseBytes.Length)
+        pipe.Flush()
+
+    /// Requires a fresh nonce challenge on Windows so a pipe-name look-alike cannot fabricate a rotate-now success.
+    let private handleWindowsRequest rotate (pipe: Stream) =
+        let requestBuffer = Array.zeroCreate<byte> 1024
+        let bytesRead = pipe.Read(requestBuffer, 0, requestBuffer.Length)
+
+        let response =
+            try
+                let request =
+                    JsonSerializer.Deserialize<CacheLocalControlChallenge>(ReadOnlySpan<byte>(requestBuffer, 0, bytesRead), Constants.JsonSerializerOptions)
+
+                if isNull (box request) then
+                    "denied"
+                else
+                    match CacheLocalControlAuthentication.tryDecodeNonce request.Nonce with
+                    | Error _ -> "denied"
+                    | Ok nonce ->
+                        match rotate () with
+                        | Error _ -> "failed"
+                        | Ok status ->
+                            match CacheRuntimeControl.signLocalControlChallenge nonce status with
+                            | Ok signed -> JsonSerializer.Serialize(signed, Constants.JsonSerializerOptions)
+                            | Error _ -> "failed"
+            with
+            | :? JsonException
+            | :? ArgumentException -> "denied"
 
         let responseBytes = Text.Encoding.UTF8.GetBytes response
         pipe.Write(responseBytes, 0, responseBytes.Length)
@@ -1741,7 +2030,8 @@ module CacheLocalControl =
                                         .GetAwaiter()
                                         .GetResult()
 
-                                    if not cancellation.IsCancellationRequested then handleRequest rotate pipe
+                                    if not cancellation.IsCancellationRequested then
+                                        handleWindowsRequest rotate pipe
                                 with
                                 | :? OperationCanceledException -> ()
                                 | :? IOException -> ())
@@ -1793,7 +2083,7 @@ module CacheLocalControl =
                                 match tryGetUnixPeerUserId accepted with
                                 | Ok callerUserId when isUnixCallerAuthorized serviceUserId callerUserId ->
                                     use stream = new NetworkStream(accepted, false)
-                                    handleRequest rotate stream
+                                    handleUnixRequest rotate stream
                                 | _ -> ()
                             with
                             | :? OperationCanceledException -> ()
@@ -1844,15 +2134,56 @@ module CacheLocalControl =
         | :? SocketException
         | :? UnauthorizedAccessException -> Error "Grace Cache rotation request was not accepted."
 
+    /// Sends one Windows nonce challenge and accepts a response only when the post-operation protected configuration verifies the active Cache signature.
+    let requestWindowsRotationWith readVerificationKey nonce openControlStream =
+        try
+            use pipe: Stream = openControlStream ()
+            let request = JsonSerializer.Serialize({ Nonce = Base64Url.encode nonce }, Constants.JsonSerializerOptions)
+            let requestBytes = Text.Encoding.UTF8.GetBytes request
+            pipe.Write(requestBytes, 0, requestBytes.Length)
+            pipe.Flush()
+            let responseBuffer = Array.zeroCreate<byte> 2048
+            let bytesRead = pipe.Read(responseBuffer, 0, responseBuffer.Length)
+
+            let response =
+                JsonSerializer.Deserialize<CacheLocalControlChallengeResponse>(
+                    ReadOnlySpan<byte>(responseBuffer, 0, bytesRead),
+                    Constants.JsonSerializerOptions
+                )
+
+            match readVerificationKey () with
+            | Ok publicKey -> CacheLocalControlAuthentication.verify nonce publicKey response
+            | Error _ -> Error "Grace Cache rotation request was not accepted."
+        with
+        | :? JsonException
+        | :? NotSupportedException
+        | :? TimeoutException
+        | :? IOException
+        | :? SocketException
+        | :? UnauthorizedAccessException -> Error "Grace Cache rotation request was not accepted."
+
     /// Sends one local-only rotation request to the active cache process without attempting a direct singleton-guard bypass.
     let requestRotation () =
-        requestRotationWith (fun () ->
-            if OperatingSystem.IsWindows() then
-                let namedPipe = new NamedPipeClientStream(".", rotationPipeName, PipeDirection.InOut, PipeOptions.None)
-                namedPipe.Connect(2000)
-                namedPipe :> Stream
-            elif OperatingSystem.IsLinux()
-                 || OperatingSystem.IsMacOS() then
+        if OperatingSystem.IsWindows() then
+            let configurationPath = CacheMachineConfiguration.configurationPath ()
+
+            match CacheMachineConfiguration.tryRead configurationPath with
+            | Error _ -> Error "Grace Cache rotation request was not accepted."
+            | Ok _ ->
+                let nonce = CacheLocalControlAuthentication.createChallenge ()
+
+                requestWindowsRotationWith
+                    (fun () ->
+                        CacheMachineConfiguration.tryRead configurationPath
+                        |> Result.map (fun configuration -> configuration.IdentityPublicKey))
+                    nonce
+                    (fun () ->
+                        let namedPipe = new NamedPipeClientStream(".", rotationPipeName, PipeDirection.InOut, PipeOptions.None)
+                        namedPipe.Connect(2000)
+                        namedPipe :> Stream)
+        elif OperatingSystem.IsLinux()
+             || OperatingSystem.IsMacOS() then
+            requestRotationWith (fun () ->
                 match validateUnixControlPath () with
                 | Error error -> raise (new UnauthorizedAccessException(error))
                 | Ok (path, socketOwnerUserId) ->
@@ -1869,6 +2200,6 @@ module CacheLocalControl =
                     with
                     | _ ->
                         socket.Dispose()
-                        reraise ()
-            else
-                raise (new PlatformNotSupportedException()))
+                        reraise ())
+        else
+            Error "Grace Cache rotation request was not accepted."

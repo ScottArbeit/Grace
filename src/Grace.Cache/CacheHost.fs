@@ -15,11 +15,17 @@ type CacheHostSettings = private { InstanceName: string }
 /// Validates the cache process startup seam without introducing enrollment or machine-wide configuration behavior.
 module CacheHostSettings =
 
+    [<Literal>]
+    let private expectedInstanceName = "grace-cache-service"
+
     /// Resolves the required private instance marker and rejects blank values before Kestrel is built.
     let fromEnvironment (readEnvironment: string -> string) =
         let instanceName = readEnvironment "GRACE_CACHE_INSTANCE_NAME"
 
-        if String.IsNullOrWhiteSpace instanceName then
+        if
+            String.IsNullOrWhiteSpace instanceName
+            || not (String.Equals(instanceName.Trim(), expectedInstanceName, StringComparison.Ordinal))
+        then
             Error "Missing required setting 'GRACE_CACHE_INSTANCE_NAME'."
         else
             Ok { InstanceName = instanceName.Trim() }
@@ -68,6 +74,17 @@ module CacheRefreshSchedule =
     let normalRefreshDelay (now: Instant) (registration: CacheRegistration) =
         let delay = (registration.RefreshAfter - now).ToTimeSpan()
         if delay <= TimeSpan.Zero then TimeSpan.Zero else delay
+
+/// Calculates the initial key-rotation callback from the server-issued due instant so restart cannot reset the server cadence.
+module CacheRotationSchedule =
+
+    /// Schedules immediately when rotation is due and otherwise waits only until the authoritative server deadline.
+    let initialDelayForDue (now: Instant) rotationDueAt =
+        let delay = (rotationDueAt - now).ToTimeSpan()
+        if delay <= TimeSpan.Zero then TimeSpan.Zero else delay
+
+    /// Calculates the initial delay from the registration response returned by Grace Server.
+    let initialDelay (now: Instant) (registration: CacheRegistration) = initialDelayForDue now registration.RotationDueAt
 
 /// Owns the fixed, non-serving HTTP surface of the Grace Cache tracer process.
 module CacheHost =
@@ -143,6 +160,23 @@ module CacheHost =
     /// Starts the server-expiry-based refresh scheduler after startup refresh has returned authoritative registration timing.
     let startRegistrationRefresh initialRegistration = new RegistrationRefreshScheduler(initialRegistration) :> IDisposable
 
+    /// Holds the in-memory rotation timer whose first callback is anchored to the server-issued due instant.
+    type private KeyRotationScheduler(initialRegistration: CacheRegistration) =
+        let timer =
+            new Timer(
+                TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore),
+                null,
+                CacheRotationSchedule.initialDelay (SystemClock.Instance.GetCurrentInstant()) initialRegistration,
+                keyRotationInterval
+            )
+
+        interface IDisposable with
+            /// Releases the process-local rotation timer when the cache host stops.
+            member _.Dispose() = timer.Dispose()
+
+    /// Starts key rotation from the authoritative server due time returned by the startup refresh.
+    let startKeyRotation initialRegistration = new KeyRotationScheduler(initialRegistration) :> IDisposable
+
     /// Lists the only routes available before cache enrollment, storage, or artifact serving exists.
     let routeInventory =
         [
@@ -177,13 +211,7 @@ module CacheHost =
             )
             |> ignore
 
-            let rotationTimer = new Timer(TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore), null, keyRotationInterval, keyRotationInterval)
-
-            app.Lifetime.ApplicationStopping.Register(
-                Action (fun () ->
-                    rotationTimer.Dispose()
-                    localControl.Dispose())
-            )
+            app.Lifetime.ApplicationStopping.Register(Action(fun () -> localControl.Dispose()))
             |> ignore
 
             Ok app

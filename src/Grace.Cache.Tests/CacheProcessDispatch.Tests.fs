@@ -13,7 +13,6 @@ open NUnit.Framework
 /// Verifies cache-process control verbs reach only the cache runtime boundary.
 [<TestFixture>]
 type CacheProcessDispatchTests() =
-
     /// Builds one complete enrollment argument vector with explicit repository-to-organization pairing.
     let enrollmentArguments =
         [|
@@ -29,6 +28,39 @@ type CacheProcessDispatchTests() =
             "--repository-organization-id"
             "22222222-2222-2222-2222-222222222222"
         |]
+
+    /// Verifies an absent or invalid private process marker rejects every verb before the process dispatch boundary can cause an effect.
+    [<Test>]
+    member _.InvalidProcessMarkerHasZeroRuntimeEffects() =
+        let mutable effectsCalled = 0
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll =
+                    fun _ ->
+                        effectsCalled <- effectsCalled + 1
+                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
+                RotateNow =
+                    fun () ->
+                        effectsCalled <- effectsCalled + 1
+                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
+                Status =
+                    fun () ->
+                        effectsCalled <- effectsCalled + 1
+                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
+                Run =
+                    fun () ->
+                        effectsCalled <- effectsCalled + 1
+                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
+            }
+
+        let missing = Program.executeWithMarker null effects [| "--status" |]
+        let invalid = Program.executeWithMarker "look-alike" effects [| "--run" |]
+
+        Assert.That(missing.ExitCode, Is.EqualTo(1))
+        Assert.That(invalid.ExitCode, Is.EqualTo(1))
+        Assert.That(missing.Payload, Is.EqualTo(invalid.Payload))
+        Assert.That(effectsCalled, Is.EqualTo(0))
 
     /// Verifies enrollment reaches the runtime boundary once with canonical explicit input.
     [<Test>]

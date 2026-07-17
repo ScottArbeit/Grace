@@ -260,6 +260,30 @@ Administrators, not runtime cache refresh, manage repository assignments and oth
 HTTPS remains the default cache transport. An HTTP endpoint requires the administrator's explicit enrollment approval for
 that exact endpoint; the cache runtime cannot change it during refresh.
 
+### Unix Cache Deployment
+
+On Linux and macOS, deployment must provision the one machine-wide cache configuration location before enrollment:
+`/var/lib/grace/cache`. The `/var/lib/grace` parent must be root-owned and mode `0755`; the `cache` leaf must be owned by
+the configured cache service account and mode `0700`. The same service account then runs `grace cache enroll` and the
+cache service. Grace Cache fails closed before enrollment, recovery, key, listener, or server work when this contract is
+missing or insecure.
+
+PowerShell:
+
+```powershell
+$serviceUser = "grace-cache"
+sudo install -d -o root -g root -m 0755 /var/lib/grace
+sudo install -d -o $serviceUser -g $serviceUser -m 0700 /var/lib/grace/cache
+```
+
+bash / zsh:
+
+```bash
+service_user="grace-cache"
+sudo install -d -o root -g root -m 0755 /var/lib/grace
+sudo install -d -o "$service_user" -g "$service_user" -m 0700 /var/lib/grace/cache
+```
+
 ### Authorization (Bootstrap)
 
 - `grace__authz__bootstrap__system_admin_users`: semicolon-delimited user IDs to seed SystemAdmin at system

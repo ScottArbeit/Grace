@@ -62,12 +62,25 @@ module CacheCommandParsingTests =
         Assert.That(child.Environment.ContainsKey("GRACE_CACHE_ENROLLMENT_TOKEN"), Is.False)
         Assert.That(child.Environment[Constants.EnvironmentVariables.GraceServerUri], Is.EqualTo("https://server.example.test/grace/"))
 
-        let enrollment = CacheCommand.createProcessStartInfo "Grace.Cache" (Some "resolved-enrollment-token")
-        let nonEnrollment = CacheCommand.createProcessStartInfo "Grace.Cache" None
+        let enrollment = CacheCommand.createProcessStartInfo "Grace.Cache" (Some "resolved-enrollment-token") (Some "https://server.example.test/grace/")
+        let nonEnrollment = CacheCommand.createProcessStartInfo "Grace.Cache" None None
 
         Assert.That(enrollment.Environment["GRACE_CACHE_ENROLLMENT_TOKEN"], Is.EqualTo("resolved-enrollment-token"))
+        Assert.That(enrollment.Environment[Constants.EnvironmentVariables.GraceServerUri], Is.EqualTo("https://server.example.test/grace/"))
         Assert.That(nonEnrollment.Environment.ContainsKey("GRACE_CACHE_ENROLLMENT_TOKEN"), Is.False)
         Assert.That(nonEnrollment.Environment.ContainsKey(Constants.EnvironmentVariables.GraceToken), Is.False)
+
+        Assert.That(
+            CacheCommand.tryGetEffectiveServerUri (Some "https://environment.example.test/grace/") (Some "https://configured.example.test/"),
+            Is.EqualTo(Some "https://environment.example.test/grace/")
+        )
+
+        Assert.That(
+            CacheCommand.tryGetEffectiveServerUri None (Some "https://configured.example.test/grace/api/"),
+            Is.EqualTo(Some "https://configured.example.test/grace/api/")
+        )
+
+        Assert.That(CacheCommand.tryGetEffectiveServerUri None None, Is.EqualTo(None))
 
     /// Verifies enrollment requires exact explicit stable identifiers and an endpoint.
     [<Test>]
@@ -156,6 +169,6 @@ module CacheCommandParsingTests =
     let ``cache executable launch failures are redacted`` () =
         let secretPath = "C:\\sensitive\\Grace.Cache.exe"
 
-        let exitCode = CacheCommand.invokeProcessWith (fun _ -> raise (new Win32Exception($"Could not start {secretPath}"))) secretPath [ "--status" ] None
+        let exitCode = CacheCommand.invokeProcessWith (fun _ -> raise (new Win32Exception($"Could not start {secretPath}"))) secretPath [ "--status" ] None None
 
         Assert.That(exitCode, Is.EqualTo(1))

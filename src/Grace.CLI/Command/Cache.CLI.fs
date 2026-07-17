@@ -85,23 +85,57 @@ module CacheCommand =
             startInfo.Environment.Remove(variableName)
             |> ignore)
 
+    /// Resolves the effective parent server URI while preserving an HTTPS or HTTP path base and rejecting credentials.
+    let tryGetEffectiveServerUri environmentServerUri configuredServerUri =
+        let tryNormalize value =
+            match Uri.TryCreate(value, UriKind.Absolute) with
+            | true, uri when
+                (uri.Scheme = Uri.UriSchemeHttp
+                 || uri.Scheme = Uri.UriSchemeHttps)
+                && String.IsNullOrEmpty uri.UserInfo
+                ->
+                Some uri.AbsoluteUri
+            | _ -> None
+
+        match environmentServerUri with
+        | Some value -> tryNormalize value
+        | None -> configuredServerUri |> Option.bind tryNormalize
+
+    /// Resolves the normal parent Grace context without creating configuration or persisting credentials for cache enrollment.
+    let tryGetConfiguredServerUri () =
+        let configuredServerUri =
+            match Grace.Shared.Client.Configuration.tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection -> Some inspection.Configuration.ServerUri
+            | Error _ -> None
+
+        tryGetEffectiveServerUri
+            (Environment.GetEnvironmentVariable Constants.EnvironmentVariables.GraceServerUri
+             |> Option.ofObj)
+            configuredServerUri
+
     /// Creates a cache process start configuration that retains operational settings while excluding inherited credentials.
-    let createProcessStartInfo executable enrollmentToken =
+    let createProcessStartInfo executable enrollmentToken serverUri =
         let startInfo = ProcessStartInfo(executable)
         startInfo.UseShellExecute <- false
         removeAuthenticationEnvironment startInfo
         startInfo.Environment[ "GRACE_CACHE_INSTANCE_NAME" ] <- cacheInstanceMarker
 
-        match enrollmentToken with
-        | Some token -> startInfo.Environment[ enrollmentTokenEnvironmentVariable ] <- token
-        | None -> ()
+        match enrollmentToken, serverUri with
+        | Some token, Some effectiveServerUri ->
+            startInfo.Environment[ enrollmentTokenEnvironmentVariable ] <- token
+
+            startInfo.Environment[
+                Constants.EnvironmentVariables.GraceServerUri
+            ] <- effectiveServerUri
+        | Some token, None -> startInfo.Environment[ enrollmentTokenEnvironmentVariable ] <- token
+        | None, _ -> ()
 
         startInfo
 
     /// Starts the cache executable through an injectable process factory and maps launch failures to the stable exit-one boundary.
-    let invokeProcessWith (startProcess: ProcessStartInfo -> Process) executable arguments enrollmentToken =
+    let invokeProcessWith (startProcess: ProcessStartInfo -> Process) executable arguments enrollmentToken serverUri =
         try
-            let startInfo = createProcessStartInfo executable enrollmentToken
+            let startInfo = createProcessStartInfo executable enrollmentToken serverUri
             arguments |> List.iter startInfo.ArgumentList.Add
 
             use childProcess = startProcess startInfo
@@ -119,8 +153,8 @@ module CacheCommand =
         | :? System.UnauthorizedAccessException -> 1
 
     /// Starts the cache executable with already validated command tokens and returns its exit code.
-    let private invokeProcess executable arguments enrollmentToken =
-        invokeProcessWith (fun startInfo -> Process.Start(startInfo)) executable arguments enrollmentToken
+    let private invokeProcess executable arguments enrollmentToken serverUri =
+        invokeProcessWith (fun startInfo -> Process.Start(startInfo)) executable arguments enrollmentToken serverUri
 
     /// Validates that the selected endpoint uses HTTPS unless the explicit HTTP exception was supplied.
     let validateEndpoint endpoint allowHttp =
@@ -139,14 +173,14 @@ module CacheCommand =
         | true, _ -> Error "Cache endpoint must use HTTP or HTTPS."
 
     /// Executes a cache executable verb without letting the CLI open cache configuration, databases, or key storage.
-    let private invokeCache parseResult arguments enrollmentToken = invokeProcess (resolveExecutable parseResult) arguments enrollmentToken
+    let private invokeCache parseResult arguments enrollmentToken serverUri = invokeProcess (resolveExecutable parseResult) arguments enrollmentToken serverUri
 
     /// Executes the foreground cache host process.
     type Run() =
         inherit SynchronousCommandLineAction()
 
         /// Starts the registered cache process and holds the CLI only for the child process lifetime.
-        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--run" ] None
+        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--run" ] None None
 
     /// Executes explicit enrollment through the deployed cache process boundary.
     type Enroll() =
@@ -199,7 +233,7 @@ module CacheCommand =
                         @ allowHttpArguments @ organizationArguments
 
                 match Auth.tryGetAccessToken().GetAwaiter().GetResult() with
-                | Ok (Some token) -> invokeCache parseResult arguments (Some token)
+                | Ok (Some token) -> invokeCache parseResult arguments (Some token) (tryGetConfiguredServerUri ())
                 | _ ->
                     Console.Error.WriteLine "Current Grace login is unavailable."
                     1
@@ -209,14 +243,14 @@ module CacheCommand =
         inherit SynchronousCommandLineAction()
 
         /// Queries the cache executable without reading its machine configuration from the CLI.
-        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--status" ] None
+        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--status" ] None None
 
     /// Executes an immediate key-rotation request through the deployed cache process boundary.
     type RotateNow() =
         inherit SynchronousCommandLineAction()
 
         /// Requests immediate rotation without exposing or handling private key material in the CLI.
-        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--rotate-now" ] None
+        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--rotate-now" ] None None
 
     /// Builds the normal operator command group without advertising prefetch, artifact serving, or cache-selection modes.
     let Build =

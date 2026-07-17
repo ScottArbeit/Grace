@@ -2,7 +2,11 @@ namespace Grace.Cache.Tests
 
 open System
 open System.IO
+open System.Runtime.InteropServices
+open System.Security.Cryptography
 open Grace.Cache
+open Grace.Shared
+open Grace.Shared.ArtifactGrant
 open Grace.Types.CacheRegistration
 open NodaTime
 open NUnit.Framework
@@ -10,6 +14,11 @@ open NUnit.Framework
 /// Verifies the cache tracer exposes only its fixed safe route inventory.
 [<TestFixture>]
 type CacheHostTests() =
+
+    let testPublicKey =
+        use key = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let parameters = key.ExportParameters(false)
+        CacheIdentityPublicKey.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y)
 
     /// Verifies that the F# cache host exposes only safe status routes before later runtime capabilities exist.
     [<Test>]
@@ -51,6 +60,122 @@ type CacheHostTests() =
         Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 0u, Is.True)
         Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 1002u, Is.False)
 
+    /// Verifies the protected Unix local-control stat layouts include Linux and macOS arm64 without accepting an unknown CPU layout.
+    [<Test>]
+    member _.UnixLocalControlSupportsX64AndArm64LayoutsOnly() =
+        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.X64, Is.True)
+        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.Arm64, Is.True)
+        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.X86, Is.False)
+        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.Arm, Is.False)
+
+        Assert.That(
+            CacheUnixPathIdentity.tryGetStatOffsets true false Architecture.X64
+            |> Result.toOption,
+            Is.EqualTo(Some(24, 28, false))
+        )
+
+        Assert.That(
+            CacheUnixPathIdentity.tryGetStatOffsets true false Architecture.Arm64
+            |> Result.toOption,
+            Is.EqualTo(Some(16, 24, false))
+        )
+
+        Assert.That(
+            CacheUnixPathIdentity.tryGetStatOffsets false true Architecture.X64
+            |> Result.toOption,
+            Is.EqualTo(Some(4, 16, true))
+        )
+
+        Assert.That(
+            CacheUnixPathIdentity.tryGetStatOffsets false true Architecture.Arm64
+            |> Result.toOption,
+            Is.EqualTo(Some(4, 16, true))
+        )
+
+        Assert.That(
+            CacheUnixPathIdentity.tryGetStatOffsets true false Architecture.X86
+            |> Result.isError,
+            Is.True
+        )
+
+    /// Verifies a Windows local-control status is accepted only for the fresh nonce signed by the recorded Cache public key.
+    [<Test>]
+    member _.WindowsLocalControlRequiresFreshRecordedKeySignature() =
+        use signer = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let parameters = signer.ExportParameters(false)
+        let publicKey = CacheIdentityPublicKey.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y)
+        let status = CacheRuntimeStatus.registered (Guid.NewGuid()) "https"
+        let firstNonce = CacheLocalControlAuthentication.createChallenge ()
+        let secondNonce = CacheLocalControlAuthentication.createChallenge ()
+        let response = CacheLocalControlAuthentication.sign signer firstNonce status
+
+        Assert.That((firstNonce = secondNonce), Is.False)
+
+        Assert.That(
+            CacheLocalControlAuthentication.verify firstNonce publicKey response
+            |> Result.isOk,
+            Is.True
+        )
+
+        Assert.That(
+            CacheLocalControlAuthentication.verify secondNonce publicKey response
+            |> Result.isError,
+            Is.True
+        )
+
+        use wrongSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let wrongParameters = wrongSigner.ExportParameters(false)
+        let wrongKey = CacheIdentityPublicKey.Create(Base64Url.encode wrongParameters.Q.X, Base64Url.encode wrongParameters.Q.Y)
+
+        Assert.That(
+            CacheLocalControlAuthentication.verify firstNonce wrongKey response
+            |> Result.isError,
+            Is.True
+        )
+
+        let malformed = { response with Signature = "malformed" }
+
+        Assert.That(
+            CacheLocalControlAuthentication.verify firstNonce publicKey malformed
+            |> Result.isError,
+            Is.True
+        )
+
+    /// Verifies a Windows client accepts the replacement signature only after rereading the durable accepted replacement key.
+    [<Test>]
+    member _.WindowsLocalControlRereadsTheAcceptedReplacementKeyAfterRotation() =
+        use replacementSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let replacementParameters = replacementSigner.ExportParameters(false)
+
+        let replacementPublicKey = CacheIdentityPublicKey.Create(Base64Url.encode replacementParameters.Q.X, Base64Url.encode replacementParameters.Q.Y)
+
+        let nonce = CacheLocalControlAuthentication.createChallenge ()
+        let response = CacheLocalControlAuthentication.sign replacementSigner nonce (CacheRuntimeStatus.registered (Guid.NewGuid()) "https")
+
+        let request: string =
+            System.Text.Json.JsonSerializer.Serialize<CacheLocalControlChallenge>({ Nonce = Base64Url.encode nonce }, Constants.JsonSerializerOptions)
+
+        let responseBytes: byte array =
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes<CacheLocalControlChallengeResponse>(response, Constants.JsonSerializerOptions)
+
+        let pipeBytes = Array.append (Array.zeroCreate<byte> (System.Text.Encoding.UTF8.GetByteCount request)) responseBytes
+        use stream = new MemoryStream(pipeBytes)
+
+        Assert.That(
+            CacheLocalControl.requestWindowsRotationWith (fun () -> Ok replacementPublicKey) nonce (fun () -> stream :> Stream)
+            |> Result.isOk,
+            Is.True
+        )
+
+    /// Verifies server-returned rotation deadlines schedule before, at, and after the deadline without resetting the cadence at restart.
+    [<Test>]
+    member _.RotationScheduleUsesServerDueTime() =
+        let now = Instant.FromUtc(2026, 7, 17, 20, 0)
+
+        Assert.That(CacheRotationSchedule.initialDelayForDue now (now.Plus(Duration.FromMinutes 10.0)), Is.EqualTo(TimeSpan.FromMinutes 10.0))
+        Assert.That(CacheRotationSchedule.initialDelayForDue now now, Is.EqualTo(TimeSpan.Zero))
+        Assert.That(CacheRotationSchedule.initialDelayForDue now (now - Duration.FromMinutes 1.0), Is.EqualTo(TimeSpan.Zero))
+
     /// Verifies known server acceptance remains known through every recovery/configuration local-write ordering.
     [<Test>]
     member _.KnownAcceptedCacheIdSurvivesRecoveryWriteFailures() =
@@ -60,6 +185,7 @@ type CacheHostTests() =
                 "https://server.example.test/grace/"
                 [| Guid.NewGuid(), Guid.NewGuid() |]
                 "opaque-key-reference"
+                testPublicKey
 
         let cacheId = Guid.NewGuid()
         let writes = ResizeArray<CacheEnrollmentRecovery>()
@@ -108,6 +234,7 @@ type CacheHostTests() =
                 "https://server.example.test/grace/"
                 [| Guid.NewGuid(), Guid.NewGuid() |]
                 "opaque-key-reference"
+                testPublicKey
 
         let cacheId = Guid.NewGuid()
         let writes = ResizeArray<CacheEnrollmentRecovery>()
@@ -138,6 +265,7 @@ type CacheHostTests() =
                 "https://server.example.test/grace/"
                 [| Guid.NewGuid(), Guid.NewGuid() |]
                 "opaque-key-reference"
+                testPublicKey
 
         let cacheId = Guid.NewGuid()
         let writes = ResizeArray<CacheEnrollmentRecovery>()
@@ -199,7 +327,14 @@ type CacheHostTests() =
         let configurationPath = Path.Combine(root, "cache.runtime.json")
         let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
         let repositoryScopes = [| Guid.NewGuid(), Guid.NewGuid() |]
-        let recovery = CacheEnrollmentRecovery.prepare "https://cache.example.test" "https://server.example.test/grace/" repositoryScopes "opaque-key-reference"
+
+        let recovery =
+            CacheEnrollmentRecovery.prepare
+                "https://cache.example.test"
+                "https://server.example.test/grace/"
+                repositoryScopes
+                "opaque-key-reference"
+                testPublicKey
 
         try
             match CacheEnrollmentRecovery.write recoveryPath (CacheEnrollmentRecovery.unknown recovery) with
@@ -232,6 +367,7 @@ type CacheHostTests() =
                 "https://original-server.example.test/grace/"
                 [| Guid.NewGuid(), Guid.NewGuid() |]
                 "opaque-key-reference"
+                testPublicKey
             |> CacheEnrollmentRecovery.accept cacheId
 
         try
@@ -270,7 +406,8 @@ type CacheHostTests() =
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test/grace/"
                 IdentityKeyName = "old-key"
-                PendingKeyTransition = Some { CurrentKeyName = "old-key"; ReplacementKeyName = "replacement-key" }
+                IdentityPublicKey = testPublicKey
+                PendingKeyTransition = Some { CurrentKeyName = "old-key"; ReplacementKeyName = "replacement-key"; ReplacementPublicKey = testPublicKey }
             }
 
         try
@@ -356,6 +493,9 @@ type CacheHostTests() =
     /// Verifies an active host owns protected machine-local rotation and executes exactly one request through the shared runtime boundary.
     [<Test>]
     member _.LocalRotationControlUsesTheActiveProcess() =
+        if OperatingSystem.IsWindows() then
+            Assert.Pass("Windows responder proof is covered by the nonce-signature contract test.")
+
         let mutable rotations = 0
         let expected = CacheRuntimeStatus.registered (Guid.Parse "11111111-1111-1111-1111-111111111111") "https"
 
@@ -384,6 +524,7 @@ type CacheHostTests() =
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test/private"
                 IdentityKeyName = "Grace.Cache.Identity.test"
+                IdentityPublicKey = testPublicKey
                 PendingKeyTransition = None
             }
 
@@ -407,7 +548,8 @@ type CacheHostTests() =
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test"
                 IdentityKeyName = "old"
-                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement" }
+                IdentityPublicKey = testPublicKey
+                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement"; ReplacementPublicKey = testPublicKey }
             }
 
         let effects: PendingKeyTransitionEffects =
@@ -444,7 +586,8 @@ type CacheHostTests() =
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test"
                 IdentityKeyName = "old"
-                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement" }
+                IdentityPublicKey = testPublicKey
+                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement"; ReplacementPublicKey = testPublicKey }
             }
 
         let effects: PendingKeyTransitionEffects =
@@ -468,6 +611,7 @@ type CacheHostTests() =
             Assert.That(deletes, Is.EquivalentTo([ "old" ]))
             Assert.That(writes.Count, Is.EqualTo(2))
             Assert.That(writes[0].IdentityKeyName, Is.EqualTo("replacement"))
+            Assert.That(writes[0].IdentityPublicKey, Is.EqualTo(testPublicKey))
             Assert.That(writes[0].PendingKeyTransition, Is.Not.EqualTo(None))
 
     /// Verifies a cleanup failure retains the durable pending transition and blocks a normal-work conclusion.
@@ -482,7 +626,8 @@ type CacheHostTests() =
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test"
                 IdentityKeyName = "replacement"
-                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement" }
+                IdentityPublicKey = testPublicKey
+                PendingKeyTransition = Some { CurrentKeyName = "old"; ReplacementKeyName = "replacement"; ReplacementPublicKey = testPublicKey }
             }
 
         let effects: PendingKeyTransitionEffects =
@@ -514,6 +659,7 @@ type CacheHostTests() =
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test"
                 IdentityKeyName = "replacement"
+                IdentityPublicKey = testPublicKey
                 PendingKeyTransition = None
             }
 
