@@ -1,6 +1,7 @@
 namespace Grace.CLI.Tests
 
 open System.Diagnostics
+open System.ComponentModel
 open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
@@ -149,3 +150,12 @@ module CacheCommandParsingTests =
         Grace.CLI.Command.CacheCommand.validateEndpoint endpoint false
         |> Result.isError
         |> Assert.That
+
+    /// Verifies a cache executable launch failure is converted to the stable exit-one result without rendering launch details.
+    [<Test>]
+    let ``cache executable launch failures are redacted`` () =
+        let secretPath = "C:\\sensitive\\Grace.Cache.exe"
+
+        let exitCode = CacheCommand.invokeProcessWith (fun _ -> raise (new Win32Exception($"Could not start {secretPath}"))) secretPath [ "--status" ] None
+
+        Assert.That(exitCode, Is.EqualTo(1))

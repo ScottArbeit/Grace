@@ -98,25 +98,37 @@ module CacheCommand =
 
         startInfo
 
+    /// Starts the cache executable through an injectable process factory and maps launch failures to the stable exit-one boundary.
+    let invokeProcessWith (startProcess: ProcessStartInfo -> Process) executable arguments enrollmentToken =
+        try
+            let startInfo = createProcessStartInfo executable enrollmentToken
+            arguments |> List.iter startInfo.ArgumentList.Add
+
+            use childProcess = startProcess startInfo
+
+            if isNull childProcess then
+                1
+            else
+                childProcess.WaitForExit()
+                childProcess.ExitCode
+        with
+        | :? System.ComponentModel.Win32Exception
+        | :? InvalidOperationException
+        | :? System.IO.FileNotFoundException
+        | :? System.IO.DirectoryNotFoundException
+        | :? System.UnauthorizedAccessException -> 1
+
     /// Starts the cache executable with already validated command tokens and returns its exit code.
     let private invokeProcess executable arguments enrollmentToken =
-        let startInfo = createProcessStartInfo executable enrollmentToken
-        arguments |> List.iter startInfo.ArgumentList.Add
-
-        use childProcess = Process.Start startInfo
-
-        if isNull childProcess then
-            1
-        else
-            childProcess.WaitForExit()
-            childProcess.ExitCode
+        invokeProcessWith (fun startInfo -> Process.Start(startInfo)) executable arguments enrollmentToken
 
     /// Validates that the selected endpoint uses HTTPS unless the explicit HTTP exception was supplied.
     let validateEndpoint endpoint allowHttp =
         match Uri.TryCreate(endpoint, UriKind.Absolute) with
         | false, _ -> Error "Cache endpoint must be an absolute HTTP or HTTPS URI."
         | true, uri when
-            uri.AbsolutePath <> "/"
+            not (String.IsNullOrEmpty uri.UserInfo)
+            || uri.AbsolutePath <> "/"
             || not (String.IsNullOrEmpty uri.Query)
             || not (String.IsNullOrEmpty uri.Fragment)
             ->

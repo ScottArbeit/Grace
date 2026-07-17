@@ -32,7 +32,9 @@ module Program =
                         | Error message ->
                             app.StopAsync().GetAwaiter().GetResult()
                             Error message
-                        | Ok refreshedConfiguration ->
+                        | Ok (refreshedConfiguration, registration) ->
+                            use _refreshSchedule = CacheHost.startRegistrationRefresh registration
+
                             app
                                 .WaitForShutdownAsync()
                                 .GetAwaiter()

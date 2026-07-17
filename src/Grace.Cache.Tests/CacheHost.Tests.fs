@@ -4,6 +4,7 @@ open System
 open System.IO
 open Grace.Cache
 open Grace.Types.CacheRegistration
+open NodaTime
 open NUnit.Framework
 
 /// Verifies the cache tracer exposes only its fixed safe route inventory.
@@ -46,6 +47,150 @@ type CacheHostTests() =
         Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 1001u, Is.True)
         Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 0u, Is.True)
         Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 1002u, Is.False)
+        Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 1001u, Is.True)
+        Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 0u, Is.True)
+        Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 1002u, Is.False)
+
+    /// Verifies known server acceptance remains known through every recovery/configuration local-write ordering.
+    [<Test>]
+    member _.KnownAcceptedCacheIdSurvivesRecoveryWriteFailures() =
+        let recovery =
+            CacheEnrollmentRecovery.prepare
+                "https://cache.example.test"
+                "https://server.example.test/grace/"
+                [| Guid.NewGuid(), Guid.NewGuid() |]
+                "opaque-key-reference"
+
+        let cacheId = Guid.NewGuid()
+        let writes = ResizeArray<CacheEnrollmentRecovery>()
+        let mutable writeAttempt = 0
+        let mutable configurationCacheId = Guid.Empty
+
+        let effects: AcceptedEnrollmentFinalizationEffects<string> =
+            {
+                WriteRecovery =
+                    fun _ accepted ->
+                        writeAttempt <- writeAttempt + 1
+                        writes.Add accepted
+
+                        if writeAttempt = 1 then Error "first recovery write failed" else Ok()
+                WriteConfiguration =
+                    fun accepted acceptedCacheId ->
+                        configurationCacheId <- acceptedCacheId
+                        Assert.That(accepted.CacheId, Is.EqualTo(Some cacheId))
+                        Ok "configuration"
+                ClearRecovery = fun _ -> Ok()
+            }
+
+        let result = AcceptedEnrollmentFinalization.finalize effects "recovery-path" recovery cacheId
+
+        Assert.That(result, Is.EqualTo((Ok "configuration": Result<string, string>)))
+        Assert.That(configurationCacheId, Is.EqualTo(cacheId))
+
+        Assert.That(
+            writes
+            |> Seq.forall (fun written -> written.CacheId = Some cacheId),
+            Is.True
+        )
+
+        Assert.That(
+            writes
+            |> Seq.forall (fun written -> not (CacheEnrollmentRecovery.isUnknown written)),
+            Is.True
+        )
+
+    /// Verifies a failed configuration write leaves accepted recovery evidence rather than converting the known outcome to unknown.
+    [<Test>]
+    member _.KnownAcceptedCacheIdSurvivesConfigurationWriteFailure() =
+        let recovery =
+            CacheEnrollmentRecovery.prepare
+                "https://cache.example.test"
+                "https://server.example.test/grace/"
+                [| Guid.NewGuid(), Guid.NewGuid() |]
+                "opaque-key-reference"
+
+        let cacheId = Guid.NewGuid()
+        let writes = ResizeArray<CacheEnrollmentRecovery>()
+
+        let effects: AcceptedEnrollmentFinalizationEffects<string> =
+            {
+                WriteRecovery =
+                    fun _ accepted ->
+                        writes.Add accepted
+                        Ok()
+                WriteConfiguration = fun _ _ -> Error "configuration write failed"
+                ClearRecovery = fun _ -> failwith "Recovery must remain after configuration failure."
+            }
+
+        let result = AcceptedEnrollmentFinalization.finalize effects "recovery-path" recovery cacheId
+
+        Assert.That(result, Is.EqualTo((Error "configuration write failed": Result<string, string>)))
+        Assert.That(writes, Has.Count.EqualTo(1))
+        Assert.That(writes[0].CacheId, Is.EqualTo(Some cacheId))
+        Assert.That(CacheEnrollmentRecovery.isUnknown writes[0], Is.False)
+
+    /// Verifies an accepted-record write failure followed by configuration and clear failures retries only the known accepted evidence.
+    [<Test>]
+    member _.KnownAcceptedCacheIdRemainsKnownWhenLaterWritesFail() =
+        let recovery =
+            CacheEnrollmentRecovery.prepare
+                "https://cache.example.test"
+                "https://server.example.test/grace/"
+                [| Guid.NewGuid(), Guid.NewGuid() |]
+                "opaque-key-reference"
+
+        let cacheId = Guid.NewGuid()
+        let writes = ResizeArray<CacheEnrollmentRecovery>()
+        let mutable attempts = 0
+
+        let effects: AcceptedEnrollmentFinalizationEffects<string> =
+            {
+                WriteRecovery =
+                    fun _ accepted ->
+                        attempts <- attempts + 1
+                        writes.Add accepted
+                        if attempts = 2 then Ok() else Error "recovery write failed"
+                WriteConfiguration = fun _ _ -> Ok "configuration"
+                ClearRecovery = fun _ -> Error "recovery clear failed"
+            }
+
+        let result = AcceptedEnrollmentFinalization.finalize effects "recovery-path" recovery cacheId
+
+        Assert.That(result, Is.EqualTo((Error "recovery clear failed": Result<string, string>)))
+        Assert.That(writes, Has.Count.EqualTo(2))
+
+        Assert.That(
+            writes
+            |> Seq.forall (fun written -> written.CacheId = Some cacheId),
+            Is.True
+        )
+
+        Assert.That(
+            writes
+            |> Seq.forall (fun written -> not (CacheEnrollmentRecovery.isUnknown written)),
+            Is.True
+        )
+
+    /// Verifies retry recovery is driven by the actual server expiry and never schedules a refresh in the fifteen-minute reserve.
+    [<Test>]
+    member _.RefreshRecoveryStopsAtTheExpiryReserve() =
+        let expiry = Instant.FromUtc(2026, 7, 17, 20, 0)
+
+        match CacheRefreshSchedule.nextRetryAction (expiry - Duration.FromMinutes 21.0) expiry with
+        | CacheRefreshSchedule.RetryAfter delay -> Assert.That(delay, Is.EqualTo(TimeSpan.FromMinutes 5.0))
+        | _ -> Assert.Fail("A retry is required while more than twenty minutes remain.")
+
+        match CacheRefreshSchedule.nextRetryAction (expiry - Duration.FromMinutes 20.0) expiry with
+        | CacheRefreshSchedule.WaitForExpiry delay -> Assert.That(delay, Is.EqualTo(TimeSpan.FromMinutes 20.0))
+        | _ -> Assert.Fail("A retry cannot be scheduled when it would enter the reserve.")
+
+        match CacheRefreshSchedule.nextRetryAction (expiry - Duration.FromMinutes 15.0) expiry with
+        | CacheRefreshSchedule.WaitForExpiry delay -> Assert.That(delay, Is.EqualTo(TimeSpan.FromMinutes 15.0))
+        | _ -> Assert.Fail("The fifteen-minute reserve forbids another automatic refresh.")
+
+        match CacheRefreshSchedule.nextRetryAction expiry expiry with
+        | CacheRefreshSchedule.Expired -> ()
+        | _ -> Assert.Fail("Expiry requires the unhealthy terminal operation, not another refresh.")
 
     /// Verifies ambiguous enrollment evidence keeps only the approved fields and blocks automatic recovery.
     [<Test>]
@@ -201,6 +346,7 @@ type CacheHostTests() =
     [<TestCase("https://cache.example.test/cache")>]
     [<TestCase("https://cache.example.test/?preview=true")>]
     [<TestCase("https://cache.example.test/#fragment")>]
+    [<TestCase("https://operator:secret@cache.example.test/")>]
     [<TestCase("ftp://cache.example.test/")>]
     member _.CacheEndpointRejectsNonOriginInputs(endpoint) =
         CacheMachineConfiguration.validateEndpoint endpoint false

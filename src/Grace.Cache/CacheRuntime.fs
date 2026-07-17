@@ -47,6 +47,14 @@ type CacheEnrollmentRecovery =
         CacheId: Guid option
     }
 
+/// Names the only local writes needed to finish a server-accepted enrollment without losing its known CacheId.
+type AcceptedEnrollmentFinalizationEffects<'configuration> =
+    {
+        WriteRecovery: string -> CacheEnrollmentRecovery -> Result<unit, string>
+        WriteConfiguration: CacheEnrollmentRecovery -> Guid -> Result<'configuration, string>
+        ClearRecovery: string -> Result<unit, string>
+    }
+
 /// Represents the safe operational facts that may be returned by the local cache control surface.
 type CacheRuntimeStatus = { Lifecycle: string; CacheId: string option; Transport: string option }
 
@@ -205,7 +213,8 @@ module CacheProcessCommand =
         match Uri.TryCreate(endpoint, UriKind.Absolute) with
         | false, _ -> Error "Cache endpoint must be an absolute HTTP or HTTPS URI."
         | true, uri when
-            uri.AbsolutePath <> "/"
+            not (String.IsNullOrEmpty uri.UserInfo)
+            || uri.AbsolutePath <> "/"
             || not (String.IsNullOrEmpty uri.Query)
             || not (String.IsNullOrEmpty uri.Fragment)
             ->
@@ -547,6 +556,14 @@ module CacheEnrollmentRecovery =
                    || String.IsNullOrWhiteSpace recovery.RecoveryStatus then
                     Error "Grace Cache enrollment recovery is invalid."
                 elif
+                    match Uri.TryCreate(recovery.Endpoint, UriKind.Absolute) with
+                    | true, endpoint ->
+                        CacheMachineConfiguration.validateEndpoint recovery.Endpoint (endpoint.Scheme = Uri.UriSchemeHttp)
+                        |> Result.isError
+                    | false, _ -> true
+                then
+                    Error "Grace Cache enrollment recovery is invalid."
+                elif
                     match Uri.TryCreate(recovery.ServerUri, UriKind.Absolute) with
                     | true, serverUri when
                         serverUri.Scheme = Uri.UriSchemeHttp
@@ -571,6 +588,31 @@ module CacheEnrollmentRecovery =
         with
         | :? IOException
         | :? UnauthorizedAccessException -> Error "Grace Cache enrollment recovery could not be cleared."
+
+/// Finalizes a known accepted CacheId through local-write failures without changing it into an unknown enrollment outcome.
+module AcceptedEnrollmentFinalization =
+
+    /// Uses a known CacheId for every later local write and retains accepted recovery evidence whenever configuration cannot finish.
+    let finalize effects recoveryPath recovery cacheId =
+        let acceptedRecovery = CacheEnrollmentRecovery.accept cacheId recovery
+
+        let finishConfiguration () =
+            effects.WriteConfiguration acceptedRecovery cacheId
+            |> Result.bind (fun configuration ->
+                effects.ClearRecovery recoveryPath
+                |> Result.map (fun () -> configuration))
+
+        match effects.WriteRecovery recoveryPath acceptedRecovery with
+        | Ok () -> finishConfiguration ()
+        | Error _ ->
+            match finishConfiguration () with
+            | Ok configuration -> Ok configuration
+            | Error error ->
+                // A second best-effort write can preserve the known server identity after a transient first failure.
+                effects.WriteRecovery recoveryPath acceptedRecovery
+                |> ignore
+
+                Error error
 
 /// Composes cache routes beneath a separately configured Grace Server path base.
 module CacheServerRoute =
@@ -1158,24 +1200,29 @@ module CacheRuntimeControl =
 
     /// Finalizes a known accepted enrollment using the immutable server URI recorded before its original request was dispatched.
     let finalizeAcceptedEnrollment (configurationPath: string) (recovery: CacheEnrollmentRecovery) cacheId =
-        let endpoint = Uri(recovery.Endpoint)
-        let serverUri = Uri(recovery.ServerUri)
+        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
 
-        let configuration: CacheMachineConfiguration =
-            {
-                CacheId = cacheId
-                Endpoint = recovery.Endpoint
-                AllowHttpEndpoint = endpoint.Scheme = Uri.UriSchemeHttp
-                ServerUri = serverUri.AbsoluteUri
-                IdentityKeyName = recovery.IdentityKeyName
-                PendingKeyTransition = None
-            }
+        let writeConfiguration (acceptedRecovery: CacheEnrollmentRecovery) acceptedCacheId =
+            match Uri.TryCreate(acceptedRecovery.Endpoint, UriKind.Absolute), Uri.TryCreate(acceptedRecovery.ServerUri, UriKind.Absolute) with
+            | (true, endpoint), (true, serverUri) ->
+                let configuration: CacheMachineConfiguration =
+                    {
+                        CacheId = acceptedCacheId
+                        Endpoint = acceptedRecovery.Endpoint
+                        AllowHttpEndpoint = endpoint.Scheme = Uri.UriSchemeHttp
+                        ServerUri = serverUri.AbsoluteUri
+                        IdentityKeyName = acceptedRecovery.IdentityKeyName
+                        PendingKeyTransition = None
+                    }
 
-        match CacheMachineConfiguration.write configurationPath configuration with
-        | Error error -> Error error
-        | Ok () ->
-            CacheEnrollmentRecovery.clear (CacheEnrollmentRecovery.recoveryPath configurationPath)
-            |> Result.map (fun () -> configuration)
+                CacheMachineConfiguration.write configurationPath configuration
+                |> Result.map (fun () -> configuration)
+            | _ -> Error "Grace Cache enrollment recovery is invalid."
+
+        let effects: AcceptedEnrollmentFinalizationEffects<CacheMachineConfiguration> =
+            { WriteRecovery = CacheEnrollmentRecovery.write; WriteConfiguration = writeConfiguration; ClearRecovery = CacheEnrollmentRecovery.clear }
+
+        AcceptedEnrollmentFinalization.finalize effects recoveryPath recovery cacheId
 
     /// Reconciles narrow enrollment evidence before any cache work and stops unknown registrations without retrying them.
     let private reconcileEnrollmentRecovery configurationPath =
@@ -1222,36 +1269,54 @@ module CacheRuntimeControl =
     /// Reads only safe cache status from the machine configuration path used by the active service account.
     let status () = readStatus (CacheMachineConfiguration.configurationPath ())
 
-    /// Refreshes one prepared configuration without taking the lifecycle gate recursively or making a scaffold selectable.
+    /// Refreshes one prepared configuration without taking the lifecycle gate recursively and returns the server-issued expiry facts.
     let private refreshConfiguration configuration health =
         match refreshWithKey configuration configuration.IdentityKeyName health with
         | Error _ -> Error "Grace Cache registration refresh was not accepted."
         | Ok result ->
             match result.Status with
             | CacheRegistrationRefreshStatus.Refreshed
-            | CacheRegistrationRefreshStatus.RefreshNotDue -> Ok(CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
+            | CacheRegistrationRefreshStatus.RefreshNotDue ->
+                match result.Registration with
+                | Some registration -> Ok registration
+                | None -> Error "Grace Cache registration refresh was not accepted."
             | _ -> Error "Grace Cache registration refresh was not accepted."
+
+    /// Refreshes through the exclusive lifecycle boundary while retaining both local configuration and actual server registration timing.
+    let private refreshRegistrationCore health =
+        getReadyConfigurationCore ()
+        |> Result.bind (fun configuration ->
+            refreshConfiguration configuration health
+            |> Result.map (fun registration -> configuration, registration))
 
     /// Refreshes the current cache registration while preserving an unhealthy scaffold until artifact serving is available.
     let refreshNow () =
         serializeLifecycle (fun () ->
-            getReadyConfigurationCore ()
-            |> Result.bind (fun configuration -> refreshConfiguration configuration CacheHealthStatus.Unhealthy))
+            refreshRegistrationCore CacheHealthStatus.Unhealthy
+            |> Result.map (fun (configuration, _) -> CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint)))
+
+    /// Refreshes the current registration and returns server-issued refresh and expiry times for in-memory host scheduling.
+    let refreshRegistrationNow () =
+        serializeLifecycle (fun () ->
+            refreshRegistrationCore CacheHealthStatus.Unhealthy
+            |> Result.map snd)
+
+    /// Marks the registration unhealthy at expiry through the same serialized proof-only refresh boundary without re-enrollment.
+    let markRegistrationExpired () =
+        serializeLifecycle (fun () ->
+            refreshRegistrationCore CacheHealthStatus.Unhealthy
+            |> Result.map ignore)
 
     /// Refreshes after the protected control channel and Kestrel listener are ready, publishing healthy only when artifacts are served.
     let startupRefresh artifactServingAvailable =
         serializeLifecycle (fun () ->
-            match getReadyConfigurationCore () with
-            | Error error -> Error error
-            | Ok configuration ->
-                let health =
-                    if artifactServingAvailable then
-                        CacheHealthStatus.Healthy
-                    else
-                        CacheHealthStatus.Unhealthy
+            let health =
+                if artifactServingAvailable then
+                    CacheHealthStatus.Healthy
+                else
+                    CacheHealthStatus.Unhealthy
 
-                refreshConfiguration configuration health
-                |> Result.map (fun _ -> configuration))
+            refreshRegistrationCore health)
 
     /// Enrolls one cache through the #600 administrator route while preserving only the approved recovery evidence.
     let enroll input =
@@ -1324,15 +1389,8 @@ module CacheRuntimeControl =
                             | EnrollmentAccepted result when result.Status = CacheRegistrationRefreshStatus.Enrolled ->
                                 match result.Registration with
                                 | Some registration when registration.CacheId <> Guid.Empty ->
-                                    let acceptedRecovery = CacheEnrollmentRecovery.accept registration.CacheId recovery
-
-                                    match CacheEnrollmentRecovery.write recoveryPath acceptedRecovery with
-                                    | Error _ ->
-                                        Error "Grace Cache enrollment recovery requires administrator inspection or revocation before normal cache work."
-                                    | Ok () ->
-                                        finalizeAcceptedEnrollment configurationPath acceptedRecovery registration.CacheId
-                                        |> Result.map (fun configuration ->
-                                            CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
+                                    finalizeAcceptedEnrollment configurationPath recovery registration.CacheId
+                                    |> Result.map (fun configuration -> CacheRuntimeStatus.registered configuration.CacheId (transport configuration.Endpoint))
                                 | _ -> preserveUnknown ()
                             | EnrollmentAccepted _
                             | EnrollmentRejected
@@ -1428,6 +1486,15 @@ module CacheLocalControl =
     [<Literal>]
     let private socketLevel = 1
 
+    [<Literal>]
+    let private directoryFileType = 0x4000
+
+    [<Literal>]
+    let private socketFileType = 0xC000
+
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private lstat(string path, byte [] statBuffer)
+
     /// Reads the effective Unix user identifier used to authorize the service account and root callers.
     [<DllImport("libc", SetLastError = true)>]
     extern uint32 private geteuid()
@@ -1443,8 +1510,81 @@ module CacheLocalControl =
     /// Admits only the running cache account or Unix root to the protected local rotation channel.
     let isUnixCallerAuthorized serviceUserId callerUserId = callerUserId = 0u || callerUserId = serviceUserId
 
-    /// Resolves the fixed local-domain socket path without exposing a network endpoint.
-    let private unixSocketPath () = Path.Combine(Path.GetTempPath(), "grace-cache-rotate-now-v1.sock")
+    /// Captures the ownership and access bits that make a Unix runtime path safe to trust.
+    type UnixRuntimePathIdentity = { OwnerUserId: uint32; Mode: int }
+
+    /// Admits a response only when the connected listener is the protected socket owner or root.
+    let isUnixResponderAuthorized socketOwnerUserId responderUserId =
+        responderUserId = 0u
+        || responderUserId = socketOwnerUserId
+
+    /// Reads the platform-native stat layout only on supported x64 Unix runtimes and rejects every other layout.
+    let private tryReadUnixRuntimePathIdentity path =
+        try
+            if RuntimeInformation.ProcessArchitecture
+               <> Architecture.X64 then
+                Error "Grace Cache local control authorization could not be established."
+            else
+                let bytes = Array.zeroCreate<byte> 256
+
+                if lstat (path, bytes) <> 0 then
+                    Error "Grace Cache local control authorization could not be established."
+                elif OperatingSystem.IsLinux() then
+                    Ok { OwnerUserId = BitConverter.ToUInt32(bytes, 28); Mode = BitConverter.ToInt32(bytes, 24) }
+                elif OperatingSystem.IsMacOS() then
+                    Ok { OwnerUserId = BitConverter.ToUInt32(bytes, 16); Mode = int (BitConverter.ToUInt16(bytes, 4)) }
+                else
+                    Error "Grace Cache local control authorization could not be established."
+        with
+        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
+        | :? DllNotFoundException
+        | :? EntryPointNotFoundException
+        | :? BadImageFormatException -> Error "Grace Cache local control authorization could not be established."
+
+    /// Verifies exact ownership, type, and mode before a runtime path may identify the active cache service.
+    let private validateUnixRuntimePath expectedOwner expectedFileType expectedPermissions path =
+        match tryReadUnixRuntimePathIdentity path with
+        | Error error -> Error error
+        | Ok identity when
+            (identity.Mode &&& 0xF000) <> expectedFileType
+            || (identity.Mode &&& 0o777) <> expectedPermissions
+            || (expectedOwner
+                |> Option.exists (fun owner -> owner <> identity.OwnerUserId))
+            ->
+            Error "Grace Cache local control authorization could not be established."
+        | Ok identity -> Ok identity
+
+    /// Resolves one machine-local runtime directory whose service-account ownership blocks other Unix users from replacing the socket.
+    let private unixRuntimeDirectory () = Path.Combine(Path.GetTempPath(), "grace-cache-runtime")
+
+    /// Creates and immediately verifies the protected runtime directory before the active service binds its socket.
+    let private prepareUnixRuntimeDirectory serviceUserId =
+        try
+            let path = unixRuntimeDirectory ()
+            Directory.CreateDirectory(path) |> ignore
+
+            File.SetUnixFileMode(
+                path,
+                UnixFileMode.UserRead
+                ||| UnixFileMode.UserWrite
+                ||| UnixFileMode.UserExecute
+            )
+
+            validateUnixRuntimePath (Some serviceUserId) directoryFileType 0o700 path
+            |> Result.map (fun _ -> path)
+        with
+        | :? IOException
+        | :? UnauthorizedAccessException
+        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
+
+    /// Validates the protected directory and socket as one trust boundary before a client connects or a stale socket is removed.
+    let private validateUnixControlPath () =
+        let directory = unixRuntimeDirectory ()
+        let socketPath = Path.Combine(directory, "rotate-now.sock")
+
+        match validateUnixRuntimePath None directoryFileType 0o700 directory, validateUnixRuntimePath None socketFileType 0o600 socketPath with
+        | Ok directoryIdentity, Ok socketIdentity when directoryIdentity.OwnerUserId = socketIdentity.OwnerUserId -> Ok(socketPath, socketIdentity.OwnerUserId)
+        | _ -> Error "Grace Cache local control authorization could not be established."
 
     /// Holds the background accept loop and cancels it when the active cache host shuts down.
     type private RotationServer(cancellation: CancellationTokenSource, ready: ManualResetEventSlim, worker: Task) =
@@ -1518,29 +1658,40 @@ module CacheLocalControl =
                 Error "Grace Cache local control authorization could not be established."
         with
         | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
+        | :? DllNotFoundException
+        | :? EntryPointNotFoundException
+        | :? BadImageFormatException -> Error "Grace Cache local control authorization could not be established."
 
     /// Creates a local Unix socket whose peer credentials are checked for the service account or root before rotation.
     let private createUnixSocket () =
         try
-            let path = unixSocketPath ()
+            let serviceUserId = geteuid ()
 
-            if File.Exists path then File.Delete path
+            match prepareUnixRuntimeDirectory serviceUserId with
+            | Error error -> Error error
+            | Ok directory ->
+                let path = Path.Combine(directory, "rotate-now.sock")
 
-            let listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
-            listener.Bind(UnixDomainSocketEndPoint(path))
+                if File.Exists path then
+                    match validateUnixControlPath () with
+                    | Error error -> Error error
+                    | Ok _ ->
+                        File.Delete path
+                        Ok()
+                else
+                    Ok()
+                |> Result.bind (fun () ->
+                    let listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+                    listener.Bind(UnixDomainSocketEndPoint(path))
+                    File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
 
-            File.SetUnixFileMode(
-                path,
-                UnixFileMode.UserRead
-                ||| UnixFileMode.UserWrite
-                ||| UnixFileMode.GroupRead
-                ||| UnixFileMode.GroupWrite
-                ||| UnixFileMode.OtherRead
-                ||| UnixFileMode.OtherWrite
-            )
-
-            listener.Listen(1)
-            Ok(path, listener)
+                    match validateUnixControlPath () with
+                    | Error error ->
+                        listener.Dispose()
+                        Error error
+                    | Ok _ ->
+                        listener.Listen(1)
+                        Ok(path, listener))
         with
         | :? SocketException
         | :? UnauthorizedAccessException
@@ -1702,8 +1853,22 @@ module CacheLocalControl =
                 namedPipe :> Stream
             elif OperatingSystem.IsLinux()
                  || OperatingSystem.IsMacOS() then
-                let socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
-                socket.Connect(UnixDomainSocketEndPoint(unixSocketPath ()))
-                new NetworkStream(socket, true) :> Stream
+                match validateUnixControlPath () with
+                | Error error -> raise (new UnauthorizedAccessException(error))
+                | Ok (path, socketOwnerUserId) ->
+                    let socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
+
+                    try
+                        socket.Connect(UnixDomainSocketEndPoint(path))
+
+                        match tryGetUnixPeerUserId socket with
+                        | Ok responderUserId when isUnixResponderAuthorized socketOwnerUserId responderUserId -> new NetworkStream(socket, true) :> Stream
+                        | _ ->
+                            socket.Dispose()
+                            raise (new UnauthorizedAccessException())
+                    with
+                    | _ ->
+                        socket.Dispose()
+                        reraise ()
             else
                 raise (new PlatformNotSupportedException()))

@@ -7,6 +7,7 @@ open Grace.Shared
 open System
 open System.Net
 open System.Threading
+open NodaTime
 
 /// Represents the minimal private process identity required before the cache host listens.
 type CacheHostSettings = private { InstanceName: string }
@@ -34,6 +35,40 @@ module CacheHostStartup =
         with
         | _ -> Error "Grace Cache host could not start."
 
+/// Calculates the in-memory recovery timing for a failed registration refresh from the server-issued expiry instant.
+module CacheRefreshSchedule =
+
+    /// Keeps the approved five-minute operational retry cadence outside the expiry reserve.
+    let retryInterval = TimeSpan.FromMinutes 5.0
+
+    /// Reserves the final fifteen minutes for operator recovery rather than another automatic refresh attempt.
+    let expiryReserve = Duration.FromMinutes 15.0
+
+    /// Distinguishes another permitted retry from waiting for expiry or terminal expiry handling.
+    type RetryAction =
+        | RetryAfter of TimeSpan
+        | WaitForExpiry of TimeSpan
+        | Expired
+
+    /// Calculates the next recovery action without persisting a retry workflow or deriving expiry from callback cadence.
+    let nextRetryAction (now: Instant) (expiresAt: Instant) =
+        if now >= expiresAt then
+            Expired
+        else
+            let untilExpiry = (expiresAt - now).ToTimeSpan()
+            let untilReserve = (expiresAt - expiryReserve - now).ToTimeSpan()
+
+            if untilReserve <= TimeSpan.Zero
+               || untilReserve <= retryInterval then
+                WaitForExpiry untilExpiry
+            else
+                RetryAfter retryInterval
+
+    /// Computes the normal refresh delay from the actual successful registration rather than a process-start interval.
+    let normalRefreshDelay (now: Instant) (registration: CacheRegistration) =
+        let delay = (registration.RefreshAfter - now).ToTimeSpan()
+        if delay <= TimeSpan.Zero then TimeSpan.Zero else delay
+
 /// Owns the fixed, non-serving HTTP surface of the Grace Cache tracer process.
 module CacheHost =
 
@@ -45,6 +80,68 @@ module CacheHost =
 
     /// Holds the server-defined one-hour interval that refreshes registration before its two-hour active lifetime expires.
     let registrationRefreshInterval = RegistrationLifetime.RefreshAfter.ToTimeSpan()
+
+    /// Owns one in-memory refresh callback that follows server-issued expiry timing and stops automatic recovery at expiry.
+    type private RegistrationRefreshScheduler(initialRegistration: CacheRegistration) =
+        let mutable currentExpiry = initialRegistration.ExpiresAt
+        let mutable timer: Timer option = None
+        let mutable expiryOnly = false
+
+        /// Reschedules the sole callback without creating a queue or a concurrent lifecycle operation.
+        let scheduleRefresh delay =
+            expiryOnly <- false
+
+            match timer with
+            | Some activeTimer ->
+                activeTimer.Change(delay, Timeout.InfiniteTimeSpan)
+                |> ignore
+            | None -> ()
+
+        /// Defers the final callback to expiry without allowing a refresh request inside the protected reserve.
+        let scheduleExpiry delay =
+            expiryOnly <- true
+
+            match timer with
+            | Some activeTimer ->
+                activeTimer.Change(delay, Timeout.InfiniteTimeSpan)
+                |> ignore
+            | None -> ()
+
+        /// Marks expiry through the serialized runtime boundary and emits only a fixed redacted operational failure.
+        let markExpired () =
+            CacheRuntimeControl.markRegistrationExpired ()
+            |> ignore
+
+            Console.Error.WriteLine("Grace Cache registration expired; operator recovery is required.")
+
+        /// Handles one normal or recovery callback, rebuilding refresh proof in the runtime for every request-level attempt.
+        let onTimer _ =
+            if expiryOnly then
+                markExpired ()
+            else
+                match CacheRuntimeControl.refreshRegistrationNow () with
+                | Ok registration ->
+                    currentExpiry <- registration.ExpiresAt
+                    scheduleRefresh (CacheRefreshSchedule.normalRefreshDelay (SystemClock.Instance.GetCurrentInstant()) registration)
+                | Error _ ->
+                    match CacheRefreshSchedule.nextRetryAction (SystemClock.Instance.GetCurrentInstant()) currentExpiry with
+                    | CacheRefreshSchedule.RetryAfter delay -> scheduleRefresh delay
+                    | CacheRefreshSchedule.WaitForExpiry delay -> scheduleExpiry delay
+                    | CacheRefreshSchedule.Expired -> markExpired ()
+
+        do
+            let refreshTimer = new Timer(TimerCallback onTimer, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan)
+            timer <- Some refreshTimer
+            scheduleRefresh (CacheRefreshSchedule.normalRefreshDelay (SystemClock.Instance.GetCurrentInstant()) initialRegistration)
+
+        interface IDisposable with
+            /// Disposes the one process-local scheduler when the host stops so no refresh callback can survive shutdown.
+            member _.Dispose() =
+                timer
+                |> Option.iter (fun activeTimer -> activeTimer.Dispose())
+
+    /// Starts the server-expiry-based refresh scheduler after startup refresh has returned authoritative registration timing.
+    let startRegistrationRefresh initialRegistration = new RegistrationRefreshScheduler(initialRegistration) :> IDisposable
 
     /// Lists the only routes available before cache enrollment, storage, or artifact serving exists.
     let routeInventory =
@@ -80,14 +177,10 @@ module CacheHost =
             )
             |> ignore
 
-            let refreshTimer =
-                new Timer(TimerCallback(fun _ -> CacheRuntimeControl.refreshNow () |> ignore), null, registrationRefreshInterval, registrationRefreshInterval)
-
             let rotationTimer = new Timer(TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore), null, keyRotationInterval, keyRotationInterval)
 
             app.Lifetime.ApplicationStopping.Register(
                 Action (fun () ->
-                    refreshTimer.Dispose()
                     rotationTimer.Dispose()
                     localControl.Dispose())
             )

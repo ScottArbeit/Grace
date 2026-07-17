@@ -81,6 +81,34 @@ type CacheProcessDispatchTests() =
         Assert.That(sideEffects, Is.EqualTo(0))
         Assert.That(result.Payload, Does.Not.Contain("https://cache.example.test"))
 
+    /// Verifies endpoint user information is rejected before key creation, recovery persistence, or server enrollment effects.
+    [<TestCase("https://operator@cache.example.test/")>]
+    [<TestCase("https://operator:secret@cache.example.test/")>]
+    member _.EnrollmentRejectsEndpointUserInformationBeforeRuntimeEffects(endpoint) =
+        let mutable sideEffects = 0
+
+        let effects: CacheProcessEffects =
+            {
+                Enroll =
+                    fun _ ->
+                        sideEffects <- sideEffects + 1
+                        failwith "Endpoint user information must not reach enrollment."
+                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
+                Status = fun () -> failwith "Status must not run for enrollment."
+                Run = fun () -> failwith "Host startup must not run for enrollment."
+            }
+
+        let arguments =
+            enrollmentArguments
+            |> Array.map (fun argument -> if argument = "https://cache.example.test" then endpoint else argument)
+
+        let result = CacheProcessCommand.execute effects arguments
+
+        Assert.That(result.ExitCode, Is.EqualTo(1))
+        Assert.That(sideEffects, Is.EqualTo(0))
+        Assert.That(result.Payload, Does.Not.Contain("operator"))
+        Assert.That(result.Payload, Does.Not.Contain("secret"))
+
     /// Verifies unrecognized process options cannot silently broaden enrollment input before any runtime side effect.
     [<Test>]
     member _.UnknownEnrollmentOptionHasNoRuntimeSideEffects() =
