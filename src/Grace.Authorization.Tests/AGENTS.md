@@ -22,4 +22,5 @@ Global policies live in `../AGENTS.md`; follow them before touching tests here.
 - Run targeted Fantomas formatting or checks before build/test validation after F# changes.
 - Build `src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj` in Release before project-specific
   `--no-build` tests.
-- Run `pwsh ./scripts/validate.ps1 -Fast` for the normal fast gate.
+- Run the smallest focused authorization proof first. Fast is an optional broad preflight; GitHub `Validate` certifies
+  the current pull-request revision across the repository.

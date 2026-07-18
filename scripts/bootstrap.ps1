@@ -73,8 +73,10 @@ try {
     Invoke-External "dotnet restore" { dotnet restore "src/Grace.slnx" }
 
     Write-Section "Next Steps"
-    Write-Host "Run: pwsh ./scripts/validate.ps1 -Fast"
-    Write-Host "Use -Full for Aspire integration coverage."
+    Write-Host "Run the focused proof appropriate to your change before committing."
+    Write-Host "Use validate.ps1 -Fast for an optional broad local preflight."
+    Write-Host "Use validate.ps1 -Full for local integration reproduction or diagnosis."
+    Write-Host "GitHub Validate is the broad gate for pull requests."
 } catch {
     $exitCode = 1
     Write-Error $_

@@ -20,7 +20,7 @@ This repo is primarily **F#** and targets **.NET 10**.
 4. Test:
 
    - `dotnet test ./src/Grace.slnx` (optionally add `-c Release`)
-   - Or run the repo validator: `pwsh ./scripts/validate.ps1 -Full`
+   - Run the smallest focused proof for your change; GitHub `Validate` is the broad pull-request gate.
 
 5. Format F#:
 
@@ -67,8 +67,12 @@ From the repo root:
 
 This repo also includes a validation script:
 
-- Fast loop: `pwsh ./scripts/validate.ps1 -Fast`
-- Full validation (includes Aspire integration coverage): `pwsh ./scripts/validate.ps1 -Full`
+- Optional broad local preflight: `pwsh ./scripts/validate.ps1 -Fast`
+- Local integration reproduction or diagnosis: `pwsh ./scripts/validate.ps1 -Full`
+
+Before each commit, run focused proof, formatting or syntax checks, required freshness checks, and `git diff --check`.
+Commit completed slices, then push a coherent reviewable checkpoint. GitHub `Validate` is the required broad proof for
+the current pull-request revision; omitting redundant local Fast or Full is normal, not skipped validation.
 
 ## Formatting (required)
 
@@ -327,11 +331,10 @@ Prometheus:
 
 ## Pull request checklist
 
-- [ ] Builds: `dotnet build ./src/Grace.slnx`
-- [ ] Tests: `dotnet test ./src/Grace.slnx`
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
 - [ ] Focused validation for the touched behavior is listed in the PR
+- [ ] Required GitHub `Validate` passed for the current PR revision
 - [ ] Local review-only subagent loop completed with no remaining issues
-- [ ] Skipped validation is listed with a reason
+- [ ] Any genuinely required validation not run is listed with a reason
 - [ ] Documentation updated (if behavior changed)
 - [ ] Docs impact, residual risk, and rollback or recovery notes are recorded when relevant
