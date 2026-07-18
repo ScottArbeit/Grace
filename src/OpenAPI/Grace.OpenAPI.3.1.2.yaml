@@ -4372,8 +4372,6 @@ components:
         AllowHttpEndpoint:
           type: boolean
           description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
-        Health:
-          $ref: '#/components/schemas/CacheHealthStatus'
         SoftwareVersion:
           type: string
         ProtocolVersion:
@@ -4389,7 +4387,6 @@ components:
         - PublicKey
         - Endpoint
         - AllowHttpEndpoint
-        - Health
         - SoftwareVersion
         - ProtocolVersion
         - PrefetchSupported

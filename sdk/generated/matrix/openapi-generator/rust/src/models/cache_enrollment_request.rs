@@ -34,8 +34,6 @@ pub struct CacheEnrollmentRequest {
     /// Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
     #[serde(rename = "AllowHttpEndpoint")]
     pub allow_http_endpoint: bool,
-    #[serde(rename = "Health")]
-    pub health: models::CacheHealthStatus,
     #[serde(rename = "SoftwareVersion")]
     pub software_version: String,
     #[serde(rename = "ProtocolVersion")]
@@ -46,7 +44,7 @@ pub struct CacheEnrollmentRequest {
 
 impl CacheEnrollmentRequest {
     /// Administrator-authenticated enrollment for exactly one Owner or Organization and explicit repositories within it.
-    pub fn new(class: String, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool) -> CacheEnrollmentRequest {
+    pub fn new(class: String, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, software_version: String, protocol_version: String, prefetch_supported: bool) -> CacheEnrollmentRequest {
         CacheEnrollmentRequest {
             class,
             display_name,
@@ -57,7 +55,6 @@ impl CacheEnrollmentRequest {
             public_key: Box::new(public_key),
             endpoint,
             allow_http_endpoint,
-            health,
             software_version,
             protocol_version,
             prefetch_supported,

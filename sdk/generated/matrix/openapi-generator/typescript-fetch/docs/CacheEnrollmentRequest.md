@@ -16,7 +16,6 @@ Name | Type
 `publicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
 `endpoint` | string
 `allowHttpEndpoint` | boolean
-`health` | [CacheHealthStatus](CacheHealthStatus.md)
 `softwareVersion` | string
 `protocolVersion` | string
 `prefetchSupported` | boolean
@@ -37,7 +36,6 @@ const example = {
   "publicKey": null,
   "endpoint": null,
   "allowHttpEndpoint": null,
-  "health": null,
   "softwareVersion": null,
   "protocolVersion": null,
   "prefetchSupported": null,

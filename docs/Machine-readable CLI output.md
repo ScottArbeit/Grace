@@ -174,6 +174,11 @@ The `watch` command is not counted in those V2 routed-success migrations. It is 
 behavior because it is a continuous foreground workflow; JSON mode returns an explicit error envelope instead of
 starting the watcher.
 
+`grace cache status` is a successful, pure observation command. Its `Lifecycle` value is `registered`,
+`enrollment-recovery-required`, or `operator-recovery-required`; the latter is emitted exactly when persisted key
+rotation recovery requires administrator revocation and re-enrollment. Status does not contact Grace Server, mutate
+machine configuration, create or delete keys, start listeners, refresh, rotate, enroll, or expose secret values.
+
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
 

@@ -119,7 +119,6 @@ module CacheRegistration =
             PublicKey: CacheIdentityPublicKey
             Endpoint: string
             AllowHttpEndpoint: bool
-            Health: CacheHealthStatus
             SoftwareVersion: string
             ProtocolVersion: string
             PrefetchSupported: bool
@@ -299,9 +298,6 @@ module CacheRegistration =
                 if request.Class <> nameof CacheEnrollmentRequest then
                     errors.Add("Class must be CacheEnrollmentRequest.")
 
-                if not (isDefinedHealth request.Health) then
-                    errors.Add("Health must be Healthy or Unhealthy.")
-
                 if String.IsNullOrWhiteSpace request.DisplayName then
                     errors.Add("DisplayName is required.")
 
@@ -403,7 +399,8 @@ module CacheRegistration =
                     CandidatePublicKey = None
                     Endpoint = request.Endpoint.Trim()
                     AllowHttpEndpoint = request.AllowHttpEndpoint
-                    Health = request.Health
+                    // Enrollment is never a readiness claim. Only a later authenticated refresh can publish Healthy.
+                    Health = CacheHealthStatus.Unhealthy
                     SoftwareVersion = request.SoftwareVersion.Trim()
                     ProtocolVersion = request.ProtocolVersion.Trim()
                     PrefetchSupported = request.PrefetchSupported

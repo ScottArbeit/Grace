@@ -546,6 +546,34 @@ type CacheHostTests() =
             | Ready
             | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Assert.Fail("Status read must retain the pending candidate.")
 
+    /// Verifies a persisted terminal lifecycle is exposed as stable redacted observation data without status-side effects.
+    [<Test>]
+    member _.StatusReportsOperatorRecoveryRequiredWithoutLifecycleEffects() =
+        let configurationPath =
+            Path.Combine(Path.GetTempPath(), $"grace-cache-terminal-status-{Guid.NewGuid():N}", "cache.runtime.json")
+        let cacheId = Guid.NewGuid()
+        let configuration: CacheMachineConfiguration =
+            { CacheId = cacheId
+              Endpoint = "https://cache.example.test"
+              AllowHttpEndpoint = false
+              ServerUri = "https://server.example.test/grace/"
+              ActiveKeyName = "active-key"
+              ActivePublicKey = testPublicKey
+              RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired }
+
+        let effects: CacheRuntimeStatusReadEffects =
+            { ValidateStorage = fun _ -> Ok()
+              ValidateFile = fun _ -> Ok()
+              ReadRecovery = fun _ -> Ok None
+              ReadConfiguration = fun _ -> Ok configuration }
+
+        match CacheRuntimeControl.readStatusWith effects configurationPath with
+        | Error error -> Assert.Fail(error)
+        | Ok status ->
+            Assert.That(status.Lifecycle, Is.EqualTo("operator-recovery-required"))
+            Assert.That(status.CacheId, Is.EqualTo(Some(cacheId.ToString("D"))))
+            Assert.That(status.Transport, Is.EqualTo(Some "https"))
+
     /// Verifies startup exceptions become a stable cache process failure without exposing bind or certificate details.
     [<Test>]
     member _.StartupExceptionBecomesRedactedProcessFailure() =

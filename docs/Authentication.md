@@ -764,13 +764,18 @@ currently accepted key by signing the canonical request payload that binds `Cach
 Unix-millisecond timestamp. Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration
 state.
 
-Run `grace cache enroll` under the same local OS account that will run `grace cache run`. The non-exportable P-256
-signing key is created in that account's `CurrentUser` X.509 store and is reopened before enrollment sends its public
-key, so a cache started under another account fails closed rather than creating a replacement identity. `GRACE_TOKEN`
-PATs, M2M credentials, and interactive login authenticate the Grace principal through the normal CLI resolver; the
-resolved bearer token is transient and is never stored or logged by Grace Cache. Changing the service OS account requires
-an administrator to revoke the existing Cache and explicitly enroll again. Grace does not migrate a private key, mutate
-key access, retain the previous `CacheId`, or persist an OS-account or service identity for an in-place account change.
+Run `grace cache enroll` under the same local OS account that will run `grace cache run`. On Windows, Grace Cache uses a
+non-exportable P-256 machine X.509 key that is accessible only to the configured cache service account. On macOS, it
+uses the platform X.509 key store. On Linux, it stores the P-256 identity as a service-owned PKCS#8 file beneath the
+protected machine cache directory. Linux requires a root-owned `0755` parent and a service-account-owned `0700` cache
+directory; each key is a regular, non-linked `0600` file created through a same-directory atomic temporary file and
+revalidated before use. This is a reduced Linux custody guarantee: the cache service account, or a backup process that
+runs as that account, can copy the key. Operators must isolate the service account, restrict backup access, and protect
+backup retention. `GRACE_TOKEN` PATs, M2M credentials, and interactive login authenticate the Grace principal through
+the normal CLI resolver; the resolved bearer token is transient and is never stored or logged by Grace Cache. Changing
+the service OS account requires an administrator to revoke the existing Cache and explicitly enroll again. Grace does
+not migrate a private key, mutate key access, retain the previous `CacheId`, or persist an OS-account or service
+identity for an in-place account change.
 
 Cache endpoints use HTTPS by default. An administrator may explicitly approve one exact HTTP endpoint during enrollment
 when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endpoint. Every cache endpoint is an absolute

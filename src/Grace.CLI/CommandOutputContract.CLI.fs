@@ -683,6 +683,10 @@ module CommandOutputContract =
                     "Representative scalar ReturnValue schema for a common Grace result envelope command."
                 ]
         | "watch", JsonModeErrorOnly reason -> unsupportedReturnValueContract "WatchResultDto" reason
+        | "cache.status", MigrationRequiredToGraceResultEnvelope RequiresCliDto ->
+            incompleteReturnValueContract
+                "CacheRuntimeStatus"
+                "Cache status is a pure successful observation with redacted Lifecycle, CacheId, and Transport values; Lifecycle includes registered, enrollment-recovery-required, and operator-recovery-required."
         | _, SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
         | _, JsonModeErrorOnly reason -> unsupportedReturnValueContract "unsupported" reason
         | _, MigrationRequiredToGraceResultEnvelope disposition ->

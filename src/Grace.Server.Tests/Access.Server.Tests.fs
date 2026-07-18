@@ -1513,6 +1513,12 @@ type EndpointAuthorizationTests() =
             let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
             Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 
+            use legacyEnrollmentContent = new StringContent("{\"Health\":\"Healthy\"}", Encoding.UTF8, "application/json")
+            let! legacyEnrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", legacyEnrollmentContent)
+            let! legacyEnrollmentBody = legacyEnrollmentResponse.Content.ReadAsStringAsync()
+            Assert.That(legacyEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(legacyEnrollmentBody, Does.Contain("Health is server-owned"))
+
             let! assignmentResponse =
                 unauthenticatedClient.PostAsync("/cache/assign-repositories", createJsonContent Unchecked.defaultof<CacheRepositoryAssignmentRequest>)
 

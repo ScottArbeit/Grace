@@ -91,7 +91,7 @@ module CacheCommand =
             startInfo.Environment.Remove(variableName)
             |> ignore)
 
-    /// Resolves the effective parent server URI while preserving an HTTPS or HTTP path base and rejecting credentials.
+    /// Resolves the effective parent server URI while preserving an HTTP(S) path base and rejecting values unsafe for child propagation.
     let tryGetEffectiveServerUri environmentServerUri configuredServerUri =
         let tryNormalize value =
             match Uri.TryCreate(value, UriKind.Absolute) with
@@ -99,13 +99,18 @@ module CacheCommand =
                 (uri.Scheme = Uri.UriSchemeHttp
                  || uri.Scheme = Uri.UriSchemeHttps)
                 && String.IsNullOrEmpty uri.UserInfo
+                && String.IsNullOrEmpty uri.Query
+                && String.IsNullOrEmpty uri.Fragment
                 ->
-                Some uri.AbsoluteUri
-            | _ -> None
+                Ok uri.AbsoluteUri
+            | _ -> Error "Grace Server URI is invalid."
 
         match environmentServerUri with
-        | Some value -> tryNormalize value
-        | None -> configuredServerUri |> Option.bind tryNormalize
+        | Some value -> tryNormalize value |> Result.map Some
+        | None ->
+            match configuredServerUri with
+            | Some value -> tryNormalize value |> Result.map Some
+            | None -> Ok None
 
     /// Resolves the normal parent Grace context without creating configuration or persisting credentials for cache enrollment.
     let tryGetConfiguredServerUri () =
@@ -119,44 +124,50 @@ module CacheCommand =
              |> Option.ofObj)
             configuredServerUri
 
-    /// Creates a cache process start configuration that retains operational settings while excluding inherited credentials.
+    /// Creates a cache process start configuration that retains only a prevalidated Grace Server URI and no inherited credentials.
     let createProcessStartInfo executable enrollmentToken serverUri =
         let startInfo = ProcessStartInfo(executable)
         startInfo.UseShellExecute <- false
         removeAuthenticationEnvironment startInfo
+
+        startInfo.Environment.Remove(Constants.EnvironmentVariables.GraceServerUri)
+        |> ignore
         startInfo.Environment[ "GRACE_CACHE_INSTANCE_NAME" ] <- cacheInstanceMarker
 
-        match enrollmentToken, serverUri with
-        | Some token, Some effectiveServerUri ->
+        match enrollmentToken, tryGetEffectiveServerUri serverUri None with
+        | Some token, Ok(Some effectiveServerUri) ->
             startInfo.Environment[ enrollmentTokenEnvironmentVariable ] <- token
 
             startInfo.Environment[
                 Constants.EnvironmentVariables.GraceServerUri
             ] <- effectiveServerUri
-        | Some token, None -> startInfo.Environment[ enrollmentTokenEnvironmentVariable ] <- token
+        | Some token, _ -> startInfo.Environment[ enrollmentTokenEnvironmentVariable ] <- token
         | None, _ -> ()
 
         startInfo
 
     /// Starts the cache executable through an injectable process factory and maps launch failures to the stable exit-one boundary.
     let invokeProcessWith (startProcess: ProcessStartInfo -> Process) executable arguments enrollmentToken serverUri =
-        try
-            let startInfo = createProcessStartInfo executable enrollmentToken serverUri
-            arguments |> List.iter startInfo.ArgumentList.Add
+        match tryGetEffectiveServerUri serverUri None with
+        | Error _ -> 1
+        | Ok effectiveServerUri ->
+            try
+                let startInfo = createProcessStartInfo executable enrollmentToken effectiveServerUri
+                arguments |> List.iter startInfo.ArgumentList.Add
 
-            use childProcess = startProcess startInfo
+                use childProcess = startProcess startInfo
 
-            if isNull childProcess then
-                1
-            else
-                childProcess.WaitForExit()
-                childProcess.ExitCode
-        with
-        | :? System.ComponentModel.Win32Exception
-        | :? InvalidOperationException
-        | :? System.IO.FileNotFoundException
-        | :? System.IO.DirectoryNotFoundException
-        | :? System.UnauthorizedAccessException -> 1
+                if isNull childProcess then
+                    1
+                else
+                    childProcess.WaitForExit()
+                    childProcess.ExitCode
+            with
+            | :? System.ComponentModel.Win32Exception
+            | :? InvalidOperationException
+            | :? System.IO.FileNotFoundException
+            | :? System.IO.DirectoryNotFoundException
+            | :? System.UnauthorizedAccessException -> 1
 
     /// Starts the cache executable with already validated command tokens and returns its exit code.
     let private invokeProcess executable arguments enrollmentToken serverUri =
@@ -239,7 +250,12 @@ module CacheCommand =
                         @ allowHttpArguments @ organizationArguments
 
                 match Auth.tryGetAccessToken().GetAwaiter().GetResult() with
-                | Ok (Some token) -> invokeCache parseResult arguments (Some token) (tryGetConfiguredServerUri ())
+                | Ok (Some token) ->
+                    match tryGetConfiguredServerUri () with
+                    | Ok serverUri -> invokeCache parseResult arguments (Some token) serverUri
+                    | Error message ->
+                        Console.Error.WriteLine message
+                        1
                 | _ ->
                     Console.Error.WriteLine "Current Grace login is unavailable."
                     1

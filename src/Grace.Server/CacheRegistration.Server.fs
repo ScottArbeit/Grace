@@ -33,6 +33,36 @@ module CacheRegistration =
             | :? NullReferenceException -> return Error(cacheError correlationId "Cache request body is invalid.")
         }
 
+    /// Binds enrollment while rejecting the removed client-controlled Health field instead of silently accepting a legacy request shape.
+    let private bindEnrollmentJson (context: HttpContext) correlationId =
+        task {
+            try
+                use! document = JsonDocument.ParseAsync(context.Request.Body)
+
+                if document.RootElement.ValueKind <> JsonValueKind.Object then
+                    return Error(cacheError correlationId "Cache request body is invalid.")
+                elif
+                    document.RootElement.EnumerateObject()
+                    |> Seq.exists (fun property ->
+                        String.Equals(property.Name, "Health", StringComparison.OrdinalIgnoreCase))
+                    then
+                    return
+                        Error(
+                            cacheError correlationId "Cache enrollment Health is server-owned and must not be supplied."
+                        )
+                else
+                    return
+                        JsonSerializer.Deserialize<CacheEnrollmentRequest>(
+                            document.RootElement.GetRawText(),
+                            Constants.JsonSerializerOptions
+                        )
+                        |> Ok
+            with
+            | :? JsonException
+            | :? BadHttpRequestException
+            | :? NullReferenceException -> return Error(cacheError correlationId "Cache request body is invalid.")
+        }
+
     /// Evaluates one current Grace administrative permission without relying on enrollment-time roles.
     let private hasPermission (context: HttpContext) operation resource =
         task {
@@ -148,7 +178,7 @@ module CacheRegistration =
             task {
                 let correlationId = getCorrelationId context
 
-                match! bindJson<CacheEnrollmentRequest> context correlationId with
+                match! bindEnrollmentJson context correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok request ->
                     match Lifecycle.validateEnrollmentRequest request with

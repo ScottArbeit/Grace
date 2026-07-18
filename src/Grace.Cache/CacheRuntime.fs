@@ -95,6 +95,14 @@ module CacheRuntimeStatus =
     /// Builds the redacted status returned while ambiguous enrollment evidence blocks every normal cache operation.
     let enrollmentRecoveryRequired = { Lifecycle = "enrollment-recovery-required"; CacheId = None; Transport = None }
 
+    /// Builds the stable terminal status emitted when persisted key recovery requires an administrator.
+    let operatorRecoveryRequired (cacheId: Guid) transport =
+        {
+            Lifecycle = "operator-recovery-required"
+            CacheId = Some(cacheId.ToString("D"))
+            Transport = transport
+        }
+
 /// Parses the cache identity rotation interval without accepting silently clamped or malformed deployment configuration.
 module CacheRotationInterval =
 
@@ -715,7 +723,12 @@ module CacheMachineConfiguration =
             | true, uri when uri.Scheme = Uri.UriSchemeHttp -> Some "http-approved"
             | _ -> None
 
-        { Lifecycle = "registered"; CacheId = Some(configuration.CacheId.ToString("D")); Transport = transport }
+        match configuration.RotationLifecycle with
+        | CacheKeyRotationLifecycle.OperatorRecoveryRequired ->
+            CacheRuntimeStatus.operatorRecoveryRequired configuration.CacheId transport
+        | Ready
+        | CandidatePending _ ->
+            { Lifecycle = "registered"; CacheId = Some(configuration.CacheId.ToString("D")); Transport = transport }
 
 /// Persists one narrow enrollment-recovery record without becoming a retry ledger or general workflow engine.
 module CacheEnrollmentRecovery =
@@ -1813,7 +1826,6 @@ module CacheRuntimeControl =
                             PublicKey = publicKey
                             Endpoint = input.Endpoint
                             AllowHttpEndpoint = input.AllowHttpEndpoint
-                            Health = CacheHealthStatus.Unhealthy
                             SoftwareVersion =
                                 typeof<CacheMachineConfiguration>
                                     .Assembly.GetName()

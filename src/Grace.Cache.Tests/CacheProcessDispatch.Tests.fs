@@ -183,6 +183,37 @@ type CacheProcessDispatchTests() =
         Assert.That(status.GetProperty("CacheId").GetString(), Is.EqualTo("44444444-4444-4444-4444-444444444444"))
         Assert.That(status.GetProperty("Transport").GetString(), Is.EqualTo("https"))
 
+    /// Verifies a terminal persisted lifecycle remains a successful machine-readable status observation.
+    [<Test>]
+    member _.OperatorRecoveryRequiredStatusUsesStableJsonAndSuccessExit() =
+        let cacheId = Guid.Parse "44444444-4444-4444-4444-444444444444"
+        let effects: CacheProcessEffects =
+            {
+                Enroll = fun _ -> failwith "Enrollment must not run for status."
+                Status = fun () -> Ok(CacheRuntimeStatus.operatorRecoveryRequired cacheId (Some "https"))
+                Run = fun () -> failwith "Host startup must not run for status."
+            }
+
+        let result = CacheProcessCommand.execute effects [| "--status" |]
+
+        use document = JsonDocument.Parse(result.Payload)
+        Assert.That(result.ExitCode, Is.EqualTo(0))
+        Assert.That(
+            document
+                .RootElement
+                .GetProperty("Lifecycle")
+                .GetString(),
+            Is.EqualTo("operator-recovery-required")
+        )
+
+        Assert.That(
+            document
+                .RootElement
+                .GetProperty("CacheId")
+                .GetString(),
+            Is.EqualTo(cacheId.ToString("D"))
+        )
+
     /// Verifies every one-shot process verb rejects trailing input before reaching a runtime or local-control effect.
     [<TestCase("--run")>]
     [<TestCase("--status")>]

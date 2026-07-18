@@ -111,15 +111,43 @@ module CacheCommandParsingTests =
 
         Assert.That(
             CacheCommand.tryGetEffectiveServerUri (Some "https://environment.example.test/grace/") (Some "https://configured.example.test/"),
-            Is.EqualTo(Some "https://environment.example.test/grace/")
+            Is.EqualTo(Ok(Some "https://environment.example.test/grace/"): Result<string option, string>)
         )
 
         Assert.That(
             CacheCommand.tryGetEffectiveServerUri None (Some "https://configured.example.test/grace/api/"),
-            Is.EqualTo(Some "https://configured.example.test/grace/api/")
+            Is.EqualTo(Ok(Some "https://configured.example.test/grace/api/"): Result<string option, string>)
         )
 
-        Assert.That(CacheCommand.tryGetEffectiveServerUri None None, Is.EqualTo(None))
+        Assert.That(CacheCommand.tryGetEffectiveServerUri None None, Is.EqualTo(Ok None: Result<string option, string>))
+
+        for unsafeUri in
+            [
+                "https://operator:secret@server.example.test/grace/"
+                "https://server.example.test/grace/?access_token=secret"
+                "https://server.example.test/grace/#token=secret"
+            ] do
+            let launched =
+                CacheCommand.invokeProcessWith
+                    (fun _ -> failwith "An unsafe Grace Server URI must not reach the child process.")
+                    "Grace.Cache"
+                    [ "--enroll" ]
+                    (Some "resolved-enrollment-token")
+                    (Some unsafeUri)
+
+            let child =
+                CacheCommand.createProcessStartInfo
+                    "Grace.Cache"
+                    (Some "resolved-enrollment-token")
+                    (Some unsafeUri)
+
+            Assert.That(
+                CacheCommand.tryGetEffectiveServerUri (Some unsafeUri) None,
+                Is.EqualTo(Error "Grace Server URI is invalid.": Result<string option, string>)
+            )
+
+            Assert.That(child.Environment.ContainsKey(Constants.EnvironmentVariables.GraceServerUri), Is.False)
+            Assert.That(launched, Is.EqualTo(1))
 
     /// Verifies enrollment requires exact explicit stable identifiers and an endpoint.
     [<Test>]
