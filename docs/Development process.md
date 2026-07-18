@@ -19,8 +19,8 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
   paths.
 - Prefer vertical slices over broad horizontal phases.
 - Add or update focused tests for behavior changes.
-- Run the fastest meaningful validation first, then broader validation when risk or shared surfaces justify it.
-- Commit after each completed slice so review scope stays clear.
+- Run the smallest meaningful focused proof locally; use broader local validation only as an explicit escalation.
+- Commit after each completed slice, then push one or more completed commits as a coherent reviewable checkpoint.
 - Keep docs, README guidance, and nearby `AGENTS.md` files aligned with behavior and workflow changes.
 - Include the purpose behind each feature or implementation change. Plans, issue bodies, and pull request bodies should
   explain why the work benefits Grace and its users so implementation agents can make better decisions when details are
@@ -274,8 +274,6 @@ not a new required section.
 If review finds a missing class of acceptance criterion, adversarial case, contract propagation, or validation evidence,
 update active and future sibling issues before assigning more workers. Preserve issue history by appending an addendum
 unless replacing stale text is clearer and safe.
-
-
 
 ### Decision Closure And Contract Propagation
 
@@ -676,8 +674,6 @@ true:
 
 After every review-fix push, wait for Codex Code Review Bot to finish on the new head before assigning more fix work.
 
-
-
 ### Repeated Review Cycle Learning Loop
 
 A PR crosses the stabilization threshold when it has three substantive Codex review cycles, two cycles on the same
@@ -789,8 +785,8 @@ The review loop is blocking:
    validation evidence, repeated trap, or issue-template gap that could affect active or future workers, amend the
    active and future sibling issues before spawning more workers. Update the issue template or agent docs when the trap
    is structural. Preserve issue history by appending an addendum unless replacing stale text is clearer and safe.
-6. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
-   the fix touches shared or risky surfaces.
+6. The implementation subagent adds focused regression proof for the changed behavior or docs, then uses GitHub
+   `Validate` as the current-revision broad result. Local Fast or Full is required only for a documented escalation.
 7. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
 8. The orchestrator replies to each Codex Code Review Bot top-level or inline review comment with the outcome, fix
    commit, and validation evidence using the [Review/Fix comment template](#reviewfix-comment-template). The comment
@@ -976,9 +972,24 @@ Not every review finding requires a docs change. Ordinary implementation mistake
 changing templates or process docs. Repeated or structural traps should update active/future sibling issues before more
 workers are assigned, and should update the issue template or agent docs when the missing guard belongs in future tasks.
 
-## Validation Commands
+## Validation
 
-Use the local scripts for repository validation:
+Focused local proof establishes that a coherent commit or implementation slice is correct. GitHub `Validate` certifies
+the current pull-request revision across the repository. Local Fast and Full are escalation, reproduction, and
+diagnostic tools, not routine pre-commit or pre-push requirements.
+
+| Stage | Default proof |
+| ----- | ------------- |
+| RED | Smallest test proving missing or incorrect behavior |
+| GREEN/refactor | Same focused test or fixture |
+| Before commit | Format/check, focused proof, freshness checks, `git diff --check` |
+| Before push | Confirm local evidence is current; no routine broad local gate |
+| PR current revision | GitHub `Validate`, authoritative broad gate |
+| Review fix | Focused regression proof, then GitHub `Validate` |
+| CI failure | Inspect CI evidence and reproduce narrowly; escalate to Fast or Full as needed |
+| Merge | Current CI green, current review satisfied, residual risks recorded |
+
+Use the local scripts only when their escalation role is justified:
 
 ```powershell
 pwsh ./scripts/bootstrap.ps1
@@ -986,33 +997,47 @@ pwsh ./scripts/validate.ps1 -Fast
 pwsh ./scripts/validate.ps1 -Full
 ```
 
-Use `-Fast` for the normal development loop. Use `-Full` when the change touches Aspire integration coverage, emulators,
-storage, Cosmos DB, Service Bus, Redis, cross-service behavior, or deployment/runtime behavior.
+Fast is an optional broad local preflight for unavailable or delayed CI, unusually broad compile fan-out, an explicit
+task or maintainer request, handoff without an immediate PR, or broader failure reproduction. Full is for local
+Aspire-backed integration reproduction or diagnosis, emulator/storage/runtime investigation, unavailable CI integration
+proof, an explicit request, or a defined release-candidate procedure. Do not infer a routine Full requirement merely
+from touching an integration-related path.
 
-Avoid duplicate builds. The validation ladder is:
+Focused local proof is the normal path. For F# behavior changes, use RED where applicable, format touched files, build
+the focused project before a `--no-build` test, run the smallest relevant fixture, namespace, category, or project, then
+run freshness checks and `git diff --check`. Docs-only proof can be MarkdownLint, YAML or PowerShell parsing, rendered
+HTML inspection, and `git diff --check`.
+
+Some repetition is intentional: focused tests provide rapid local feedback and run again as independent CI
+certification. Avoid routine local near-full or full validation immediately before the same broad repository proof in
+CI. The validation ladder is:
 
 1. Run Fantomas formatting or targeted Fantomas checks for touched F# files.
 2. Run any required freshness or generated-file checks.
 3. Choose exactly one final build/test gate.
 4. Run `git diff --check`.
 
-`validate.ps1 -Fast` and `validate.ps1 -Full` already restore, build the solution, and run the selected test projects.
-If a worker is going to run `validate -Fast` or `validate -Full`, do not also prompt it to routinely run a
-project-specific `dotnet build` plus `dotnet test --no-build`. The selected `validate` command is the final build/test
-gate.
+Fast keeps its selected non-Aspire filter. Full runs one unfiltered solution-level test command, including every current
+and future test project in `src/Grace.slnx`. GitHub `Validate` restores and builds once, then invokes the shared Full
+implementation without rebuilding. Do not add per-project test-process fan-out.
+
+When Fast or Full is intentionally selected, do not also duplicate its build/test work with routine focused commands
+for that checkpoint. Otherwise, local broad validation is normally omitted. That omission is not skipped validation
+when focused proof is complete, the PR is pushed, and current GitHub `Validate` is required and available. Record
+"skipped validation" only for omitted required focused proof, syntax/lint/freshness checks, required CI, or task-specific
+manual validation.
 
 Focused project build/test is still appropriate when it is the right evidence for the slice:
 
 - RED evidence before a code change.
 - Failure diagnosis or faster defect localization after a failing broad gate.
-- A skipped-validate workflow where the task record explicitly accepts the narrower gate.
+- Normal slice proof before current-revision GitHub `Validate`.
 - Tests outside the selected validate profile.
 - Issues that explicitly require focused-only validation.
 
 When a focused command uses `--no-build`, first run the matching
 `dotnet build --configuration Release <project>` command so the test assembly exists and reflects the current source.
-Use separate broad `dotnet build` or broad `dotnet test` commands only when diagnosing a failure or when `validate` is
-being intentionally skipped.
+Use separate broad `dotnet build` or broad `dotnet test` commands only when diagnosing a failure.
 
 If running commands manually, the high-level fallback is:
 
@@ -1028,16 +1053,15 @@ npx --yes markdownlint-cli2 "**/*.md"
 git diff --check
 ```
 
-If validation is skipped, record exactly what was skipped and why in the task record or pull request.
+If required validation is skipped, record exactly what was skipped and why in the task record or pull request.
 
 For F# changes, run Fantomas formatting or targeted Fantomas checks before build and test validation. The intended
 order is:
 
 1. Apply the code change.
 2. Run Fantomas on the touched files, or run the repo-standard recursive Fantomas command when the edit is broad.
-3. Run focused project build/test only when it is needed for RED evidence, failure diagnosis, tests outside the selected
-   validate profile, skipped-validate workflows, or explicitly focused-only issues.
-4. Run exactly one final build/test gate, normally `validate -Fast` or `validate -Full`.
+3. Run focused project build/test for the changed behavior.
+4. Use Fast or Full only when their documented escalation condition applies.
 5. Run `git diff --check`.
 
 Avoid running the full test suite before formatting, then discovering Fantomas rewrote files and forcing another
@@ -1074,8 +1098,10 @@ comments as the review loop continues:
 - why the change benefits Grace and its users
 - summary of changed behavior
 - touched paths and any write-set expansion
-- focused validation run
-- broader validation run, or skipped-validation reason
+- focused local proof, formatting/linting, freshness/syntax, and manual evidence as applicable
+- optional Fast or Full evidence and the reason when one was run
+- current head SHA, GitHub `Validate` conclusion, run link, and confirmation that it is associated with the latest PR
+  revision; successful logs need not be summarized unless CI fails or warns
 - implementation and review path used, including the implementation subagent and Codex Code Review Bot state observed
 - final no-issues bot review result for the latest commit
 - replies to each Codex Code Review Bot comment that required a fix, including the issue, fix, fix commit, validation,
@@ -1098,10 +1124,11 @@ Then verify:
 - ahead/behind status shows the branch is current enough for a blocking review decision
 - the scoped diff still contains only the intended write set
 - no unexpected deletions were introduced during the update
-- the chosen validation gate has passed on the refreshed branch
+- focused proof was rerun when conflict resolution or relevant base changes could affect the slice
 
-Only then wait for Codex Code Review Bot to review the refreshed head commit. A bot reaction or comment on an older head
-commit is useful history, but it does not satisfy the completion review gate.
+Push the refreshed revision, require a new GitHub `Validate` result associated with that revision, and wait for Codex
+Code Review Bot. CI and code review can run in parallel. A bot reaction, comment, or CI result on an older revision is
+useful history, but it does not satisfy the completion review gate.
 
 Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
 maintainer explicitly asks for a draft.
@@ -1120,8 +1147,9 @@ The agent should:
 2. Evaluate whether the feedback is correct and identify the smallest appropriate fix, or state why no code change is
    needed.
 3. Make the fix in the issue-owned branch/worktree and keep the change traceable to the review thread.
-4. Run focused validation for the changed behavior or docs, and broader validation when the feedback touches shared or
-   risky surfaces.
+4. Add or strengthen focused regression proof, then run formatting, relevant syntax/freshness checks, and
+   `git diff --check`. Use local Fast or Full only for an explicit escalation condition; GitHub `Validate` provides the
+   new broad current-revision result.
 5. Commit the fix and push the branch.
 6. Reply to the GitHub review comment with the outcome, changed commit, validation evidence, and a short prevention
    line.

@@ -64,11 +64,10 @@ Grace development uses a task-record-first process that keeps human and agent wo
 4. Claim the issue with a comment, assign it to the authenticated GitHub user, and create an issue-owned worktree from
    the latest `origin/main`.
 5. Work in vertical slices that prove one public behavior at a time.
-6. Validate with the fastest meaningful focused command, then run `pwsh ./scripts/validate.ps1 -Fast` for the normal
-   repo gate.
-7. Use `pwsh ./scripts/validate.ps1 -Full` when Aspire integration, emulators, storage, Cosmos DB, Service Bus, Redis,
-   deployment/runtime behavior, or cross-service behavior changes.
-8. Commit after each completed slice and keep pull requests focused.
+6. Validate with the fastest meaningful focused command, formatting or syntax checks, and `git diff --check`.
+7. Use `pwsh ./scripts/validate.ps1 -Fast` only as an optional broad local preflight and `-Full` for local integration
+   reproduction or diagnosis. GitHub `Validate` is the required broad gate for the current pull-request revision.
+8. Commit after each completed slice and push one or more completed commits as a coherent, reviewable checkpoint.
 9. Update docs and nearby `AGENTS.md` files when behavior, commands, APIs, dependencies, or workflow changes.
 
 When a maintainer says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when they explicitly ask

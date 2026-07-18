@@ -171,9 +171,10 @@ body:
     attributes:
       label: Expected validation
       placeholder: |
-        - focused test command
-        - fast validation expectation
-        - full validation expectation, if needed
+        - required focused local proof
+        - required formatting, linting, generated-file, or syntax checks
+        - required GitHub Validate expectation for the current pull-request revision
+        - exceptional local Fast or Full requirement with reason, or N/A
         - manual validation, if any
     validations:
       required: true

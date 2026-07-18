@@ -78,8 +78,9 @@ Add canned regressions for:
 
 ## Validation Commands
 
-Use focused tests first. Then run the selected profile. Build the matching project in Release before any
-project-specific `dotnet test --no-build` command.
+Use focused tests first. Build the matching project in Release before any project-specific `dotnet test --no-build`
+command. Fast is an optional broad preflight and Full is for local integration reproduction or diagnosis; GitHub
+`Validate` is the required broad current-revision proof.
 
 ```powershell
 dotnet build --configuration Release src/Grace.Types.Tests/Grace.Types.Tests.fsproj
@@ -96,9 +97,9 @@ pwsh ./scripts/validate.ps1 -Fast
 pwsh ./scripts/validate.ps1 -Full
 ```
 
-`validate.ps1` uses one solution-level `dotnet test "src/Grace.slnx"` invocation with Fast or Full selection filters,
-not custom per-project process fan-out. Fast selects Authorization, CLI, Types, and Server.Unit tests. Full adds Server
-integration tests.
+`validate.ps1` uses one solution-level `dotnet test "src/Grace.slnx"` invocation, not custom per-project process
+fan-out. Fast uses the selected non-Aspire filter; Full is unfiltered and therefore includes every current and future
+test project in the solution. GitHub `Validate` invokes the shared Full implementation.
 
 Run `dotnet tool run fantomas --recurse .` from `./src` after F# changes when formatting is needed.
 

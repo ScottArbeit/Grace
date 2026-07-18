@@ -7,9 +7,9 @@ Treat this file as the canonical high-level brief; each project folder contains 
 ## Local Commands
 
 - `pwsh ./scripts/bootstrap.ps1`
-- `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration tests)
+- Focused project proof for the changed behavior; use Fast or Full only as optional broad local escalation.
 
-Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit `validate -Fast` hook.
+Optional: `pwsh ./scripts/install-githooks.ps1` adds a staged-diff check only; focused tests and formatting stay explicit.
 
 ## Work Tracking
 
@@ -57,27 +57,19 @@ update the issue before editing the new paths.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
-- Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).
-- Order validation to avoid duplicate builds. Run targeted Fantomas formatting or checks before validation for touched
-  F# files, then choose exactly one final build/test gate. If `validate -Fast` or `validate -Full` will run, do not also
-  ask workers to routinely run project-specific `dotnet build` plus `dotnet test --no-build`; `validate` is the final
-  build/test gate.
-- Focused project build/test is appropriate for RED evidence, failure diagnosis, skipped-validate workflows, tests
-  outside the selected validate profile, or explicitly focused-only issues. If running commands manually instead of
-  `validate`, use `dotnet build --configuration Release` and `dotnet test --no-build`; build the focused project before
-  any project-specific `--no-build` test command.
-- Freshness or generated-file update workers follow the same validation ladder: formatting or freshness checks first,
-  then exactly one final build/test gate. If `validate -Fast` or `validate -Full` runs, do not also run routine focused
-  build/test commands.
+- Validate the changed behavior locally with the smallest focused proof. Format touched F# files first, build the
+  focused project before a `--no-build` test, run required freshness checks, and finish with `git diff --check`.
+- GitHub `Validate` is the required broad gate for the current pull-request revision. Local Fast is an optional broad
+  preflight; Full is for local integration reproduction or diagnosis, not a routine consequence of touching a runtime
+  surface. If either broad command is intentionally selected, do not duplicate its build/test work with routine focused
+  build/test commands for that checkpoint.
 - Product/DAG independence is not the same as merge/write-set independence. Parallelize branches only when their write
   sets are disjoint enough to avoid predictable churn. Serialize or merge-queue branches that touch shared project
   files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
   preparatory compile-item or file-scaffold slice before later branches edit separate files.
-- Before the Grace completion review gate, update the branch against current `origin/main`, verify ahead/behind,
-  verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then wait for
-  Codex Code Review Bot to review the refreshed PR head. A bot signal on a stale commit does not satisfy the completion
-  gate. For sub-issue PRs targeting an epic integration branch, run that freshness gate against the current epic branch;
-  for the final epic-to-`main` PR, run it against current `origin/main`.
+- Before the Grace completion review gate, update against the required base, inspect ahead/behind, scoped diff,
+  unexpected deletions, and relevant conflict resolutions, then rerun focused proof if needed. Push and require
+  current GitHub `Validate` and Codex Code Review Bot state for the refreshed revision.
 - Never sleep or poll for more than 120 seconds in one command. This applies to `Start-Sleep`, `wait_agent`,
   long-polling commands, watch loops, and tool waits; use repeated shorter checks instead, with status updates between
   checks during long workflows.
@@ -158,8 +150,10 @@ update the issue before editing the new paths.
 
 ## Test Parallelization And Validation
 
-- `pwsh ./scripts/validate.ps1 -Fast` and `-Full` run one solution-level `dotnet test "src/Grace.slnx"` command with
-  selection filters. Fast selects Authorization, CLI, Types, and Server.Unit tests. Full adds Server integration tests.
+- `pwsh ./scripts/validate.ps1 -Fast` uses one solution-level `dotnet test "src/Grace.slnx"` command with the selected
+  non-Aspire filter: Authorization, CLI, Operations, Types, and Server.Unit tests. `-Full` uses one unfiltered
+  solution-level command, so every current and future test project in `src/Grace.slnx` runs. GitHub `Validate` reuses
+  this Full selection implementation rather than maintaining its own test list.
 - Do not reintroduce custom per-project process fan-out into validation unless a future issue owns that runner change.
 - Assembly-level NUnit parallel defaults are intentionally limited. `Grace.Authorization.Tests` and `Grace.Types.Tests`
   have bounded defaults. `Grace.Server.Unit.Tests` is deferred while process-static approval-store mutation remains in
