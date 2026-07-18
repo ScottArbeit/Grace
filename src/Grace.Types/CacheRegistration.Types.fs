@@ -583,6 +583,13 @@ module CacheRegistration =
                     Some registration,
                     "Cache rotation interval is outside the accepted range."
                 )
+            | Some registration when registration.ActivePublicKey = request.CandidatePublicKey ->
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.NotFound,
+                    Some registration,
+                    "Cache identity candidate must differ from the active identity key."
+                )
             | Some registration when
                 request.IsStartup
                 && (registration.LastRotatedAt

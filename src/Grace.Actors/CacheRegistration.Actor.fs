@@ -163,6 +163,8 @@ module CacheRegistrationActor =
                             )
                     | Some _ when not (CacheRegistrationProof.isValidPublicKey request.CandidatePublicKey) ->
                         return Error(GraceError.Create "Cache identity candidate requires a canonical P-256 public key." correlationId)
+                    | Some registration when registration.ActivePublicKey = request.CandidatePublicKey ->
+                        return Error(GraceError.Create "Cache identity candidate must differ from the active identity key." correlationId)
                     | Some registration when
                         registration.CandidatePublicKey
                         |> Option.exists (fun candidate -> candidate <> request.CandidatePublicKey)

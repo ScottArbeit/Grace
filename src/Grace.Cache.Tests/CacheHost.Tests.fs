@@ -465,6 +465,20 @@ type CacheHostTests() =
                 Assert.Fail("A simultaneous cache startup must not acquire the machine guard.")
             | Error message -> Assert.That(message, Does.Contain("already active"))
 
+    /// Verifies mutex creation failures become the stable redacted guard result without exposing the rejected guard identity.
+    [<Test>]
+    member _.MachineGuardRedactsMutexCreationFailure() =
+        let rejectedName = "Global\\"
+
+        match MachineInstanceGuard.tryAcquireWithName rejectedName with
+        | Ok lease ->
+            use lease = lease
+            Assert.Fail("The invalid Windows global mutex name unexpectedly acquired the machine guard.")
+        | Error message ->
+            Assert.That(message, Is.EqualTo("A Grace Cache process is already active on this machine."))
+            Assert.That(message, Does.Not.Contain(rejectedName))
+            Assert.That(message, Does.Not.Contain("Global\\"))
+
     /// Verifies normal disposal releases the operating-system guard for a later cache process.
     [<Test>]
     member _.MachineGuardIsReleasedAfterDisposal() =

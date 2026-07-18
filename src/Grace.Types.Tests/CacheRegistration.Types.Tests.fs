@@ -212,6 +212,7 @@ type CacheRegistrationLifecycleTests() =
             }
 
         let promotedState, promotion = Lifecycle.promoteCandidate pendingState refreshRequest (now.Plus(Duration.FromMinutes 90L))
+        let promoted = promotedState.Registrations[0]
 
         let throttledRequest = { refreshRequest with ObservedAt = now.Plus(Duration.FromMinutes 91L) }
 
@@ -219,6 +220,20 @@ type CacheRegistrationLifecycleTests() =
 
         Assert.That(promotion.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
         Assert.That(throttled.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(promoted.ActivePublicKey, Is.EqualTo(candidate))
+        Assert.That(promoted.LastRotatedAt, Is.EqualTo(Some(now.Plus(Duration.FromMinutes 90L))))
+
+        Assert.That(
+            promoted.RotationDueAt,
+            Is.EqualTo(
+                now.Plus(
+                    Duration.FromMinutes(
+                        float RegistrationLifetime.DefaultRotationIntervalMinutes
+                        + 90.0
+                    )
+                )
+            )
+        )
 
         Assert.That(
             throttled.Registration
@@ -231,6 +246,32 @@ type CacheRegistrationLifecycleTests() =
             |> Option.bind (fun registration -> registration.CandidatePublicKey),
             Is.EqualTo(None)
         )
+
+    /// Verifies an active-key duplicate cannot become a no-op candidate or advance the durable rotation schedule.
+    [<Test>]
+    member _.``active key cannot be submitted as a candidate``() =
+        let state, _ = enrolled ()
+        let registration = state.Registrations[0]
+
+        let request =
+            {
+                Class = nameof CacheKeyCandidateRequest
+                CacheId = cacheId
+                CandidatePublicKey = registration.ActivePublicKey
+                RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                IsStartup = false
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let next, result = Lifecycle.submitCandidate state request (now.Plus(Duration.FromMinutes 90L))
+        let retained = next.Registrations[0]
+
+        Assert.That(result.Status, Is.EqualTo(CacheRegistrationRefreshStatus.NotFound))
+        Assert.That(result.Message, Is.EqualTo("Cache identity candidate must differ from the active identity key."))
+        Assert.That(next, Is.EqualTo(state))
+        Assert.That(retained.CandidatePublicKey, Is.EqualTo(None))
+        Assert.That(retained.LastRotatedAt, Is.EqualTo(registration.LastRotatedAt))
+        Assert.That(retained.RotationDueAt, Is.EqualTo(registration.RotationDueAt))
 
     [<Test>]
     member _.``refresh updates only allowed operational facts and preserves administrator owned endpoint identity``() =

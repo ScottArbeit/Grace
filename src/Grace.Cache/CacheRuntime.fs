@@ -125,13 +125,21 @@ module MachineInstanceGuard =
     /// Acquires a named guard atomically and returns a loser result without attempting later cache side effects.
     let tryAcquireWithName name =
         let mutable createdNew = false
-        let mutex = new Mutex(true, name, &createdNew)
 
-        if createdNew then
-            Ok(new MachineInstanceLease(mutex))
-        else
-            mutex.Dispose()
-            Error "A Grace Cache process is already active on this machine."
+        try
+            let mutex = new Mutex(true, name, &createdNew)
+
+            if createdNew then
+                Ok(new MachineInstanceLease(mutex))
+            else
+                mutex.Dispose()
+                Error "A Grace Cache process is already active on this machine."
+        with
+        | :? UnauthorizedAccessException
+        | :? IOException
+        | :? PlatformNotSupportedException
+        | :? WaitHandleCannotBeOpenedException
+        | :? ArgumentException -> Error "A Grace Cache process is already active on this machine."
 
     /// Acquires the one fixed cache guard whose identity cannot vary with database, endpoint, repository, or runtime settings.
     let tryAcquire () = tryAcquireWithName guardName
