@@ -39,7 +39,7 @@ class ArtifactGrantPayload(BaseModel):
     requester_principal_id: StrictStr = Field(description="Stable authenticated grace_user_id supplied by Grace Server.", alias="RequesterPrincipalId")
     holder_key_thumbprint: StrictStr = Field(description="Base64url SHA-256 thumbprint of the canonical ephemeral holder public key.", alias="HolderKeyThumbprint")
     cache_id: StrictStr = Field(alias="CacheId")
-    cache_endpoint: StrictStr = Field(description="Exact selected Cache endpoint covered by this signature.", alias="CacheEndpoint")
+    cache_endpoint: StrictStr = Field(description="Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature.", alias="CacheEndpoint")
     target_root_directory_version_id: UUID = Field(alias="TargetRootDirectoryVersionId")
     execution_mode: MaterializationExecutionMode = Field(alias="ExecutionMode")
     artifact_identities: Annotated[List[StrictStr], Field(min_length=1)] = Field(alias="ArtifactIdentities")

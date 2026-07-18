@@ -15,7 +15,7 @@ Name | Type | Description | Notes
 **repository_scopes** | [**List[CacheRepositoryScope]**](CacheRepositoryScope.md) |  | 
 **active_public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
 **candidate_public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | [optional] 
-**endpoint** | **str** |  | 
+**endpoint** | **str** | Absolute HTTP(S) Cache origin with path &#39;/&#39;, no user info, query, or fragment. | 
 **allow_http_endpoint** | **bool** | Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS. | 
 **health** | [**CacheHealthStatus**](CacheHealthStatus.md) |  | 
 **software_version** | **str** |  | 

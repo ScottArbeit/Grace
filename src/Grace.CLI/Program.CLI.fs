@@ -1044,6 +1044,12 @@ module GraceCommand =
             Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
             |> Seq.exists (fun command -> command.Name.Equals("doctor", StringComparison.OrdinalIgnoreCase))
 
+    /// Returns true only when a command may use repository- and user-scoped CLI history without affecting machine-scoped cache execution.
+    let shouldRecordHistory isIntrospection (parseResult: ParseResult) =
+        not isIntrospection
+        && not (parseResult |> isGraceDoctor)
+        && not (parseResult |> isGraceCache)
+
     /// Checks if the command is a foreground `grace watch` command.
     let isGraceWatchForeground (parseResult: ParseResult) =
         (parseResult |> isGraceWatch)
@@ -1545,10 +1551,7 @@ module GraceCommand =
                     (finishTime - startTime).TotalMilliseconds
                     |> int64
 
-                if
-                    not isIntrospection
-                    && not (parseResult |> isGraceDoctor)
-                then
+                if shouldRecordHistory isIntrospection parseResult then
                     HistoryStorage.tryRecordInvocation
                         {
                             argvOriginal = argvOriginal

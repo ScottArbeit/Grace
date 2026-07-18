@@ -512,8 +512,8 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test/grace/"
                 ActiveKeyName = "old-key"
                 ActivePublicKey = testPublicKey
-                CandidateKeyState =
-                    Some
+                RotationLifecycle =
+                    CandidatePending
                         { ActiveKeyName = "old-key"; ActivePublicKey = testPublicKey; CandidateKeyName = "replacement-key"; CandidatePublicKey = testPublicKey }
             }
 
@@ -540,7 +540,11 @@ type CacheHostTests() =
             Assert.That(status.Lifecycle, Is.EqualTo("registered"))
             Assert.That(recoveryReadCount, Is.EqualTo(1))
             Assert.That(configurationReadCount, Is.EqualTo(1))
-            Assert.That(configuration.CandidateKeyState, Is.Not.EqualTo(None))
+
+            match configuration.RotationLifecycle with
+            | CandidatePending _ -> ()
+            | Ready
+            | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Assert.Fail("Status read must retain the pending candidate.")
 
     /// Verifies startup exceptions become a stable cache process failure without exposing bind or certificate details.
     [<Test>]
@@ -618,7 +622,7 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test/private"
                 ActiveKeyName = "Grace.Cache.Identity.test"
                 ActivePublicKey = testPublicKey
-                CandidateKeyState = None
+                RotationLifecycle = Ready
             }
 
         let status = CacheMachineConfiguration.toStatus configuration
@@ -652,7 +656,7 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test/private"
                 ActiveKeyName = keyReference
                 ActivePublicKey = testPublicKey
-                CandidateKeyState = None
+                RotationLifecycle = Ready
             }
 
         let rendered =
@@ -724,10 +728,10 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test"
                 ActiveKeyName = "linux-11111111111111111111111111111111"
                 ActivePublicKey = testPublicKey
-                CandidateKeyState = None
+                RotationLifecycle = Ready
             }
 
-        let effects: CandidateKeyStateEffects =
+        let effects: CacheKeyRotationLifecycleEffects =
             {
                 WriteConfiguration =
                     fun value ->
@@ -739,12 +743,14 @@ type CacheHostTests() =
                         Ok()
             }
 
-        match CandidateKeyState.beginTransition effects configuration "linux-22222222222222222222222222222222" testPublicKey with
+        match CacheKeyRotationLifecycle.beginTransition effects configuration "linux-22222222222222222222222222222222" testPublicKey with
         | Error error -> Assert.Fail(error)
         | Ok persisted ->
             let restartCandidate =
-                persisted.CandidateKeyState
-                |> Option.map (fun pending -> pending.CandidateKeyName)
+                match persisted.RotationLifecycle with
+                | CandidatePending pending -> Some pending.CandidateKeyName
+                | Ready
+                | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> None
 
             Assert.That(restartCandidate, Is.EqualTo(Some "linux-22222222222222222222222222222222"))
             Assert.That(deletes, Is.Empty)
@@ -764,11 +770,12 @@ type CacheHostTests() =
                 ServerUri = "https://server.example.test"
                 ActiveKeyName = "old"
                 ActivePublicKey = testPublicKey
-                CandidateKeyState =
-                    Some { ActiveKeyName = "old"; ActivePublicKey = testPublicKey; CandidateKeyName = "replacement"; CandidatePublicKey = testPublicKey }
+                RotationLifecycle =
+                    CandidatePending
+                        { ActiveKeyName = "old"; ActivePublicKey = testPublicKey; CandidateKeyName = "replacement"; CandidatePublicKey = testPublicKey }
             }
 
-        let effects: CandidateKeyStateEffects =
+        let effects: CacheKeyRotationLifecycleEffects =
             {
                 WriteConfiguration =
                     fun value ->
@@ -780,19 +787,143 @@ type CacheHostTests() =
                         Ok()
             }
 
-        match configuration.CandidateKeyState with
-        | None -> Assert.Fail("The test requires a persisted candidate.")
-        | Some candidate ->
-            match CandidateKeyState.acceptReplacement effects configuration candidate with
+        match configuration.RotationLifecycle with
+        | CandidatePending candidate ->
+            match CacheKeyRotationLifecycle.acceptReplacement effects configuration candidate with
             | Error error -> Assert.Fail(error)
             | Ok promoted ->
                 Assert.That(promoted.ActiveKeyName, Is.EqualTo("replacement"))
-                Assert.That(promoted.CandidateKeyState, Is.EqualTo(None))
+                Assert.That(promoted.RotationLifecycle, Is.EqualTo(Ready))
                 Assert.That(deletes, Is.EquivalentTo([ "old" ]))
                 Assert.That(writes.Count, Is.EqualTo(2))
                 Assert.That(writes[0].ActiveKeyName, Is.EqualTo("replacement"))
                 Assert.That(writes[0].ActivePublicKey, Is.EqualTo(testPublicKey))
-                Assert.That(writes[0].CandidateKeyState, Is.Not.EqualTo(None))
+
+                match writes[0].RotationLifecycle with
+                | CandidatePending _ -> ()
+                | Ready
+                | CacheKeyRotationLifecycle.OperatorRecoveryRequired ->
+                    Assert.Fail("The active key must remain paired with its pending candidate until cleanup.")
+        | Ready
+        | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Assert.Fail("The test requires a persisted candidate.")
+
+    /// Verifies final server candidate outcomes are never retried with retained local candidate state.
+    [<TestCase(CacheRegistrationRefreshStatus.Expired)>]
+    [<TestCase(CacheRegistrationRefreshStatus.Revoked)>]
+    [<TestCase(CacheRegistrationRefreshStatus.NotFound)>]
+    member _.DefinitiveCandidateOutcomesRequireOperatorRecovery(status) =
+        CacheKeyRotationLifecycle.isDefinitiveRegistrationRejection status
+        |> Assert.That
+
+    /// Verifies candidate rejection clears durable pending state before deleting the rejected key, including a cleanup failure.
+    [<Test>]
+    member _.CandidateRejectionClearsStateBeforeKeyCleanupFailure() =
+        let writes = ResizeArray<CacheMachineConfiguration>()
+        let deletes = ResizeArray<string>()
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle =
+                    CandidatePending
+                        { ActiveKeyName = "active"; ActivePublicKey = testPublicKey; CandidateKeyName = "candidate"; CandidatePublicKey = testPublicKey }
+            }
+
+        let effects: CacheKeyRotationLifecycleEffects =
+            {
+                WriteConfiguration =
+                    fun value ->
+                        writes.Add value
+                        Ok()
+                DeleteKey =
+                    fun value ->
+                        deletes.Add value
+                        Error "candidate-key-delete-failed"
+            }
+
+        match configuration.RotationLifecycle with
+        | CandidatePending pending ->
+            match CacheKeyRotationLifecycle.rejectReplacement effects configuration pending with
+            | Error error -> Assert.Fail(error)
+            | Ok (cleared, cleanupFailure) ->
+                Assert.That(cleared.RotationLifecycle, Is.EqualTo(CacheKeyRotationLifecycle.OperatorRecoveryRequired))
+                Assert.That(CacheKeyRotationLifecycle.requiresOperatorRecovery cleared, Is.True)
+                Assert.That(writes, Has.Count.EqualTo(1))
+                Assert.That(writes[0].RotationLifecycle, Is.EqualTo(CacheKeyRotationLifecycle.OperatorRecoveryRequired))
+                Assert.That(deletes, Is.EquivalentTo([ "candidate" ]))
+                Assert.That(cleanupFailure, Is.EqualTo(Some "candidate-key-delete-failed"))
+                let terminalJson = JsonSerializer.Serialize(cleared, Constants.JsonSerializerOptions)
+                Assert.That(terminalJson, Does.Not.Contain("CandidateKeyName"))
+                Assert.That(terminalJson, Does.Not.Contain("CandidatePublicKey"))
+
+                let restarted = JsonSerializer.Deserialize<CacheMachineConfiguration>(terminalJson, Constants.JsonSerializerOptions)
+                Assert.That(restarted.RotationLifecycle, Is.EqualTo(CacheKeyRotationLifecycle.OperatorRecoveryRequired))
+        | Ready
+        | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Assert.Fail("The test requires a pending candidate.")
+
+    /// Verifies the durable rejection marker makes a restarted host return the same operator-recovery outcome before listener startup.
+    [<Test>]
+    member _.DefinitiveCandidateRejectionStopsStartupAfterRestart() =
+        let mutable listenerStarts = 0
+
+        let rejectedConfiguration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired
+            }
+
+        let effects: StartupRotationEffects =
+            {
+                Synchronize =
+                    fun () ->
+                        if CacheKeyRotationLifecycle.requiresOperatorRecovery rejectedConfiguration then
+                            Ok(OperatorRecoveryRequired "Grace Cache identity recovery requires administrator revocation and re-enrollment.")
+                        else
+                            Assert.Fail("A definitive rejection must prevent startup from creating another candidate.")
+                            Error "unreachable"
+                WaitForRetry =
+                    fun _ ->
+                        Assert.Fail("Terminal rejection must not schedule a startup retry.")
+                        false
+            }
+
+        match CacheStartupRotation.synchronizeBeforeListener effects with
+        | Ok () ->
+            listenerStarts <- listenerStarts + 1
+            Assert.Fail("Terminal candidate rejection must block cache startup.")
+        | Error error -> Assert.That(error, Does.Contain("administrator revocation and re-enrollment"))
+
+        Assert.That(listenerStarts, Is.Zero)
+
+    /// Verifies a final candidate rejection stops runtime scheduling instead of retrying or creating another candidate.
+    [<Test>]
+    member _.DefinitiveCandidateRejectionStopsRuntimeRotation() =
+        let mutable scheduled = false
+        let mutable markedUnhealthy = false
+
+        let effects: KeyRotationSchedulingEffects =
+            {
+                Synchronize = fun () -> Ok(OperatorRecoveryRequired "operator recovery")
+                ReadRegistration = fun () -> Error "registration must not be read after terminal candidate rejection"
+                MarkUnhealthy = fun () -> markedUnhealthy <- true
+                Schedule = fun _ -> scheduled <- true
+                Now = fun () -> Instant.FromUnixTimeSeconds 0L
+            }
+
+        let phase = CacheKeyRotationScheduling.run RotationRequired effects
+        Assert.That(phase, Is.EqualTo(AutomaticWorkStopped))
+        Assert.That(scheduled, Is.False)
+        Assert.That(markedUnhealthy, Is.False)
 
     /// Verifies simultaneous cache starts have exactly one operating-system guard winner and the loser can cause no later effects.
     [<Test>]

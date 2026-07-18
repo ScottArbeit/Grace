@@ -258,7 +258,15 @@ stores only the corresponding public key for proof-validated runtime refresh and
 Registered Grace Cache services use a server-owned active lifetime of 2 hours and a refresh-after interval of 1 hour.
 Administrators, not runtime cache refresh, manage repository assignments and other cache administration.
 HTTPS remains the default cache transport. An HTTP endpoint requires the administrator's explicit enrollment approval for
-that exact endpoint; the cache runtime cannot change it during refresh.
+that exact endpoint; the cache runtime cannot change it during refresh. A cache endpoint is an absolute HTTP(S) origin
+with path `/`, no user info, query, or fragment. This is separate from the Grace Server URI, which may include a path
+base.
+
+During identity rotation, the machine configuration is always in exactly one durable lifecycle case: ready with no
+candidate, pending with the complete candidate transition, or operator recovery required with no candidate material.
+Only transient, unknown, or ambiguous results retain the current candidate for retry. Definitive `Expired`, `Revoked`,
+and `NotFound` results write the terminal lifecycle before attempting candidate-key deletion, stop automatic work across
+restart, and require administrator revocation and re-enrollment even when cleanup fails.
 
 ### Unix Cache Deployment
 

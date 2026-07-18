@@ -91,10 +91,10 @@ type CacheRegistrationLifecycleTests() =
 
         Assert.That(roundTripped.RetryAfterSeconds, Is.EqualTo(Some 42))
 
-    /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact endpoint.
+    /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact origin.
     [<Test>]
     member _.``enrollment accepts only coherent explicit HTTP endpoint approval``() =
-        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080/artifacts"; AllowHttpEndpoint = true }
+        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080"; AllowHttpEndpoint = true }
 
         let state, result = Lifecycle.enroll CacheRegistrationState.Empty cacheId httpEnrollment "admin-user" now
         let registration = state.Registrations[0]
@@ -123,15 +123,15 @@ type CacheRegistrationLifecycleTests() =
     /// Verifies cache-authenticated refresh cannot substitute the scheme, host, port, or path of the stored endpoint.
     [<Test>]
     member _.``refresh rejects every endpoint substitution before durable mutation``() =
-        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080/artifacts"; AllowHttpEndpoint = true }
+        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080"; AllowHttpEndpoint = true }
 
         let state, _ = Lifecycle.enroll CacheRegistrationState.Empty cacheId httpEnrollment "admin-user" now
 
         let substitutions =
             [
                 "https://cache.example.test:8080/artifacts"
-                "http://other-cache.example.test:8080/artifacts"
-                "http://cache.example.test:8081/artifacts"
+                "http://other-cache.example.test:8080"
+                "http://cache.example.test:8081"
                 "http://cache.example.test:8080/other-artifacts"
             ]
 
@@ -152,6 +152,36 @@ type CacheRegistrationLifecycleTests() =
             let next, result = Lifecycle.refresh state request (now.Plus(Duration.FromMinutes 90L))
             Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.EndpointMismatch)
             Assert.That(next, Is.EqualTo state)
+
+    /// Verifies every public registration boundary rejects endpoint paths, credentials, queries, and fragments before actor mutation.
+    [<TestCase("https://cache.example.test/cache")>]
+    [<TestCase("https://cache.example.test/?preview=true")>]
+    [<TestCase("https://cache.example.test/#fragment")>]
+    [<TestCase("https://operator@cache.example.test")>]
+    member _.``registration validators reject non-origin endpoints`` endpoint =
+        let enrollmentRequest = { enrollment [ repositoryId ] with Endpoint = endpoint }
+
+        let refreshRequest: CacheRegistrationRefreshRequest =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = endpoint
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion = "1.0.0"
+                ProtocolVersion = "v1"
+                PrefetchSupported = true
+                ObservedAt = now.Plus(Duration.FromMinutes 90L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        for validation in
+            [
+                Lifecycle.validateEnrollmentRequest enrollmentRequest
+                Lifecycle.validateRefreshRequest refreshRequest
+            ] do
+            match validation with
+            | Ok () -> Assert.Fail("A path-qualified Cache endpoint must be rejected before lifecycle mutation.")
+            | Error errors -> Assert.That(errors, Does.Contain "Endpoint must be an absolute HTTP or HTTPS origin with path '/'.")
 
     /// Verifies candidate proof cannot promote or extend a registration through an endpoint other than its exact stored endpoint.
     [<Test>]

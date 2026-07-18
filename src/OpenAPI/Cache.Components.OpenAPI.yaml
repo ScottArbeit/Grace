@@ -55,7 +55,10 @@ CacheEnrollmentRequest:
       minItems: 1
       items: { $ref: '#/CacheRepositoryScope' }
     PublicKey: { $ref: '#/CacheIdentityPublicKey' }
-    Endpoint: { type: string, format: uri }
+    Endpoint:
+      type: string
+      format: uri
+      description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     AllowHttpEndpoint:
       type: boolean
       description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
@@ -70,7 +73,10 @@ CacheRegistrationRefreshRequest:
   properties:
     Class: { type: string, example: CacheRegistrationRefreshRequest }
     CacheId: { type: string, format: uuid }
-    Endpoint: { type: string, format: uri }
+    Endpoint:
+      type: string
+      format: uri
+      description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     Health: { $ref: '#/CacheHealthStatus' }
     SoftwareVersion: { type: string }
     ProtocolVersion: { type: string }
@@ -124,7 +130,10 @@ CacheRegistration:
     RepositoryScopes: { type: array, items: { $ref: '#/CacheRepositoryScope' } }
     ActivePublicKey: { $ref: '#/CacheIdentityPublicKey' }
     CandidatePublicKey: { $ref: '#/CacheIdentityPublicKey', nullable: true }
-    Endpoint: { type: string, format: uri }
+    Endpoint:
+      type: string
+      format: uri
+      description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     AllowHttpEndpoint:
       type: boolean
       description: Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
@@ -287,7 +296,7 @@ ArtifactGrantPayload:
     CacheEndpoint:
       type: string
       format: uri
-      description: Exact selected Cache endpoint covered by this signature.
+      description: Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature.
     TargetRootDirectoryVersionId:
       $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
     ExecutionMode:

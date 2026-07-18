@@ -41,7 +41,7 @@ class CacheEnrollmentRequest(BaseModel):
     organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
     repository_scopes: Annotated[List[CacheRepositoryScope], Field(min_length=1)] = Field(alias="RepositoryScopes")
     public_key: CacheIdentityPublicKey = Field(alias="PublicKey")
-    endpoint: StrictStr = Field(alias="Endpoint")
+    endpoint: StrictStr = Field(description="Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.", alias="Endpoint")
     allow_http_endpoint: StrictBool = Field(description="Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.", alias="AllowHttpEndpoint")
     health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")

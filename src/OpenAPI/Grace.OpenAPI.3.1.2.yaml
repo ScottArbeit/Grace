@@ -4368,6 +4368,7 @@ components:
         Endpoint:
           type: string
           format: uri
+          description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
         AllowHttpEndpoint:
           type: boolean
           description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
@@ -4405,6 +4406,7 @@ components:
         Endpoint:
           type: string
           format: uri
+          description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
         Health:
           $ref: '#/components/schemas/CacheHealthStatus'
         SoftwareVersion:
@@ -4544,6 +4546,7 @@ components:
         Endpoint:
           type: string
           format: uri
+          description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
         AllowHttpEndpoint:
           type: boolean
           description: Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
@@ -4777,7 +4780,7 @@ components:
         CacheEndpoint:
           type: string
           format: uri
-          description: Exact selected Cache endpoint covered by this signature.
+          description: Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature.
         TargetRootDirectoryVersionId:
           $ref: '#/components/schemas/DirectoryVersionId'
         ExecutionMode:

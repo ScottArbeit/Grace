@@ -34,7 +34,7 @@ class CacheRegistrationRefreshRequest(BaseModel):
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
     cache_id: UUID = Field(alias="CacheId")
-    endpoint: StrictStr = Field(alias="Endpoint")
+    endpoint: StrictStr = Field(description="Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.", alias="Endpoint")
     health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")
     protocol_version: StrictStr = Field(alias="ProtocolVersion")

@@ -249,6 +249,7 @@ module CacheRegistration =
             not (isNull (box registration))
             && registration.RevokedAt.IsNone
             && registration.Health = CacheHealthStatus.Healthy
+            && Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint registration.Endpoint
             && match Uri.TryCreate(registration.Endpoint, UriKind.Absolute) with
                | true, endpoint when endpoint.Scheme = Uri.UriSchemeHttps -> not registration.AllowHttpEndpoint
                | true, endpoint when endpoint.Scheme = Uri.UriSchemeHttp -> registration.AllowHttpEndpoint
@@ -322,6 +323,8 @@ module CacheRegistration =
                     errors.Add("Endpoint is required.")
                 else
                     match Uri.TryCreate(request.Endpoint, UriKind.Absolute) with
+                    | true, _ when not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint request.Endpoint) ->
+                        errors.Add("Endpoint must be an absolute HTTP or HTTPS origin with path '/'.")
                     | true, uri when
                         uri.Scheme = Uri.UriSchemeHttps
                         && not request.AllowHttpEndpoint
@@ -366,6 +369,8 @@ module CacheRegistration =
                     errors.Add("Endpoint is required.")
                 else
                     match Uri.TryCreate(request.Endpoint, UriKind.Absolute) with
+                    | true, _ when not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint request.Endpoint) ->
+                        errors.Add("Endpoint must be an absolute HTTP or HTTPS origin with path '/'.")
                     | true, uri when
                         uri.Scheme = Uri.UriSchemeHttps
                         || uri.Scheme = Uri.UriSchemeHttp

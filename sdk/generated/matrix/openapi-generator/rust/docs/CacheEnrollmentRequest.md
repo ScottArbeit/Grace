@@ -11,7 +11,7 @@ Name | Type | Description | Notes
 **organization_id** | Option<**uuid::Uuid**> |  | [optional]
 **repository_scopes** | [**Vec<models::CacheRepositoryScope>**](CacheRepositoryScope.md) |  | 
 **public_key** | [**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
-**endpoint** | **String** |  | 
+**endpoint** | **String** | Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment. | 
 **allow_http_endpoint** | **bool** | Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default. | 
 **health** | [**models::CacheHealthStatus**](CacheHealthStatus.md) |  | 
 **software_version** | **String** |  | 

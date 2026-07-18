@@ -13,7 +13,7 @@ Name | Type | Description | Notes
 **organization_id** | **UUID** |  | [optional] 
 **repository_scopes** | [**List[CacheRepositoryScope]**](CacheRepositoryScope.md) |  | 
 **public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
-**endpoint** | **str** |  | 
+**endpoint** | **str** | Absolute HTTP(S) Cache origin with path &#39;/&#39;, no user info, query, or fragment. | 
 **allow_http_endpoint** | **bool** | Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default. | 
 **health** | [**CacheHealthStatus**](CacheHealthStatus.md) |  | 
 **software_version** | **str** |  | 

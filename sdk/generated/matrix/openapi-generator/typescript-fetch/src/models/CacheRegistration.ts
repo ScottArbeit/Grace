@@ -103,7 +103,7 @@ export interface CacheRegistration {
      */
     candidatePublicKey?: CacheIdentityPublicKey;
     /**
-     * 
+     * Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
      * @type {string}
      * @memberof CacheRegistration
      */

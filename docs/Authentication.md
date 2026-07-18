@@ -773,13 +773,19 @@ an administrator to revoke the existing Cache and explicitly enroll again. Grace
 key access, retain the previous `CacheId`, or persist an OS-account or service identity for an in-place account change.
 
 Cache endpoints use HTTPS by default. An administrator may explicitly approve one exact HTTP endpoint during enrollment
-when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endpoint. Grace persists that approval with
+when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endpoint. Every cache endpoint is an absolute
+HTTP(S) origin with path `/`, no user info, query, or fragment; this does not limit the independent Grace Server URI path
+base. Grace persists that approval with
 the exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
 transport choice. `grace cache status` emits only redacted lifecycle, `CacheId`, and transport information. `grace cache
 run` performs mandatory active/candidate identity-key synchronization at startup. The running host schedules automatic
 rotation from `GRACE_CACHE_KEY_ROTATION_INTERVAL_MINUTES`, which defaults to 240 and accepts 15 through 10080 minutes.
-It retains one candidate key across retries and promotes it only after candidate-key proof reaches Grace Server; the old
-local key is deleted only after durable local selection of the promoted candidate. The host independently refreshes the
+Its machine-local rotation lifecycle is exactly ready with no candidate, pending with the complete candidate transition,
+or operator recovery required with no candidate material. It retains one candidate key only for transient, unknown, or
+ambiguous outcomes and promotes it only after candidate-key proof reaches Grace Server. `Expired`, `Revoked`, `NotFound`,
+and definitive candidate rejection durably write operator recovery before candidate-key deletion, stop automatic work
+across restart even when cleanup fails, and require administrator revocation and re-enrollment; the old local key is
+deleted only after durable local selection of the promoted candidate. The host independently refreshes the
 live registration every hour, before its two-hour active lifetime expires. Neither command prints or exports private key
 material, tokens, grants, repository assignments, server URLs, or secret configuration. Server-issued cache plans and
 their signed artifact grants bind the exact endpoint, so clients reject scheme, host, port, or path substitution before

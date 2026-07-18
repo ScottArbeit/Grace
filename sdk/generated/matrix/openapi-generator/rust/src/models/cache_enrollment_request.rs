@@ -28,6 +28,7 @@ pub struct CacheEnrollmentRequest {
     pub repository_scopes: Vec<models::CacheRepositoryScope>,
     #[serde(rename = "PublicKey")]
     pub public_key: Box<models::CacheIdentityPublicKey>,
+    /// Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
     /// Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.

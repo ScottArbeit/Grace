@@ -44,7 +44,7 @@ class CacheRegistration(BaseModel):
     repository_scopes: List[CacheRepositoryScope] = Field(alias="RepositoryScopes")
     active_public_key: CacheIdentityPublicKey = Field(alias="ActivePublicKey")
     candidate_public_key: Optional[CacheIdentityPublicKey] = Field(default=None, alias="CandidatePublicKey")
-    endpoint: StrictStr = Field(alias="Endpoint")
+    endpoint: StrictStr = Field(description="Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.", alias="Endpoint")
     allow_http_endpoint: StrictBool = Field(description="Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.", alias="AllowHttpEndpoint")
     health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")

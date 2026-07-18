@@ -90,6 +90,7 @@ module CacheRotationSchedule =
 type internal KeyRotationSchedulingPhase =
     | RotationRequired
     | RegistrationSchedulingRequired
+    | AutomaticWorkStopped
 
 /// Supplies the serialized runtime operations and timer hooks needed to separate key promotion from registration scheduling.
 type internal KeyRotationSchedulingEffects =
@@ -125,6 +126,7 @@ module internal CacheKeyRotationScheduling =
                 effects.MarkUnhealthy()
                 effects.Schedule CacheRefreshSchedule.retryInterval
                 RotationRequired
+            | Ok (OperatorRecoveryRequired _) -> AutomaticWorkStopped
             | Error _ ->
                 effects.MarkUnhealthy()
                 effects.Schedule CacheRefreshSchedule.retryInterval
@@ -133,6 +135,7 @@ module internal CacheKeyRotationScheduling =
             match effects.ReadRegistration() with
             | Ok registration -> scheduleFromRegistration registration
             | Error _ -> retryRegistrationScheduling ()
+        | AutomaticWorkStopped -> AutomaticWorkStopped
 
 /// Supplies the startup-only rotation and cancellation effects that keep a throttled cache unready before listener creation.
 type internal StartupRotationEffects = { Synchronize: unit -> Result<IdentitySynchronizationResult, string>; WaitForRetry: TimeSpan -> bool }
@@ -150,6 +153,7 @@ module internal CacheStartupRotation =
             | Ok (RotationRetryAfter retryAfter) ->
                 if not (effects.WaitForRetry retryAfter) then
                     result <- Some(Error "Grace Cache startup was cancelled.")
+            | Ok (OperatorRecoveryRequired error) -> result <- Some(Error error)
             | Error error -> result <- Some(Error error)
 
         result.Value

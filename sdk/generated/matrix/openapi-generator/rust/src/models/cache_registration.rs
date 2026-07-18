@@ -32,6 +32,7 @@ pub struct CacheRegistration {
     pub active_public_key: Box<models::CacheIdentityPublicKey>,
     #[serde(rename = "CandidatePublicKey", skip_serializing_if = "Option::is_none")]
     pub candidate_public_key: Option<Box<models::CacheIdentityPublicKey>>,
+    /// Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
     /// Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.

@@ -94,7 +94,7 @@ type ArtifactGrantValidationTests() =
         let keyNotBefore = now.Minus(Duration.FromHours 1)
         let key, validationKey = signingKey "key-1" keyNotBefore (keyNotBefore.Plus canonicalValidationKeyLifetime)
         use key = key
-        let httpEndpoint = "http://cache.example.test:8080/artifacts"
+        let httpEndpoint = "http://cache.example.test:8080"
 
         let grant =
             signedGrantForEndpoint

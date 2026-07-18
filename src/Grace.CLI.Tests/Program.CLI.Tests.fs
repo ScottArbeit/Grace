@@ -84,6 +84,15 @@ module CommandParsingTests =
         GraceCommand.isGraceCache parseResult
         |> should equal true
 
+    /// Verifies cache child results cannot be changed by a locked or unwritable repository/user history finalizer.
+    [<Test>]
+    let ``cache command bypasses history finalization`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "cache"; "status" |])
+        parseResult.Errors.Count |> should equal 0
+
+        GraceCommand.shouldRecordHistory false parseResult
+        |> should equal false
+
     /// Builds grant role args test data used to exercise CLI program behavior.
     let private grantRoleArgs roleId =
         [|

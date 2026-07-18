@@ -28,7 +28,7 @@ pub struct ArtifactGrantPayload {
     pub holder_key_thumbprint: String,
     #[serde(rename = "CacheId")]
     pub cache_id: String,
-    /// Exact selected Cache endpoint covered by this signature.
+    /// Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature.
     #[serde(rename = "CacheEndpoint")]
     pub cache_endpoint: String,
     #[serde(rename = "TargetRootDirectoryVersionId")]

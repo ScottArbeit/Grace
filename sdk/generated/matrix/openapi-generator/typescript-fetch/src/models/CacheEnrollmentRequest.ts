@@ -91,7 +91,7 @@ export interface CacheEnrollmentRequest {
      */
     publicKey: CacheIdentityPublicKey;
     /**
-     * 
+     * Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
      * @type {string}
      * @memberof CacheEnrollmentRequest
      */

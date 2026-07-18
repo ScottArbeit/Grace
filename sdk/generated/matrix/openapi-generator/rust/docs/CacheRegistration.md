@@ -13,7 +13,7 @@ Name | Type | Description | Notes
 **repository_scopes** | [**Vec<models::CacheRepositoryScope>**](CacheRepositoryScope.md) |  | 
 **active_public_key** | [**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
 **candidate_public_key** | Option<[**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md)> |  | [optional]
-**endpoint** | **String** |  | 
+**endpoint** | **String** | Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment. | 
 **allow_http_endpoint** | **bool** | Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS. | 
 **health** | [**models::CacheHealthStatus**](CacheHealthStatus.md) |  | 
 **software_version** | **String** |  | 
