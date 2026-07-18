@@ -40,15 +40,14 @@ class CacheEnrollmentRequest(BaseModel):
     owner_id: UUID = Field(alias="OwnerId")
     organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
     repository_scopes: Annotated[List[CacheRepositoryScope], Field(min_length=1)] = Field(alias="RepositoryScopes")
-    active_public_key: CacheIdentityPublicKey = Field(alias="ActivePublicKey")
-    candidate_public_key: Optional[CacheIdentityPublicKey] = Field(default=None, alias="CandidatePublicKey")
+    public_key: CacheIdentityPublicKey = Field(alias="PublicKey")
     endpoint: StrictStr = Field(alias="Endpoint")
     allow_http_endpoint: StrictBool = Field(description="Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.", alias="AllowHttpEndpoint")
     health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")
     protocol_version: StrictStr = Field(alias="ProtocolVersion")
     prefetch_supported: StrictBool = Field(alias="PrefetchSupported")
-    __properties: ClassVar[List[str]] = ["Class", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "ActivePublicKey", "CandidatePublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported"]
+    __properties: ClassVar[List[str]] = ["Class", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -96,12 +95,9 @@ class CacheEnrollmentRequest(BaseModel):
                 if _item_repository_scopes:
                     _items.append(_item_repository_scopes.to_dict())
             _dict['RepositoryScopes'] = _items
-        # override the default output from pydantic by calling `to_dict()` of active_public_key
-        if self.active_public_key:
-            _dict['ActivePublicKey'] = self.active_public_key.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of candidate_public_key
-        if self.candidate_public_key:
-            _dict['CandidatePublicKey'] = self.candidate_public_key.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of public_key
+        if self.public_key:
+            _dict['PublicKey'] = self.public_key.to_dict()
         return _dict
 
     @classmethod
@@ -120,8 +116,7 @@ class CacheEnrollmentRequest(BaseModel):
             "OwnerId": obj.get("OwnerId"),
             "OrganizationId": obj.get("OrganizationId"),
             "RepositoryScopes": [CacheRepositoryScope.from_dict(_item) for _item in obj["RepositoryScopes"]] if obj.get("RepositoryScopes") is not None else None,
-            "ActivePublicKey": CacheIdentityPublicKey.from_dict(obj["ActivePublicKey"]) if obj.get("ActivePublicKey") is not None else None,
-            "CandidatePublicKey": CacheIdentityPublicKey.from_dict(obj["CandidatePublicKey"]) if obj.get("CandidatePublicKey") is not None else None,
+            "PublicKey": CacheIdentityPublicKey.from_dict(obj["PublicKey"]) if obj.get("PublicKey") is not None else None,
             "Endpoint": obj.get("Endpoint"),
             "AllowHttpEndpoint": obj.get("AllowHttpEndpoint"),
             "Health": obj.get("Health"),

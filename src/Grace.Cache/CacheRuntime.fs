@@ -64,6 +64,15 @@ type AcceptedEnrollmentFinalizationEffects<'configuration> =
 /// Represents the safe operational facts that may be returned by the local cache control surface.
 type CacheRuntimeStatus = { Lifecycle: string; CacheId: string option; Transport: string option }
 
+/// Supplies the protected local reads used to produce a redacted cache status without granting status a lifecycle mutation path.
+type CacheRuntimeStatusReadEffects =
+    {
+        ValidateStorage: string -> Result<unit, string>
+        ValidateFile: string -> Result<unit, string>
+        ReadRecovery: string -> Result<CacheEnrollmentRecovery option, string>
+        ReadConfiguration: string -> Result<CacheMachineConfiguration, string>
+    }
+
 /// Provides safe runtime-result values without carrying cache key, token, repository, or server configuration data.
 module CacheRuntimeStatus =
 
@@ -1398,20 +1407,32 @@ module CacheRuntimeControl =
     /// Reads the enrolled configuration without mutating candidate state; identity synchronization owns candidate recovery.
     let getReadyConfiguration () = serializeLifecycle getReadyConfigurationCore
 
-    /// Reads safe machine status without reconciling pending keys, contacting Grace Server, or mutating local recovery state.
-    let readStatus configurationPath =
+    /// Reads safe machine status from supplied protected reads without reconciling pending keys, contacting Grace Server, or mutating local recovery state.
+    let readStatusWith (effects: CacheRuntimeStatusReadEffects) configurationPath =
         let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
 
-        match CacheMachineConfiguration.validateProvisionedStorage configurationPath, CacheMachineConfiguration.validateProvisionedFile recoveryPath with
+        match effects.ValidateStorage configurationPath, effects.ValidateFile recoveryPath with
         | Error error, _
         | _, Error error -> Error error
         | Ok (), Ok () ->
-            match CacheEnrollmentRecovery.tryRead recoveryPath with
+            match effects.ReadRecovery recoveryPath with
             | Ok (Some recovery) when CacheEnrollmentRecovery.isUnknown recovery -> Ok CacheRuntimeStatus.enrollmentRecoveryRequired
             | Error message -> Error message
             | Ok _ ->
-                CacheMachineConfiguration.tryRead configurationPath
+                effects.ReadConfiguration configurationPath
                 |> Result.map CacheMachineConfiguration.toStatus
+
+    /// Reads safe machine status through the deployment-provisioned protected configuration and recovery paths.
+    let readStatus configurationPath =
+        let effects: CacheRuntimeStatusReadEffects =
+            {
+                ValidateStorage = CacheMachineConfiguration.validateProvisionedStorage
+                ValidateFile = CacheMachineConfiguration.validateProvisionedFile
+                ReadRecovery = CacheEnrollmentRecovery.tryRead
+                ReadConfiguration = CacheMachineConfiguration.tryRead
+            }
+
+        readStatusWith effects configurationPath
 
     /// Reads only safe cache status from the machine configuration path used by the active service account.
     let status () = readStatus (CacheMachineConfiguration.configurationPath ())
@@ -1554,7 +1575,7 @@ module CacheRuntimeControl =
                                 Error "Grace Cache enrollment was not accepted."
                             | EnrollmentUnknown -> preserveUnknown ()
 
-    /// Submits the persisted candidate with an active-key proof, promotes it with a candidate-key refresh, then retires the old local key.
+    /// Reconciles a persisted candidate with candidate-key proof before active-key submission so a lost promotion response never uses a retired key.
     let private completeCandidateSynchronization
         (configurationPath: string)
         (configuration: CacheMachineConfiguration)
@@ -1572,6 +1593,19 @@ module CacheRuntimeControl =
             | Ok activeKey, Ok candidateKey ->
                 use activeKey = activeKey
                 use candidateKey = candidateKey
+
+                let acceptPromotedCandidate () =
+                    CandidateKeyState.acceptReplacement effects configuration pending
+                    |> Result.map (fun updated -> CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint))
+
+                /// Recognizes both a just-promoted refresh and a post-promotion refresh throttle only when the authoritative registration proves the candidate is active.
+                let candidateRefreshConfirmsPromotion (result: CacheRegistrationResult) =
+                    (result.Status = CacheRegistrationRefreshStatus.Refreshed
+                     || result.Status = CacheRegistrationRefreshStatus.RefreshNotDue)
+                    && (result.Registration
+                        |> Option.exists (fun registration ->
+                            registration.ActivePublicKey = pending.CandidatePublicKey
+                            && registration.CandidatePublicKey.IsNone))
 
                 let unsignedRequest: CacheKeyCandidateRequest =
                     {
@@ -1591,26 +1625,27 @@ module CacheRuntimeControl =
                         (CacheRegistrationProof.candidateRequestDigest unsignedRequest)
                         (NodaTime.SystemClock.Instance.GetCurrentInstant())
 
-                match postCandidate (Uri(configuration.ServerUri)) { unsignedRequest with Proof = proof } with
-                | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.CandidateAccepted ->
-                    match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
-                    | Ok promoted when promoted.Status = CacheRegistrationRefreshStatus.Refreshed ->
-                        CandidateKeyState.acceptReplacement effects configuration pending
-                        |> Result.map (fun updated -> CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint))
-                    | _ -> Error "Grace Cache identity candidate could not be promoted; the same candidate remains pending for retry."
-                | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.RotationRetryAfter ->
-                    Error
-                        $"Grace Cache startup identity rotation must wait {result.RetryAfterSeconds |> Option.defaultValue 60} seconds before retrying the same candidate."
-                | RotationAccepted _
-                | RotationRejected
-                | RotationNotSent -> Error "Grace Cache identity candidate was not accepted; the same candidate remains pending for retry."
-                | RotationUnknown -> Error "Grace Cache identity candidate outcome is unknown; the same candidate remains pending for retry."
+                match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
+                | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()
+                | _ ->
+                    match postCandidate (Uri(configuration.ServerUri)) { unsignedRequest with Proof = proof } with
+                    | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.CandidateAccepted ->
+                        match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
+                        | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()
+                        | _ -> Error "Grace Cache identity candidate could not be promoted; the same candidate remains pending for retry."
+                    | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.RotationRetryAfter ->
+                        Error
+                            $"Grace Cache startup identity rotation must wait {result.RetryAfterSeconds |> Option.defaultValue 60} seconds before retrying the same candidate."
+                    | RotationAccepted _
+                    | RotationRejected
+                    | RotationNotSent -> Error "Grace Cache identity candidate was not accepted; the same candidate remains pending for retry."
+                    | RotationUnknown -> Error "Grace Cache identity candidate outcome is unknown; the same candidate remains pending for retry."
 
     /// Submits or reuses one locally durable candidate, then promotes it through candidate-key refresh before selecting it locally.
     let private synchronizeIdentityCore isStartup =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
-        match CacheMachineConfiguration.tryRead configurationPath with
+        match getReadyConfigurationCore () with
         | Error error -> Error error
         | Ok configuration ->
             match configuration.CandidateKeyState with

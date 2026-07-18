@@ -47,13 +47,7 @@ class TestCacheEnrollmentRequest(unittest.TestCase):
                         organization_id = '', 
                         repository_id = '', )
                     ],
-                active_public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
-                    class = 'CacheIdentityPublicKey', 
-                    algorithm = 'ES256', 
-                    curve = 'P-256', 
-                    public_key_x = '', 
-                    public_key_y = '', ),
-                candidate_public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
+                public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
                     class = 'CacheIdentityPublicKey', 
                     algorithm = 'ES256', 
                     curve = 'P-256', 
@@ -78,7 +72,7 @@ class TestCacheEnrollmentRequest(unittest.TestCase):
                         organization_id = '', 
                         repository_id = '', )
                     ],
-                active_public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
+                public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
                     class = 'CacheIdentityPublicKey', 
                     algorithm = 'ES256', 
                     curve = 'P-256', 

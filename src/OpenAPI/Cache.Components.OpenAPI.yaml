@@ -54,8 +54,7 @@ CacheEnrollmentRequest:
       type: array
       minItems: 1
       items: { $ref: '#/CacheRepositoryScope' }
-    ActivePublicKey: { $ref: '#/CacheIdentityPublicKey' }
-    CandidatePublicKey: { $ref: '#/CacheIdentityPublicKey', nullable: true }
+    PublicKey: { $ref: '#/CacheIdentityPublicKey' }
     Endpoint: { type: string, format: uri }
     AllowHttpEndpoint:
       type: boolean
@@ -64,7 +63,7 @@ CacheEnrollmentRequest:
     SoftwareVersion: { type: string }
     ProtocolVersion: { type: string }
     PrefetchSupported: { type: boolean }
-  required: [Class, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, ActivePublicKey, Endpoint, AllowHttpEndpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported]
+  required: [Class, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, AllowHttpEndpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported]
 CacheRegistrationRefreshRequest:
   description: Cache-authenticated refresh that may update operational facts only.
   type: object
@@ -158,6 +157,10 @@ CacheRegistrationResult:
     Message:
       type: string
       example: Cache registration is current.
+    RetryAfterSeconds:
+      type: integer
+      minimum: 1
+      nullable: true
   required: [Class, Status, Message]
 CacheRegistrationReturnValue:
   description: Grace response envelope whose ReturnValue contains a Cache registration result.

@@ -26,10 +26,8 @@ pub struct CacheEnrollmentRequest {
     pub organization_id: Option<uuid::Uuid>,
     #[serde(rename = "RepositoryScopes")]
     pub repository_scopes: Vec<models::CacheRepositoryScope>,
-    #[serde(rename = "ActivePublicKey")]
-    pub active_public_key: Box<models::CacheIdentityPublicKey>,
-    #[serde(rename = "CandidatePublicKey", skip_serializing_if = "Option::is_none")]
-    pub candidate_public_key: Option<Box<models::CacheIdentityPublicKey>>,
+    #[serde(rename = "PublicKey")]
+    pub public_key: Box<models::CacheIdentityPublicKey>,
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
     /// Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
@@ -47,7 +45,7 @@ pub struct CacheEnrollmentRequest {
 
 impl CacheEnrollmentRequest {
     /// Administrator-authenticated enrollment for exactly one Owner or Organization and explicit repositories within it.
-    pub fn new(class: String, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, active_public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool) -> CacheEnrollmentRequest {
+    pub fn new(class: String, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool) -> CacheEnrollmentRequest {
         CacheEnrollmentRequest {
             class,
             display_name,
@@ -55,8 +53,7 @@ impl CacheEnrollmentRequest {
             owner_id,
             organization_id: None,
             repository_scopes,
-            active_public_key: Box::new(active_public_key),
-            candidate_public_key: None,
+            public_key: Box::new(public_key),
             endpoint,
             allow_http_endpoint,
             health,

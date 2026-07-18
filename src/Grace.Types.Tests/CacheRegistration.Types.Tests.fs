@@ -1,12 +1,14 @@
 namespace Grace.Types.Tests
 
 open Grace.Shared
+open Grace.Shared.ArtifactGrant
 open Grace.Types.CacheRegistration
 open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.Security.Cryptography
+open System.Text.Json
 
 /// Covers deterministic administrator-owned Cache enrollment and runtime proof behavior.
 [<Parallelizable(ParallelScope.All)>]
@@ -61,6 +63,33 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.EnrolledBy, Is.EqualTo "admin-user")
         Assert.That(registration.PrefetchSupported, Is.True)
         Assert.That(registration.RotationDueAt, Is.EqualTo(now.Plus RegistrationLifetime.KeyRotationInterval))
+
+    /// Verifies administrator enrollment request JSON retains the server-owned PublicKey field and never borrows registration state fields.
+    [<Test>]
+    member _.``enrollment request JSON uses PublicKey rather than registration key fields``() =
+        use document = JsonDocument.Parse(JsonSerializer.Serialize(enrollment [ repositoryId ], Constants.JsonSerializerOptions))
+        let mutable ignoredProperty = Unchecked.defaultof<JsonElement>
+
+        Assert.That(document.RootElement.TryGetProperty("PublicKey", &ignoredProperty), Is.True)
+        Assert.That(document.RootElement.TryGetProperty("ActivePublicKey", &ignoredProperty), Is.False)
+        Assert.That(document.RootElement.TryGetProperty("CandidatePublicKey", &ignoredProperty), Is.False)
+
+    /// Verifies lifecycle responses preserve retry-after values through the JSON contract used by generated clients.
+    [<Test>]
+    member _.``registration result JSON round trips RetryAfterSeconds``() =
+        let result: CacheRegistrationResult =
+            {
+                Class = nameof CacheRegistrationResult
+                Status = CacheRegistrationRefreshStatus.RotationRetryAfter
+                Registration = None
+                Message = "Retry later."
+                RetryAfterSeconds = Some 42
+            }
+
+        let json = JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
+        let roundTripped = JsonSerializer.Deserialize<CacheRegistrationResult>(json, Constants.JsonSerializerOptions)
+
+        Assert.That(roundTripped.RetryAfterSeconds, Is.EqualTo(Some 42))
 
     /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact endpoint.
     [<Test>]
@@ -123,6 +152,85 @@ type CacheRegistrationLifecycleTests() =
             let next, result = Lifecycle.refresh state request (now.Plus(Duration.FromMinutes 90L))
             Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.EndpointMismatch)
             Assert.That(next, Is.EqualTo state)
+
+    /// Verifies candidate proof cannot promote or extend a registration through an endpoint other than its exact stored endpoint.
+    [<Test>]
+    member _.``candidate promotion rejects endpoint substitution before durable mutation``() =
+        let state, _ = enrolled ()
+        let registration = { state.Registrations[0] with CandidatePublicKey = Some(publicKey ()) }
+        let pendingState = { state with Registrations = [| registration |] }
+
+        let request =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://other-cache.example.test"
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion = "1.1.0"
+                ProtocolVersion = "v2"
+                PrefetchSupported = false
+                ObservedAt = now.Plus(Duration.FromMinutes 90L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let next, result = Lifecycle.promoteCandidate pendingState request (now.Plus(Duration.FromMinutes 90L))
+
+        Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.EndpointMismatch)
+        Assert.That(next, Is.EqualTo pendingState)
+
+    /// Verifies a response lost after candidate promotion can still prove the selected candidate through a normal refresh throttle result.
+    [<Test>]
+    member _.``promoted candidate remains identifiable through refresh throttling``() =
+        let state, _ = enrolled ()
+        use candidateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let candidateParameters = candidateKey.ExportParameters(false)
+        let candidate = CacheIdentityPublicKey.Create(Base64Url.encode candidateParameters.Q.X, Base64Url.encode candidateParameters.Q.Y)
+
+        let candidateRequest =
+            {
+                Class = nameof CacheKeyCandidateRequest
+                CacheId = cacheId
+                CandidatePublicKey = candidate
+                RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                IsStartup = true
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let pendingState, _ = Lifecycle.submitCandidate state candidateRequest (now.Plus(Duration.FromMinutes 90L))
+
+        let refreshRequest =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                Health = CacheHealthStatus.Unhealthy
+                SoftwareVersion = "1.1.0"
+                ProtocolVersion = "v2"
+                PrefetchSupported = false
+                ObservedAt = now.Plus(Duration.FromMinutes 90L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let promotedState, promotion = Lifecycle.promoteCandidate pendingState refreshRequest (now.Plus(Duration.FromMinutes 90L))
+
+        let throttledRequest = { refreshRequest with ObservedAt = now.Plus(Duration.FromMinutes 91L) }
+
+        let _, throttled = Lifecycle.refresh promotedState throttledRequest (now.Plus(Duration.FromMinutes 91L))
+
+        Assert.That(promotion.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(throttled.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+
+        Assert.That(
+            throttled.Registration
+            |> Option.map (fun registration -> registration.ActivePublicKey),
+            Is.EqualTo(Some candidate)
+        )
+
+        Assert.That(
+            throttled.Registration
+            |> Option.bind (fun registration -> registration.CandidatePublicKey),
+            Is.EqualTo(None)
+        )
 
     [<Test>]
     member _.``refresh updates only allowed operational facts and preserves administrator owned endpoint identity``() =

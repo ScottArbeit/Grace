@@ -4,6 +4,7 @@ open System
 open System.IO
 open System.Runtime.InteropServices
 open System.Security.Cryptography
+open System.Text.Json
 open Grace.Cache
 open Grace.Shared
 open Grace.Shared.ArtifactGrant
@@ -194,8 +195,7 @@ type CacheHostTests() =
     /// Verifies ambiguous enrollment evidence keeps only the approved fields and blocks automatic recovery.
     [<Test>]
     member _.UnknownEnrollmentRecoveryPreservesEvidenceAndBlocksAutomaticWork() =
-        let root = Path.Combine(Path.GetTempPath(), $"grace-cache-recovery-{Guid.NewGuid():N}")
-        let configurationPath = Path.Combine(root, "cache.runtime.json")
+        let configurationPath = Path.Combine(Path.GetTempPath(), $"grace-cache-recovery-{Guid.NewGuid():N}", "cache.runtime.json")
         let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
         let repositoryScopes = [| Guid.NewGuid(), Guid.NewGuid() |]
 
@@ -207,22 +207,31 @@ type CacheHostTests() =
                 "opaque-key-reference"
                 testPublicKey
 
-        try
-            match CacheEnrollmentRecovery.write recoveryPath (CacheEnrollmentRecovery.unknown recovery) with
-            | Error error -> Assert.Fail(error)
-            | Ok () ->
-                match CacheEnrollmentRecovery.tryRead recoveryPath with
-                | Error error -> Assert.Fail(error)
-                | Ok None -> Assert.Fail("Expected durable enrollment recovery evidence.")
-                | Ok (Some persisted) ->
-                    Assert.That(CacheEnrollmentRecovery.isUnknown persisted, Is.True)
-                    Assert.That(persisted.Endpoint, Is.EqualTo(recovery.Endpoint))
-                    Assert.That(persisted.ServerUri, Is.EqualTo(recovery.ServerUri))
-                    Assert.That(persisted.RepositoryScopes = repositoryScopes, Is.True)
-                    Assert.That(persisted.ActiveKeyName, Is.EqualTo(recovery.ActiveKeyName))
-                    Assert.That(persisted.CacheId, Is.EqualTo(None))
-        finally
-            if Directory.Exists root then Directory.Delete(root, true)
+        let persisted = CacheEnrollmentRecovery.unknown recovery
+
+        let effects: CacheRuntimeStatusReadEffects =
+            {
+                ValidateStorage = fun _ -> Ok()
+                ValidateFile = fun _ -> Ok()
+                ReadRecovery =
+                    fun path ->
+                        if path = recoveryPath then
+                            Ok(Some persisted)
+                        else
+                            Error "Unexpected recovery path."
+                ReadConfiguration = fun _ -> Error "Unknown enrollment recovery must block normal configuration reads."
+            }
+
+        match CacheRuntimeControl.readStatusWith effects configurationPath with
+        | Error error -> Assert.Fail(error)
+        | Ok status ->
+            Assert.That(status, Is.EqualTo(CacheRuntimeStatus.enrollmentRecoveryRequired))
+            Assert.That(CacheEnrollmentRecovery.isUnknown persisted, Is.True)
+            Assert.That(persisted.Endpoint, Is.EqualTo(recovery.Endpoint))
+            Assert.That(persisted.ServerUri, Is.EqualTo(recovery.ServerUri))
+            Assert.That(persisted.RepositoryScopes = repositoryScopes, Is.True)
+            Assert.That(persisted.ActiveKeyName, Is.EqualTo(recovery.ActiveKeyName))
+            Assert.That(persisted.CacheId, Is.EqualTo(None))
 
     /// Verifies known-CacheId recovery finalizes against the immutable original server URI even after the environment changes.
     [<Test>]
@@ -242,6 +251,8 @@ type CacheHostTests() =
             |> CacheEnrollmentRecovery.accept cacheId
 
         try
+            Directory.CreateDirectory(root) |> ignore
+
             match CacheEnrollmentRecovery.write recoveryPath recovery with
             | Error error -> Assert.Fail(error)
             | Ok () ->
@@ -252,9 +263,10 @@ type CacheHostTests() =
                     match CacheRuntimeControl.finalizeAcceptedEnrollment configurationPath recovery cacheId with
                     | Error error -> Assert.Fail(error)
                     | Ok _ ->
-                        match CacheMachineConfiguration.tryRead configurationPath with
-                        | Error error -> Assert.Fail(error)
-                        | Ok configuration -> Assert.That(configuration.ServerUri, Is.EqualTo("https://original-server.example.test/grace/"))
+                        let configuration =
+                            JsonSerializer.Deserialize<CacheMachineConfiguration>(File.ReadAllText configurationPath, Constants.JsonSerializerOptions)
+
+                        Assert.That(configuration.ServerUri, Is.EqualTo("https://original-server.example.test/grace/"))
 
                         match CacheEnrollmentRecovery.tryRead recoveryPath with
                         | Error error -> Assert.Fail(error)
@@ -267,8 +279,7 @@ type CacheHostTests() =
     /// Verifies status reads a pending transition without probing Grace Server, deleting either key, or reconciling state.
     [<Test>]
     member _.StatusReadIsPureWhileRotationIsPending() =
-        let root = Path.Combine(Path.GetTempPath(), $"grace-cache-status-{Guid.NewGuid():N}")
-        let configurationPath = Path.Combine(root, "cache.runtime.json")
+        let configurationPath = Path.Combine(Path.GetTempPath(), $"grace-cache-status-{Guid.NewGuid():N}", "cache.runtime.json")
 
         let configuration: CacheMachineConfiguration =
             {
@@ -283,19 +294,30 @@ type CacheHostTests() =
                         { ActiveKeyName = "old-key"; ActivePublicKey = testPublicKey; CandidateKeyName = "replacement-key"; CandidatePublicKey = testPublicKey }
             }
 
-        try
-            match CacheMachineConfiguration.write configurationPath configuration with
-            | Error error -> Assert.Fail(error)
-            | Ok () ->
-                match CacheRuntimeControl.readStatus configurationPath with
-                | Error error -> Assert.Fail(error)
-                | Ok status -> Assert.That(status.Lifecycle, Is.EqualTo("registered"))
+        let mutable recoveryReadCount = 0
+        let mutable configurationReadCount = 0
 
-                match CacheMachineConfiguration.tryRead configurationPath with
-                | Error error -> Assert.Fail(error)
-                | Ok persisted -> Assert.That(persisted.CandidateKeyState, Is.EqualTo(configuration.CandidateKeyState))
-        finally
-            if Directory.Exists root then Directory.Delete(root, true)
+        let effects: CacheRuntimeStatusReadEffects =
+            {
+                ValidateStorage = fun _ -> Ok()
+                ValidateFile = fun _ -> Ok()
+                ReadRecovery =
+                    fun _ ->
+                        recoveryReadCount <- recoveryReadCount + 1
+                        Ok None
+                ReadConfiguration =
+                    fun _ ->
+                        configurationReadCount <- configurationReadCount + 1
+                        Ok configuration
+            }
+
+        match CacheRuntimeControl.readStatusWith effects configurationPath with
+        | Error error -> Assert.Fail(error)
+        | Ok status ->
+            Assert.That(status.Lifecycle, Is.EqualTo("registered"))
+            Assert.That(recoveryReadCount, Is.EqualTo(1))
+            Assert.That(configurationReadCount, Is.EqualTo(1))
+            Assert.That(configuration.CandidateKeyState, Is.Not.EqualTo(None))
 
     /// Verifies startup exceptions become a stable cache process failure without exposing bind or certificate details.
     [<Test>]

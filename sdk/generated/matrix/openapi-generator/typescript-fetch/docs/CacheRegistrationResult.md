@@ -11,6 +11,7 @@ Name | Type
 `status` | [CacheRegistrationRefreshStatus](CacheRegistrationRefreshStatus.md)
 `registration` | [CacheRegistration](CacheRegistration.md)
 `message` | string
+`retryAfterSeconds` | number
 
 ## Example
 
@@ -23,6 +24,7 @@ const example = {
   "status": null,
   "registration": null,
   "message": Cache registration is current.,
+  "retryAfterSeconds": null,
 } satisfies CacheRegistrationResult
 
 console.log(example)

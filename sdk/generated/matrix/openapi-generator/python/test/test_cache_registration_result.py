@@ -73,7 +73,8 @@ class TestCacheRegistrationResult(unittest.TestCase):
                     last_rotated_at = null, 
                     rotation_due_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
                     revoked_at = null, ),
-                message = 'Cache registration is current.'
+                message = 'Cache registration is current.',
+                retry_after_seconds = 1
             )
         else:
             return CacheRegistrationResult(

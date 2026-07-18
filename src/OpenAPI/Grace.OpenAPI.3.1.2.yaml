@@ -4363,11 +4363,8 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/CacheRepositoryScope'
-        ActivePublicKey:
+        PublicKey:
           $ref: '#/components/schemas/CacheIdentityPublicKey'
-        CandidatePublicKey:
-          $ref: '#/components/schemas/CacheIdentityPublicKey'
-          nullable: true
         Endpoint:
           type: string
           format: uri
@@ -4388,7 +4385,7 @@ components:
         - BoundaryKind
         - OwnerId
         - RepositoryScopes
-        - ActivePublicKey
+        - PublicKey
         - Endpoint
         - AllowHttpEndpoint
         - Health
@@ -4616,6 +4613,10 @@ components:
         Message:
           type: string
           example: Cache registration is current.
+        RetryAfterSeconds:
+          type: integer
+          minimum: 1
+          nullable: true
       required:
         - Class
         - Status

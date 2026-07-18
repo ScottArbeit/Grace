@@ -22,6 +22,8 @@ pub struct CacheRegistrationResult {
     pub registration: Option<Box<models::CacheRegistration>>,
     #[serde(rename = "Message")]
     pub message: String,
+    #[serde(rename = "RetryAfterSeconds", skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<i32>,
 }
 
 impl CacheRegistrationResult {
@@ -32,6 +34,7 @@ impl CacheRegistrationResult {
             status,
             registration: None,
             message,
+            retry_after_seconds: None,
         }
     }
 }

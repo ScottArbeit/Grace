@@ -653,6 +653,13 @@ module CacheRegistration =
                     Some registration,
                     "Cache registration is expired and must enroll again."
                 )
+            | Some registration when not (String.Equals(registration.Endpoint, request.Endpoint.Trim(), StringComparison.Ordinal)) ->
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.EndpointMismatch,
+                    Some registration,
+                    "Cache refresh Endpoint must exactly match the registered endpoint."
+                )
             | Some registration when registration.CandidatePublicKey.IsNone ->
                 current, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, Some registration, "Cache identity candidate was not found.")
             | Some registration ->
