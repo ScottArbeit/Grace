@@ -89,7 +89,13 @@ export interface CacheEnrollmentRequest {
      * @type {CacheIdentityPublicKey}
      * @memberof CacheEnrollmentRequest
      */
-    publicKey: CacheIdentityPublicKey;
+    activePublicKey: CacheIdentityPublicKey;
+    /**
+     * 
+     * @type {CacheIdentityPublicKey}
+     * @memberof CacheEnrollmentRequest
+     */
+    candidatePublicKey?: CacheIdentityPublicKey;
     /**
      * 
      * @type {string}
@@ -139,7 +145,7 @@ export function instanceOfCacheEnrollmentRequest(value: object): value is CacheE
     if (!('boundaryKind' in value) || value['boundaryKind'] === undefined) return false;
     if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
     if (!('repositoryScopes' in value) || value['repositoryScopes'] === undefined) return false;
-    if (!('publicKey' in value) || value['publicKey'] === undefined) return false;
+    if (!('activePublicKey' in value) || value['activePublicKey'] === undefined) return false;
     if (!('endpoint' in value) || value['endpoint'] === undefined) return false;
     if (!('allowHttpEndpoint' in value) || value['allowHttpEndpoint'] === undefined) return false;
     if (!('health' in value) || value['health'] === undefined) return false;
@@ -165,7 +171,8 @@ export function CacheEnrollmentRequestFromJSONTyped(json: any, ignoreDiscriminat
         'ownerId': json['OwnerId'],
         'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
         'repositoryScopes': ((json['RepositoryScopes'] as Array<any>).map(CacheRepositoryScopeFromJSON)),
-        'publicKey': CacheIdentityPublicKeyFromJSON(json['PublicKey']),
+        'activePublicKey': CacheIdentityPublicKeyFromJSON(json['ActivePublicKey']),
+        'candidatePublicKey': json['CandidatePublicKey'] == null ? undefined : CacheIdentityPublicKeyFromJSON(json['CandidatePublicKey']),
         'endpoint': json['Endpoint'],
         'allowHttpEndpoint': json['AllowHttpEndpoint'],
         'health': CacheHealthStatusFromJSON(json['Health']),
@@ -192,7 +199,8 @@ export function CacheEnrollmentRequestToJSONTyped(value?: CacheEnrollmentRequest
         'OwnerId': value['ownerId'],
         'OrganizationId': value['organizationId'],
         'RepositoryScopes': ((value['repositoryScopes'] as Array<any>).map(CacheRepositoryScopeToJSON)),
-        'PublicKey': CacheIdentityPublicKeyToJSON(value['publicKey']),
+        'ActivePublicKey': CacheIdentityPublicKeyToJSON(value['activePublicKey']),
+        'CandidatePublicKey': CacheIdentityPublicKeyToJSON(value['candidatePublicKey']),
         'Endpoint': value['endpoint'],
         'AllowHttpEndpoint': value['allowHttpEndpoint'],
         'Health': CacheHealthStatusToJSON(value['health']),

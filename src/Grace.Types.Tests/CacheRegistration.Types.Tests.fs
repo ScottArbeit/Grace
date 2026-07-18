@@ -155,7 +155,7 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.RepositoryScopes, Has.Length.EqualTo 1)
         Assert.That(registration.RepositoryScopes[0].RepositoryId, Is.EqualTo repositoryId)
         Assert.That(registration.DisplayName, Is.EqualTo "Seattle cache")
-        Assert.That(registration.PublicKey, Is.EqualTo state.Registrations[0].PublicKey)
+        Assert.That(registration.ActivePublicKey, Is.EqualTo state.Registrations[0].ActivePublicKey)
         Assert.That(registration.EnrolledBy, Is.EqualTo "admin-user")
 
     /// Verifies an early unhealthy report immediately removes a Cache from selection without extending any other operational fact.
@@ -345,7 +345,7 @@ type CacheRegistrationLifecycleTests() =
         let digest = "canonical-request-digest"
         let proof = CacheRegistrationProof.createProof privateKey cacheId CacheRegistrationProof.RefreshOperation digest now
         Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.RefreshOperation digest proof, Is.True)
-        Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.RotateKeyOperation digest proof, Is.False)
+        Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.SubmitCandidateOperation digest proof, Is.False)
 
         Assert.That(
             CacheRegistrationProof.validate (now.Plus(Duration.FromSeconds 31L)) key cacheId CacheRegistrationProof.RefreshOperation digest proof,
@@ -369,7 +369,7 @@ type CacheRegistrationLifecycleTests() =
                 for operation in
                     [
                         CacheRegistrationProof.RefreshOperation
-                        CacheRegistrationProof.RotateKeyOperation
+                        CacheRegistrationProof.SubmitCandidateOperation
                     ] do
                     Assert.That(validateAt operation (now.Minus(Duration.FromSeconds 30L)), Is.True)
                     Assert.That(validateAt operation (now.Plus(Duration.FromSeconds 30L)), Is.True)

@@ -9,7 +9,7 @@ Method | HTTP request | Description
 [**get_artifact_grant_validation_keys**](CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 [**refresh_cache**](CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
 [**revoke_cache**](CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
-[**rotate_cache_key**](CacheApi.md#rotate_cache_key) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
+[**submit_cache_key_candidate**](CacheApi.md#submit_cache_key_candidate) | **POST** /cache/candidate | Submit or reuse one Cache identity candidate after active-key proof.
 
 
 # **assign_cache_repositories**
@@ -391,17 +391,17 @@ Name | Type | Description  | Notes
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **rotate_cache_key**
-> CacheRegistrationReturnValue rotate_cache_key(cache_key_rotation_request)
+# **submit_cache_key_candidate**
+> CacheRegistrationReturnValue submit_cache_key_candidate(cache_key_candidate_request)
 
-Rotate a Cache identity key after proof by the currently accepted key.
+Submit or reuse one Cache identity candidate after active-key proof.
 
 ### Example
 
 
 ```python
 import grace_generated_openapi_probe
-from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest
+from grace_generated_openapi_probe.models.cache_key_candidate_request import CacheKeyCandidateRequest
 from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue
 from grace_generated_openapi_probe.rest import ApiException
 from pprint import pprint
@@ -417,15 +417,15 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.CacheApi(api_client)
-    cache_key_rotation_request = grace_generated_openapi_probe.CacheKeyRotationRequest() # CacheKeyRotationRequest | 
+    cache_key_candidate_request = grace_generated_openapi_probe.CacheKeyCandidateRequest() # CacheKeyCandidateRequest | 
 
     try:
-        # Rotate a Cache identity key after proof by the currently accepted key.
-        api_response = api_instance.rotate_cache_key(cache_key_rotation_request)
-        print("The response of CacheApi->rotate_cache_key:\n")
+        # Submit or reuse one Cache identity candidate after active-key proof.
+        api_response = api_instance.submit_cache_key_candidate(cache_key_candidate_request)
+        print("The response of CacheApi->submit_cache_key_candidate:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling CacheApi->rotate_cache_key: %s\n" % e)
+        print("Exception when calling CacheApi->submit_cache_key_candidate: %s\n" % e)
 ```
 
 
@@ -435,7 +435,7 @@ with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **cache_key_rotation_request** | [**CacheKeyRotationRequest**](CacheKeyRotationRequest.md)|  | 
+ **cache_key_candidate_request** | [**CacheKeyCandidateRequest**](CacheKeyCandidateRequest.md)|  | 
 
 ### Return type
 
@@ -448,7 +448,7 @@ No authorization required
 ### HTTP request headers
 
  - **Content-Type**: application/json
- - **Accept**: application/json, text/plain
+ - **Accept**: application/json
 
 ### HTTP response details
 
@@ -456,7 +456,6 @@ No authorization required
 |-------------|-------------|------------------|
 **200** | OK |  -  |
 **400** | Bad Request |  -  |
-**401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
 **500** | Internal Server Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

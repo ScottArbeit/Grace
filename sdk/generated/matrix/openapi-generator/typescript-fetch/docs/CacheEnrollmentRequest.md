@@ -13,7 +13,8 @@ Name | Type
 `ownerId` | string
 `organizationId` | string
 `repositoryScopes` | [Array&lt;CacheRepositoryScope&gt;](CacheRepositoryScope.md)
-`publicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
+`activePublicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
+`candidatePublicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
 `endpoint` | string
 `allowHttpEndpoint` | boolean
 `health` | [CacheHealthStatus](CacheHealthStatus.md)
@@ -34,7 +35,8 @@ const example = {
   "ownerId": null,
   "organizationId": null,
   "repositoryScopes": null,
-  "publicKey": null,
+  "activePublicKey": null,
+  "candidatePublicKey": null,
   "endpoint": null,
   "allowHttpEndpoint": null,
   "health": null,

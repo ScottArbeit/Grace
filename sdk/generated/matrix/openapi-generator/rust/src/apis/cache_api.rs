@@ -67,12 +67,11 @@ pub enum RevokeCacheError {
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`rotate_cache_key`]
+/// struct for typed errors of method [`submit_cache_key_candidate`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum RotateCacheKeyError {
+pub enum SubmitCacheKeyCandidateError {
     Status400(models::GraceError),
-    Status401(String),
     Status500(models::GraceError),
     UnknownValue(serde_json::Value),
 }
@@ -270,17 +269,17 @@ pub async fn revoke_cache(configuration: &configuration::Configuration, cache_re
     }
 }
 
-pub async fn rotate_cache_key(configuration: &configuration::Configuration, cache_key_rotation_request: models::CacheKeyRotationRequest) -> Result<models::CacheRegistrationReturnValue, Error<RotateCacheKeyError>> {
+pub async fn submit_cache_key_candidate(configuration: &configuration::Configuration, cache_key_candidate_request: models::CacheKeyCandidateRequest) -> Result<models::CacheRegistrationReturnValue, Error<SubmitCacheKeyCandidateError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_body_cache_key_rotation_request = cache_key_rotation_request;
+    let p_body_cache_key_candidate_request = cache_key_candidate_request;
 
-    let uri_str = format!("{}/cache/rotate-key", configuration.base_path);
+    let uri_str = format!("{}/cache/candidate", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_body_cache_key_rotation_request);
+    req_builder = req_builder.json(&p_body_cache_key_candidate_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -302,7 +301,7 @@ pub async fn rotate_cache_key(configuration: &configuration::Configuration, cach
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<RotateCacheKeyError> = serde_json::from_str(&content).ok();
+        let entity: Option<SubmitCacheKeyCandidateError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

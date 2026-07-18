@@ -259,7 +259,7 @@ type OpenApiRouteCoverageTests() =
             [
                 "/cache/validation-keys"
                 "/cache/refresh"
-                "/cache/rotate-key"
+                "/cache/candidate"
             ]
 
         let administratorPaths =

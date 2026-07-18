@@ -29,53 +29,67 @@ import {
 } from './CacheIdentityPublicKey';
 
 /**
- * 
+ * Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
  * @export
- * @interface CacheKeyRotationRequest
+ * @interface CacheKeyCandidateRequest
  */
-export interface CacheKeyRotationRequest {
+export interface CacheKeyCandidateRequest {
     /**
      * 
      * @type {string}
-     * @memberof CacheKeyRotationRequest
+     * @memberof CacheKeyCandidateRequest
      */
     _class: string;
     /**
      * 
      * @type {string}
-     * @memberof CacheKeyRotationRequest
+     * @memberof CacheKeyCandidateRequest
      */
     cacheId: string;
     /**
      * 
      * @type {CacheIdentityPublicKey}
-     * @memberof CacheKeyRotationRequest
+     * @memberof CacheKeyCandidateRequest
      */
-    newPublicKey: CacheIdentityPublicKey;
+    candidatePublicKey: CacheIdentityPublicKey;
+    /**
+     * 
+     * @type {number}
+     * @memberof CacheKeyCandidateRequest
+     */
+    rotationIntervalMinutes: number;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof CacheKeyCandidateRequest
+     */
+    isStartup: boolean;
     /**
      * 
      * @type {SignedCacheRequestProof}
-     * @memberof CacheKeyRotationRequest
+     * @memberof CacheKeyCandidateRequest
      */
     proof: SignedCacheRequestProof;
 }
 
 /**
- * Check if a given object implements the CacheKeyRotationRequest interface.
+ * Check if a given object implements the CacheKeyCandidateRequest interface.
  */
-export function instanceOfCacheKeyRotationRequest(value: object): value is CacheKeyRotationRequest {
+export function instanceOfCacheKeyCandidateRequest(value: object): value is CacheKeyCandidateRequest {
     if (!('_class' in value) || value['_class'] === undefined) return false;
     if (!('cacheId' in value) || value['cacheId'] === undefined) return false;
-    if (!('newPublicKey' in value) || value['newPublicKey'] === undefined) return false;
+    if (!('candidatePublicKey' in value) || value['candidatePublicKey'] === undefined) return false;
+    if (!('rotationIntervalMinutes' in value) || value['rotationIntervalMinutes'] === undefined) return false;
+    if (!('isStartup' in value) || value['isStartup'] === undefined) return false;
     if (!('proof' in value) || value['proof'] === undefined) return false;
     return true;
 }
 
-export function CacheKeyRotationRequestFromJSON(json: any): CacheKeyRotationRequest {
-    return CacheKeyRotationRequestFromJSONTyped(json, false);
+export function CacheKeyCandidateRequestFromJSON(json: any): CacheKeyCandidateRequest {
+    return CacheKeyCandidateRequestFromJSONTyped(json, false);
 }
 
-export function CacheKeyRotationRequestFromJSONTyped(json: any, ignoreDiscriminator: boolean): CacheKeyRotationRequest {
+export function CacheKeyCandidateRequestFromJSONTyped(json: any, ignoreDiscriminator: boolean): CacheKeyCandidateRequest {
     if (json == null) {
         return json;
     }
@@ -83,16 +97,18 @@ export function CacheKeyRotationRequestFromJSONTyped(json: any, ignoreDiscrimina
         
         '_class': json['Class'],
         'cacheId': json['CacheId'],
-        'newPublicKey': CacheIdentityPublicKeyFromJSON(json['NewPublicKey']),
+        'candidatePublicKey': CacheIdentityPublicKeyFromJSON(json['CandidatePublicKey']),
+        'rotationIntervalMinutes': json['RotationIntervalMinutes'],
+        'isStartup': json['IsStartup'],
         'proof': SignedCacheRequestProofFromJSON(json['Proof']),
     };
 }
 
-export function CacheKeyRotationRequestToJSON(json: any): CacheKeyRotationRequest {
-    return CacheKeyRotationRequestToJSONTyped(json, false);
+export function CacheKeyCandidateRequestToJSON(json: any): CacheKeyCandidateRequest {
+    return CacheKeyCandidateRequestToJSONTyped(json, false);
 }
 
-export function CacheKeyRotationRequestToJSONTyped(value?: CacheKeyRotationRequest | null, ignoreDiscriminator: boolean = false): any {
+export function CacheKeyCandidateRequestToJSONTyped(value?: CacheKeyCandidateRequest | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
@@ -101,7 +117,9 @@ export function CacheKeyRotationRequestToJSONTyped(value?: CacheKeyRotationReque
         
         'Class': value['_class'],
         'CacheId': value['cacheId'],
-        'NewPublicKey': CacheIdentityPublicKeyToJSON(value['newPublicKey']),
+        'CandidatePublicKey': CacheIdentityPublicKeyToJSON(value['candidatePublicKey']),
+        'RotationIntervalMinutes': value['rotationIntervalMinutes'],
+        'IsStartup': value['isStartup'],
         'Proof': SignedCacheRequestProofToJSON(value['proof']),
     };
 }

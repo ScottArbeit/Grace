@@ -95,7 +95,7 @@ All URIs are relative to *http://localhost:5000*
 *CacheApi* | [**getArtifactGrantValidationKeys**](docs/CacheApi.md#getartifactgrantvalidationkeys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 *CacheApi* | [**refreshCache**](docs/CacheApi.md#refreshcache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
 *CacheApi* | [**revokeCache**](docs/CacheApi.md#revokecache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
-*CacheApi* | [**rotateCacheKey**](docs/CacheApi.md#rotatecachekey) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
+*CacheApi* | [**submitCacheKeyCandidate**](docs/CacheApi.md#submitcachekeycandidate) | **POST** /cache/candidate | Submit or reuse one Cache identity candidate after active-key proof.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirmContentBlockUpload**](docs/DefaultApi.md#confirmcontentblockupload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discoverContentBlocks**](docs/DefaultApi.md#discovercontentblocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -210,7 +210,7 @@ All URIs are relative to *http://localhost:5000*
 - [CacheEnrollmentRequest](docs/CacheEnrollmentRequest.md)
 - [CacheHealthStatus](docs/CacheHealthStatus.md)
 - [CacheIdentityPublicKey](docs/CacheIdentityPublicKey.md)
-- [CacheKeyRotationRequest](docs/CacheKeyRotationRequest.md)
+- [CacheKeyCandidateRequest](docs/CacheKeyCandidateRequest.md)
 - [CacheRegistration](docs/CacheRegistration.md)
 - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
 - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)

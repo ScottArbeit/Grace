@@ -1062,7 +1062,6 @@ module CommandOutputContract =
             row [ "candidate" ] "required-actions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate" ] "retry" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "cache" ] "enroll" true true human_proc_only mutating_state_transition local_client RequiresCliDto
-            row [ "cache" ] "rotate-now" true true human_proc_only mutating_state_transition local_client RequiresCliDto
             row [ "cache" ] "run" true true human_proc_only fire_and_forget_progress local_client RequiresCliDto
             row [ "cache" ] "status" true false human_proc_only read_list_search local_client RequiresCliDto
             row [ "config" ] "write" true false common_renderOutput_envelope read_or_mutating_verify local_client ReuseExistingApiOrSdkDto

@@ -1491,23 +1491,24 @@ type EndpointAuthorizationTests() =
 
             let invalidKey = { Class = nameof CacheIdentityPublicKey; Algorithm = "ES256"; Curve = "P-256"; PublicKeyX = "invalid"; PublicKeyY = "invalid" }
 
-            let rotationRequest =
+            let candidateRequest =
                 {
-                    Class = nameof CacheKeyRotationRequest
+                    Class = nameof CacheKeyCandidateRequest
                     CacheId = cacheId
-                    OperationId = Guid.NewGuid()
-                    NewPublicKey = invalidKey
-                    Proof = invalidCacheProof cacheId CacheRegistrationProof.RotateKeyOperation "invalid-rotation-digest"
+                    CandidatePublicKey = invalidKey
+                    RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                    IsStartup = true
+                    Proof = invalidCacheProof cacheId CacheRegistrationProof.SubmitCandidateOperation "invalid-candidate-digest"
                 }
 
-            let! rotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent rotationRequest)
-            Assert.That(rotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! candidateResponse = unauthenticatedClient.PostAsync("/cache/candidate", createJsonContent candidateRequest)
+            Assert.That(candidateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
 
-            let missingKeyRotationRequest = { rotationRequest with NewPublicKey = Unchecked.defaultof<CacheIdentityPublicKey> }
+            let missingCandidateRequest = { candidateRequest with CandidatePublicKey = Unchecked.defaultof<CacheIdentityPublicKey> }
 
-            let! missingKeyRotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent missingKeyRotationRequest)
+            let! missingCandidateResponse = unauthenticatedClient.PostAsync("/cache/candidate", createJsonContent missingCandidateRequest)
 
-            Assert.That(missingKeyRotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(missingCandidateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
 
             let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
             Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))

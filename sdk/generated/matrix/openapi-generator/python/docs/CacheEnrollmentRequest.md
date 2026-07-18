@@ -12,7 +12,8 @@ Name | Type | Description | Notes
 **owner_id** | **UUID** |  | 
 **organization_id** | **UUID** |  | [optional] 
 **repository_scopes** | [**List[CacheRepositoryScope]**](CacheRepositoryScope.md) |  | 
-**public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**active_public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**candidate_public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | [optional] 
 **endpoint** | **str** |  | 
 **allow_http_endpoint** | **bool** | Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default. | 
 **health** | [**CacheHealthStatus**](CacheHealthStatus.md) |  | 

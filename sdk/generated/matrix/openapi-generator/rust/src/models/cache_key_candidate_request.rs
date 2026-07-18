@@ -11,24 +11,32 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
+/// CacheKeyCandidateRequest : Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CacheKeyRotationRequest {
+pub struct CacheKeyCandidateRequest {
     #[serde(rename = "Class")]
     pub class: String,
     #[serde(rename = "CacheId")]
     pub cache_id: uuid::Uuid,
-    #[serde(rename = "NewPublicKey")]
-    pub new_public_key: Box<models::CacheIdentityPublicKey>,
+    #[serde(rename = "CandidatePublicKey")]
+    pub candidate_public_key: Box<models::CacheIdentityPublicKey>,
+    #[serde(rename = "RotationIntervalMinutes")]
+    pub rotation_interval_minutes: i32,
+    #[serde(rename = "IsStartup")]
+    pub is_startup: bool,
     #[serde(rename = "Proof")]
     pub proof: Box<models::SignedCacheRequestProof>,
 }
 
-impl CacheKeyRotationRequest {
-    pub fn new(class: String, cache_id: uuid::Uuid, new_public_key: models::CacheIdentityPublicKey, proof: models::SignedCacheRequestProof) -> CacheKeyRotationRequest {
-        CacheKeyRotationRequest {
+impl CacheKeyCandidateRequest {
+    /// Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
+    pub fn new(class: String, cache_id: uuid::Uuid, candidate_public_key: models::CacheIdentityPublicKey, rotation_interval_minutes: i32, is_startup: bool, proof: models::SignedCacheRequestProof) -> CacheKeyCandidateRequest {
+        CacheKeyCandidateRequest {
             class,
             cache_id,
-            new_public_key: Box::new(new_public_key),
+            candidate_public_key: Box::new(candidate_public_key),
+            rotation_interval_minutes,
+            is_startup,
             proof: Box::new(proof),
         }
     }

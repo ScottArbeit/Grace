@@ -29,10 +29,12 @@ pub enum CacheRegistrationRefreshStatus {
     Revoked,
     #[serde(rename = "updated")]
     Updated,
-    #[serde(rename = "rotated")]
-    Rotated,
+    #[serde(rename = "candidateAccepted")]
+    CandidateAccepted,
     #[serde(rename = "endpointMismatch")]
     EndpointMismatch,
+    #[serde(rename = "rotationRetryAfter")]
+    RotationRetryAfter,
 
 }
 
@@ -46,8 +48,9 @@ impl std::fmt::Display for CacheRegistrationRefreshStatus {
             Self::NotFound => write!(f, "notFound"),
             Self::Revoked => write!(f, "revoked"),
             Self::Updated => write!(f, "updated"),
-            Self::Rotated => write!(f, "rotated"),
+            Self::CandidateAccepted => write!(f, "candidateAccepted"),
             Self::EndpointMismatch => write!(f, "endpointMismatch"),
+            Self::RotationRetryAfter => write!(f, "rotationRetryAfter"),
         }
     }
 }

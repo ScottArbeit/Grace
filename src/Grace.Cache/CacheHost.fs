@@ -92,9 +92,6 @@ module CacheHost =
     /// Marks this scaffold as non-serving until #625 installs the authorized artifact-serving contract.
     let artifactServingAvailable = false
 
-    /// Holds the server-defined four-hour interval for cache identity key rotation.
-    let keyRotationInterval = RegistrationLifetime.KeyRotationInterval.ToTimeSpan()
-
     /// Holds the server-defined one-hour interval that refreshes registration before its two-hour active lifetime expires.
     let registrationRefreshInterval = RegistrationLifetime.RefreshAfter.ToTimeSpan()
 
@@ -160,58 +157,57 @@ module CacheHost =
     /// Starts the server-expiry-based refresh scheduler after startup refresh has returned authoritative registration timing.
     let startRegistrationRefresh initialRegistration = new RegistrationRefreshScheduler(initialRegistration) :> IDisposable
 
-    /// Holds the in-memory rotation timer whose first callback is anchored to the server-issued due instant.
+    /// Holds the in-memory rotation timer that retries failures after five minutes and otherwise follows server-issued due time.
     type private KeyRotationScheduler(initialRegistration: CacheRegistration) =
-        let timer =
-            new Timer(
-                TimerCallback(fun _ -> CacheRuntimeControl.rotateNow () |> ignore),
-                null,
-                CacheRotationSchedule.initialDelay (SystemClock.Instance.GetCurrentInstant()) initialRegistration,
-                keyRotationInterval
-            )
+        let mutable timer: Timer option = None
+
+        /// Schedules the next single rotation callback without allowing timer cadence to override the server due instant.
+        let schedule delay =
+            timer
+            |> Option.iter (fun activeTimer ->
+                activeTimer.Change(delay, Timeout.InfiniteTimeSpan)
+                |> ignore)
+
+        /// Rotates through the serialized runtime, retaining a failed candidate and publishing unhealthy state before retrying it.
+        let onTimer _ =
+            match CacheRuntimeControl.synchronizeIdentity false with
+            | Ok _ ->
+                match CacheRuntimeControl.refreshRegistrationNow () with
+                | Ok registration -> schedule (CacheRotationSchedule.initialDelay (SystemClock.Instance.GetCurrentInstant()) registration)
+                | Error _ -> schedule CacheRefreshSchedule.retryInterval
+            | Error _ ->
+                CacheRuntimeControl.refreshNow () |> ignore
+
+                schedule CacheRefreshSchedule.retryInterval
+
+        do
+            let rotationTimer = new Timer(TimerCallback onTimer, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan)
+            timer <- Some rotationTimer
+            schedule (CacheRotationSchedule.initialDelay (SystemClock.Instance.GetCurrentInstant()) initialRegistration)
 
         interface IDisposable with
             /// Releases the process-local rotation timer when the cache host stops.
-            member _.Dispose() = timer.Dispose()
+            member _.Dispose() =
+                timer
+                |> Option.iter (fun activeTimer -> activeTimer.Dispose())
 
     /// Starts key rotation from the authoritative server due time returned by the startup refresh.
     let startKeyRotation initialRegistration = new KeyRotationScheduler(initialRegistration) :> IDisposable
 
     /// Lists the only routes available before cache enrollment, storage, or artifact serving exists.
-    let routeInventory =
-        [
-            "/healthz"
-            "/status"
-            "/control/status"
-        ]
+    let routeInventory = [ "/healthz"; "/status" ]
 
-    /// Builds the cache HTTP host only after protected local control has been established for the active process.
+    /// Builds the cache HTTP host after the runtime has completed its server-synchronized startup transition.
     let build (settings: CacheHostSettings) (configuration: CacheMachineConfiguration) (args: string array) =
-        match CacheLocalControl.start () with
-        | Error error -> Error error
-        | Ok localControl ->
-            let builder = WebApplication.CreateBuilder(args)
-            let app = builder.Build()
+        let builder = WebApplication.CreateBuilder(args)
+        let app = builder.Build()
 
-            app.Urls.Add(configuration.Endpoint)
+        app.Urls.Add(configuration.Endpoint)
 
-            app.MapGet("/healthz", Func<string>(fun () -> "Grace Cache scaffold healthy."))
-            |> ignore
+        app.MapGet("/healthz", Func<string>(fun () -> "Grace Cache scaffold healthy."))
+        |> ignore
 
-            app.MapGet("/status", Func<IResult>(fun () -> Results.Json(CacheMachineConfiguration.toStatus configuration, Constants.JsonSerializerOptions)))
-            |> ignore
+        app.MapGet("/status", Func<IResult>(fun () -> Results.Json(CacheMachineConfiguration.toStatus configuration, Constants.JsonSerializerOptions)))
+        |> ignore
 
-            app.MapGet(
-                "/control/status",
-                Func<HttpContext, IResult> (fun context ->
-                    if IPAddress.IsLoopback context.Connection.RemoteIpAddress then
-                        Results.Json(CacheMachineConfiguration.toStatus configuration, Constants.JsonSerializerOptions)
-                    else
-                        Results.NotFound())
-            )
-            |> ignore
-
-            app.Lifetime.ApplicationStopping.Register(Action(fun () -> localControl.Dispose()))
-            |> ignore
-
-            Ok app
+        Ok app

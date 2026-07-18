@@ -14,7 +14,6 @@ module CacheCommandParsingTests =
     /// Verifies the normal cache lifecycle commands parse without loading repository configuration.
     [<TestCase("run")>]
     [<TestCase("status")>]
-    [<TestCase("rotate-now")>]
     let ``cache lifecycle command parses`` commandName =
         let parseResult = GraceCommand.rootCommand.Parse([| "cache"; commandName |])
         Assert.That(parseResult.Errors.Count, Is.EqualTo(0))

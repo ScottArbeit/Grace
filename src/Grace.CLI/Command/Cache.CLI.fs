@@ -245,13 +245,6 @@ module CacheCommand =
         /// Queries the cache executable without reading its machine configuration from the CLI.
         override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--status" ] None None
 
-    /// Executes an immediate key-rotation request through the deployed cache process boundary.
-    type RotateNow() =
-        inherit SynchronousCommandLineAction()
-
-        /// Requests immediate rotation without exposing or handling private key material in the CLI.
-        override _.Invoke(parseResult: ParseResult) : int = invokeCache parseResult [ "--rotate-now" ] None None
-
     /// Builds the normal operator command group without advertising prefetch, artifact serving, or cache-selection modes.
     let Build =
         let cacheCommand = new Command("cache", Description = "Run and control the machine-managed Grace Cache service.")
@@ -281,14 +274,7 @@ module CacheCommand =
 
         statusCommand.Action <- Status()
 
-        let rotateCommand =
-            new Command("rotate-now", Description = "Request immediate Grace Cache identity-key rotation.")
-            |> fun command -> command |> addOption Options.executable
-
-        rotateCommand.Action <- RotateNow()
-
         cacheCommand.Subcommands.Add runCommand
         cacheCommand.Subcommands.Add enrollCommand
         cacheCommand.Subcommands.Add statusCommand
-        cacheCommand.Subcommands.Add rotateCommand
         cacheCommand

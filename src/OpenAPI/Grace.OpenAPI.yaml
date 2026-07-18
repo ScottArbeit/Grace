@@ -1806,61 +1806,19 @@ paths:
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /cache/rotate-key:
+  /cache/candidate:
     post:
       tags:
         - Cache
-      summary: Rotate a Cache identity key after proof by the currently accepted key.
-      operationId: RotateCacheKey
+      summary: Submit or reuse one Cache identity candidate after active-key proof.
+      operationId: SubmitCacheKeyCandidate
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CacheKeyRotationRequest'
-      responses:
-        '200':
-          $ref: '#/components/responses/CacheRegistrationResponse'
-        '400':
-          $ref: '#/components/responses/400'
-        '401':
-          $ref: '#/components/responses/401'
-        '500':
-          $ref: '#/components/responses/500'
-  /cache/rotate-key/outcome:
-    post:
-      tags:
-        - Cache
-      summary: Read an exact durable Cache key-rotation outcome after cache-key proof.
-      operationId: GetCacheKeyRotationOutcome
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CacheKeyRotationOutcomeRequest'
-      responses:
-        '200':
-          $ref: '#/components/responses/CacheRegistrationResponse'
-        '400':
-          $ref: '#/components/responses/400'
-        '500':
-          $ref: '#/components/responses/500'
-  /cache/rotate-key/complete:
-    post:
-      tags:
-        - Cache
-      summary: Acknowledge an exact durable Cache key-rotation outcome after local finalization.
-      operationId: CompleteCacheKeyRotation
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CacheKeyRotationCompletionRequest'
+              $ref: '#/components/schemas/CacheKeyCandidateRequest'
       responses:
         '200':
           $ref: '#/components/responses/CacheRegistrationResponse'
@@ -4405,8 +4363,11 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/CacheRepositoryScope'
-        PublicKey:
+        ActivePublicKey:
           $ref: '#/components/schemas/CacheIdentityPublicKey'
+        CandidatePublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
+          nullable: true
         Endpoint:
           type: string
           format: uri
@@ -4427,7 +4388,7 @@ components:
         - BoundaryKind
         - OwnerId
         - RepositoryScopes
-        - PublicKey
+        - ActivePublicKey
         - Endpoint
         - AllowHttpEndpoint
         - Health
@@ -4499,27 +4460,33 @@ components:
       required:
         - Class
         - CacheId
-    CacheKeyRotationRequest:
+    CacheKeyCandidateRequest:
+      description: Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
       type: object
       properties:
         Class:
           type: string
-          example: CacheKeyRotationRequest
+          example: CacheKeyCandidateRequest
         CacheId:
           type: string
           format: uuid
-        OperationId:
-          type: string
-          format: uuid
-        NewPublicKey:
+        CandidatePublicKey:
           $ref: '#/components/schemas/CacheIdentityPublicKey'
+        RotationIntervalMinutes:
+          type: integer
+          minimum: 15
+          maximum: 10080
+          default: 240
+        IsStartup:
+          type: boolean
         Proof:
           $ref: '#/components/schemas/SignedCacheRequestProof'
       required:
         - Class
         - CacheId
-        - OperationId
-        - NewPublicKey
+        - CandidatePublicKey
+        - RotationIntervalMinutes
+        - IsStartup
         - Proof
     CacheRegistrationRefreshStatus:
       description: Result classification for Cache enrollment and lifecycle operations.
@@ -4532,8 +4499,9 @@ components:
         - notFound
         - revoked
         - updated
-        - rotated
+        - candidateAccepted
         - endpointMismatch
+        - rotationRetryAfter
       x-enumNames:
         - Enrolled
         - Refreshed
@@ -4542,8 +4510,9 @@ components:
         - NotFound
         - Revoked
         - Updated
-        - Rotated
+        - CandidateAccepted
         - EndpointMismatch
+        - RotationRetryAfter
       example: enrolled
     CacheRegistration:
       description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
@@ -4570,8 +4539,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CacheRepositoryScope'
-        PublicKey:
+        ActivePublicKey:
           $ref: '#/components/schemas/CacheIdentityPublicKey'
+        CandidatePublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
+          nullable: true
         Endpoint:
           type: string
           format: uri
@@ -4596,6 +4568,13 @@ components:
           $ref: '#/components/schemas/Instant'
         ExpiresAt:
           $ref: '#/components/schemas/Instant'
+        RotationIntervalMinutes:
+          type: integer
+          minimum: 15
+          maximum: 10080
+        LastRotatedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
         RotationDueAt:
           $ref: '#/components/schemas/Instant'
         RevokedAt:
@@ -4608,7 +4587,7 @@ components:
         - BoundaryKind
         - OwnerId
         - RepositoryScopes
-        - PublicKey
+        - ActivePublicKey
         - Endpoint
         - AllowHttpEndpoint
         - Health
@@ -4620,6 +4599,7 @@ components:
         - LastRefreshedAt
         - RefreshAfter
         - ExpiresAt
+        - RotationIntervalMinutes
         - RotationDueAt
     CacheRegistrationResult:
       description: Result returned by Cache registration and refresh routes.
@@ -7152,44 +7132,6 @@ components:
         - EventTime
         - CorrelationId
         - Properties
-    CacheKeyRotationOutcomeRequest:
-      type: object
-      properties:
-        Class:
-          type: string
-          example: CacheKeyRotationOutcomeRequest
-        CacheId:
-          type: string
-          format: uuid
-        OperationId:
-          type: string
-          format: uuid
-        Proof:
-          $ref: '#/components/schemas/SignedCacheRequestProof'
-      required:
-        - Class
-        - CacheId
-        - OperationId
-        - Proof
-    CacheKeyRotationCompletionRequest:
-      type: object
-      properties:
-        Class:
-          type: string
-          example: CacheKeyRotationCompletionRequest
-        CacheId:
-          type: string
-          format: uuid
-        OperationId:
-          type: string
-          format: uuid
-        Proof:
-          $ref: '#/components/schemas/SignedCacheRequestProof'
-      required:
-        - Class
-        - CacheId
-        - OperationId
-        - Proof
     OrganizationCommandReturnValue:
       description: Grace response envelope returned by organization command endpoints.
       type: object

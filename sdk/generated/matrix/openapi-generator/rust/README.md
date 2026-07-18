@@ -79,7 +79,7 @@ Class | Method | HTTP request | Description
 *CacheApi* | [**get_artifact_grant_validation_keys**](docs/CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 *CacheApi* | [**refresh_cache**](docs/CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
 *CacheApi* | [**revoke_cache**](docs/CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
-*CacheApi* | [**rotate_cache_key**](docs/CacheApi.md#rotate_cache_key) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
+*CacheApi* | [**submit_cache_key_candidate**](docs/CacheApi.md#submit_cache_key_candidate) | **POST** /cache/candidate | Submit or reuse one Cache identity candidate after active-key proof.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirm_content_block_upload**](docs/DefaultApi.md#confirm_content_block_upload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
 *DefaultApi* | [**discover_content_blocks**](docs/DefaultApi.md#discover_content_blocks) | **POST** /storage/discoverContentBlocks | Discovers reusable ContentBlock candidates.
@@ -194,7 +194,7 @@ Class | Method | HTTP request | Description
  - [CacheEnrollmentRequest](docs/CacheEnrollmentRequest.md)
  - [CacheHealthStatus](docs/CacheHealthStatus.md)
  - [CacheIdentityPublicKey](docs/CacheIdentityPublicKey.md)
- - [CacheKeyRotationRequest](docs/CacheKeyRotationRequest.md)
+ - [CacheKeyCandidateRequest](docs/CacheKeyCandidateRequest.md)
  - [CacheRegistration](docs/CacheRegistration.md)
  - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
  - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)

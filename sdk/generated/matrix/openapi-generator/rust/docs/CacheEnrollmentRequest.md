@@ -10,7 +10,8 @@ Name | Type | Description | Notes
 **owner_id** | **uuid::Uuid** |  | 
 **organization_id** | Option<**uuid::Uuid**> |  | [optional]
 **repository_scopes** | [**Vec<models::CacheRepositoryScope>**](CacheRepositoryScope.md) |  | 
-**public_key** | [**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**active_public_key** | [**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**candidate_public_key** | Option<[**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md)> |  | [optional]
 **endpoint** | **String** |  | 
 **allow_http_endpoint** | **bool** | Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default. | 
 **health** | [**models::CacheHealthStatus**](CacheHealthStatus.md) |  | 

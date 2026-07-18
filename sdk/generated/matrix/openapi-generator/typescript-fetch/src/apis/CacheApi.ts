@@ -24,10 +24,10 @@ import {
     CacheEnrollmentRequestToJSON,
 } from '../models/CacheEnrollmentRequest';
 import {
-    type CacheKeyRotationRequest,
-    CacheKeyRotationRequestFromJSON,
-    CacheKeyRotationRequestToJSON,
-} from '../models/CacheKeyRotationRequest';
+    type CacheKeyCandidateRequest,
+    CacheKeyCandidateRequestFromJSON,
+    CacheKeyCandidateRequestToJSON,
+} from '../models/CacheKeyCandidateRequest';
 import {
     type CacheRegistrationRefreshRequest,
     CacheRegistrationRefreshRequestFromJSON,
@@ -70,8 +70,8 @@ export interface RevokeCacheRequest {
     cacheRevocationRequest: CacheRevocationRequest;
 }
 
-export interface RotateCacheKeyRequest {
-    cacheKeyRotationRequest: CacheKeyRotationRequest;
+export interface SubmitCacheKeyCandidateRequest {
+    cacheKeyCandidateRequest: CacheKeyCandidateRequest;
 }
 
 /**
@@ -331,13 +331,13 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Creates request options for rotateCacheKey without sending the request
+     * Creates request options for submitCacheKeyCandidate without sending the request
      */
-    async rotateCacheKeyRequestOpts(requestParameters: RotateCacheKeyRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['cacheKeyRotationRequest'] == null) {
+    async submitCacheKeyCandidateRequestOpts(requestParameters: SubmitCacheKeyCandidateRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['cacheKeyCandidateRequest'] == null) {
             throw new runtime.RequiredError(
-                'cacheKeyRotationRequest',
-                'Required parameter "cacheKeyRotationRequest" was null or undefined when calling rotateCacheKey().'
+                'cacheKeyCandidateRequest',
+                'Required parameter "cacheKeyCandidateRequest" was null or undefined when calling submitCacheKeyCandidate().'
             );
         }
 
@@ -348,32 +348,32 @@ export class CacheApi extends runtime.BaseAPI {
         headerParameters['Content-Type'] = 'application/json';
 
 
-        let urlPath = `/cache/rotate-key`;
+        let urlPath = `/cache/candidate`;
 
         return {
             path: urlPath,
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: CacheKeyRotationRequestToJSON(requestParameters['cacheKeyRotationRequest']),
+            body: CacheKeyCandidateRequestToJSON(requestParameters['cacheKeyCandidateRequest']),
         };
     }
 
     /**
-     * Rotate a Cache identity key after proof by the currently accepted key.
+     * Submit or reuse one Cache identity candidate after active-key proof.
      */
-    async rotateCacheKeyRaw(requestParameters: RotateCacheKeyRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
-        const requestOptions = await this.rotateCacheKeyRequestOpts(requestParameters);
+    async submitCacheKeyCandidateRaw(requestParameters: SubmitCacheKeyCandidateRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
+        const requestOptions = await this.submitCacheKeyCandidateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
         return new runtime.JSONApiResponse(response, (jsonValue) => CacheRegistrationReturnValueFromJSON(jsonValue));
     }
 
     /**
-     * Rotate a Cache identity key after proof by the currently accepted key.
+     * Submit or reuse one Cache identity candidate after active-key proof.
      */
-    async rotateCacheKey(requestParameters: RotateCacheKeyRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
-        const response = await this.rotateCacheKeyRaw(requestParameters, initOverrides);
+    async submitCacheKeyCandidate(requestParameters: SubmitCacheKeyCandidateRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
+        const response = await this.submitCacheKeyCandidateRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

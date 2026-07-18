@@ -22,31 +22,34 @@ module Program =
         | Ok lease ->
             use _lease = lease
 
-            match CacheRuntimeControl.getReadyConfiguration () with
+            match CacheRuntimeControl.synchronizeIdentity true with
             | Error message -> Error message
-            | Ok configuration ->
-                match CacheHost.build settings configuration [||] with
+            | Ok _ ->
+                match CacheRuntimeControl.getReadyConfiguration () with
                 | Error message -> Error message
-                | Ok app ->
-                    use app = app
-
-                    match CacheHostStartup.start (fun () -> app.StartAsync().GetAwaiter().GetResult()) with
+                | Ok configuration ->
+                    match CacheHost.build settings configuration [||] with
                     | Error message -> Error message
-                    | Ok () ->
-                        match CacheRuntimeControl.startupRefresh CacheHost.artifactServingAvailable with
-                        | Error message ->
-                            app.StopAsync().GetAwaiter().GetResult()
-                            Error message
-                        | Ok (refreshedConfiguration, registration) ->
-                            use _refreshSchedule = CacheHost.startRegistrationRefresh registration
-                            use _rotationSchedule = CacheHost.startKeyRotation registration
+                    | Ok app ->
+                        use app = app
 
-                            app
-                                .WaitForShutdownAsync()
-                                .GetAwaiter()
-                                .GetResult()
+                        match CacheHostStartup.start (fun () -> app.StartAsync().GetAwaiter().GetResult()) with
+                        | Error message -> Error message
+                        | Ok () ->
+                            match CacheRuntimeControl.startupRefresh CacheHost.artifactServingAvailable with
+                            | Error message ->
+                                app.StopAsync().GetAwaiter().GetResult()
+                                Error message
+                            | Ok (refreshedConfiguration, registration) ->
+                                use _refreshSchedule = CacheHost.startRegistrationRefresh registration
+                                use _rotationSchedule = CacheHost.startKeyRotation registration
 
-                            Ok(CacheMachineConfiguration.toStatus refreshedConfiguration)
+                                app
+                                    .WaitForShutdownAsync()
+                                    .GetAwaiter()
+                                    .GetResult()
+
+                                Ok(CacheMachineConfiguration.toStatus refreshedConfiguration)
 
     /// Executes exactly one supported cache process verb and writes its redacted machine-readable result.
     [<EntryPoint>]
@@ -55,13 +58,7 @@ module Program =
             match CacheHostSettings.fromEnvironment Environment.GetEnvironmentVariable with
             | Error _ -> CacheProcessCommand.processFailure ()
             | Ok settings ->
-                let effects =
-                    {
-                        Enroll = CacheRuntimeControl.enroll
-                        RotateNow = fun () -> CacheLocalControl.requestRotation ()
-                        Status = fun () -> showStatus ()
-                        Run = fun () -> runHost settings
-                    }
+                let effects = { Enroll = CacheRuntimeControl.enroll; Status = (fun () -> showStatus ()); Run = (fun () -> runHost settings) }
 
                 CacheProcessCommand.execute effects args
 

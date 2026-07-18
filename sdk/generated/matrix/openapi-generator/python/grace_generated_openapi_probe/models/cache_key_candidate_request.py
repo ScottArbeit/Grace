@@ -18,8 +18,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List
+from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.cache_identity_public_key import CacheIdentityPublicKey
 from grace_generated_openapi_probe.models.signed_cache_request_proof import SignedCacheRequestProof
@@ -27,15 +28,17 @@ from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class CacheKeyRotationRequest(BaseModel):
+class CacheKeyCandidateRequest(BaseModel):
     """
-    CacheKeyRotationRequest
+    Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
     cache_id: UUID = Field(alias="CacheId")
-    new_public_key: CacheIdentityPublicKey = Field(alias="NewPublicKey")
+    candidate_public_key: CacheIdentityPublicKey = Field(alias="CandidatePublicKey")
+    rotation_interval_minutes: Annotated[int, Field(le=10080, strict=True, ge=15)] = Field(alias="RotationIntervalMinutes")
+    is_startup: StrictBool = Field(alias="IsStartup")
     proof: SignedCacheRequestProof = Field(alias="Proof")
-    __properties: ClassVar[List[str]] = ["Class", "CacheId", "NewPublicKey", "Proof"]
+    __properties: ClassVar[List[str]] = ["Class", "CacheId", "CandidatePublicKey", "RotationIntervalMinutes", "IsStartup", "Proof"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -55,7 +58,7 @@ class CacheKeyRotationRequest(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of CacheKeyRotationRequest from a JSON string"""
+        """Create an instance of CacheKeyCandidateRequest from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -76,9 +79,9 @@ class CacheKeyRotationRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of new_public_key
-        if self.new_public_key:
-            _dict['NewPublicKey'] = self.new_public_key.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of candidate_public_key
+        if self.candidate_public_key:
+            _dict['CandidatePublicKey'] = self.candidate_public_key.to_dict()
         # override the default output from pydantic by calling `to_dict()` of proof
         if self.proof:
             _dict['Proof'] = self.proof.to_dict()
@@ -86,7 +89,7 @@ class CacheKeyRotationRequest(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of CacheKeyRotationRequest from a dict"""
+        """Create an instance of CacheKeyCandidateRequest from a dict"""
         if obj is None:
             return None
 
@@ -96,7 +99,9 @@ class CacheKeyRotationRequest(BaseModel):
         _obj = cls.model_validate({
             "Class": obj.get("Class"),
             "CacheId": obj.get("CacheId"),
-            "NewPublicKey": CacheIdentityPublicKey.from_dict(obj["NewPublicKey"]) if obj.get("NewPublicKey") is not None else None,
+            "CandidatePublicKey": CacheIdentityPublicKey.from_dict(obj["CandidatePublicKey"]) if obj.get("CandidatePublicKey") is not None else None,
+            "RotationIntervalMinutes": obj.get("RotationIntervalMinutes") if obj.get("RotationIntervalMinutes") is not None else 240,
+            "IsStartup": obj.get("IsStartup"),
             "Proof": SignedCacheRequestProof.from_dict(obj["Proof"]) if obj.get("Proof") is not None else None
         })
         return _obj

@@ -303,83 +303,28 @@ module CacheRegistration =
                             | Error error -> return! context |> result400BadRequest error
             }
 
-    /// Handles POST /cache/rotate-key using proof of the old key before the actor durably accepts the new key.
-    let RotateKey: HttpHandler =
+    /// Handles the proof-only candidate route without requiring a Grace user bearer token.
+    let SubmitCandidate: HttpHandler =
         fun _next context ->
             task {
                 let correlationId = getCorrelationId context
 
-                match! bindJson<CacheKeyRotationRequest> context correlationId with
+                match! bindJson<CacheKeyCandidateRequest> context correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok request when
                     isNull (box request)
-                    || request.Class <> nameof CacheKeyRotationRequest
+                    || request.Class <> nameof CacheKeyCandidateRequest
                     || request.CacheId = Guid.Empty
-                    || request.OperationId = Guid.Empty
                     || isNull (box request.Proof)
-                    || not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey)
+                    || not (CacheRegistrationProof.isValidPublicKey request.CandidatePublicKey)
                     ->
                     return!
                         context
-                        |> result400BadRequest (cacheError correlationId "Cache key rotation request is invalid.")
+                        |> result400BadRequest (cacheError correlationId "Cache identity candidate request is invalid.")
                 | Ok request ->
                     let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
 
-                    match! actor.RotateKey(request, getCurrentInstant (), correlationId) with
-                    | Ok result -> return! context |> result200Ok result
-                    | Error error -> return! context |> result400BadRequest error
-            }
-
-    /// Handles POST /cache/rotate-key/outcome through cache-key proof to recover an exact durable rotation result.
-    let GetRotationOutcome: HttpHandler =
-        fun _next context ->
-            task {
-                let correlationId = getCorrelationId context
-
-                match! bindJson<CacheKeyRotationOutcomeRequest> context correlationId with
-                | Error error -> return! context |> result400BadRequest error
-                | Ok request when
-                    isNull (box request)
-                    || request.Class
-                       <> nameof CacheKeyRotationOutcomeRequest
-                    || request.CacheId = Guid.Empty
-                    || request.OperationId = Guid.Empty
-                    || isNull (box request.Proof)
-                    ->
-                    return!
-                        context
-                        |> result400BadRequest (cacheError correlationId "Cache key rotation outcome request is invalid.")
-                | Ok request ->
-                    let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
-
-                    match! actor.GetRotationOutcome(request, getCurrentInstant (), correlationId) with
-                    | Ok result -> return! context |> result200Ok result
-                    | Error error -> return! context |> result400BadRequest error
-            }
-
-    /// Handles POST /cache/rotate-key/complete through cache-key proof to retire only the exact acknowledged outcome.
-    let CompleteRotation: HttpHandler =
-        fun _next context ->
-            task {
-                let correlationId = getCorrelationId context
-
-                match! bindJson<CacheKeyRotationCompletionRequest> context correlationId with
-                | Error error -> return! context |> result400BadRequest error
-                | Ok request when
-                    isNull (box request)
-                    || request.Class
-                       <> nameof CacheKeyRotationCompletionRequest
-                    || request.CacheId = Guid.Empty
-                    || request.OperationId = Guid.Empty
-                    || isNull (box request.Proof)
-                    ->
-                    return!
-                        context
-                        |> result400BadRequest (cacheError correlationId "Cache key rotation completion request is invalid.")
-                | Ok request ->
-                    let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
-
-                    match! actor.CompleteRotation(request, getCurrentInstant (), correlationId) with
+                    match! actor.SubmitCandidate(request, getCurrentInstant (), correlationId) with
                     | Ok result -> return! context |> result200Ok result
                     | Error error -> return! context |> result400BadRequest error
             }

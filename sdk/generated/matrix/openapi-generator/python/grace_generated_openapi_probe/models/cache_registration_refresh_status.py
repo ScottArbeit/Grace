@@ -34,8 +34,9 @@ class CacheRegistrationRefreshStatus(str, Enum):
     NOTFOUND = 'notFound'
     REVOKED = 'revoked'
     UPDATED = 'updated'
-    ROTATED = 'rotated'
+    CANDIDATEACCEPTED = 'candidateAccepted'
     ENDPOINTMISMATCH = 'endpointMismatch'
+    ROTATIONRETRYAFTER = 'rotationRetryAfter'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

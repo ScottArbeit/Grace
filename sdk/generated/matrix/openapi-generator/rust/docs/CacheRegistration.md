@@ -11,7 +11,8 @@ Name | Type | Description | Notes
 **owner_id** | **uuid::Uuid** |  | 
 **organization_id** | Option<**uuid::Uuid**> |  | [optional]
 **repository_scopes** | [**Vec<models::CacheRepositoryScope>**](CacheRepositoryScope.md) |  | 
-**public_key** | [**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**active_public_key** | [**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**candidate_public_key** | Option<[**models::CacheIdentityPublicKey**](CacheIdentityPublicKey.md)> |  | [optional]
 **endpoint** | **String** |  | 
 **allow_http_endpoint** | **bool** | Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS. | 
 **health** | [**models::CacheHealthStatus**](CacheHealthStatus.md) |  | 
@@ -23,6 +24,8 @@ Name | Type | Description | Notes
 **last_refreshed_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **refresh_after** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **expires_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
+**rotation_interval_minutes** | **i32** |  | 
+**last_rotated_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
 **rotation_due_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **revoked_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
 

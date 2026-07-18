@@ -40,10 +40,6 @@ type CacheProcessDispatchTests() =
                     fun _ ->
                         effectsCalled <- effectsCalled + 1
                         Ok(CacheRuntimeStatus.registered Guid.Empty "https")
-                RotateNow =
-                    fun () ->
-                        effectsCalled <- effectsCalled + 1
-                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
                 Status =
                     fun () ->
                         effectsCalled <- effectsCalled + 1
@@ -73,7 +69,6 @@ type CacheProcessDispatchTests() =
                     fun input ->
                         received <- Some input
                         Ok(CacheRuntimeStatus.registered (Guid.Parse "44444444-4444-4444-4444-444444444444") "https")
-                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
                 Status = fun () -> failwith "Status must not run for enrollment."
                 Run = fun () -> failwith "Host startup must not run for enrollment."
             }
@@ -95,7 +90,6 @@ type CacheProcessDispatchTests() =
                     fun _ ->
                         sideEffects <- sideEffects + 1
                         failwith "Malformed enrollment must not reach the runtime boundary."
-                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
                 Status = fun () -> failwith "Status must not run for enrollment."
                 Run = fun () -> failwith "Host startup must not run for enrollment."
             }
@@ -125,7 +119,6 @@ type CacheProcessDispatchTests() =
                     fun _ ->
                         sideEffects <- sideEffects + 1
                         failwith "Endpoint user information must not reach enrollment."
-                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
                 Status = fun () -> failwith "Status must not run for enrollment."
                 Run = fun () -> failwith "Host startup must not run for enrollment."
             }
@@ -147,7 +140,6 @@ type CacheProcessDispatchTests() =
         let effects: CacheProcessEffects =
             {
                 Enroll = fun _ -> failwith "Unknown enrollment input must not reach the runtime boundary."
-                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
                 Status = fun () -> failwith "Status must not run for enrollment."
                 Run = fun () -> failwith "Host startup must not run for enrollment."
             }
@@ -156,35 +148,12 @@ type CacheProcessDispatchTests() =
 
         Assert.That(result.ExitCode, Is.EqualTo(1))
 
-    /// Verifies immediate rotation reaches its proof-only runtime boundary without reading enrollment input.
-    [<Test>]
-    member _.RotationDispatchesToRuntimeBoundary() =
-        let mutable rotations = 0
-
-        let effects: CacheProcessEffects =
-            {
-                Enroll = fun _ -> failwith "Enrollment must not run for rotation."
-                RotateNow =
-                    fun () ->
-                        rotations <- rotations + 1
-                        Ok(CacheRuntimeStatus.registered (Guid.Parse "44444444-4444-4444-4444-444444444444") "https")
-                Status = fun () -> failwith "Status must not run for rotation."
-                Run = fun () -> failwith "Host startup must not run for rotation."
-            }
-
-        let result = CacheProcessCommand.execute effects [| "--rotate-now" |]
-
-        Assert.That(result.ExitCode, Is.EqualTo(0))
-        Assert.That(rotations, Is.EqualTo(1))
-        Assert.That(result.Payload, Does.Not.Contain("private"))
-
     /// Verifies secret-bearing runtime failures are replaced with a stable redacted process result.
     [<Test>]
     member _.RuntimeFailureIsRedacted() =
         let effects: CacheProcessEffects =
             {
                 Enroll = fun _ -> Error "server rejected token super-secret"
-                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
                 Status = fun () -> failwith "Status must not run for enrollment."
                 Run = fun () -> failwith "Host startup must not run for enrollment."
             }
@@ -202,7 +171,6 @@ type CacheProcessDispatchTests() =
         let effects: CacheProcessEffects =
             {
                 Enroll = fun _ -> failwith "Enrollment must not run for status."
-                RotateNow = fun () -> failwith "Rotation must not run for status."
                 Status = fun () -> Ok(CacheRuntimeStatus.registered (Guid.Parse "44444444-4444-4444-4444-444444444444") "https")
                 Run = fun () -> failwith "Host startup must not run for status."
             }
@@ -218,17 +186,12 @@ type CacheProcessDispatchTests() =
     /// Verifies every one-shot process verb rejects trailing input before reaching a runtime or local-control effect.
     [<TestCase("--run")>]
     [<TestCase("--status")>]
-    [<TestCase("--rotate-now")>]
     member _.OneShotVerbsRejectTrailingTokensBeforeEffects(marker) =
         let mutable calls = 0
 
         let effects: CacheProcessEffects =
             {
                 Enroll = fun _ -> failwith "Enrollment must not run."
-                RotateNow =
-                    fun () ->
-                        calls <- calls + 1
-                        Ok(CacheRuntimeStatus.registered Guid.Empty "https")
                 Status =
                     fun () ->
                         calls <- calls + 1
@@ -271,7 +234,6 @@ type CacheProcessDispatchTests() =
                     fun _ ->
                         calls <- calls + 1
                         failwith "Malformed marker-only input must not enroll."
-                RotateNow = fun () -> failwith "Rotation must not run for enrollment."
                 Status = fun () -> failwith "Status must not run for enrollment."
                 Run = fun () -> failwith "Host startup must not run for enrollment."
             }
@@ -404,15 +366,6 @@ type CacheProcessDispatchTests() =
         Assert.That(preSendCalls, Is.EqualTo(3))
         Assert.That(ambiguousResult, Is.EqualTo(RotationMayHaveReachedServer))
         Assert.That(ambiguousCalls, Is.EqualTo(1))
-
-    /// Verifies an absent or refused Unix control socket becomes the stable redacted local-control rejection.
-    [<Test>]
-    member _.UnixControlSocketFailureIsRedacted() =
-        let result = CacheLocalControl.requestRotationWith (fun () -> raise (SocketException()))
-
-        match result with
-        | Ok _ -> Assert.Fail("An unavailable Unix control socket must not return a cache status.")
-        | Error error -> Assert.That(error, Is.EqualTo("Grace Cache rotation request was not accepted."))
 
     /// Verifies retryable refresh transport failures rebuild the request so later proof attempts have a new observation value.
     [<Test>]

@@ -22,150 +22,21 @@ type CacheHostTests() =
 
     /// Verifies that the F# cache host exposes only safe status routes before later runtime capabilities exist.
     [<Test>]
-    member _.RouteInventoryContainsOnlyScaffoldRoutes() =
-        Assert.That(
-            CacheHost.routeInventory,
-            Is.EquivalentTo(
-                [
-                    "/healthz"
-                    "/status"
-                    "/control/status"
-                ]
-            )
-        )
+    member _.RouteInventoryContainsOnlyScaffoldRoutes() = Assert.That(CacheHost.routeInventory, Is.EquivalentTo([ "/healthz"; "/status" ]))
 
-    /// Verifies the host uses the #600 registration contract interval for automatic rotation rather than a local timer default.
+    /// Verifies failed automatic rotation retries on the approved five-minute cadence rather than a fixed key-rotation timer.
     [<Test>]
-    member _.HostUsesTheFourHourRegistrationRotationInterval() =
-        Assert.That(CacheHost.keyRotationInterval, Is.EqualTo(RegistrationLifetime.KeyRotationInterval.ToTimeSpan()))
+    member _.HostRetriesFailedRotationAfterFiveMinutes() = Assert.That(CacheRefreshSchedule.retryInterval, Is.EqualTo(TimeSpan.FromMinutes 5.0))
 
     /// Verifies registration refresh has an independent one-hour schedule that runs before the two-hour active lifetime expires.
     [<Test>]
     member _.HostUsesTheOneHourRegistrationRefreshInterval() =
         Assert.That(CacheHost.registrationRefreshInterval, Is.EqualTo(RegistrationLifetime.RefreshAfter.ToTimeSpan()))
         Assert.That(CacheHost.registrationRefreshInterval, Is.LessThan(RegistrationLifetime.ActiveLifetime.ToTimeSpan()))
-        Assert.That(CacheHost.registrationRefreshInterval, Is.Not.EqualTo(CacheHost.keyRotationInterval))
 
     /// Verifies the pre-artifact scaffold never represents itself as ready to serve selected cache materialization work.
     [<Test>]
     member _.ScaffoldDoesNotPublishArtifactServingReadiness() = Assert.That(CacheHost.artifactServingAvailable, Is.False)
-
-    /// Verifies the Unix local-control policy admits the service account and root while rejecting unrelated callers.
-    [<Test>]
-    member _.UnixLocalControlAuthorizesOnlyServiceAccountOrRoot() =
-        Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 1001u, Is.True)
-        Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 0u, Is.True)
-        Assert.That(CacheLocalControl.isUnixCallerAuthorized 1001u 1002u, Is.False)
-        Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 1001u, Is.True)
-        Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 0u, Is.True)
-        Assert.That(CacheLocalControl.isUnixResponderAuthorized 1001u 1002u, Is.False)
-
-    /// Verifies the protected Unix local-control stat layouts include Linux and macOS arm64 without accepting an unknown CPU layout.
-    [<Test>]
-    member _.UnixLocalControlSupportsX64AndArm64LayoutsOnly() =
-        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.X64, Is.True)
-        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.Arm64, Is.True)
-        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.X86, Is.False)
-        Assert.That(CacheLocalControl.supportsUnixStatLayout Architecture.Arm, Is.False)
-
-        Assert.That(
-            CacheUnixPathIdentity.tryGetStatOffsets true false Architecture.X64
-            |> Result.toOption,
-            Is.EqualTo(Some(24, 28, false))
-        )
-
-        Assert.That(
-            CacheUnixPathIdentity.tryGetStatOffsets true false Architecture.Arm64
-            |> Result.toOption,
-            Is.EqualTo(Some(16, 24, false))
-        )
-
-        Assert.That(
-            CacheUnixPathIdentity.tryGetStatOffsets false true Architecture.X64
-            |> Result.toOption,
-            Is.EqualTo(Some(4, 16, true))
-        )
-
-        Assert.That(
-            CacheUnixPathIdentity.tryGetStatOffsets false true Architecture.Arm64
-            |> Result.toOption,
-            Is.EqualTo(Some(4, 16, true))
-        )
-
-        Assert.That(
-            CacheUnixPathIdentity.tryGetStatOffsets true false Architecture.X86
-            |> Result.isError,
-            Is.True
-        )
-
-    /// Verifies a Windows local-control status is accepted only for the fresh nonce signed by the recorded Cache public key.
-    [<Test>]
-    member _.WindowsLocalControlRequiresFreshRecordedKeySignature() =
-        use signer = ECDsa.Create(ECCurve.NamedCurves.nistP256)
-        let parameters = signer.ExportParameters(false)
-        let publicKey = CacheIdentityPublicKey.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y)
-        let status = CacheRuntimeStatus.registered (Guid.NewGuid()) "https"
-        let firstNonce = CacheLocalControlAuthentication.createChallenge ()
-        let secondNonce = CacheLocalControlAuthentication.createChallenge ()
-        let response = CacheLocalControlAuthentication.sign signer firstNonce status
-
-        Assert.That((firstNonce = secondNonce), Is.False)
-
-        Assert.That(
-            CacheLocalControlAuthentication.verify firstNonce publicKey response
-            |> Result.isOk,
-            Is.True
-        )
-
-        Assert.That(
-            CacheLocalControlAuthentication.verify secondNonce publicKey response
-            |> Result.isError,
-            Is.True
-        )
-
-        use wrongSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256)
-        let wrongParameters = wrongSigner.ExportParameters(false)
-        let wrongKey = CacheIdentityPublicKey.Create(Base64Url.encode wrongParameters.Q.X, Base64Url.encode wrongParameters.Q.Y)
-
-        Assert.That(
-            CacheLocalControlAuthentication.verify firstNonce wrongKey response
-            |> Result.isError,
-            Is.True
-        )
-
-        let malformed = { response with Signature = "malformed" }
-
-        Assert.That(
-            CacheLocalControlAuthentication.verify firstNonce publicKey malformed
-            |> Result.isError,
-            Is.True
-        )
-
-    /// Verifies a Windows client accepts the replacement signature only after rereading the durable accepted replacement key.
-    [<Test>]
-    member _.WindowsLocalControlRereadsTheAcceptedReplacementKeyAfterRotation() =
-        use replacementSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256)
-        let replacementParameters = replacementSigner.ExportParameters(false)
-
-        let replacementPublicKey = CacheIdentityPublicKey.Create(Base64Url.encode replacementParameters.Q.X, Base64Url.encode replacementParameters.Q.Y)
-
-        let nonce = CacheLocalControlAuthentication.createChallenge ()
-        let response = CacheLocalControlAuthentication.sign replacementSigner nonce (CacheRuntimeStatus.registered (Guid.NewGuid()) "https")
-
-        let request: string =
-            System.Text.Json.JsonSerializer.Serialize<CacheLocalControlChallenge>({ Nonce = Base64Url.encode nonce }, Constants.JsonSerializerOptions)
-
-        let responseBytes: byte array =
-            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes<CacheLocalControlChallengeResponse>(response, Constants.JsonSerializerOptions)
-
-        let pipeBytes = Array.append (Array.zeroCreate<byte> (System.Text.Encoding.UTF8.GetByteCount request)) responseBytes
-        use stream = new MemoryStream(pipeBytes)
-
-        Assert.That(
-            CacheLocalControl.requestWindowsRotationWith (fun () -> Ok replacementPublicKey) nonce (fun () -> stream :> Stream)
-            |> Result.isOk,
-            Is.True
-        )
 
     /// Verifies server-returned rotation deadlines schedule before, at, and after the deadline without resetting the cadence at restart.
     [<Test>]
@@ -348,7 +219,7 @@ type CacheHostTests() =
                     Assert.That(persisted.Endpoint, Is.EqualTo(recovery.Endpoint))
                     Assert.That(persisted.ServerUri, Is.EqualTo(recovery.ServerUri))
                     Assert.That(persisted.RepositoryScopes = repositoryScopes, Is.True)
-                    Assert.That(persisted.IdentityKeyName, Is.EqualTo(recovery.IdentityKeyName))
+                    Assert.That(persisted.ActiveKeyName, Is.EqualTo(recovery.ActiveKeyName))
                     Assert.That(persisted.CacheId, Is.EqualTo(None))
         finally
             if Directory.Exists root then Directory.Delete(root, true)
@@ -405,17 +276,11 @@ type CacheHostTests() =
                 Endpoint = "https://cache.example.test"
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test/grace/"
-                IdentityKeyName = "old-key"
-                IdentityPublicKey = testPublicKey
-                PendingKeyTransition =
+                ActiveKeyName = "old-key"
+                ActivePublicKey = testPublicKey
+                CandidateKeyState =
                     Some
-                        {
-                            OperationId = Guid.NewGuid()
-                            CurrentKeyName = "old-key"
-                            CurrentPublicKey = testPublicKey
-                            ReplacementKeyName = "replacement-key"
-                            ReplacementPublicKey = testPublicKey
-                        }
+                        { ActiveKeyName = "old-key"; ActivePublicKey = testPublicKey; CandidateKeyName = "replacement-key"; CandidatePublicKey = testPublicKey }
             }
 
         try
@@ -428,7 +293,7 @@ type CacheHostTests() =
 
                 match CacheMachineConfiguration.tryRead configurationPath with
                 | Error error -> Assert.Fail(error)
-                | Ok persisted -> Assert.That(persisted.PendingKeyTransition, Is.EqualTo(configuration.PendingKeyTransition))
+                | Ok persisted -> Assert.That(persisted.CandidateKeyState, Is.EqualTo(configuration.CandidateKeyState))
         finally
             if Directory.Exists root then Directory.Delete(root, true)
 
@@ -440,7 +305,6 @@ type CacheHostTests() =
         let effects: CacheProcessEffects =
             {
                 Enroll = fun _ -> failwith "Enrollment must not run for startup."
-                RotateNow = fun () -> failwith "Rotation must not run for startup."
                 Status = fun () -> failwith "Status must not run for startup."
                 Run =
                     fun () ->
@@ -498,30 +362,6 @@ type CacheHostTests() =
         |> Result.isError
         |> Assert.That
 
-    /// Verifies an active host owns protected machine-local rotation and executes exactly one request through the shared runtime boundary.
-    [<Test>]
-    member _.LocalRotationControlUsesTheActiveProcess() =
-        if OperatingSystem.IsWindows() then
-            Assert.Pass("Windows responder proof is covered by the nonce-signature contract test.")
-
-        let mutable rotations = 0
-        let expected = CacheRuntimeStatus.registered (Guid.Parse "11111111-1111-1111-1111-111111111111") "https"
-
-        match
-            CacheLocalControl.startWith (fun () ->
-                rotations <- rotations + 1
-                Ok expected)
-            with
-        | Error error -> Assert.Fail(error)
-        | Ok server ->
-            use server = server
-
-            match CacheLocalControl.requestRotation () with
-            | Error error -> Assert.Fail(error)
-            | Ok actual ->
-                Assert.That(actual, Is.EqualTo(expected))
-                Assert.That(rotations, Is.EqualTo(1))
-
     /// Verifies redacted status retains a stable cache identity and transport state without exposing the Grace Server URI.
     [<Test>]
     member _.StatusRedactsServerConfiguration() =
@@ -531,9 +371,9 @@ type CacheHostTests() =
                 Endpoint = "https://cache.example.test"
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test/private"
-                IdentityKeyName = "Grace.Cache.Identity.test"
-                IdentityPublicKey = testPublicKey
-                PendingKeyTransition = None
+                ActiveKeyName = "Grace.Cache.Identity.test"
+                ActivePublicKey = testPublicKey
+                CandidateKeyState = None
             }
 
         let status = CacheMachineConfiguration.toStatus configuration
@@ -541,11 +381,11 @@ type CacheHostTests() =
         Assert.That(status.CacheId, Is.EqualTo(Some "11111111-1111-1111-1111-111111111111"))
         Assert.That(status.Transport, Is.EqualTo(Some "https"))
         Assert.That(status.ToString(), Does.Not.Contain(configuration.ServerUri))
-        Assert.That(status.ToString(), Does.Not.Contain(configuration.IdentityKeyName))
+        Assert.That(status.ToString(), Does.Not.Contain(configuration.ActiveKeyName))
 
-    /// Verifies a restart before remote acceptance removes the pending replacement and retains the currently accepted key.
+    /// Verifies candidate promotion selects the candidate durably before retiring the former active key.
     [<Test>]
-    member _.PendingKeyBeforeRemoteAcceptanceRollsBackOnRecovery() =
+    member _.CandidatePromotionSelectsBeforeActiveKeyCleanup() =
         let writes = ResizeArray<CacheMachineConfiguration>()
         let deletes = ResizeArray<string>()
 
@@ -555,20 +395,13 @@ type CacheHostTests() =
                 Endpoint = "https://cache.example.test"
                 AllowHttpEndpoint = false
                 ServerUri = "https://server.example.test"
-                IdentityKeyName = "old"
-                IdentityPublicKey = testPublicKey
-                PendingKeyTransition =
-                    Some
-                        {
-                            OperationId = Guid.NewGuid()
-                            CurrentKeyName = "old"
-                            CurrentPublicKey = testPublicKey
-                            ReplacementKeyName = "replacement"
-                            ReplacementPublicKey = testPublicKey
-                        }
+                ActiveKeyName = "old"
+                ActivePublicKey = testPublicKey
+                CandidateKeyState =
+                    Some { ActiveKeyName = "old"; ActivePublicKey = testPublicKey; CandidateKeyName = "replacement"; CandidatePublicKey = testPublicKey }
             }
 
-        let effects: PendingKeyTransitionEffects =
+        let effects: CandidateKeyStateEffects =
             {
                 WriteConfiguration =
                     fun value ->
@@ -578,144 +411,21 @@ type CacheHostTests() =
                     fun value ->
                         deletes.Add value
                         Ok()
-                ProbeAcceptedKey = fun _ keyName -> Ok(keyName = "old")
             }
 
-        match PendingKeyTransition.reconcile effects configuration with
-        | Error error -> Assert.Fail(error)
-        | Ok recovered ->
-            Assert.That(recovered.IdentityKeyName, Is.EqualTo("old"))
-            Assert.That(recovered.PendingKeyTransition, Is.EqualTo(None))
-            Assert.That(deletes, Is.EquivalentTo([ "replacement" ]))
-            Assert.That(writes.Count, Is.EqualTo(1))
-
-    /// Verifies a restart after server acceptance finalizes the local replacement before retiring the old key.
-    [<Test>]
-    member _.PendingAcceptedKeyFinalizesBeforeOldKeyCleanup() =
-        let writes = ResizeArray<CacheMachineConfiguration>()
-        let deletes = ResizeArray<string>()
-
-        let configuration: CacheMachineConfiguration =
-            {
-                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
-                Endpoint = "https://cache.example.test"
-                AllowHttpEndpoint = false
-                ServerUri = "https://server.example.test"
-                IdentityKeyName = "old"
-                IdentityPublicKey = testPublicKey
-                PendingKeyTransition =
-                    Some
-                        {
-                            OperationId = Guid.NewGuid()
-                            CurrentKeyName = "old"
-                            CurrentPublicKey = testPublicKey
-                            ReplacementKeyName = "replacement"
-                            ReplacementPublicKey = testPublicKey
-                        }
-            }
-
-        let effects: PendingKeyTransitionEffects =
-            {
-                WriteConfiguration =
-                    fun value ->
-                        writes.Add value
-                        Ok()
-                DeleteKey =
-                    fun value ->
-                        deletes.Add value
-                        Ok()
-                ProbeAcceptedKey = fun _ keyName -> Ok(keyName = "replacement")
-            }
-
-        match PendingKeyTransition.reconcile effects configuration with
-        | Error error -> Assert.Fail(error)
-        | Ok recovered ->
-            Assert.That(recovered.IdentityKeyName, Is.EqualTo("replacement"))
-            Assert.That(recovered.PendingKeyTransition, Is.EqualTo(None))
-            Assert.That(deletes, Is.EquivalentTo([ "old" ]))
-            Assert.That(writes.Count, Is.EqualTo(2))
-            Assert.That(writes[0].IdentityKeyName, Is.EqualTo("replacement"))
-            Assert.That(writes[0].IdentityPublicKey, Is.EqualTo(testPublicKey))
-            Assert.That(writes[0].PendingKeyTransition, Is.Not.EqualTo(None))
-
-    /// Verifies a cleanup failure retains the durable pending transition and blocks a normal-work conclusion.
-    [<Test>]
-    member _.PendingAcceptedKeyCleanupFailureStaysUnresolved() =
-        let writes = ResizeArray<CacheMachineConfiguration>()
-
-        let configuration: CacheMachineConfiguration =
-            {
-                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
-                Endpoint = "https://cache.example.test"
-                AllowHttpEndpoint = false
-                ServerUri = "https://server.example.test"
-                IdentityKeyName = "replacement"
-                IdentityPublicKey = testPublicKey
-                PendingKeyTransition =
-                    Some
-                        {
-                            OperationId = Guid.NewGuid()
-                            CurrentKeyName = "old"
-                            CurrentPublicKey = testPublicKey
-                            ReplacementKeyName = "replacement"
-                            ReplacementPublicKey = testPublicKey
-                        }
-            }
-
-        let effects: PendingKeyTransitionEffects =
-            {
-                WriteConfiguration =
-                    fun value ->
-                        writes.Add value
-                        Ok()
-                DeleteKey = fun _ -> Error "cleanup failed"
-                ProbeAcceptedKey = fun _ keyName -> Ok(keyName = "replacement")
-            }
-
-        PendingKeyTransition.reconcile effects configuration
-        |> Result.isError
-        |> Assert.That
-
-        Assert.That(writes.Count, Is.EqualTo(1))
-        Assert.That(writes[0].PendingKeyTransition, Is.Not.EqualTo(None))
-
-    /// Verifies a completed transition has no further recovery probes, cleanup, or writes on restart.
-    [<Test>]
-    member _.CompletedKeyTransitionDoesNotRunRecoveryAgain() =
-        let mutable effectsCalled = false
-
-        let configuration: CacheMachineConfiguration =
-            {
-                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
-                Endpoint = "https://cache.example.test"
-                AllowHttpEndpoint = false
-                ServerUri = "https://server.example.test"
-                IdentityKeyName = "replacement"
-                IdentityPublicKey = testPublicKey
-                PendingKeyTransition = None
-            }
-
-        let effects: PendingKeyTransitionEffects =
-            {
-                WriteConfiguration =
-                    fun _ ->
-                        effectsCalled <- true
-                        Ok()
-                DeleteKey =
-                    fun _ ->
-                        effectsCalled <- true
-                        Ok()
-                ProbeAcceptedKey =
-                    fun _ _ ->
-                        effectsCalled <- true
-                        Ok true
-            }
-
-        match PendingKeyTransition.reconcile effects configuration with
-        | Error error -> Assert.Fail(error)
-        | Ok recovered -> Assert.That(recovered, Is.EqualTo(configuration))
-
-        Assert.That(effectsCalled, Is.False)
+        match configuration.CandidateKeyState with
+        | None -> Assert.Fail("The test requires a persisted candidate.")
+        | Some candidate ->
+            match CandidateKeyState.acceptReplacement effects configuration candidate with
+            | Error error -> Assert.Fail(error)
+            | Ok promoted ->
+                Assert.That(promoted.ActiveKeyName, Is.EqualTo("replacement"))
+                Assert.That(promoted.CandidateKeyState, Is.EqualTo(None))
+                Assert.That(deletes, Is.EquivalentTo([ "old" ]))
+                Assert.That(writes.Count, Is.EqualTo(2))
+                Assert.That(writes[0].ActiveKeyName, Is.EqualTo("replacement"))
+                Assert.That(writes[0].ActivePublicKey, Is.EqualTo(testPublicKey))
+                Assert.That(writes[0].CandidateKeyState, Is.Not.EqualTo(None))
 
     /// Verifies simultaneous cache starts have exactly one operating-system guard winner and the loser can cause no later effects.
     [<Test>]

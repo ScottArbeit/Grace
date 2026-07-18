@@ -62,10 +62,10 @@ class TestCacheApi(unittest.TestCase):
         """
         pass
 
-    def test_rotate_cache_key(self) -> None:
-        """Test case for rotate_cache_key
+    def test_submit_cache_key_candidate(self) -> None:
+        """Test case for submit_cache_key_candidate
 
-        Rotate a Cache identity key after proof by the currently accepted key.
+        Submit or reuse one Cache identity candidate after active-key proof.
         """
         pass
 

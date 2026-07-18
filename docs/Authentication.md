@@ -776,17 +776,18 @@ Cache endpoints use HTTPS by default. An administrator may explicitly approve on
 when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endpoint. Grace persists that approval with
 the exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
 transport choice. `grace cache status` emits only redacted lifecycle, `CacheId`, and transport information. `grace cache
-rotate-now` requests immediate current-key-proven rotation; the running host separately requests the same rotation every
-four hours. The host independently refreshes the live registration every hour, before its two-hour active lifetime
-expires. Before replacing a key, the host durably records the current and replacement opaque key references; after an
-interrupted rotation, it reconciles that narrow pending transition through the existing registration proof before normal
-cache work resumes. Neither command prints or exports private key material, tokens, grants, repository assignments,
-server URLs, or secret configuration. Server-issued cache plans and their signed artifact grants bind the exact endpoint,
-so clients reject scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI
-behavior is unchanged.
+run` performs mandatory active/candidate identity-key synchronization at startup. The running host schedules automatic
+rotation from `GRACE_CACHE_KEY_ROTATION_INTERVAL_MINUTES`, which defaults to 240 and accepts 15 through 10080 minutes.
+It retains one candidate key across retries and promotes it only after candidate-key proof reaches Grace Server; the old
+local key is deleted only after durable local selection of the promoted candidate. The host independently refreshes the
+live registration every hour, before its two-hour active lifetime expires. Neither command prints or exports private key
+material, tokens, grants, repository assignments, server URLs, or secret configuration. Server-issued cache plans and
+their signed artifact grants bind the exact endpoint, so clients reject scheme, host, port, or path substitution before
+presenting a grant or holder proof. Direct artifact URI behavior is unchanged.
 
-Grace Cache enrollment begins as `Unhealthy` and remains non-selectable until protected local control, Kestrel readiness,
-and the artifact-serving contract are all available. The current scaffold therefore does not publish a healthy cache. Before
+Grace Cache enrollment begins as `Unhealthy` and remains non-selectable until mandatory startup synchronization, Kestrel
+readiness, and the artifact-serving contract are all available. The current scaffold therefore does not publish a healthy
+cache. Before
 the enrollment request, Cache writes one narrow machine-local recovery record with the endpoint, explicit repository inputs,
 opaque signing-key reference, and recovery status. A valid server `CacheId` completes that record before local configuration
 is finalized. If finalization fails, a later start finalizes the known registration before normal work. If a request
@@ -796,12 +797,9 @@ result, and requires administrator inspection or revocation before another expli
 looks up,
 refreshes, rotates, or compensates an unknown registration automatically.
 
-When the cache is running, `grace cache rotate-now` sends a request to the active process over protected machine-local
-IPC, never through a LAN-reachable control route. Windows admits the cache account and built-in local administrators;
-Unix uses a local-domain socket that validates kernel peer credentials for the cache account or root. The active process
-validates the request and
-serializes rotation with startup recovery and registration refresh. Grace Cache fails closed when it cannot establish the
-platform restriction and does not persist an operator list or caller identity.
+Stopping and restarting the cache is the only operator-requested immediate rotation. There is no live local-control
+channel. Startup, automatic rotation, registration refresh, and health publication share the serialized lifecycle gate;
+a running synchronization failure marks the registration unhealthy and retries the same candidate after five minutes.
 
 Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
 negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this
@@ -809,10 +807,11 @@ foundation. Refresh reports the enrolled endpoint as an exact immutable match an
 software/protocol version, Prefetch support, and liveness timestamps; it cannot change the endpoint, `AllowHttpEndpoint`,
 a Cache's display name, repository assignments, boundary, public key, or administrative state.
 
-Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. A current-key-proven
-`/cache/rotate-key` request immediately accepts the new canonical P-256 public key, retires the old key, and resets the
-four-hour rotation schedule. A lost key requires revocation and re-enrollment. Cache enrollment does not require cache
-environment variables, service principal IDs, or private-key configuration in Grace Server.
+Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. The proof-only
+`/cache/candidate` route accepts or reuses one candidate public key after active-key proof; a refresh signed by that
+candidate atomically promotes it and resets the configured rotation schedule. A lost key requires revocation and
+re-enrollment. Cache enrollment does not require cache environment variables, service principal IDs, or private-key
+configuration in Grace Server.
 
 ---
 

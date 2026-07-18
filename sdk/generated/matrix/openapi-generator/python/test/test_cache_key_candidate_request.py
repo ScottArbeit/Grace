@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest
+from grace_generated_openapi_probe.models.cache_key_candidate_request import CacheKeyCandidateRequest
 
-class TestCacheKeyRotationRequest(unittest.TestCase):
-    """CacheKeyRotationRequest unit test stubs"""
+class TestCacheKeyCandidateRequest(unittest.TestCase):
+    """CacheKeyCandidateRequest unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,24 +26,26 @@ class TestCacheKeyRotationRequest(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> CacheKeyRotationRequest:
-        """Test CacheKeyRotationRequest
+    def make_instance(self, include_optional) -> CacheKeyCandidateRequest:
+        """Test CacheKeyCandidateRequest
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `CacheKeyRotationRequest`
+        # uncomment below to create an instance of `CacheKeyCandidateRequest`
         """
-        model = CacheKeyRotationRequest()
+        model = CacheKeyCandidateRequest()
         if include_optional:
-            return CacheKeyRotationRequest(
-                var_class = 'CacheKeyRotationRequest',
+            return CacheKeyCandidateRequest(
+                var_class = 'CacheKeyCandidateRequest',
                 cache_id = '',
-                new_public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
+                candidate_public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
                     class = 'CacheIdentityPublicKey', 
                     algorithm = 'ES256', 
                     curve = 'P-256', 
                     public_key_x = '', 
                     public_key_y = '', ),
+                rotation_interval_minutes = 15,
+                is_startup = True,
                 proof = grace_generated_openapi_probe.models.signed_cache_request_proof.SignedCacheRequestProof(
                     class = 'SignedCacheRequestProof', 
                     payload = grace_generated_openapi_probe.models.cache_request_proof_payload.CacheRequestProofPayload(
@@ -55,15 +57,17 @@ class TestCacheKeyRotationRequest(unittest.TestCase):
                     signature = '', )
             )
         else:
-            return CacheKeyRotationRequest(
-                var_class = 'CacheKeyRotationRequest',
+            return CacheKeyCandidateRequest(
+                var_class = 'CacheKeyCandidateRequest',
                 cache_id = '',
-                new_public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
+                candidate_public_key = grace_generated_openapi_probe.models.cache_identity_public_key.CacheIdentityPublicKey(
                     class = 'CacheIdentityPublicKey', 
                     algorithm = 'ES256', 
                     curve = 'P-256', 
                     public_key_x = '', 
                     public_key_y = '', ),
+                rotation_interval_minutes = 15,
+                is_startup = True,
                 proof = grace_generated_openapi_probe.models.signed_cache_request_proof.SignedCacheRequestProof(
                     class = 'SignedCacheRequestProof', 
                     payload = grace_generated_openapi_probe.models.cache_request_proof_payload.CacheRequestProofPayload(
@@ -76,8 +80,8 @@ class TestCacheKeyRotationRequest(unittest.TestCase):
         )
         """
 
-    def testCacheKeyRotationRequest(self):
-        """Test CacheKeyRotationRequest"""
+    def testCacheKeyCandidateRequest(self):
+        """Test CacheKeyCandidateRequest"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

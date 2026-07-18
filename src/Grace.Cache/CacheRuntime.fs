@@ -3,11 +3,9 @@ namespace Grace.Cache
 open System
 open System.Collections.Generic
 open System.IO
-open System.IO.Pipes
 open System.Net.Http
 open System.Net.Http.Headers
 open System.Net.Http.Json
-open System.Net.Sockets
 open System.Runtime.InteropServices
 open System.Security.Cryptography
 open System.Security.Cryptography.X509Certificates
@@ -22,14 +20,13 @@ open Grace.Shared.Utilities
 open Grace.Types.CacheRegistration
 open Grace.Types.Common
 
-/// Records the durable key references and public verification material involved in one recoverable Cache key rotation.
-type PendingKeyTransition =
+/// Records the durable active and candidate key references involved in one recoverable Cache identity promotion.
+type CandidateKeyTransition =
     {
-        OperationId: Guid
-        CurrentKeyName: string
-        CurrentPublicKey: CacheIdentityPublicKey
-        ReplacementKeyName: string
-        ReplacementPublicKey: CacheIdentityPublicKey
+        ActiveKeyName: string
+        ActivePublicKey: CacheIdentityPublicKey
+        CandidateKeyName: string
+        CandidatePublicKey: CacheIdentityPublicKey
     }
 
 /// Holds the machine-scoped operational facts that a registered Grace Cache may retain locally.
@@ -39,9 +36,9 @@ type CacheMachineConfiguration =
         Endpoint: string
         AllowHttpEndpoint: bool
         ServerUri: string
-        IdentityKeyName: string
-        IdentityPublicKey: CacheIdentityPublicKey
-        PendingKeyTransition: PendingKeyTransition option
+        ActiveKeyName: string
+        ActivePublicKey: CacheIdentityPublicKey
+        CandidateKeyState: CandidateKeyTransition option
     }
 
 /// Records the only durable local evidence permitted while a cache enrollment reaches a confirmed or ambiguous outcome.
@@ -50,8 +47,8 @@ type CacheEnrollmentRecovery =
         Endpoint: string
         ServerUri: string
         RepositoryScopes: (Guid * Guid) array
-        IdentityKeyName: string
-        IdentityPublicKey: CacheIdentityPublicKey
+        ActiveKeyName: string
+        ActivePublicKey: CacheIdentityPublicKey
         RecoveryStatus: string
         CacheId: Guid option
     }
@@ -67,14 +64,6 @@ type AcceptedEnrollmentFinalizationEffects<'configuration> =
 /// Represents the safe operational facts that may be returned by the local cache control surface.
 type CacheRuntimeStatus = { Lifecycle: string; CacheId: string option; Transport: string option }
 
-/// Carries the one-time nonce sent by a Windows local-control client to prove the responder holds the active Cache key.
-[<CLIMutable>]
-type CacheLocalControlChallenge = { Nonce: string }
-
-/// Carries a nonce-bound Cache status response whose signature is verified from protected machine configuration.
-[<CLIMutable>]
-type CacheLocalControlChallengeResponse = { Nonce: string; Signature: string; Status: CacheRuntimeStatus }
-
 /// Provides safe runtime-result values without carrying cache key, token, repository, or server configuration data.
 module CacheRuntimeStatus =
 
@@ -84,74 +73,27 @@ module CacheRuntimeStatus =
     /// Builds the redacted status returned while ambiguous enrollment evidence blocks every normal cache operation.
     let enrollmentRecoveryRequired = { Lifecycle = "enrollment-recovery-required"; CacheId = None; Transport = None }
 
-/// Selects the supported Unix lstat field layout without treating one CPU ABI as interchangeable with another.
-module CacheUnixPathIdentity =
-
-    /// Returns mode and owner field offsets for the explicit Linux and macOS x64 and arm64 lstat layouts.
-    let tryGetStatOffsets isLinux isMacOS architecture =
-        match isLinux, isMacOS, architecture with
-        | true, false, Architecture.X64 -> Ok(24, 28, false)
-        | true, false, Architecture.Arm64 -> Ok(16, 24, false)
-        | false, true, Architecture.X64
-        | false, true, Architecture.Arm64 -> Ok(4, 16, true)
-        | _ -> Error()
-
-/// Creates and verifies Windows local-control nonce challenges without exposing cache private-key material.
-module CacheLocalControlAuthentication =
+/// Parses the cache identity rotation interval without accepting silently clamped or malformed deployment configuration.
+module CacheRotationInterval =
 
     [<Literal>]
-    let private nonceLength = 32
+    let EnvironmentVariable = "GRACE_CACHE_KEY_ROTATION_INTERVAL_MINUTES"
 
-    /// Generates the exact fresh random challenge size accepted by the protected Windows pipe protocol.
-    let createChallenge () = RandomNumberGenerator.GetBytes nonceLength
-
-    /// Decodes a nonce only when it is the fixed random challenge size required to prevent stale or malformed responses.
-    let tryDecodeNonce value =
-        match Base64Url.tryDecode value with
-        | Some nonce when nonce.Length = nonceLength -> Ok nonce
-        | _ -> Error "Grace Cache rotation request was not accepted."
-
-    /// Signs a fresh local-control challenge together with the already-serialized status response.
-    let sign (key: ECDsa) (nonce: byte array) (status: CacheRuntimeStatus) =
-        let signature =
-            key.SignData(nonce, HashAlgorithmName.SHA256)
-            |> Base64Url.encode
-
-        { Nonce = Base64Url.encode nonce; Signature = signature; Status = status }
-
-    /// Verifies that a response is fresh for this request and was signed by the public Cache key recorded in protected machine configuration.
-    let verify (expectedNonce: byte array) publicKey (response: CacheLocalControlChallengeResponse) =
-        try
-            if
-                isNull (box response)
-                || isNull (box response.Status)
-                || String.IsNullOrWhiteSpace response.Status.Lifecycle
-                || not (CacheRegistrationProof.isValidPublicKey publicKey)
-            then
-                Error "Grace Cache rotation request was not accepted."
-            else
-                match tryDecodeNonce response.Nonce,
-                      Base64Url.tryDecode response.Signature,
-                      Base64Url.tryDecode publicKey.PublicKeyX,
-                      Base64Url.tryDecode publicKey.PublicKeyY
-                    with
-                | Ok responseNonce, Some signature, Some x, Some y when CryptographicOperations.FixedTimeEquals(expectedNonce, responseNonce) ->
-                    let mutable parameters = ECParameters()
-                    parameters.Curve <- ECCurve.NamedCurves.nistP256
-                    let mutable point = ECPoint()
-                    point.X <- x
-                    point.Y <- y
-                    parameters.Q <- point
-                    use verifier = ECDsa.Create(parameters)
-
-                    if verifier.VerifyData(expectedNonce, signature, HashAlgorithmName.SHA256) then
-                        Ok response.Status
-                    else
-                        Error "Grace Cache rotation request was not accepted."
-                | _ -> Error "Grace Cache rotation request was not accepted."
-        with
-        | :? CryptographicException
-        | :? ArgumentException -> Error "Grace Cache rotation request was not accepted."
+    /// Reads the configured inclusive 15 through 10080 minute interval, defaulting only when the setting is absent.
+    let fromEnvironment readEnvironment =
+        match readEnvironment EnvironmentVariable with
+        | null
+        | "" -> Ok RegistrationLifetime.DefaultRotationIntervalMinutes
+        | value ->
+            match Int32.TryParse value with
+            | true, minutes when
+                minutes
+                >= RegistrationLifetime.MinimumRotationIntervalMinutes
+                && minutes
+                   <= RegistrationLifetime.MaximumRotationIntervalMinutes
+                ->
+                Ok minutes
+            | _ -> Error "Grace Cache key rotation interval is invalid."
 
 /// Holds the operating-system mutex lease that makes one active cache process machine-wide.
 type MachineInstanceLease internal (mutex: Mutex) =
@@ -199,7 +141,6 @@ type CacheEnrollmentInput =
 /// Models a cache process command after all syntactic input is validated before runtime side effects begin.
 type CacheProcessVerb =
     | Enroll of CacheEnrollmentInput
-    | RotateNow
     | Status
     | Run
 
@@ -207,7 +148,6 @@ type CacheProcessVerb =
 type CacheProcessEffects =
     {
         Enroll: CacheEnrollmentInput -> Result<CacheRuntimeStatus, string>
-        RotateNow: unit -> Result<CacheRuntimeStatus, string>
         Status: unit -> Result<CacheRuntimeStatus, string>
         Run: unit -> Result<CacheRuntimeStatus, string>
     }
@@ -391,24 +331,20 @@ module CacheProcessCommand =
     /// Parses exactly one supported cache process verb so control markers cannot be combined ambiguously.
     let parse (arguments: string array) =
         let markerCount =
-            [
-                "--enroll"
-                "--rotate-now"
-                "--status"
-                "--run"
-            ]
+            [ "--enroll"; "--status"; "--run" ]
             |> List.filter (fun marker -> arguments |> Array.contains marker)
             |> List.length
 
         if markerCount <> 1 then
-            Error "Specify exactly one of --run, --enroll, --rotate-now, or --status."
+            Error "Specify exactly one of --run, --enroll, or --status."
         elif arguments |> Array.contains "--enroll" then
             parseEnrollment arguments |> Result.map Enroll
         else
             let oneShotMarker =
-                if arguments |> Array.contains "--rotate-now" then "--rotate-now", RotateNow
-                elif arguments |> Array.contains "--status" then "--status", Status
-                else "--run", Run
+                if arguments |> Array.contains "--status" then
+                    "--status", Status
+                else
+                    "--run", Run
 
             if arguments = [| fst oneShotMarker |] then
                 Ok(snd oneShotMarker)
@@ -446,11 +382,6 @@ module CacheProcessCommand =
         match parse arguments with
         | Error _ -> failure "command"
         | Ok (Enroll input) -> guarded "enrollment" (fun () -> effects.Enroll input)
-        | Ok RotateNow ->
-            // Rotation is owned by the active host through its protected local IPC channel, not a competing singleton claimant.
-            match effects.RotateNow() with
-            | Ok status -> success status
-            | Error _ -> failure "rotation"
         | Ok Status ->
             match effects.Status() with
             | Ok status -> success status
@@ -459,6 +390,18 @@ module CacheProcessCommand =
             match effects.Run() with
             | Ok status -> success status
             | Error _ -> failure "startup"
+
+/// Selects the supported Unix lstat layouts used to validate deployment-provisioned cache configuration paths.
+module CacheUnixPathIdentity =
+
+    /// Returns mode and owner offsets for explicit Linux and macOS x64 and arm64 layouts.
+    let tryGetStatOffsets isLinux isMacOS architecture =
+        match isLinux, isMacOS, architecture with
+        | true, false, Architecture.X64 -> Ok(24, 28, false)
+        | true, false, Architecture.Arm64 -> Ok(16, 24, false)
+        | false, true, Architecture.X64
+        | false, true, Architecture.Arm64 -> Ok(4, 16, true)
+        | _ -> Error()
 
 /// Provides machine-scoped Grace Cache configuration without consulting repository configuration or CLI local state.
 module CacheMachineConfiguration =
@@ -606,29 +549,30 @@ module CacheMachineConfiguration =
             Error "A registered CacheId is required."
         elif String.IsNullOrWhiteSpace configuration.ServerUri then
             Error "Grace Server URI is required."
-        elif String.IsNullOrWhiteSpace configuration.IdentityKeyName then
+        elif String.IsNullOrWhiteSpace configuration.ActiveKeyName then
             Error "Grace Cache identity key reference is required."
         elif
-            isNull (box configuration.IdentityPublicKey)
-            || not (CacheRegistrationProof.isValidPublicKey configuration.IdentityPublicKey)
+            isNull (box configuration.ActivePublicKey)
+            || not (CacheRegistrationProof.isValidPublicKey configuration.ActivePublicKey)
         then
             Error "Grace Cache identity public verification key is invalid."
-        elif configuration.PendingKeyTransition
+        elif configuration.CandidateKeyState
              |> Option.exists (fun pending ->
-                 pending.OperationId = Guid.Empty
-                 || String.IsNullOrWhiteSpace pending.CurrentKeyName
-                 || String.IsNullOrWhiteSpace pending.ReplacementKeyName
-                 || pending.CurrentKeyName = pending.ReplacementKeyName
-                 || isNull (box pending.CurrentPublicKey)
-                 || not (CacheRegistrationProof.isValidPublicKey pending.CurrentPublicKey)
-                 || isNull (box pending.ReplacementPublicKey)
-                 || not (CacheRegistrationProof.isValidPublicKey pending.ReplacementPublicKey)) then
+                 String.IsNullOrWhiteSpace pending.ActiveKeyName
+                 || String.IsNullOrWhiteSpace pending.CandidateKeyName
+                 || pending.ActiveKeyName = pending.CandidateKeyName
+                 || isNull (box pending.ActivePublicKey)
+                 || not (CacheRegistrationProof.isValidPublicKey pending.ActivePublicKey)
+                 || isNull (box pending.CandidatePublicKey)
+                 || not (CacheRegistrationProof.isValidPublicKey pending.CandidatePublicKey)) then
             Error "Grace Cache pending key transition is invalid."
         else
             match validateEndpoint configuration.Endpoint configuration.AllowHttpEndpoint, Uri.TryCreate(configuration.ServerUri, UriKind.Absolute) with
             | Error error, _ -> Error error
             | Ok _, (true, serverUri) when
                 String.IsNullOrEmpty serverUri.UserInfo
+                && String.IsNullOrEmpty serverUri.Query
+                && String.IsNullOrEmpty serverUri.Fragment
                 && (serverUri.Scheme = Uri.UriSchemeHttps
                     || serverUri.Scheme = Uri.UriSchemeHttp)
                 ->
@@ -720,8 +664,8 @@ module CacheEnrollmentRecovery =
             Endpoint = endpoint
             ServerUri = serverUri
             RepositoryScopes = repositoryScopes
-            IdentityKeyName = identityKeyName
-            IdentityPublicKey = identityPublicKey
+            ActiveKeyName = identityKeyName
+            ActivePublicKey = identityPublicKey
             RecoveryStatus = preparedStatus
             CacheId = None
         }
@@ -781,9 +725,9 @@ module CacheEnrollmentRecovery =
                    || String.IsNullOrWhiteSpace recovery.Endpoint
                    || String.IsNullOrWhiteSpace recovery.ServerUri
                    || isNull recovery.RepositoryScopes
-                   || String.IsNullOrWhiteSpace recovery.IdentityKeyName
-                   || isNull (box recovery.IdentityPublicKey)
-                   || not (CacheRegistrationProof.isValidPublicKey recovery.IdentityPublicKey)
+                   || String.IsNullOrWhiteSpace recovery.ActiveKeyName
+                   || isNull (box recovery.ActivePublicKey)
+                   || not (CacheRegistrationProof.isValidPublicKey recovery.ActivePublicKey)
                    || String.IsNullOrWhiteSpace recovery.RecoveryStatus then
                     Error "Grace Cache enrollment recovery is invalid."
                 elif
@@ -859,75 +803,42 @@ module CacheServerRoute =
         builder.Uri
 
 /// Supplies the durable effects required to finish or roll back one pending service-key transition.
-type PendingKeyTransitionEffects =
-    {
-        WriteConfiguration: CacheMachineConfiguration -> Result<unit, string>
-        DeleteKey: string -> Result<unit, string>
-        ProbeAcceptedKey: CacheMachineConfiguration -> string -> Result<bool, string>
-    }
+type CandidateKeyStateEffects = { WriteConfiguration: CacheMachineConfiguration -> Result<unit, string>; DeleteKey: string -> Result<unit, string> }
 
 /// Coordinates the small durable state machine that prevents Cache and Grace Server key references from diverging.
-module PendingKeyTransition =
+module CandidateKeyState =
 
-    /// Persists the current and replacement opaque references before a rotation request can reach Grace Server.
-    let beginTransition effects (configuration: CacheMachineConfiguration) replacementKeyName replacementPublicKey =
-        let pending =
+    /// Persists the active and candidate opaque references before candidate submission can reach Grace Server.
+    let beginTransition effects (configuration: CacheMachineConfiguration) candidateKeyName candidatePublicKey =
+        let pending: CandidateKeyTransition =
             {
-                OperationId = Guid.NewGuid()
-                CurrentKeyName = configuration.IdentityKeyName
-                CurrentPublicKey = configuration.IdentityPublicKey
-                ReplacementKeyName = replacementKeyName
-                ReplacementPublicKey = replacementPublicKey
+                ActiveKeyName = configuration.ActiveKeyName
+                ActivePublicKey = configuration.ActivePublicKey
+                CandidateKeyName = candidateKeyName
+                CandidatePublicKey = candidatePublicKey
             }
 
-        let pendingConfiguration = { configuration with PendingKeyTransition = Some pending }
+        let pendingConfiguration = { configuration with CandidateKeyState = Some pending }
 
         effects.WriteConfiguration pendingConfiguration
         |> Result.map (fun () -> pendingConfiguration)
 
-    /// Clears a rejected replacement only after removing its certificate while retaining the established current key.
-    let rejectReplacement effects (configuration: CacheMachineConfiguration) (pending: PendingKeyTransition) =
-        match effects.DeleteKey pending.ReplacementKeyName with
-        | Error error -> Error error
-        | Ok () ->
-            let recovered = { configuration with IdentityKeyName = pending.CurrentKeyName; PendingKeyTransition = None }
-
-            effects.WriteConfiguration recovered
-            |> Result.map (fun () -> recovered)
-
-    /// Durably switches to the server-accepted key before retiring the prior key and finally clearing the transition.
-    let acceptReplacement effects (configuration: CacheMachineConfiguration) (pending: PendingKeyTransition) =
+    /// Durably selects the promoted candidate before retiring the former active key and clearing candidate state.
+    let acceptReplacement effects (configuration: CacheMachineConfiguration) (pending: CandidateKeyTransition) =
         let switched =
-            { configuration with
-                IdentityKeyName = pending.ReplacementKeyName
-                IdentityPublicKey = pending.ReplacementPublicKey
-                PendingKeyTransition = Some pending
-            }
+            { configuration with ActiveKeyName = pending.CandidateKeyName; ActivePublicKey = pending.CandidatePublicKey; CandidateKeyState = Some pending }
 
         match effects.WriteConfiguration switched with
         | Error error -> Error error
         | Ok () ->
-            match effects.DeleteKey pending.CurrentKeyName with
+            match effects.DeleteKey pending.ActiveKeyName with
             | Error error -> Error error
             | Ok () ->
-                let finalized = { switched with PendingKeyTransition = None }
+                let finalized = { switched with CandidateKeyState = None }
 
                 effects.WriteConfiguration finalized
                 |> Result.map (fun () -> finalized)
 
-    /// Resolves a persisted incomplete transition using the key currently accepted by Grace Server before normal cache work resumes.
-    let reconcile effects (configuration: CacheMachineConfiguration) =
-        match configuration.PendingKeyTransition with
-        | None -> Ok configuration
-        | Some pending ->
-            match effects.ProbeAcceptedKey configuration pending.CurrentKeyName with
-            | Error error -> Error error
-            | Ok true -> rejectReplacement effects configuration pending
-            | Ok false ->
-                match effects.ProbeAcceptedKey configuration pending.ReplacementKeyName with
-                | Error error -> Error error
-                | Ok true -> acceptReplacement effects configuration pending
-                | Ok false -> Error "Grace Cache key transition could not be reconciled."
 
 /// Runs transient cache-control attempts with a fixed upper bound and no durable retry state.
 module CacheRetry =
@@ -1185,20 +1096,6 @@ module CacheRuntimeControl =
         else
             Ok(CacheIdentityPublicKey.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y))
 
-    /// Signs a Windows local-control nonce with the currently durable service key after a rotation has finalized its public verification material.
-    let signLocalControlChallenge nonce status =
-        let configurationPath = CacheMachineConfiguration.configurationPath ()
-
-        match CacheMachineConfiguration.tryRead configurationPath, CacheLocalControlAuthentication.tryDecodeNonce (Base64Url.encode nonce) with
-        | Error error, _ -> Error error
-        | _, Error error -> Error error
-        | Ok configuration, Ok _ ->
-            match openKey configuration.IdentityKeyName with
-            | Error error -> Error error
-            | Ok key ->
-                use key = key
-                Ok(CacheLocalControlAuthentication.sign key.Key nonce status)
-
     /// Reads the current server URI only from machine process configuration, never a repository-local Grace configuration file.
     let private serverUri () =
         let value = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.GraceServerUri
@@ -1206,6 +1103,8 @@ module CacheRuntimeControl =
         match Uri.TryCreate(value, UriKind.Absolute) with
         | true, uri when
             String.IsNullOrEmpty uri.UserInfo
+            && String.IsNullOrEmpty uri.Query
+            && String.IsNullOrEmpty uri.Fragment
             && (uri.Scheme = Uri.UriSchemeHttp
                 || uri.Scheme = Uri.UriSchemeHttps)
             ->
@@ -1316,9 +1215,9 @@ module CacheRuntimeControl =
         | RejectedByServer -> EnrollmentRejected
         | MayHaveReachedServer -> EnrollmentUnknown
 
-    /// Sends one rotation request and retries only a preparation failure proven to occur before HTTP dispatch.
-    let private postRotation (serverUri: Uri) (request: CacheKeyRotationRequest) =
-        let requestUri = CacheServerRoute.append serverUri "cache/rotate-key"
+    /// Sends one active-key candidate submission and treats an unreadable response as requiring reuse of the same local candidate.
+    let private postCandidate (serverUri: Uri) (request: CacheKeyCandidateRequest) =
+        let requestUri = CacheServerRoute.append serverUri "cache/candidate"
 
         let send () =
             let prepared =
@@ -1367,37 +1266,6 @@ module CacheRuntimeControl =
         | RotationPreSendFailure -> RotationNotSent
         | RotationRejectedByServer -> RotationRejected
         | RotationMayHaveReachedServer -> RotationUnknown
-
-    /// Acknowledges one locally finalized operation with the selected key so Grace Server can retire only that exact durable result.
-    let private acknowledgeRotationOutcome (configuration: CacheMachineConfiguration) operationId =
-        match openKey configuration.IdentityKeyName with
-        | Error _ -> Error "Grace Cache key rotation completion was not accepted."
-        | Ok key ->
-            use key = key
-            let now = NodaTime.SystemClock.Instance.GetCurrentInstant()
-
-            let unsignedRequest: CacheKeyRotationCompletionRequest =
-                {
-                    Class = nameof CacheKeyRotationCompletionRequest
-                    CacheId = configuration.CacheId
-                    OperationId = operationId
-                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
-                }
-
-            let request =
-                { unsignedRequest with
-                    Proof =
-                        CacheRegistrationProof.createProof
-                            key.Key
-                            configuration.CacheId
-                            CacheRegistrationProof.RotationCompletionOperation
-                            (CacheRegistrationProof.rotationCompletionRequestDigest unsignedRequest)
-                            now
-                }
-
-            postWithRetry (Uri(configuration.ServerUri)) "cache/rotate-key/complete" String.Empty (fun () -> request)
-            |> Result.mapError (fun _ -> "Grace Cache key rotation completion was not accepted.")
-            |> Result.map ignore
 
     /// Rejects a new enrollment when existing configuration or recovery evidence must be resolved first.
     let private prepareEnrollmentTarget path =
@@ -1465,26 +1333,6 @@ module CacheRuntimeControl =
             use key = key
             postWithRetry (Uri(configuration.ServerUri)) "cache/refresh" String.Empty (fun () -> refreshRequest configuration key.Key health)
 
-    /// Determines whether Grace Server currently accepts one candidate key without treating an ambiguous transport failure as rejection.
-    let private probeAcceptedKey configuration keyReference =
-        match refreshWithKey configuration keyReference CacheHealthStatus.Unhealthy with
-        | Error Retryable
-        | Error Ambiguous -> Error "Grace Cache key transition could not be reconciled because Grace Server did not complete the proof request."
-        | Error Rejected -> Ok false
-        | Ok result ->
-            match result.Status with
-            | CacheRegistrationRefreshStatus.Refreshed
-            | CacheRegistrationRefreshStatus.RefreshNotDue
-            | CacheRegistrationRefreshStatus.Expired -> Ok true
-            | _ -> Ok false
-
-    /// Reconciles a pending key transition before listener startup, refresh, signing, cache-store work, or a further rotation.
-    let resolvePendingKeyTransition configurationPath configuration =
-        let effects: PendingKeyTransitionEffects =
-            { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey; ProbeAcceptedKey = probeAcceptedKey }
-
-        PendingKeyTransition.reconcile effects configuration
-
     /// Finalizes a known accepted enrollment using the immutable server URI recorded before its original request was dispatched.
     let finalizeAcceptedEnrollment (configurationPath: string) (recovery: CacheEnrollmentRecovery) cacheId =
         let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
@@ -1498,9 +1346,9 @@ module CacheRuntimeControl =
                         Endpoint = acceptedRecovery.Endpoint
                         AllowHttpEndpoint = endpoint.Scheme = Uri.UriSchemeHttp
                         ServerUri = serverUri.AbsoluteUri
-                        IdentityKeyName = acceptedRecovery.IdentityKeyName
-                        IdentityPublicKey = acceptedRecovery.IdentityPublicKey
-                        PendingKeyTransition = None
+                        ActiveKeyName = acceptedRecovery.ActiveKeyName
+                        ActivePublicKey = acceptedRecovery.ActivePublicKey
+                        CandidateKeyState = None
                     }
 
                 CacheMachineConfiguration.write configurationPath configuration
@@ -1530,7 +1378,7 @@ module CacheRuntimeControl =
                 Error
                     "Grace Cache enrollment outcome is unknown. Administrator inspection or revocation is required before normal cache work or a new enrollment."
 
-    /// Reads configuration only after accepted enrollment and pending rotation recovery have reached durable outcomes.
+    /// Reads configuration only after accepted enrollment recovery has reached a durable outcome.
     let private getReadyConfigurationCore () =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
         let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
@@ -1541,13 +1389,13 @@ module CacheRuntimeControl =
         | Ok (), Ok () ->
             match reconcileEnrollmentRecovery configurationPath with
             | Error error -> Error error
-            | Ok (Some configuration) -> resolvePendingKeyTransition configurationPath configuration
+            | Ok (Some configuration) -> Ok configuration
             | Ok None ->
                 match CacheMachineConfiguration.tryRead configurationPath with
                 | Error error -> Error error
-                | Ok configuration -> resolvePendingKeyTransition configurationPath configuration
+                | Ok configuration -> Ok configuration
 
-    /// Reconciles pending key work before any caller uses the registered machine configuration.
+    /// Reads the enrolled configuration without mutating candidate state; identity synchronization owns candidate recovery.
     let getReadyConfiguration () = serializeLifecycle getReadyConfigurationCore
 
     /// Reads safe machine status without reconciling pending keys, contacting Grace Server, or mutating local recovery state.
@@ -1570,7 +1418,7 @@ module CacheRuntimeControl =
 
     /// Refreshes one prepared configuration without taking the lifecycle gate recursively and returns the server-issued expiry facts.
     let private refreshConfiguration configuration health =
-        match refreshWithKey configuration configuration.IdentityKeyName health with
+        match refreshWithKey configuration configuration.ActiveKeyName health with
         | Error _ -> Error "Grace Cache registration refresh was not accepted."
         | Ok result ->
             match result.Status with
@@ -1706,582 +1554,90 @@ module CacheRuntimeControl =
                                 Error "Grace Cache enrollment was not accepted."
                             | EnrollmentUnknown -> preserveUnknown ()
 
-    /// Rotates the service key through #600's current-key proof route with a crash-safe local transition before retiring the prior key.
-    let private rotateNowCore () =
+    /// Submits the persisted candidate with an active-key proof, promotes it with a candidate-key refresh, then retires the old local key.
+    let private completeCandidateSynchronization
+        (configurationPath: string)
+        (configuration: CacheMachineConfiguration)
+        (pending: CandidateKeyTransition)
+        isStartup
+        =
+        let effects: CandidateKeyStateEffects = { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey }
+
+        match CacheRotationInterval.fromEnvironment Environment.GetEnvironmentVariable with
+        | Error error -> Error error
+        | Ok intervalMinutes ->
+            match openKey configuration.ActiveKeyName, openKey pending.CandidateKeyName with
+            | Error _, _ -> Error "Grace Cache active identity is unavailable. Administrator revocation and re-enrollment are required."
+            | _, Error _ -> Error "Grace Cache candidate identity is unavailable. Administrator revocation and re-enrollment are required."
+            | Ok activeKey, Ok candidateKey ->
+                use activeKey = activeKey
+                use candidateKey = candidateKey
+
+                let unsignedRequest: CacheKeyCandidateRequest =
+                    {
+                        Class = nameof CacheKeyCandidateRequest
+                        CacheId = configuration.CacheId
+                        CandidatePublicKey = pending.CandidatePublicKey
+                        RotationIntervalMinutes = intervalMinutes
+                        IsStartup = isStartup
+                        Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                    }
+
+                let proof =
+                    CacheRegistrationProof.createProof
+                        activeKey.Key
+                        configuration.CacheId
+                        CacheRegistrationProof.SubmitCandidateOperation
+                        (CacheRegistrationProof.candidateRequestDigest unsignedRequest)
+                        (NodaTime.SystemClock.Instance.GetCurrentInstant())
+
+                match postCandidate (Uri(configuration.ServerUri)) { unsignedRequest with Proof = proof } with
+                | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.CandidateAccepted ->
+                    match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
+                    | Ok promoted when promoted.Status = CacheRegistrationRefreshStatus.Refreshed ->
+                        CandidateKeyState.acceptReplacement effects configuration pending
+                        |> Result.map (fun updated -> CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint))
+                    | _ -> Error "Grace Cache identity candidate could not be promoted; the same candidate remains pending for retry."
+                | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.RotationRetryAfter ->
+                    Error
+                        $"Grace Cache startup identity rotation must wait {result.RetryAfterSeconds |> Option.defaultValue 60} seconds before retrying the same candidate."
+                | RotationAccepted _
+                | RotationRejected
+                | RotationNotSent -> Error "Grace Cache identity candidate was not accepted; the same candidate remains pending for retry."
+                | RotationUnknown -> Error "Grace Cache identity candidate outcome is unknown; the same candidate remains pending for retry."
+
+    /// Submits or reuses one locally durable candidate, then promotes it through candidate-key refresh before selecting it locally.
+    let private synchronizeIdentityCore isStartup =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
         match CacheMachineConfiguration.tryRead configurationPath with
         | Error error -> Error error
         | Ok configuration ->
-            match resolvePendingKeyTransition configurationPath configuration with
-            | Error error -> Error error
-            | Ok configuration ->
-                match KeyRotationPreparation.openCurrentBeforeCreatingReplacement (fun () -> openKey configuration.IdentityKeyName) createKey with
+            match configuration.CandidateKeyState with
+            | Some pending -> completeCandidateSynchronization configurationPath configuration pending isStartup
+            | None ->
+                match KeyRotationPreparation.openCurrentBeforeCreatingReplacement (fun () -> openKey configuration.ActiveKeyName) createKey with
                 | Error error -> Error error
-                | Ok (oldKey, (newKeyName, newKey)) ->
-                    use oldKey = oldKey
-                    use newKey = newKey
+                | Ok (activeKey, (candidateKeyName, candidateKey)) ->
+                    use activeKey = activeKey
+                    use candidateKey = candidateKey
 
-                    let cleanupReplacement error =
-                        deleteKey newKeyName |> ignore
-                        Error error
-
-                    match publicKey newKey.Key with
-                    | Error error -> cleanupReplacement error
-                    | Ok newPublicKey ->
-                        let effects: PendingKeyTransitionEffects =
-                            {
-                                WriteConfiguration = CacheMachineConfiguration.write configurationPath
-                                DeleteKey = deleteKey
-                                ProbeAcceptedKey = probeAcceptedKey
-                            }
-
-                        match PendingKeyTransition.beginTransition effects configuration newKeyName newPublicKey with
-                        | Error error -> cleanupReplacement error
-                        | Ok pendingConfiguration ->
-                            let unsignedRequest: CacheKeyRotationRequest =
-                                {
-                                    Class = nameof CacheKeyRotationRequest
-                                    CacheId = configuration.CacheId
-                                    OperationId =
-                                        match pendingConfiguration.PendingKeyTransition with
-                                        | Some pending -> pending.OperationId
-                                        | None -> Guid.Empty
-                                    NewPublicKey = newPublicKey
-                                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
-                                }
-
-                            let proof =
-                                CacheRegistrationProof.createProof
-                                    oldKey.Key
-                                    configuration.CacheId
-                                    CacheRegistrationProof.RotateKeyOperation
-                                    (CacheRegistrationProof.rotationRequestDigest unsignedRequest)
-                                    (NodaTime.SystemClock.Instance.GetCurrentInstant())
-
-                            let request = { unsignedRequest with Proof = proof }
-
-                            match postRotation (Uri(configuration.ServerUri)) request with
-                            | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.Rotated ->
-                                match pendingConfiguration.PendingKeyTransition with
-                                | Some pending ->
-                                    PendingKeyTransition.acceptReplacement effects pendingConfiguration pending
-                                    |> Result.bind (fun updated ->
-                                        acknowledgeRotationOutcome updated pending.OperationId
-                                        |> Result.map (fun () -> CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint)))
-                                | None -> Error "Grace Cache key transition could not be finalized."
-                            | RotationAccepted _
-                            | RotationRejected
-                            | RotationNotSent ->
-                                match pendingConfiguration.PendingKeyTransition with
-                                | Some pending ->
-                                    PendingKeyTransition.rejectReplacement effects pendingConfiguration pending
-                                    |> Result.mapError id
-                                | None -> Error "Grace Cache key transition could not be rolled back."
-                                |> Result.bind (fun _ -> Error "Grace Cache key rotation was not accepted.")
-                            | RotationUnknown -> Error "Grace Cache key rotation outcome is unknown and requires operator inspection."
-
-    /// Rotates only after obtaining the lifecycle gate shared with refresh and recovery.
-    let rotateNow () = serializeLifecycle rotateNowCore
-
-/// Hosts the protected machine-local rotation request channel owned only by the active cache process.
-module CacheLocalControl =
-
-    [<Literal>]
-    let private rotationPipeName = "Grace.Cache.RotateNow.v1"
-
-    [<Literal>]
-    let private socketOptionPeerCredentials = 17
-
-    [<Literal>]
-    let private socketLevel = 1
-
-    [<Literal>]
-    let private directoryFileType = 0x4000
-
-    [<Literal>]
-    let private socketFileType = 0xC000
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private lstat(string path, byte [] statBuffer)
-
-    /// Reads the effective Unix user identifier used to authorize the service account and root callers.
-    [<DllImport("libc", SetLastError = true)>]
-    extern uint32 private geteuid()
-
-    /// Reads Linux peer credentials from the accepted local-domain socket before control work is invoked.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private getsockopt(IntPtr socket, int level, int optionName, byte [] optionValue, int& optionLength)
-
-    /// Reads macOS peer identifiers from the accepted local-domain socket before control work is invoked.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private getpeereid(int socket, uint32& effectiveUserId, uint32& effectiveGroupId)
-
-    /// Admits only the running cache account or Unix root to the protected local rotation channel.
-    let isUnixCallerAuthorized serviceUserId callerUserId = callerUserId = 0u || callerUserId = serviceUserId
-
-    /// Captures the ownership and access bits that make a Unix runtime path safe to trust.
-    type UnixRuntimePathIdentity = { OwnerUserId: uint32; Mode: int }
-
-    /// Identifies Unix CPU layouts whose native stat offsets are explicitly supported by the local-control boundary.
-    let supportsUnixStatLayout architecture =
-        CacheUnixPathIdentity.tryGetStatOffsets true false architecture
-        |> Result.isOk
-
-    /// Admits a response only when the connected listener is the protected socket owner or root.
-    let isUnixResponderAuthorized socketOwnerUserId responderUserId =
-        responderUserId = 0u
-        || responderUserId = socketOwnerUserId
-
-    /// Reads the platform-native stat layout only on supported x64 and arm64 Unix runtimes and rejects every other layout.
-    let private tryReadUnixRuntimePathIdentity path =
-        try
-            match CacheUnixPathIdentity.tryGetStatOffsets (OperatingSystem.IsLinux()) (OperatingSystem.IsMacOS()) RuntimeInformation.ProcessArchitecture with
-            | Error () -> Error "Grace Cache local control authorization could not be established."
-            | Ok (modeOffset, ownerOffset, modeIsUInt16) ->
-                let bytes = Array.zeroCreate<byte> 256
-
-                if lstat (path, bytes) <> 0 then
-                    Error "Grace Cache local control authorization could not be established."
-                else
-                    let mode =
-                        if modeIsUInt16 then
-                            int (BitConverter.ToUInt16(bytes, modeOffset))
-                        else
-                            BitConverter.ToInt32(bytes, modeOffset)
-
-                    Ok { OwnerUserId = BitConverter.ToUInt32(bytes, ownerOffset); Mode = mode }
-        with
-        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
-        | :? DllNotFoundException
-        | :? EntryPointNotFoundException
-        | :? BadImageFormatException -> Error "Grace Cache local control authorization could not be established."
-
-    /// Verifies exact ownership, type, and mode before a runtime path may identify the active cache service.
-    let private validateUnixRuntimePath expectedOwner expectedFileType expectedPermissions path =
-        match tryReadUnixRuntimePathIdentity path with
-        | Error error -> Error error
-        | Ok identity when
-            (identity.Mode &&& 0xF000) <> expectedFileType
-            || (identity.Mode &&& 0o777) <> expectedPermissions
-            || (expectedOwner
-                |> Option.exists (fun owner -> owner <> identity.OwnerUserId))
-            ->
-            Error "Grace Cache local control authorization could not be established."
-        | Ok identity -> Ok identity
-
-    /// Resolves one machine-local runtime directory whose service-account ownership blocks other Unix users from replacing the socket.
-    let private unixRuntimeDirectory () = Path.Combine(Path.GetTempPath(), "grace-cache-runtime")
-
-    /// Creates and immediately verifies the protected runtime directory before the active service binds its socket.
-    let private prepareUnixRuntimeDirectory serviceUserId =
-        try
-            let path = unixRuntimeDirectory ()
-            Directory.CreateDirectory(path) |> ignore
-
-            File.SetUnixFileMode(
-                path,
-                UnixFileMode.UserRead
-                ||| UnixFileMode.UserWrite
-                ||| UnixFileMode.UserExecute
-            )
-
-            validateUnixRuntimePath (Some serviceUserId) directoryFileType 0o700 path
-            |> Result.map (fun _ -> path)
-        with
-        | :? IOException
-        | :? UnauthorizedAccessException
-        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
-
-    /// Validates the protected directory and socket as one trust boundary before a client connects or a stale socket is removed.
-    let private validateUnixControlPath () =
-        let directory = unixRuntimeDirectory ()
-        let socketPath = Path.Combine(directory, "rotate-now.sock")
-
-        match validateUnixRuntimePath None directoryFileType 0o700 directory, validateUnixRuntimePath None socketFileType 0o600 socketPath with
-        | Ok directoryIdentity, Ok socketIdentity when directoryIdentity.OwnerUserId = socketIdentity.OwnerUserId -> Ok(socketPath, socketIdentity.OwnerUserId)
-        | _ -> Error "Grace Cache local control authorization could not be established."
-
-    /// Holds the background accept loop and cancels it when the active cache host shuts down.
-    type private RotationServer(cancellation: CancellationTokenSource, ready: ManualResetEventSlim, worker: Task) =
-        interface IDisposable with
-            /// Stops local-control acceptance before the cache process releases its machine-wide instance lease.
-            member _.Dispose() =
-                cancellation.Cancel()
-
-                try
-                    worker.Wait(TimeSpan.FromSeconds 2.0) |> ignore
-                with
-                | :? AggregateException -> ()
-
-                ready.Dispose()
-                cancellation.Dispose()
-
-    /// Creates the Windows pipe ACL that admits only the cache account and built-in local administrators.
-    let private createWindowsPipe () =
-        try
-            use serviceIdentity = WindowsIdentity.GetCurrent()
-            let serviceSid = serviceIdentity.User
-
-            if isNull serviceSid then
-                Error "Grace Cache local control authorization could not be established."
-            else
-                let security = PipeSecurity()
-                security.AddAccessRule(PipeAccessRule(serviceSid, PipeAccessRights.ReadWrite, AccessControlType.Allow))
-
-                let administrators = SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null)
-                security.AddAccessRule(PipeAccessRule(administrators, PipeAccessRights.ReadWrite, AccessControlType.Allow))
-
-                NamedPipeServerStreamAcl.Create(
-                    rotationPipeName,
-                    PipeDirection.InOut,
-                    1,
-                    PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous,
-                    256,
-                    256,
-                    security,
-                    HandleInheritability.None,
-                    PipeAccessRights.ChangePermissions
-                )
-                |> Ok
-        with
-        | :? UnauthorizedAccessException
-        | :? PlatformNotSupportedException
-        | :? IdentityNotMappedException -> Error "Grace Cache local control authorization could not be established."
-
-    /// Reads the authenticated Unix peer user identifier when the platform supplies local socket credentials.
-    let private tryGetUnixPeerUserId (socket: Socket) =
-        try
-            if OperatingSystem.IsLinux() then
-                let credentials = Array.zeroCreate<byte> 12
-                let mutable length = credentials.Length
-
-                if getsockopt (socket.Handle, socketLevel, socketOptionPeerCredentials, credentials, &length) = 0
-                   && length >= 12 then
-                    Ok(BitConverter.ToUInt32(credentials, 4))
-                else
-                    Error "Grace Cache local control authorization could not be established."
-            elif OperatingSystem.IsMacOS() then
-                let mutable userId = 0u
-                let mutable groupId = 0u
-
-                if getpeereid (socket.Handle.ToInt32(), &userId, &groupId) = 0 then
-                    Ok userId
-                else
-                    Error "Grace Cache local control authorization could not be established."
-            else
-                Error "Grace Cache local control authorization could not be established."
-        with
-        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
-        | :? DllNotFoundException
-        | :? EntryPointNotFoundException
-        | :? BadImageFormatException -> Error "Grace Cache local control authorization could not be established."
-
-    /// Creates a local Unix socket whose peer credentials are checked for the service account or root before rotation.
-    let private createUnixSocket () =
-        try
-            let serviceUserId = geteuid ()
-
-            match prepareUnixRuntimeDirectory serviceUserId with
-            | Error error -> Error error
-            | Ok directory ->
-                let path = Path.Combine(directory, "rotate-now.sock")
-
-                if File.Exists path then
-                    match validateUnixControlPath () with
-                    | Error error -> Error error
-                    | Ok _ ->
-                        File.Delete path
-                        Ok()
-                else
-                    Ok()
-                |> Result.bind (fun () ->
-                    let listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
-                    listener.Bind(UnixDomainSocketEndPoint(path))
-                    File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
-
-                    match validateUnixControlPath () with
+                    match publicKey candidateKey.Key with
                     | Error error ->
-                        listener.Dispose()
+                        deleteKey candidateKeyName |> ignore
                         Error error
-                    | Ok _ ->
-                        listener.Listen(1)
-                        Ok(path, listener))
-        with
-        | :? SocketException
-        | :? UnauthorizedAccessException
-        | :? IOException
-        | :? PlatformNotSupportedException -> Error "Grace Cache local control authorization could not be established."
+                    | Ok candidatePublicKey ->
+                        let effects: CandidateKeyStateEffects =
+                            { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey }
 
-    /// Requires a fresh signed nonce on Unix after peer and socket checks so a look-alike owner cannot fabricate a rotation success.
-    let private handleUnixRequest rotate (pipe: Stream) =
-        let requestBuffer = Array.zeroCreate<byte> 1024
-        let bytesRead = pipe.Read(requestBuffer, 0, requestBuffer.Length)
+                        match CandidateKeyState.beginTransition effects configuration candidateKeyName candidatePublicKey with
+                        | Error error ->
+                            deleteKey candidateKeyName |> ignore
+                            Error error
+                        | Ok candidateConfiguration ->
+                            match candidateConfiguration.CandidateKeyState with
+                            | Some pending -> completeCandidateSynchronization configurationPath candidateConfiguration pending isStartup
+                            | None -> Error "Grace Cache candidate state was not persisted."
 
-        let response =
-            try
-                let request =
-                    JsonSerializer.Deserialize<CacheLocalControlChallenge>(ReadOnlySpan<byte>(requestBuffer, 0, bytesRead), Constants.JsonSerializerOptions)
-
-                if isNull (box request) then
-                    "denied"
-                else
-                    match CacheLocalControlAuthentication.tryDecodeNonce request.Nonce with
-                    | Error _ -> "denied"
-                    | Ok nonce ->
-                        match rotate () with
-                        | Error _ -> "failed"
-                        | Ok status ->
-                            match CacheRuntimeControl.signLocalControlChallenge nonce status with
-                            | Ok signed -> JsonSerializer.Serialize(signed, Constants.JsonSerializerOptions)
-                            | Error _ -> "failed"
-            with
-            | :? JsonException
-            | :? ArgumentException -> "denied"
-
-        let responseBytes = Text.Encoding.UTF8.GetBytes response
-        pipe.Write(responseBytes, 0, responseBytes.Length)
-        pipe.Flush()
-
-    /// Requires a fresh nonce challenge on Windows so a pipe-name look-alike cannot fabricate a rotate-now success.
-    let private handleWindowsRequest rotate (pipe: Stream) =
-        let requestBuffer = Array.zeroCreate<byte> 1024
-        let bytesRead = pipe.Read(requestBuffer, 0, requestBuffer.Length)
-
-        let response =
-            try
-                let request =
-                    JsonSerializer.Deserialize<CacheLocalControlChallenge>(ReadOnlySpan<byte>(requestBuffer, 0, bytesRead), Constants.JsonSerializerOptions)
-
-                if isNull (box request) then
-                    "denied"
-                else
-                    match CacheLocalControlAuthentication.tryDecodeNonce request.Nonce with
-                    | Error _ -> "denied"
-                    | Ok nonce ->
-                        match rotate () with
-                        | Error _ -> "failed"
-                        | Ok status ->
-                            match CacheRuntimeControl.signLocalControlChallenge nonce status with
-                            | Ok signed -> JsonSerializer.Serialize(signed, Constants.JsonSerializerOptions)
-                            | Error _ -> "failed"
-            with
-            | :? JsonException
-            | :? ArgumentException -> "denied"
-
-        let responseBytes = Text.Encoding.UTF8.GetBytes response
-        pipe.Write(responseBytes, 0, responseBytes.Length)
-        pipe.Flush()
-
-    /// Starts the Windows ACL-protected request channel before listener readiness.
-    let private startWindowsWith rotate =
-        match createWindowsPipe () with
-        | Error error -> Error error
-        | Ok probe ->
-            probe.Dispose()
-            let cancellation = new CancellationTokenSource()
-            let ready = new ManualResetEventSlim(false)
-
-            let worker =
-                Task.Run(
-                    Action (fun () ->
-                        while not cancellation.IsCancellationRequested do
-                            match createWindowsPipe () with
-                            | Error _ -> cancellation.Cancel()
-                            | Ok pipe ->
-                                use pipe = pipe
-                                ready.Set()
-
-                                try
-                                    pipe
-                                        .WaitForConnectionAsync(cancellation.Token)
-                                        .GetAwaiter()
-                                        .GetResult()
-
-                                    if not cancellation.IsCancellationRequested then
-                                        handleWindowsRequest rotate pipe
-                                with
-                                | :? OperationCanceledException -> ()
-                                | :? IOException -> ())
-                )
-
-            if ready.Wait(TimeSpan.FromSeconds 2.0) then
-                Ok(new RotationServer(cancellation, ready, worker) :> IDisposable)
-            else
-                cancellation.Cancel()
-                ready.Dispose()
-                cancellation.Dispose()
-                Error "Grace Cache local control authorization could not be established."
-
-    /// Holds the Unix socket listener and removes its local file when the active host stops.
-    type private UnixRotationServer(path: string, listener: Socket, cancellation: CancellationTokenSource, worker: Task) =
-        interface IDisposable with
-            /// Stops Unix control acceptance and removes the socket before the cache host releases its machine guard.
-            member _.Dispose() =
-                cancellation.Cancel()
-                listener.Dispose()
-
-                try
-                    worker.Wait(TimeSpan.FromSeconds 2.0) |> ignore
-                with
-                | :? AggregateException -> ()
-
-                if File.Exists path then File.Delete path
-                cancellation.Dispose()
-
-    /// Starts a Unix-domain control channel that authorizes each caller from kernel peer credentials.
-    let private startUnixWith rotate =
-        match createUnixSocket () with
-        | Error error -> Error error
-        | Ok (path, listener) ->
-            let cancellation = new CancellationTokenSource()
-            let serviceUserId = geteuid ()
-
-            let worker =
-                Task.Run(
-                    Action (fun () ->
-                        while not cancellation.IsCancellationRequested do
-                            try
-                                use accepted =
-                                    listener
-                                        .AcceptAsync(cancellation.Token)
-                                        .GetAwaiter()
-                                        .GetResult()
-
-                                match tryGetUnixPeerUserId accepted with
-                                | Ok callerUserId when isUnixCallerAuthorized serviceUserId callerUserId ->
-                                    use stream = new NetworkStream(accepted, false)
-                                    handleUnixRequest rotate stream
-                                | _ -> ()
-                            with
-                            | :? OperationCanceledException -> ()
-                            | :? ObjectDisposedException -> ()
-                            | :? SocketException -> ())
-                )
-
-            Ok(new UnixRotationServer(path, listener, cancellation, worker) :> IDisposable)
-
-    /// Starts protected request processing with the operating-system-specific local authorization mechanism.
-    let startWith rotate =
-        if OperatingSystem.IsWindows() then
-            startWindowsWith rotate
-        elif OperatingSystem.IsLinux()
-             || OperatingSystem.IsMacOS() then
-            startUnixWith rotate
-        else
-            Error "Grace Cache local control authorization could not be established."
-
-    /// Starts the active-process rotation channel using the shared serialized runtime operation.
-    let start () = startWith CacheRuntimeControl.rotateNow
-
-    /// Sends one local-only rotation request through a supplied stream factory and maps unavailable control channels to a redacted rejection.
-    let requestRotationWith openControlStream =
-        try
-            use pipe: Stream = openControlStream ()
-
-            let request = Text.Encoding.UTF8.GetBytes "rotate-now"
-            pipe.Write(request, 0, request.Length)
-            pipe.Flush()
-            let responseBuffer = Array.zeroCreate<byte> 1024
-            let bytesRead = pipe.Read(responseBuffer, 0, responseBuffer.Length)
-            let response = Text.Encoding.UTF8.GetString(responseBuffer, 0, bytesRead)
-
-            try
-                let status = JsonSerializer.Deserialize<CacheRuntimeStatus>(response, Constants.JsonSerializerOptions)
-
-                if isNull (box status) then
-                    Error "Grace Cache rotation request was not accepted."
-                else
-                    Ok status
-            with
-            | :? JsonException
-            | :? NotSupportedException -> Error "Grace Cache rotation request was not accepted."
-        with
-        | :? TimeoutException
-        | :? IOException
-        | :? SocketException
-        | :? UnauthorizedAccessException -> Error "Grace Cache rotation request was not accepted."
-
-    /// Sends one Windows nonce challenge and accepts a response only when the post-operation protected configuration verifies the active Cache signature.
-    let requestWindowsRotationWith readVerificationKey nonce openControlStream =
-        try
-            use pipe: Stream = openControlStream ()
-            let request = JsonSerializer.Serialize({ Nonce = Base64Url.encode nonce }, Constants.JsonSerializerOptions)
-            let requestBytes = Text.Encoding.UTF8.GetBytes request
-            pipe.Write(requestBytes, 0, requestBytes.Length)
-            pipe.Flush()
-            let responseBuffer = Array.zeroCreate<byte> 2048
-            let bytesRead = pipe.Read(responseBuffer, 0, responseBuffer.Length)
-
-            let response =
-                JsonSerializer.Deserialize<CacheLocalControlChallengeResponse>(
-                    ReadOnlySpan<byte>(responseBuffer, 0, bytesRead),
-                    Constants.JsonSerializerOptions
-                )
-
-            match readVerificationKey () with
-            | Ok publicKey -> CacheLocalControlAuthentication.verify nonce publicKey response
-            | Error _ -> Error "Grace Cache rotation request was not accepted."
-        with
-        | :? JsonException
-        | :? NotSupportedException
-        | :? TimeoutException
-        | :? IOException
-        | :? SocketException
-        | :? UnauthorizedAccessException -> Error "Grace Cache rotation request was not accepted."
-
-    /// Sends one local-only rotation request to the active cache process without attempting a direct singleton-guard bypass.
-    let requestRotation () =
-        if OperatingSystem.IsWindows() then
-            let configurationPath = CacheMachineConfiguration.configurationPath ()
-
-            match CacheMachineConfiguration.tryRead configurationPath with
-            | Error _ -> Error "Grace Cache rotation request was not accepted."
-            | Ok _ ->
-                let nonce = CacheLocalControlAuthentication.createChallenge ()
-
-                requestWindowsRotationWith
-                    (fun () ->
-                        CacheMachineConfiguration.tryRead configurationPath
-                        |> Result.map (fun configuration -> configuration.IdentityPublicKey))
-                    nonce
-                    (fun () ->
-                        let namedPipe = new NamedPipeClientStream(".", rotationPipeName, PipeDirection.InOut, PipeOptions.None)
-                        namedPipe.Connect(2000)
-                        namedPipe :> Stream)
-        elif OperatingSystem.IsLinux()
-             || OperatingSystem.IsMacOS() then
-            let configurationPath = CacheMachineConfiguration.configurationPath ()
-
-            match CacheMachineConfiguration.tryRead configurationPath with
-            | Error _ -> Error "Grace Cache rotation request was not accepted."
-            | Ok _ ->
-                let nonce = CacheLocalControlAuthentication.createChallenge ()
-
-                requestWindowsRotationWith
-                    (fun () ->
-                        CacheMachineConfiguration.tryRead configurationPath
-                        |> Result.map (fun configuration -> configuration.IdentityPublicKey))
-                    nonce
-                    (fun () ->
-                        match validateUnixControlPath () with
-                        | Error error -> raise (new UnauthorizedAccessException(error))
-                        | Ok (path, socketOwnerUserId) ->
-                            let socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)
-
-                            try
-                                socket.Connect(UnixDomainSocketEndPoint(path))
-
-                                match tryGetUnixPeerUserId socket with
-                                | Ok responderUserId when isUnixResponderAuthorized socketOwnerUserId responderUserId ->
-                                    new NetworkStream(socket, true) :> Stream
-                                | _ ->
-                                    socket.Dispose()
-                                    raise (new UnauthorizedAccessException())
-                            with
-                            | _ ->
-                                socket.Dispose()
-                                reraise ())
-        else
-            Error "Grace Cache rotation request was not accepted."
+    /// Synchronizes identity only after obtaining the lifecycle gate shared with refresh and recovery.
+    let synchronizeIdentity isStartup = serializeLifecycle (fun () -> synchronizeIdentityCore isStartup)

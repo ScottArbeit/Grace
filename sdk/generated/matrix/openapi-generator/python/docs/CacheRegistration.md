@@ -13,7 +13,8 @@ Name | Type | Description | Notes
 **owner_id** | **UUID** |  | 
 **organization_id** | **UUID** |  | [optional] 
 **repository_scopes** | [**List[CacheRepositoryScope]**](CacheRepositoryScope.md) |  | 
-**public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**active_public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | 
+**candidate_public_key** | [**CacheIdentityPublicKey**](CacheIdentityPublicKey.md) |  | [optional] 
 **endpoint** | **str** |  | 
 **allow_http_endpoint** | **bool** | Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS. | 
 **health** | [**CacheHealthStatus**](CacheHealthStatus.md) |  | 
@@ -25,6 +26,8 @@ Name | Type | Description | Notes
 **last_refreshed_at** | **datetime** |  | 
 **refresh_after** | **datetime** |  | 
 **expires_at** | **datetime** |  | 
+**rotation_interval_minutes** | **int** |  | 
+**last_rotated_at** | **datetime** |  | [optional] 
 **rotation_due_at** | **datetime** |  | 
 **revoked_at** | **datetime** |  | [optional] 
 

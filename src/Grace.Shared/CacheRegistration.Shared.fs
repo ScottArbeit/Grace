@@ -17,17 +17,9 @@ module CacheRegistrationProof =
     [<Literal>]
     let RefreshOperation = "cache-registration-refresh-v1"
 
-    /// Identifies the canonical runtime operation for Cache public-key rotation.
+    /// Identifies the canonical active-key proof used to submit or replay the one candidate public key.
     [<Literal>]
-    let RotateKeyOperation = "cache-registration-rotate-key-v1"
-
-    /// Identifies an exact signed read of a durable cache key-rotation outcome.
-    [<Literal>]
-    let RotationOutcomeOperation = "cache-registration-rotate-outcome-v1"
-
-    /// Identifies an exact signed acknowledgement that allows a durable rotation outcome to be retired.
-    [<Literal>]
-    let RotationCompletionOperation = "cache-registration-rotate-complete-v1"
+    let SubmitCandidateOperation = "cache-registration-submit-candidate-v1"
 
     /// Writes one Cache identity public key in canonical field order.
     let private writePublicKey (writer: Utf8JsonWriter) (key: CacheIdentityPublicKey) =
@@ -64,33 +56,16 @@ module CacheRegistrationProof =
             writer.WriteString("software", request.SoftwareVersion)
             writer.WriteEndObject())
 
-    /// Computes the canonical digest bound into a key-rotation proof without including its signature.
-    let rotationRequestDigest (request: CacheKeyRotationRequest) =
+    /// Computes the canonical digest bound into an active-key candidate-submission proof without including its signature.
+    let candidateRequestDigest (request: CacheKeyCandidateRequest) =
         digest (fun writer ->
             writer.WriteStartObject()
             writer.WriteString("cache", request.CacheId.ToString("D"))
             writer.WriteString("class", request.Class)
-            writer.WriteString("operation", request.OperationId.ToString("D"))
-            writer.WritePropertyName("newKey")
-            writePublicKey writer request.NewPublicKey
-            writer.WriteEndObject())
-
-    /// Computes the canonical digest bound into a cache-authenticated rotation-outcome read.
-    let rotationOutcomeRequestDigest (request: CacheKeyRotationOutcomeRequest) =
-        digest (fun writer ->
-            writer.WriteStartObject()
-            writer.WriteString("cache", request.CacheId.ToString("D"))
-            writer.WriteString("class", request.Class)
-            writer.WriteString("operation", request.OperationId.ToString("D"))
-            writer.WriteEndObject())
-
-    /// Computes the canonical digest bound into a cache-authenticated rotation completion acknowledgement.
-    let rotationCompletionRequestDigest (request: CacheKeyRotationCompletionRequest) =
-        digest (fun writer ->
-            writer.WriteStartObject()
-            writer.WriteString("cache", request.CacheId.ToString("D"))
-            writer.WriteString("class", request.Class)
-            writer.WriteString("operation", request.OperationId.ToString("D"))
+            writer.WritePropertyName("candidate")
+            writePublicKey writer request.CandidatePublicKey
+            writer.WriteNumber("intervalMinutes", request.RotationIntervalMinutes)
+            writer.WriteBoolean("startup", request.IsStartup)
             writer.WriteEndObject())
 
     /// Encodes the signed Cache proof payload in canonical JSON field order.
