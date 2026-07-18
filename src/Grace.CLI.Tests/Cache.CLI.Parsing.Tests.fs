@@ -48,6 +48,38 @@ module CacheCommandParsingTests =
             Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
         ] <- "m2m-secret"
 
+        child.Environment[
+            Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret
+        ] <- "deprecated-microsoft-secret"
+
+        child.Environment[
+            Constants.EnvironmentVariables.GraceAuthMicrosoftTenantId
+        ] <- "deprecated-microsoft-tenant"
+
+        let inheritedCredentials =
+            [
+                Constants.EnvironmentVariables.GraceToken
+                Constants.EnvironmentVariables.GraceTokenFile
+                Constants.EnvironmentVariables.GraceAuthOidcAuthority
+                Constants.EnvironmentVariables.GraceAuthOidcAudience
+                Constants.EnvironmentVariables.GraceAuthOidcCliClientId
+                Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort
+                Constants.EnvironmentVariables.GraceAuthOidcCliScopes
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientId
+                Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
+                Constants.EnvironmentVariables.GraceAuthOidcM2mScopes
+                Constants.EnvironmentVariables.GraceAuthMicrosoftClientId
+                Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret
+                Constants.EnvironmentVariables.GraceAuthMicrosoftTenantId
+                Constants.EnvironmentVariables.GraceAuthMicrosoftAuthority
+                Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope
+                Constants.EnvironmentVariables.GraceAuthMicrosoftCliClientId
+                "GRACE_CACHE_ENROLLMENT_TOKEN"
+            ]
+
+        inheritedCredentials
+        |> List.iter (fun variableName -> child.Environment[ variableName ] <- "inherited-secret")
+
         child.Environment[ "GRACE_CACHE_ENROLLMENT_TOKEN" ] <- "stale-enrollment-token"
 
         child.Environment[
@@ -58,7 +90,13 @@ module CacheCommandParsingTests =
 
         Assert.That(child.Environment.ContainsKey(Constants.EnvironmentVariables.GraceToken), Is.False)
         Assert.That(child.Environment.ContainsKey(Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret), Is.False)
+        Assert.That(child.Environment.ContainsKey(Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret), Is.False)
+        Assert.That(child.Environment.ContainsKey(Constants.EnvironmentVariables.GraceAuthMicrosoftTenantId), Is.False)
         Assert.That(child.Environment.ContainsKey("GRACE_CACHE_ENROLLMENT_TOKEN"), Is.False)
+
+        inheritedCredentials
+        |> List.iter (fun variableName -> Assert.That(child.Environment.ContainsKey(variableName), Is.False))
+
         Assert.That(child.Environment[Constants.EnvironmentVariables.GraceServerUri], Is.EqualTo("https://server.example.test/grace/"))
 
         let enrollment = CacheCommand.createProcessStartInfo "Grace.Cache" (Some "resolved-enrollment-token") (Some "https://server.example.test/grace/")
@@ -68,6 +106,8 @@ module CacheCommandParsingTests =
         Assert.That(enrollment.Environment[Constants.EnvironmentVariables.GraceServerUri], Is.EqualTo("https://server.example.test/grace/"))
         Assert.That(nonEnrollment.Environment.ContainsKey("GRACE_CACHE_ENROLLMENT_TOKEN"), Is.False)
         Assert.That(nonEnrollment.Environment.ContainsKey(Constants.EnvironmentVariables.GraceToken), Is.False)
+        Assert.That(nonEnrollment.Environment.ContainsKey(Constants.EnvironmentVariables.GraceAuthMicrosoftClientId), Is.False)
+        Assert.That(nonEnrollment.Environment.ContainsKey(Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret), Is.False)
 
         Assert.That(
             CacheCommand.tryGetEffectiveServerUri (Some "https://environment.example.test/grace/") (Some "https://configured.example.test/"),

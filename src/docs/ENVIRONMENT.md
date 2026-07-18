@@ -268,6 +268,12 @@ the configured cache service account and mode `0700`. The same service account t
 cache service. Grace Cache fails closed before enrollment, recovery, key, listener, or server work when this contract is
 missing or insecure.
 
+Linux stores each Cache identity as a service-owned P-256 PKCS#8 file beneath this protected directory. Each key is a
+regular, non-linked `0600` file created through a same-directory atomic temporary file and is revalidated before use.
+This is a reduced Linux custody guarantee: a process or backup running as the same cache service account can copy the
+key. Operators must isolate that service account, limit backup access, and protect backup retention accordingly. Windows
+continues to use its non-exportable service-accessible X.509 key, and macOS continues to use its platform key store.
+
 PowerShell:
 
 ```powershell

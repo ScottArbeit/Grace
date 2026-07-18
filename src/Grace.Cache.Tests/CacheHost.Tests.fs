@@ -628,6 +628,128 @@ type CacheHostTests() =
         Assert.That(status.ToString(), Does.Not.Contain(configuration.ServerUri))
         Assert.That(status.ToString(), Does.Not.Contain(configuration.ActiveKeyName))
 
+    /// Verifies Linux alone selects protected PKCS#8 custody while Windows and macOS retain platform X.509 stores.
+    [<Test>]
+    member _.KeyCustodySelectsLinuxFilesOnly() =
+        Assert.That(CacheIdentityKeyCustody.selectProvider true, Is.EqualTo(LinuxProtectedPkcs8File))
+        Assert.That(CacheIdentityKeyCustody.selectProvider false, Is.EqualTo(PlatformX509Store))
+
+    /// Verifies a Linux key reference remains opaque, rejects path-like substitutions, and cannot leak through status.
+    [<Test>]
+    member _.LinuxKeyReferenceRejectsSubstitutionAndStatusRedactsIt() =
+        let keyReference = "linux-11111111111111111111111111111111"
+        let keyPath = CacheMachineConfiguration.tryGetLinuxIdentityKeyPath keyReference
+
+        Assert.That(keyPath, Is.Not.EqualTo(None))
+        Assert.That(CacheMachineConfiguration.tryGetLinuxIdentityKeyPath "linux-../identity.pk8", Is.EqualTo(None))
+        Assert.That(CacheMachineConfiguration.tryGetLinuxIdentityKeyPath "linux-11111111-1111-1111-1111-111111111111", Is.EqualTo(None))
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/private"
+                ActiveKeyName = keyReference
+                ActivePublicKey = testPublicKey
+                CandidateKeyState = None
+            }
+
+        let rendered =
+            CacheMachineConfiguration.toStatus configuration
+            |> string
+
+        Assert.That(rendered, Does.Not.Contain(keyReference))
+
+        keyPath
+        |> Option.iter (fun path -> Assert.That(rendered, Does.Not.Contain(path)))
+
+    /// Verifies a proof created after a probe lasting longer than thirty seconds is accepted at the existing tolerance boundary.
+    [<Test>]
+    member _.CandidateSubmissionProofUsesFreshPostProbeTimestamp() =
+        use activeKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let parameters = activeKey.ExportParameters(false)
+        let activePublicKey = CacheIdentityPublicKey.Create(Base64Url.encode parameters.Q.X, Base64Url.encode parameters.Q.Y)
+        let cacheId = Guid.NewGuid()
+        let probeStarted = Instant.FromUtc(2026, 7, 17, 20, 0)
+        let dispatchTime = probeStarted.Plus(Duration.FromSeconds 31L)
+
+        let unsignedRequest: CacheKeyCandidateRequest =
+            {
+                Class = nameof CacheKeyCandidateRequest
+                CacheId = cacheId
+                CandidatePublicKey = testPublicKey
+                RotationIntervalMinutes = 240
+                IsStartup = false
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let signedRequest = CacheCandidateSubmissionProof.create activeKey unsignedRequest dispatchTime
+        let digest = CacheRegistrationProof.candidateRequestDigest unsignedRequest
+
+        Assert.That(signedRequest.Proof.Payload.IssuedAt, Is.EqualTo(dispatchTime))
+
+        Assert.That(
+            CacheRegistrationProof.validate
+                (dispatchTime.Plus(Duration.FromSeconds 30L))
+                activePublicKey
+                cacheId
+                CacheRegistrationProof.SubmitCandidateOperation
+                digest
+                signedRequest.Proof,
+            Is.True
+        )
+
+    /// Verifies Linux syscall custody checks are intentionally host-dependent and cannot be claimed as a Windows filesystem proof.
+    [<Test>]
+    member _.LinuxFileCustodySyscallsAreHostDependent() =
+        if OperatingSystem.IsLinux() then
+            CacheMachineConfiguration.validateProvisionedIdentityKeyFile "/definitely-missing-grace-cache-key"
+            |> Result.isError
+            |> Assert.That
+        else
+            Assert.That(CacheIdentityKeyCustody.selectProvider false, Is.EqualTo(PlatformX509Store))
+
+    /// Verifies a restart sees the same durable candidate and does not retire the still-usable active key before promotion.
+    [<Test>]
+    member _.CandidateRestartRetainsSameCandidateBeforeCleanup() =
+        let writes = ResizeArray<CacheMachineConfiguration>()
+        let deletes = ResizeArray<string>()
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test"
+                ActiveKeyName = "linux-11111111111111111111111111111111"
+                ActivePublicKey = testPublicKey
+                CandidateKeyState = None
+            }
+
+        let effects: CandidateKeyStateEffects =
+            {
+                WriteConfiguration =
+                    fun value ->
+                        writes.Add value
+                        Ok()
+                DeleteKey =
+                    fun value ->
+                        deletes.Add value
+                        Ok()
+            }
+
+        match CandidateKeyState.beginTransition effects configuration "linux-22222222222222222222222222222222" testPublicKey with
+        | Error error -> Assert.Fail(error)
+        | Ok persisted ->
+            let restartCandidate =
+                persisted.CandidateKeyState
+                |> Option.map (fun pending -> pending.CandidateKeyName)
+
+            Assert.That(restartCandidate, Is.EqualTo(Some "linux-22222222222222222222222222222222"))
+            Assert.That(deletes, Is.Empty)
+            Assert.That(writes, Has.Count.EqualTo(1))
+
     /// Verifies candidate promotion selects the candidate durably before retiring the former active key.
     [<Test>]
     member _.CandidatePromotionSelectsBeforeActiveKeyCleanup() =

@@ -14,6 +14,7 @@ open System.Security.Principal
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Win32.SafeHandles
 open Grace.Shared
 open Grace.Shared.ArtifactGrant
 open Grace.Shared.Utilities
@@ -538,6 +539,39 @@ module CacheMachineConfiguration =
         else
             Ok()
 
+    /// Validates an existing Linux identity-key leaf without following links or accepting ownership, type, or mode drift.
+    let validateProvisionedIdentityKeyFile path =
+        if OperatingSystem.IsLinux() then
+            match validateProvisionedStorage path with
+            | Error error -> Error error
+            | Ok () ->
+                try
+                    let file = FileInfo(path)
+
+                    if isNull file.LinkTarget && file.Exists then
+                        validateUnixPath (geteuid ()) regularFileType 0o600 path
+                    else
+                        Error "Grace Cache machine configuration is not securely provisioned."
+                with
+                | :? IOException
+                | :? UnauthorizedAccessException -> Error "Grace Cache machine configuration is not securely provisioned."
+        else
+            Ok()
+
+    /// Maps a Linux-only opaque identity reference to its fixed protected PKCS#8 leaf without exposing a caller-controlled path.
+    let tryGetLinuxIdentityKeyPath keyReference =
+        let prefix = "linux-"
+
+        if
+            not (String.IsNullOrWhiteSpace keyReference)
+            && keyReference.StartsWith(prefix, StringComparison.Ordinal)
+        then
+            match Guid.TryParseExact(keyReference[prefix.Length ..], "N") with
+            | true, identifier -> Some(Path.Combine(unixConfigurationDirectory (), $"identity-{identifier:N}.pk8"))
+            | _ -> None
+        else
+            None
+
     /// Validates the exact endpoint and explicit HTTP exception before a cache process can use it.
     let validateEndpoint (endpoint: string) allowHttpEndpoint =
         match Uri.TryCreate(endpoint, UriKind.Absolute) with
@@ -1013,11 +1047,47 @@ module KeyRotationPreparation =
             createReplacement ()
             |> Result.map (fun replacementKey -> currentKey, replacementKey)
 
+/// Identifies the private-key custody provider selected without exposing private material or provider locations.
+type CacheIdentityKeyProvider =
+    | LinuxProtectedPkcs8File
+    | PlatformX509Store
+
+/// Selects Linux protected-file custody while retaining the existing Windows and macOS platform key stores.
+module CacheIdentityKeyCustody =
+
+    /// Returns the sole private-key provider permitted for the supplied platform classification.
+    let selectProvider isLinux = if isLinux then LinuxProtectedPkcs8File else PlatformX509Store
+
+/// Creates a candidate-submission proof at the dispatch boundary, after any potentially slow candidate-key probe.
+module CacheCandidateSubmissionProof =
+
+    /// Signs the canonical candidate request with the active key using the supplied dispatch timestamp.
+    let create (activeKey: ECDsa) (request: CacheKeyCandidateRequest) issuedAt =
+        { request with
+            Proof =
+                CacheRegistrationProof.createProof
+                    activeKey
+                    request.CacheId
+                    CacheRegistrationProof.SubmitCandidateOperation
+                    (CacheRegistrationProof.candidateRequestDigest request)
+                    issuedAt
+        }
+
 /// Owns service-account P-256 keys without exporting private parameters and calls that use the completed #600 contracts.
 module CacheRuntimeControl =
 
     [<Literal>]
     let private enrollmentTokenEnvironmentVariable = "GRACE_CACHE_ENROLLMENT_TOKEN"
+
+    /// Opens a Linux file descriptor with `O_NOFOLLOW` so a checked identity leaf cannot be replaced by a symbolic link.
+    [<DllImport("libc", SetLastError = true, EntryPoint = "open")>]
+    extern nativeint private openUnixFile(string path, int flags, int mode)
+
+    [<Literal>]
+    let private unixReadOnlyNoFollowCloseOnExec = 0xA0000
+
+    [<Literal>]
+    let private unixWriteCreateExclusiveNoFollowCloseOnExec = 0xA00C1
 
     /// Serializes every refresh, pending-key recovery, and rotation so no callback can observe a half-finished key transition.
     let private lifecycleGate = new SemaphoreSlim(1, 1)
@@ -1031,18 +1101,21 @@ module CacheRuntimeControl =
         finally
             lifecycleGate.Release() |> ignore
 
-    /// Holds one portable service-account certificate and its private ES256 operation without exposing private parameters.
-    type private ServiceIdentityKey(certificate: X509Certificate2, key: ECDsa) =
+    /// Holds one service identity signing operation without exposing private parameters or storage locations.
+    type private ServiceIdentityKey(key: ECDsa, release: unit -> unit) =
         member _.Key = key
 
         interface IDisposable with
-            /// Releases the portable certificate-store handle after one runtime operation completes.
-            member _.Dispose() =
-                key.Dispose()
-                certificate.Dispose()
+            /// Releases the platform-store or Linux file-backed signing handle after one runtime operation completes.
+            member _.Dispose() = release ()
 
-    /// Opens the service account's opaque certificate reference from the portable current-user certificate store.
-    let private openKey keyReference =
+    /// Checks whether an ECDsa signing key is exactly the required P-256 identity curve.
+    let private isP256Key (key: ECDsa) =
+        not (isNull key)
+        && key.ExportParameters(false).Curve.Oid.Value = "1.2.840.10045.3.1.7"
+
+    /// Opens the Windows or macOS platform-store key selected by its opaque certificate reference.
+    let private openPlatformKey keyReference =
         try
             use store = new X509Store(StoreName.My, StoreLocation.CurrentUser)
             store.Open(OpenFlags.ReadOnly)
@@ -1054,22 +1127,162 @@ module CacheRuntimeControl =
                 let certificate = new X509Certificate2(matches[0])
                 let key = certificate.GetECDsaPrivateKey()
 
-                let isP256 =
-                    not (isNull key)
-                    && key.ExportParameters(false).Curve.Oid.Value = "1.2.840.10045.3.1.7"
-
-                if not isP256 then
+                if not (isP256Key key) then
                     if not (isNull key) then key.Dispose()
                     certificate.Dispose()
                     Error "Grace Cache service identity is unavailable."
                 else
-                    Ok(new ServiceIdentityKey(certificate, key))
+                    Ok(
+                        new ServiceIdentityKey(
+                            key,
+                            fun () ->
+                                key.Dispose()
+                                certificate.Dispose()
+                        )
+                    )
         with
         | :? CryptographicException
         | :? PlatformNotSupportedException -> Error "Grace Cache service identity is unavailable."
 
-    /// Creates a P-256 identity in the executing account store, then reopens it before enrollment can send its public key.
-    let private createKey () =
+    /// Opens a Linux PKCS#8 key only after its opaque reference and protected regular-file custody have been revalidated.
+    let private openLinuxKey keyReference =
+        match CacheMachineConfiguration.tryGetLinuxIdentityKeyPath keyReference with
+        | None -> Error "Grace Cache service identity is unavailable."
+        | Some keyPath ->
+            match CacheMachineConfiguration.validateProvisionedIdentityKeyFile keyPath with
+            | Error _ -> Error "Grace Cache service identity is unavailable."
+            | Ok () ->
+                let mutable privateBytes = Array.empty<byte>
+
+                let result =
+                    try
+                        let nativeHandle = openUnixFile (keyPath, unixReadOnlyNoFollowCloseOnExec, 0)
+
+                        if nativeHandle = -1n then
+                            Error "Grace Cache service identity is unavailable."
+                        else
+                            use keyHandle = new SafeFileHandle(nativeHandle, true)
+                            use keyFile = new FileStream(keyHandle, FileAccess.Read)
+
+                            if keyFile.Length <= 0L || keyFile.Length > 16384L then
+                                Error "Grace Cache service identity is unavailable."
+                            else
+                                privateBytes <- Array.zeroCreate (int keyFile.Length)
+                                let mutable offset = 0
+                                let mutable complete = true
+
+                                while complete && offset < privateBytes.Length do
+                                    let read = keyFile.Read(privateBytes, offset, privateBytes.Length - offset)
+
+                                    if read = 0 then complete <- false else offset <- offset + read
+
+                                if not complete then
+                                    Error "Grace Cache service identity is unavailable."
+                                else
+                                    let key = ECDsa.Create()
+                                    let mutable bytesRead = 0
+
+                                    try
+                                        key.ImportPkcs8PrivateKey(privateBytes, &bytesRead)
+
+                                        if
+                                            bytesRead <> privateBytes.Length
+                                            || not (isP256Key key)
+                                        then
+                                            key.Dispose()
+                                            Error "Grace Cache service identity is unavailable."
+                                        else
+                                            Ok(new ServiceIdentityKey(key, (fun () -> key.Dispose())))
+                                    with
+                                    | :? CryptographicException ->
+                                        key.Dispose()
+                                        Error "Grace Cache service identity is unavailable."
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException
+                    | :? CryptographicException -> Error "Grace Cache service identity is unavailable."
+
+                CryptographicOperations.ZeroMemory privateBytes
+                result
+
+    /// Opens the Linux protected PKCS#8 provider or the existing Windows and macOS platform-store provider.
+    let private openKey keyReference =
+        match CacheIdentityKeyCustody.selectProvider (OperatingSystem.IsLinux()) with
+        | LinuxProtectedPkcs8File -> openLinuxKey keyReference
+        | PlatformX509Store -> openPlatformKey keyReference
+
+    /// Removes a Linux key only after verifying the same protected regular-file contract required for opening it.
+    let private deleteLinuxKey keyReference =
+        match CacheMachineConfiguration.tryGetLinuxIdentityKeyPath keyReference with
+        | None -> Error "Grace Cache service identity cleanup failed."
+        | Some keyPath ->
+            try
+                if File.Exists keyPath then
+                    match CacheMachineConfiguration.validateProvisionedIdentityKeyFile keyPath with
+                    | Ok () ->
+                        File.Delete keyPath
+                        Ok()
+                    | Error _ -> Error "Grace Cache service identity cleanup failed."
+                else
+                    Ok()
+            with
+            | :? IOException
+            | :? UnauthorizedAccessException -> Error "Grace Cache service identity cleanup failed."
+
+    /// Creates and atomically promotes one Linux PKCS#8 P-256 key before reopening it through the normal custody checks.
+    let private createLinuxKey () =
+        let keyReference = $"linux-{Guid.NewGuid():N}"
+
+        match CacheMachineConfiguration.tryGetLinuxIdentityKeyPath keyReference with
+        | None -> Error "Grace Cache service identity could not be created."
+        | Some keyPath ->
+            match CacheMachineConfiguration.validateProvisionedStorage keyPath with
+            | Error _ -> Error "Grace Cache service identity could not be created."
+            | Ok () ->
+                let temporaryPath = $"{keyPath}.{Guid.NewGuid():N}.tmp"
+                let mutable privateBytes = Array.empty<byte>
+
+                try
+                    try
+                        use generatedKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+                        privateBytes <- generatedKey.ExportPkcs8PrivateKey()
+
+                        let nativeHandle = openUnixFile (temporaryPath, unixWriteCreateExclusiveNoFollowCloseOnExec, 0o600)
+
+                        if nativeHandle = -1n then
+                            Error "Grace Cache service identity could not be created."
+                        else
+                            use temporaryHandle = new SafeFileHandle(nativeHandle, true)
+                            use temporaryFile = new FileStream(temporaryHandle, FileAccess.Write)
+                            temporaryFile.Write(privateBytes, 0, privateBytes.Length)
+                            temporaryFile.Flush(true)
+                            temporaryFile.Dispose()
+
+                            match CacheMachineConfiguration.validateProvisionedIdentityKeyFile temporaryPath with
+                            | Error _ -> Error "Grace Cache service identity could not be created."
+                            | Ok () ->
+                                File.Move(temporaryPath, keyPath, false)
+
+                                match openLinuxKey keyReference with
+                                | Ok key -> Ok(keyReference, key)
+                                | Error _ ->
+                                    deleteLinuxKey keyReference |> ignore
+                                    Error "Grace Cache service identity could not be reopened."
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException
+                    | :? CryptographicException -> Error "Grace Cache service identity could not be created."
+                finally
+                    CryptographicOperations.ZeroMemory privateBytes
+
+                    try
+                        if File.Exists temporaryPath then File.Delete temporaryPath
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> ()
+
+    /// Creates a P-256 identity in the existing platform store, then reopens it before enrollment can send its public key.
+    let private createPlatformKey () =
         try
             use generatedKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
             let subject = $"CN=Grace Cache {Guid.NewGuid():N}"
@@ -1099,8 +1312,14 @@ module CacheRuntimeControl =
         | :? CryptographicException
         | :? PlatformNotSupportedException -> Error "Grace Cache service identity could not be created."
 
-    /// Deletes an unaccepted replacement certificate or retires a prior certificate without exporting private key material.
-    let private deleteKey keyReference =
+    /// Creates a Linux protected file key or preserves the Windows and macOS platform-store creation behavior.
+    let private createKey () =
+        match CacheIdentityKeyCustody.selectProvider (OperatingSystem.IsLinux()) with
+        | LinuxProtectedPkcs8File -> createLinuxKey ()
+        | PlatformX509Store -> createPlatformKey ()
+
+    /// Deletes an unaccepted replacement or retires a prior identity only through its selected provider.
+    let private deletePlatformKey keyReference =
         try
             use store = new X509Store(StoreName.My, StoreLocation.CurrentUser)
             store.Open(OpenFlags.ReadWrite)
@@ -1113,6 +1332,12 @@ module CacheRuntimeControl =
         with
         | :? CryptographicException
         | :? PlatformNotSupportedException -> Error "Grace Cache service identity cleanup failed."
+
+    /// Retires a Linux file key or an existing platform-store key after the durable promotion ordering permits cleanup.
+    let private deleteKey keyReference =
+        match CacheIdentityKeyCustody.selectProvider (OperatingSystem.IsLinux()) with
+        | LinuxProtectedPkcs8File -> deleteLinuxKey keyReference
+        | PlatformX509Store -> deletePlatformKey keyReference
 
     /// Produces the canonical #600 public-key DTO from only public P-256 coordinates.
     let private publicKey (key: ECDsa) =
@@ -1635,18 +1860,13 @@ module CacheRuntimeControl =
                         Proof = Unchecked.defaultof<SignedCacheRequestProof>
                     }
 
-                let proof =
-                    CacheRegistrationProof.createProof
-                        activeKey.Key
-                        configuration.CacheId
-                        CacheRegistrationProof.SubmitCandidateOperation
-                        (CacheRegistrationProof.candidateRequestDigest unsignedRequest)
-                        (NodaTime.SystemClock.Instance.GetCurrentInstant())
-
                 match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
                 | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()
                 | _ ->
-                    match postCandidate (Uri(configuration.ServerUri)) { unsignedRequest with Proof = proof } with
+                    // The candidate probe can take longer than the server proof tolerance; sign only for the request being sent.
+                    let signedRequest = CacheCandidateSubmissionProof.create activeKey.Key unsignedRequest (NodaTime.SystemClock.Instance.GetCurrentInstant())
+
+                    match postCandidate (Uri(configuration.ServerUri)) signedRequest with
                     | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.CandidateAccepted ->
                         match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
                         | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()

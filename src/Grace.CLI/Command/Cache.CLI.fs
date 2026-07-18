@@ -30,6 +30,12 @@ module CacheCommand =
             Constants.EnvironmentVariables.GraceAuthOidcM2mClientId
             Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
             Constants.EnvironmentVariables.GraceAuthOidcM2mScopes
+            Constants.EnvironmentVariables.GraceAuthMicrosoftClientId
+            Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret
+            Constants.EnvironmentVariables.GraceAuthMicrosoftTenantId
+            Constants.EnvironmentVariables.GraceAuthMicrosoftAuthority
+            Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope
+            Constants.EnvironmentVariables.GraceAuthMicrosoftCliClientId
             enrollmentTokenEnvironmentVariable
         ]
 
