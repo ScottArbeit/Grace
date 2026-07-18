@@ -148,7 +148,10 @@ Use the profile from `docs/Development process.md`:
 | `sdk-client` | SDK surface or client contract changes |
 | `deployment-runtime` | Aspire, emulators, Docker, Azure resources, scripts, runtime config |
 
-Default commands:
+Focused proof comes first. The broad commands below are optional local escalation tools; GitHub `Validate` is the
+authoritative broad gate for the current pull-request revision.
+
+Commands:
 
 ```powershell
 pwsh ./scripts/bootstrap.ps1
@@ -158,23 +161,17 @@ npx --yes markdownlint-cli2 "**/*.md"
 git diff --check
 ```
 
-Run `-Full` for Aspire integration, emulators, storage, Cosmos DB, Service Bus, Redis, runtime delivery, or
-cross-service behavior.
-
-Use the validation ladder from `docs/Development process.md`: run targeted Fantomas formatting or checks before
-validation for touched F# files, run freshness checks when needed, then choose exactly one final build/test gate. If
-`validate -Fast` or `validate -Full` will run, do not also ask workers to routinely run project-specific
-`dotnet build` plus `dotnet test --no-build`; `validate` is the final build/test gate.
-
-Focused project build/test remains appropriate for RED evidence, failure diagnosis, skipped-validate workflows, tests
-outside the selected validate profile, or explicitly focused-only issues. Freshness/update workers follow the same
-rule: formatting or freshness checks first, then one final build/test gate.
+Use Fast for a concrete optional broad preflight, such as unavailable CI or unusually broad compile fan-out. Use Full
+for local integration reproduction or diagnosis, not merely because an integration-related path was touched. Avoid
+routine local broad validation immediately followed by required CI. Focused project build/test, formatting, freshness
+checks, and `git diff --check` are required before commit; build the focused project before `--no-build` tests.
 
 Before the Grace completion review gate, update the branch against its required base: current `origin/main` for
 standalone non-epic issue branches, current `origin/epic/...` for sub-issue branches targeting an epic integration
 branch, and current `origin/main` for the final epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that
-no unexpected deletions are present, run the chosen validation gate, then wait for Codex Code Review Bot on the
-refreshed PR head. A bot reaction or comment on a stale commit does not satisfy completion.
+no unexpected deletions are present, and rerun focused proof when relevant changes affect the slice. Push the refreshed
+head, then require current GitHub `Validate` and Codex Code Review Bot state. A bot reaction or CI result on a stale
+revision does not satisfy completion.
 
 ## Merge Cleanup
 

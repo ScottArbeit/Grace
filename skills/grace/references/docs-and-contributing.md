@@ -68,6 +68,10 @@ pwsh ./scripts/validate.ps1 -Fast
 pwsh ./scripts/validate.ps1 -Full
 ```
 
+Explain focused proof, formatting or syntax checks, and `git diff --check` as the normal local path. Describe Fast as
+an optional broad preflight and Full as local integration reproduction or diagnosis. GitHub `Validate` is the required
+broad gate for the current pull-request revision; omission of redundant local Fast or Full is not skipped validation.
+
 From `./src` for formatting:
 
 ```powershell

@@ -90,7 +90,7 @@ jobs:
           fi
 
           exit "${pull_failed}"
-      - name: Test
+      - name: Test every solution project through the shared Full profile
         env:
           GRACE_TEST_SERVER_CLEANUP: "0"
-        run: dotnet test "src/Grace.slnx" --configuration Release --no-build --no-restore
+        run: pwsh ./scripts/validate.ps1 -Full -SkipFormat -SkipBuild -Configuration Release

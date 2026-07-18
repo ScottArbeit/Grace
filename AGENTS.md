@@ -14,10 +14,12 @@ Prerequisites:
 Commands:
 
 - `pwsh ./scripts/bootstrap.ps1`
-- `pwsh ./scripts/validate.ps1 -Fast`
+- Run the smallest meaningful focused proof for the changed slice.
 
-Use `pwsh ./scripts/validate.ps1 -Full` for Aspire integration coverage.
-Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit `validate -Fast` hook.
+Use `pwsh ./scripts/validate.ps1 -Fast` as an optional broad local preflight and `-Full` for local integration
+reproduction or diagnosis. GitHub `Validate` is the required broad gate for the current pull-request revision.
+Optional: `pwsh ./scripts/install-githooks.ps1` adds a lightweight pre-commit staged-diff check; focused tests and
+formatting remain explicit responsibilities.
 
 More context:
 
@@ -113,31 +115,22 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
-- Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate.
-- Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
-  deployment/runtime behavior, or cross-service integration is affected.
-- Order validation to avoid duplicate builds. Run targeted Fantomas formatting or checks before validation for touched
-  F# files, then choose exactly one final build/test gate. If the slice will run
-  `pwsh ./scripts/validate.ps1 -Fast` or `pwsh ./scripts/validate.ps1 -Full`, do not also ask workers to routinely run
-  project-specific `dotnet build` plus `dotnet test --no-build`; `validate` is the final build/test gate.
-- Focused project build/test is appropriate for RED evidence, failure diagnosis, skipped-validate workflows, tests
-  outside the selected validate profile, or issues that explicitly require a focused-only gate. When a focused test
-  command uses `--no-build`, run the matching Release build for that project after formatting and before the
-  `--no-build` test command.
-- Freshness or generated-file update workers follow the same validation ladder: formatting or freshness checks first,
-  then exactly one final build/test gate. If `validate -Fast` or `validate -Full` runs, do not also run routine focused
-  build/test commands.
+- Prefer vertical slices with focused local proof: RED where applicable, formatting, the smallest relevant test or
+  parser/lint/rendered-artifact check, required freshness checks, and `git diff --check` before each commit.
+- Do not routinely run local Fast or Full and then repeat the same broad proof in required CI. Fast is an optional
+  broad preflight; Full is for local integration reproduction or diagnosis. Use either only for concrete escalation,
+  such as unavailable CI, broad compile fan-out, a requested gate, or local investigation.
+- When a focused `dotnet test` command uses `--no-build`, run the matching Release build first. If Fast or Full is
+  intentionally selected, it replaces—not supplements—the routine focused build/test gate for that checkpoint.
 - Treat parallel work as two separate decisions: product/DAG independence and merge/write-set independence. Run
   branches in parallel only when their write sets are disjoint enough to avoid predictable churn. Serialize or
   merge-queue branches that touch shared project files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper
   files. For broad waves, consider a preparatory compile-item or file-scaffold slice before later branches edit
   separate files.
-- Before the Grace completion review gate, update the branch against current `origin/main`, verify ahead/behind,
-  verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then wait for
-  Codex Code Review Bot to review the refreshed PR head. A bot signal on a stale commit does not satisfy the completion
-  gate. For sub-issue PRs targeting an epic integration branch, run that freshness gate against the current epic branch;
-  for the final epic-to-`main` PR, run it against current `origin/main`.
-- Commit after each completed slice and keep pull requests focused and reviewable.
+- Before the completion review gate, update against the required base, inspect ahead/behind, the scoped diff, unexpected
+  deletions, and relevant conflict resolutions, then rerun focused proof if they affect the slice. Push and require
+  current GitHub `Validate` plus Codex Code Review Bot state for that revision.
+- Commit after each completed slice; push one or more completed local commits as a coherent, reviewable checkpoint.
 - When acting as the main implementation orchestrator, delegate each coding task and each fix task to a fresh worker
   subagent. The main orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the
   worker, or commit code changes locally. If an earlier worker thread is lost, compacted away, leaves uncommitted work,
