@@ -222,28 +222,24 @@ function Get-FastTestFilterTerms {
     [string[]]($terms + (Get-ServerUnitTestFilterTerms))
 }
 
-function Get-TestFilter([bool]$IncludeFullTests) {
-    $terms = Get-FastTestFilterTerms
-
-    if ($IncludeFullTests) {
-        $terms += "FullyQualifiedName~Grace.Server.Tests"
-    }
-
-    Join-TestFilter $terms
+function Get-FastTestFilter {
+    Join-TestFilter (Get-FastTestFilterTerms)
 }
 
-function Invoke-SolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
-    $testFilter = Get-TestFilter $IncludeFullTests
+function Invoke-SolutionTests([string]$Configuration, [bool]$UseFastFilter) {
+    $testFilter = if ($UseFastFilter) { Get-FastTestFilter } else { $null }
 
     Write-Host "Test target: src/Grace.slnx"
-    Write-Host ("Test filter: {0}" -f $testFilter)
-    if ($IncludeFullTests) {
-        Write-Host "Progress note: -Full includes Grace.Server.Tests; the Aspire-backed test assembly generally runs for 3-4 minutes after the faster assemblies finish."
+    if ($UseFastFilter) {
+        Write-Host ("Test filter: {0}" -f $testFilter)
+    } else {
+        Write-Host "Test filter: none (-Full runs every test project in src/Grace.slnx)."
+        Write-Host "Progress note: the Aspire-backed test assembly generally runs for 3-4 minutes after the faster assemblies finish."
         Write-Host "Progress note: VSTest may buffer test-host progress output; wait for the Grace.Server.Tests summary before treating quiet output as a hang."
     }
 
     $previousServerCleanup = $env:GRACE_TEST_SERVER_CLEANUP
-    $setServerCleanupForRun = $IncludeFullTests -and [string]::IsNullOrWhiteSpace($env:GRACE_TEST_SERVER_CLEANUP)
+    $setServerCleanupForRun = -not $UseFastFilter -and [string]::IsNullOrWhiteSpace($env:GRACE_TEST_SERVER_CLEANUP)
 
     if ($setServerCleanupForRun) {
         $env:GRACE_TEST_SERVER_CLEANUP = "0"
@@ -251,10 +247,16 @@ function Invoke-SolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
     }
 
     try {
-        Write-Host ("Running: dotnet test `"src/Grace.slnx`" -c {0} --no-build --filter `"{1}`"" -f $Configuration, $testFilter)
-
-        Invoke-External "Grace solution tests" {
-            dotnet test "src/Grace.slnx" -c $Configuration --no-build --filter $testFilter
+        if ($UseFastFilter) {
+            Write-Host ("Running: dotnet test `"src/Grace.slnx`" -c {0} --no-build --no-restore --filter `"{1}`"" -f $Configuration, $testFilter)
+            Invoke-External "Grace solution tests" {
+                dotnet test "src/Grace.slnx" -c $Configuration --no-build --no-restore --filter $testFilter
+            }
+        } else {
+            Write-Host ("Running: dotnet test `"src/Grace.slnx`" -c {0} --no-build --no-restore" -f $Configuration)
+            Invoke-External "Grace solution tests" {
+                dotnet test "src/Grace.slnx" -c $Configuration --no-build --no-restore
+            }
         }
     } finally {
         if ($setServerCleanupForRun) {
@@ -333,7 +335,7 @@ try {
 
     if (-not $SkipTests) {
         Write-Section "Test"
-        Invoke-SolutionTests $Configuration $Full
+        Invoke-SolutionTests $Configuration $Fast
     } else {
         Write-Section "Test"
         Write-Host "Skipped (-SkipTests)."

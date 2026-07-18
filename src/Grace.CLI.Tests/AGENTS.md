@@ -36,5 +36,6 @@ Read `../AGENTS.md` for global expectations before updating CLI tests.
 - Run the matching Release build before any project-specific `dotnet test --no-build` command.
 - Run `dotnet test --configuration Release --no-build src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj` only after that build
   context exists.
-- Run `pwsh ./scripts/validate.ps1 -Fast` for the normal fast gate. The script uses one solution-level `dotnet test`
-  invocation with filters rather than custom per-project process fan-out.
+- Run the smallest focused CLI proof first. Fast is an optional broad preflight; GitHub `Validate` certifies the current
+  pull-request revision. Fast remains one solution-level `dotnet test` invocation with a filter rather than custom
+  per-project process fan-out.
