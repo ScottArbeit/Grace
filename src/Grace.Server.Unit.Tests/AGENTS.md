@@ -25,6 +25,7 @@ Global policies live in `../AGENTS.md`; follow them before touching tests here.
   `--no-build` tests.
 - Run `dotnet test --configuration Release --no-build src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj`
   only after that build context exists.
-- Run `pwsh ./scripts/validate.ps1 -Fast` for the normal fast gate. The script runs solution-level `dotnet test` with
-  selection filters; because several moved files keep historical `Grace.Server.Tests` namespaces, the Server.Unit
-  filter currently derives fixture/type selectors from project compile items and source declarations.
+- Run the smallest focused unit proof first. Fast is an optional broad preflight; GitHub `Validate` certifies the
+  current pull-request revision. Fast uses a solution-level `dotnet test` filter; because several moved files keep
+  historical `Grace.Server.Tests` namespaces, the Server.Unit selectors derive from project compile items and source
+  declarations.

@@ -47,7 +47,7 @@ Details:
 - [ ] Owned paths and forbidden paths reviewed against the issue.
 - [ ] Sensitive surfaces reviewed and marked below.
 - [ ] README, CONTRIBUTING, AGENTS, and docs drift checked.
-- [ ] Skipped validation is explicitly listed with a reason.
+- [ ] Any genuinely required validation that was not run is explicitly listed with a reason.
 
 ## Risk surfaces
 
@@ -69,15 +69,28 @@ Choose one:
 - [ ] Docs impact: None - reason
 - [ ] Not applicable; no user-facing, contributor-facing, or agent-facing behavior changed.
 
-## Validation run
+## Local focused evidence
 
-- [ ] `pwsh ./scripts/validate.ps1 -Fast`
-- [ ] `pwsh ./scripts/validate.ps1 -Full`
-- [ ] Focused tests: command
-- [ ] Formatting/linting: command
-- [ ] Manual validation: command or steps
+- [ ] Focused proof: command and result
+- [ ] Formatting/linting: command and result
+- [ ] Generated-file/freshness or syntax checks: command and result
+- [ ] Manual validation: command, steps, or N/A
+
+## Optional local broad preflight
+
+- [ ] Fast, Full, or neither: result and reason when run
+
+## Required CI evidence
+
+- Current head SHA:
+- GitHub `Validate` state:
+- GitHub Actions run link:
+- [ ] The result was triggered by and remains associated with the latest PR revision.
 
 ## Validation not run
+
+List only required proof that was omitted. Normal omission of local Fast or Full after focused proof is not skipped
+validation.
 
 ## Residual risks
 

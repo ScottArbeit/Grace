@@ -349,7 +349,7 @@
         <span>GitHub issue first</span>
         <span>Owned paths</span>
         <span>Vertical slices</span>
-        <span>Fast validation</span>
+        <span>Focused local proof</span>
         <span>Checkpoint commits</span>
         <span>Promotion-ready review</span>
       </div>
@@ -378,8 +378,8 @@
           <h3>Keep Grace-Native</h3>
           <ul>
             <li>Use GitHub issues as the active task record for implementation work.</li>
-            <li>Use <code>pwsh ./scripts/validate.ps1 -Fast</code> as the normal validation gate.</li>
-            <li>Use <code>-Full</code> when Aspire, integration, emulators, or cross-service behavior changes.</li>
+            <li>Use focused local proof before each commit; GitHub <code>Validate</code> is the broad PR gate.</li>
+            <li>Use <code>-Fast</code> as an optional preflight and <code>-Full</code> for local diagnosis or reproduction.</li>
             <li>Keep the fork and PR contribution path for outside contributors.</li>
             <li>Use epic integration branches when the whole epic is the production-safe unit for <code>main</code>.</li>
             <li>Map final integration language to Grace's promotion model: candidates, gates, attestations, and review reports.</li>
@@ -531,16 +531,16 @@ Definition of done:</code></pre>
         </article>
 
         <article class="step" data-step="8">
-          <h3>Run the fastest meaningful validation first</h3>
+          <h3>Prove the slice locally, certify it broadly in CI</h3>
           <p>
-            Start with the impacted test project, then promote to the repo validator when the change crosses project,
-            fixture, build, or integration boundaries. The normal repo gates are:
+            Start with the impacted test project, parser, linter, or rendered artifact, then run freshness checks and
+            <code>git diff --check</code>. GitHub <code>Validate</code> certifies the current PR revision broadly:
           </p>
           <pre><code>pwsh ./scripts/validate.ps1 -Fast
 pwsh ./scripts/validate.ps1 -Full</code></pre>
           <p>
-            Use <code>-Full</code> when Aspire integration, emulators, storage, Service Bus, Cosmos, Redis, deployment,
-            or cross-service behavior matters.
+            Use <code>-Fast</code> only for a justified local broad preflight. Use <code>-Full</code> for local
+            integration diagnosis or reproduction. Commit each completed slice and push coherent checkpoints.
           </p>
         </article>
 
@@ -668,7 +668,7 @@ Definition of done:
           <h3>CLI Or Server Boundary</h3>
           <p>
             Commands, endpoints, SDK calls, or actor-backed workflows. Prefer focused command/API/server-surface tests
-            before broader validation.
+            before optional broader local validation.
           </p>
         </div>
         <div class="panel">
@@ -681,8 +681,8 @@ Definition of done:
         <div class="panel">
           <h3>Deployment Runtime</h3>
           <p>
-            Aspire, emulators, Azure settings, Docker, or scripts. Pair parser/script checks with
-            <code>validate.ps1 -Full</code> or live evidence when runtime behavior is affected.
+            Aspire, emulators, Azure settings, Docker, or scripts. Pair parser/script checks with focused live evidence;
+            use <code>validate.ps1 -Full</code> for local diagnosis and GitHub <code>Validate</code> for broad CI proof.
           </p>
         </div>
         <div class="panel">

@@ -60,8 +60,11 @@ Use these sibling skills when the task needs a specialized workflow:
   `references/workflow.md`. Route sub-issue pull requests to that epic branch; do not use direct-to-`main` epic slices.
 - Coordinate across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.SDK`, `Grace.CLI`, and tests
   when one surface changes another.
-- Prefer `pwsh ./scripts/validate.ps1 -Fast`; use `-Full` when Aspire, emulators, Service Bus, storage, Redis,
-  deployment/runtime behavior, or cross-service integration is affected.
+- Require focused local proof first. Use `pwsh ./scripts/validate.ps1 -Fast` only as an optional broad preflight and
+  `-Full` for local integration reproduction or diagnosis. GitHub `Validate` certifies the current PR revision across
+  the repository; successful CI logs need not be ingested unless a failure or warning requires diagnosis.
+- Push one or more completed local commits as a coherent checkpoint. Review fixes use focused regression proof, then
+  the current-revision GitHub `Validate` result.
 - Use PowerShell examples before bash / zsh in docs.
 
 ## PowerShell Text Editing and Quoting

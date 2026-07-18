@@ -43,6 +43,7 @@ Global policies live in `../AGENTS.md`; follow them before touching tests here.
 - Run the matching Release build before any project-specific `dotnet test --no-build` command.
 - Run `dotnet test --configuration Release --no-build src/Grace.Server.Tests/Grace.Server.Tests.fsproj` only after that
   build context exists.
-- Run `pwsh ./scripts/validate.ps1 -Full` for the integration gate. The script uses one solution-level `dotnet test`
-  invocation with filters rather than custom per-project process fan-out.
+- Run the smallest focused integration proof first. Use `pwsh ./scripts/validate.ps1 -Full` only for local integration
+  reproduction or diagnosis; GitHub `Validate` is the broad integration gate for the current pull-request revision.
+  Full uses one unfiltered solution-level `dotnet test` invocation rather than custom per-project process fan-out.
 - Run `dotnet tool run fantomas --recurse .` from `./src` after F# changes.
