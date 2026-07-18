@@ -189,16 +189,25 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Contain("addCacheProject builder isTestRun useFixedTestPorts")))
         )
 
-    /// Verifies both standard validation profiles inherit the Fast cache-test selection.
+    /// Verifies Fast filters to the selected test families while Full runs the unfiltered solution test path.
     [<Test>]
     member _.ValidateScriptSelectsCacheTestsForFastAndFullProfiles() =
         let validationScript = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "scripts", "validate.ps1")))
 
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(validationScript, Does.Contain("\"FullyQualifiedName~Grace.Cache.Tests\","))
-                Assert.That(validationScript, Does.Contain("$terms = Get-FastTestFilterTerms"))
-                Assert.That(validationScript, Does.Contain("if ($IncludeFullTests)")))
+                Assert.That(validationScript, Does.Contain("FullyQualifiedName~Grace.Authorization.Tests"))
+                Assert.That(validationScript, Does.Contain("FullyQualifiedName~Grace.Cache.Tests"))
+                Assert.That(validationScript, Does.Contain("Get-ServerUnitTestFilterTerms"))
+
+                Assert.That(
+                    validationScript,
+                    Does.Match("(?m)^                dotnet test \"src/Grace.slnx\" -c \\$Configuration --no-build --no-restore --filter \\$[A-Za-z0-9_]+$")
+                )
+
+                Assert.That(validationScript, Does.Contain("Invoke-SolutionTests $Configuration $Fast"))
+
+                Assert.That(validationScript, Does.Match("(?m)^                dotnet test \"src/Grace.slnx\" -c \\$Configuration --no-build --no-restore$")))
         )
 
     /// Verifies the hand-authored F# marker preserves Aspire's generated AppHost test-entry contract.
