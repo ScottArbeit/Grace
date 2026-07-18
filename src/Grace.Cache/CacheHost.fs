@@ -86,6 +86,74 @@ module CacheRotationSchedule =
     /// Calculates the initial delay from the registration response returned by Grace Server.
     let initialDelay (now: Instant) (registration: CacheRegistration) = initialDelayForDue now registration.RotationDueAt
 
+/// Identifies whether the next timer callback must rotate a key or only obtain authoritative scheduling facts after promotion.
+type internal KeyRotationSchedulingPhase =
+    | RotationRequired
+    | RegistrationSchedulingRequired
+
+/// Supplies the serialized runtime operations and timer hooks needed to separate key promotion from registration scheduling.
+type internal KeyRotationSchedulingEffects =
+    {
+        Synchronize: unit -> Result<IdentitySynchronizationResult, string>
+        ReadRegistration: unit -> Result<CacheRegistration, string>
+        MarkUnhealthy: unit -> unit
+        Schedule: TimeSpan -> unit
+        Now: unit -> Instant
+    }
+
+/// Schedules automatic rotation from the server due time while ensuring a failed post-promotion read never initiates another rotation.
+module internal CacheKeyRotationScheduling =
+
+    /// Runs one timer callback and returns the phase required for its next callback.
+    let run phase (effects: KeyRotationSchedulingEffects) =
+        let scheduleFromRegistration registration =
+            effects.Schedule(CacheRotationSchedule.initialDelay (effects.Now()) registration)
+            RotationRequired
+
+        let retryRegistrationScheduling () =
+            effects.Schedule CacheRefreshSchedule.retryInterval
+            RegistrationSchedulingRequired
+
+        match phase with
+        | RotationRequired ->
+            match effects.Synchronize() with
+            | Ok (Synchronized _) ->
+                match effects.ReadRegistration() with
+                | Ok registration -> scheduleFromRegistration registration
+                | Error _ -> retryRegistrationScheduling ()
+            | Ok (RotationRetryAfter _) ->
+                effects.MarkUnhealthy()
+                effects.Schedule CacheRefreshSchedule.retryInterval
+                RotationRequired
+            | Error _ ->
+                effects.MarkUnhealthy()
+                effects.Schedule CacheRefreshSchedule.retryInterval
+                RotationRequired
+        | RegistrationSchedulingRequired ->
+            match effects.ReadRegistration() with
+            | Ok registration -> scheduleFromRegistration registration
+            | Error _ -> retryRegistrationScheduling ()
+
+/// Supplies the startup-only rotation and cancellation effects that keep a throttled cache unready before listener creation.
+type internal StartupRotationEffects = { Synchronize: unit -> Result<IdentitySynchronizationResult, string>; WaitForRetry: TimeSpan -> bool }
+
+/// Waits at a server-issued startup throttle boundary and retries only the already durable candidate before listener creation.
+module internal CacheStartupRotation =
+
+    /// Repeats startup synchronization after each completed server throttle wait and exits promptly when shutdown cancels the wait.
+    let synchronizeBeforeListener (effects: StartupRotationEffects) =
+        let mutable result: Result<unit, string> option = None
+
+        while result.IsNone do
+            match effects.Synchronize() with
+            | Ok (Synchronized _) -> result <- Some(Ok())
+            | Ok (RotationRetryAfter retryAfter) ->
+                if not (effects.WaitForRetry retryAfter) then
+                    result <- Some(Error "Grace Cache startup was cancelled.")
+            | Error error -> result <- Some(Error error)
+
+        result.Value
+
 /// Owns the fixed, non-serving HTTP surface of the Grace Cache tracer process.
 module CacheHost =
 
@@ -160,6 +228,7 @@ module CacheHost =
     /// Holds the in-memory rotation timer that retries failures after five minutes and otherwise follows server-issued due time.
     type private KeyRotationScheduler(initialRegistration: CacheRegistration) =
         let mutable timer: Timer option = None
+        let mutable phase = RotationRequired
 
         /// Schedules the next single rotation callback without allowing timer cadence to override the server due instant.
         let schedule delay =
@@ -170,15 +239,16 @@ module CacheHost =
 
         /// Rotates through the serialized runtime, retaining a failed candidate and publishing unhealthy state before retrying it.
         let onTimer _ =
-            match CacheRuntimeControl.synchronizeIdentity false with
-            | Ok _ ->
-                match CacheRuntimeControl.refreshRegistrationNow () with
-                | Ok registration -> schedule (CacheRotationSchedule.initialDelay (SystemClock.Instance.GetCurrentInstant()) registration)
-                | Error _ -> schedule CacheRefreshSchedule.retryInterval
-            | Error _ ->
-                CacheRuntimeControl.refreshNow () |> ignore
+            let effects: KeyRotationSchedulingEffects =
+                {
+                    Synchronize = fun () -> CacheRuntimeControl.synchronizeIdentity false
+                    ReadRegistration = CacheRuntimeControl.refreshRegistrationNow
+                    MarkUnhealthy = fun () -> CacheRuntimeControl.refreshNow () |> ignore
+                    Schedule = schedule
+                    Now = SystemClock.Instance.GetCurrentInstant
+                }
 
-                schedule CacheRefreshSchedule.retryInterval
+            phase <- CacheKeyRotationScheduling.run phase effects
 
         do
             let rotationTimer = new Timer(TimerCallback onTimer, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan)

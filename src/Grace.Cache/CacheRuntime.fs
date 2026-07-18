@@ -64,6 +64,11 @@ type AcceptedEnrollmentFinalizationEffects<'configuration> =
 /// Represents the safe operational facts that may be returned by the local cache control surface.
 type CacheRuntimeStatus = { Lifecycle: string; CacheId: string option; Transport: string option }
 
+/// Distinguishes a completed identity synchronization from the server-mandated retry boundary during startup rotation.
+type internal IdentitySynchronizationResult =
+    | Synchronized of CacheRuntimeStatus
+    | RotationRetryAfter of TimeSpan
+
 /// Supplies the protected local reads used to produce a redacted cache status without granting status a lifecycle mutation path.
 type CacheRuntimeStatusReadEffects =
     {
@@ -103,6 +108,11 @@ module CacheRotationInterval =
                 ->
                 Ok minutes
             | _ -> Error "Grace Cache key rotation interval is invalid."
+
+    /// Validates the current deployment interval before candidate recovery or creation can cause a key or server effect.
+    let internal beforeSynchronization readEnvironment continueSynchronization =
+        fromEnvironment readEnvironment
+        |> Result.bind continueSynchronization
 
 /// Holds the operating-system mutex lease that makes one active cache process machine-wide.
 type MachineInstanceLease internal (mutex: Mutex) =
@@ -1424,7 +1434,7 @@ module CacheRuntimeControl =
         | _, Error error -> Error error
         | Ok (), Ok () ->
             match effects.ReadRecovery recoveryPath with
-            | Ok (Some recovery) when CacheEnrollmentRecovery.isUnknown recovery -> Ok CacheRuntimeStatus.enrollmentRecoveryRequired
+            | Ok (Some _) -> Ok CacheRuntimeStatus.enrollmentRecoveryRequired
             | Error message -> Error message
             | Ok _ ->
                 effects.ReadConfiguration configurationPath
@@ -1604,7 +1614,7 @@ module CacheRuntimeControl =
 
                 let acceptPromotedCandidate () =
                     CandidateKeyState.acceptReplacement effects configuration pending
-                    |> Result.map (fun updated -> CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint))
+                    |> Result.map (fun updated -> Synchronized(CacheRuntimeStatus.registered updated.CacheId (transport updated.Endpoint)))
 
                 /// Recognizes both a just-promoted refresh and a post-promotion refresh throttle only when the authoritative registration proves the candidate is active.
                 let candidateRefreshConfirmsPromotion (result: CacheRegistrationResult) =
@@ -1642,45 +1652,48 @@ module CacheRuntimeControl =
                         | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()
                         | _ -> Error "Grace Cache identity candidate could not be promoted; the same candidate remains pending for retry."
                     | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.RotationRetryAfter ->
-                        Error
-                            $"Grace Cache startup identity rotation must wait {result.RetryAfterSeconds |> Option.defaultValue 60} seconds before retrying the same candidate."
+                        Ok(RotationRetryAfter(TimeSpan.FromSeconds(float (result.RetryAfterSeconds |> Option.defaultValue 60))))
                     | RotationAccepted _
                     | RotationRejected
                     | RotationNotSent -> Error "Grace Cache identity candidate was not accepted; the same candidate remains pending for retry."
                     | RotationUnknown -> Error "Grace Cache identity candidate outcome is unknown; the same candidate remains pending for retry."
 
     /// Submits or reuses one locally durable candidate, then promotes it through candidate-key refresh before selecting it locally.
+    let private synchronizeReadyConfiguration configurationPath (configuration: CacheMachineConfiguration) isStartup =
+        match configuration.CandidateKeyState with
+        | Some pending -> completeCandidateSynchronization configurationPath configuration pending isStartup
+        | None ->
+            match KeyRotationPreparation.openCurrentBeforeCreatingReplacement (fun () -> openKey configuration.ActiveKeyName) createKey with
+            | Error error -> Error error
+            | Ok (activeKey, (candidateKeyName, candidateKey)) ->
+                use activeKey = activeKey
+                use candidateKey = candidateKey
+
+                match publicKey candidateKey.Key with
+                | Error error ->
+                    deleteKey candidateKeyName |> ignore
+                    Error error
+                | Ok candidatePublicKey ->
+                    let effects: CandidateKeyStateEffects = { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey }
+
+                    match CandidateKeyState.beginTransition effects configuration candidateKeyName candidatePublicKey with
+                    | Error error ->
+                        deleteKey candidateKeyName |> ignore
+                        Error error
+                    | Ok candidateConfiguration ->
+                        match candidateConfiguration.CandidateKeyState with
+                        | Some pending -> completeCandidateSynchronization configurationPath candidateConfiguration pending isStartup
+                        | None -> Error "Grace Cache candidate state was not persisted."
+
+    /// Validates the active interval before any retained candidate can be opened, reconciled, or replaced.
     let private synchronizeIdentityCore isStartup =
         let configurationPath = CacheMachineConfiguration.configurationPath ()
 
         match getReadyConfigurationCore () with
         | Error error -> Error error
         | Ok configuration ->
-            match configuration.CandidateKeyState with
-            | Some pending -> completeCandidateSynchronization configurationPath configuration pending isStartup
-            | None ->
-                match KeyRotationPreparation.openCurrentBeforeCreatingReplacement (fun () -> openKey configuration.ActiveKeyName) createKey with
-                | Error error -> Error error
-                | Ok (activeKey, (candidateKeyName, candidateKey)) ->
-                    use activeKey = activeKey
-                    use candidateKey = candidateKey
-
-                    match publicKey candidateKey.Key with
-                    | Error error ->
-                        deleteKey candidateKeyName |> ignore
-                        Error error
-                    | Ok candidatePublicKey ->
-                        let effects: CandidateKeyStateEffects =
-                            { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey }
-
-                        match CandidateKeyState.beginTransition effects configuration candidateKeyName candidatePublicKey with
-                        | Error error ->
-                            deleteKey candidateKeyName |> ignore
-                            Error error
-                        | Ok candidateConfiguration ->
-                            match candidateConfiguration.CandidateKeyState with
-                            | Some pending -> completeCandidateSynchronization configurationPath candidateConfiguration pending isStartup
-                            | None -> Error "Grace Cache candidate state was not persisted."
+            CacheRotationInterval.beforeSynchronization Environment.GetEnvironmentVariable (fun _ ->
+                synchronizeReadyConfiguration configurationPath configuration isStartup)
 
     /// Synchronizes identity only after obtaining the lifecycle gate shared with refresh and recovery.
-    let synchronizeIdentity isStartup = serializeLifecycle (fun () -> synchronizeIdentityCore isStartup)
+    let internal synchronizeIdentity isStartup = serializeLifecycle (fun () -> synchronizeIdentityCore isStartup)

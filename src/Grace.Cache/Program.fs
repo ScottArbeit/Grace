@@ -15,6 +15,28 @@ module Program =
         | Error _ -> CacheProcessCommand.processFailure ()
         | Ok _ -> CacheProcessCommand.execute effects args
 
+    /// Waits for Grace Server's startup-rotation throttle with a cancellable process wait before any listener can be built or started.
+    let private synchronizeStartupIdentity () =
+        use cancellationSource = new Threading.CancellationTokenSource()
+
+        let onCancel =
+            ConsoleCancelEventHandler (fun _ eventArgs ->
+                eventArgs.Cancel <- true
+                cancellationSource.Cancel())
+
+        Console.CancelKeyPress.AddHandler onCancel
+
+        try
+            let effects: StartupRotationEffects =
+                {
+                    Synchronize = fun () -> CacheRuntimeControl.synchronizeIdentity true
+                    WaitForRetry = fun retryAfter -> not (cancellationSource.Token.WaitHandle.WaitOne retryAfter)
+                }
+
+            CacheStartupRotation.synchronizeBeforeListener effects
+        finally
+            Console.CancelKeyPress.RemoveHandler onCancel
+
     /// Starts the registered cache host only after acquiring the machine-wide guard before configuration, listener, or store work.
     let private runHost settings =
         match MachineInstanceGuard.tryAcquire () with
@@ -25,7 +47,7 @@ module Program =
             match CacheRuntimeControl.getReadyConfiguration () with
             | Error message -> Error message
             | Ok _ ->
-                match CacheRuntimeControl.synchronizeIdentity true with
+                match synchronizeStartupIdentity () with
                 | Error message -> Error message
                 | Ok _ ->
                     match CacheRuntimeControl.getReadyConfiguration () with

@@ -233,6 +233,229 @@ type CacheHostTests() =
             Assert.That(persisted.ActiveKeyName, Is.EqualTo(recovery.ActiveKeyName))
             Assert.That(persisted.CacheId, Is.EqualTo(None))
 
+    /// Verifies every retained enrollment recovery subtype is visible through a pure redacted status read even when no final configuration exists.
+    [<Test>]
+    member _.RetainedEnrollmentRecoveryStatusIsPureAndRedactedWithoutFinalConfiguration() =
+        let configurationPath = Path.Combine(Path.GetTempPath(), $"grace-cache-status-recovery-{Guid.NewGuid():N}", "cache.runtime.json")
+        let recoveryPath = CacheEnrollmentRecovery.recoveryPath configurationPath
+
+        let prepared =
+            CacheEnrollmentRecovery.prepare
+                "https://cache.example.test"
+                "https://server.example.test/private"
+                [| Guid.NewGuid(), Guid.NewGuid() |]
+                "opaque-key-reference"
+                testPublicKey
+
+        let retainedRecoveries =
+            [
+                prepared
+                CacheEnrollmentRecovery.accept (Guid.NewGuid()) prepared
+                CacheEnrollmentRecovery.unknown prepared
+            ]
+
+        for recovery in retainedRecoveries do
+            let mutable recoveryReads = 0
+            let mutable configurationReads = 0
+
+            let effects: CacheRuntimeStatusReadEffects =
+                {
+                    ValidateStorage = fun _ -> Ok()
+                    ValidateFile = fun _ -> Ok()
+                    ReadRecovery =
+                        fun path ->
+                            recoveryReads <- recoveryReads + 1
+
+                            if path = recoveryPath then
+                                Ok(Some recovery)
+                            else
+                                Error "Unexpected recovery path."
+                    ReadConfiguration =
+                        fun _ ->
+                            configurationReads <- configurationReads + 1
+                            Error "Status must not read a final configuration while enrollment recovery is retained."
+                }
+
+            match CacheRuntimeControl.readStatusWith effects configurationPath with
+            | Error error -> Assert.Fail(error)
+            | Ok status ->
+                Assert.That(status, Is.EqualTo(CacheRuntimeStatus.enrollmentRecoveryRequired))
+                Assert.That(recoveryReads, Is.EqualTo(1))
+                Assert.That(configurationReads, Is.EqualTo(0))
+                Assert.That(status.ToString(), Does.Not.Contain(recovery.Endpoint))
+                Assert.That(status.ToString(), Does.Not.Contain(recovery.ServerUri))
+                Assert.That(status.ToString(), Does.Not.Contain(recovery.ActiveKeyName))
+
+    /// Verifies invalid rotation configuration aborts before candidate recovery can mutate retained candidate bytes or references.
+    [<Test>]
+    member _.InvalidRotationIntervalPrecedesEveryCandidateEffect() =
+        let candidateBytes = [| 1uy; 2uy; 3uy |]
+        let retainedCandidateBytes = candidateBytes
+        let originalBytes = Array.copy candidateBytes
+        let mutable candidateEffectRan = false
+
+        let result =
+            CacheRotationInterval.beforeSynchronization
+                (fun _ -> "14")
+                (fun _ ->
+                    candidateEffectRan <- true
+                    candidateBytes[0] <- 0uy
+                    Ok())
+
+        Assert.That(result, Is.EqualTo((Error "Grace Cache key rotation interval is invalid.": Result<unit, string>)))
+        Assert.That(candidateEffectRan, Is.False)
+        Assert.That(Object.ReferenceEquals(candidateBytes, retainedCandidateBytes), Is.True)
+        Assert.That((candidateBytes = originalBytes), Is.True)
+
+    /// Verifies mandatory startup rotation waits exactly for the server boundary before retrying the same durable candidate without listener or health publication.
+    [<Test>]
+    member _.StartupThrottleWaitsUnreadyThenRetriesTheSameCandidate() =
+        let retryAfter = TimeSpan.FromSeconds 37.0
+        let candidateReference = "candidate-reference"
+        let attempts = ResizeArray<string>()
+        let waits = ResizeArray<TimeSpan>()
+        let mutable listenerStarts = 0
+        let mutable healthyPublications = 0
+
+        let effects: StartupRotationEffects =
+            {
+                Synchronize =
+                    fun () ->
+                        attempts.Add candidateReference
+
+                        if attempts.Count = 1 then
+                            Ok(RotationRetryAfter retryAfter)
+                        else
+                            Ok(Synchronized(CacheRuntimeStatus.registered Guid.Empty "https"))
+                WaitForRetry =
+                    fun delay ->
+                        waits.Add delay
+                        Assert.That(listenerStarts, Is.EqualTo(0))
+                        Assert.That(healthyPublications, Is.EqualTo(0))
+                        true
+            }
+
+        match CacheStartupRotation.synchronizeBeforeListener effects with
+        | Error error -> Assert.Fail(error)
+        | Ok () ->
+            listenerStarts <- listenerStarts + 1
+            healthyPublications <- healthyPublications + 1
+
+        Assert.That(
+            (attempts |> Seq.toList) =
+                [
+                    candidateReference
+                    candidateReference
+                ],
+            Is.True
+        )
+
+        Assert.That((waits |> Seq.toList) = [ retryAfter ], Is.True)
+        Assert.That(listenerStarts, Is.EqualTo(1))
+        Assert.That(healthyPublications, Is.EqualTo(1))
+
+    /// Verifies startup cancellation interrupts the throttle wait without retrying rotation or permitting listener startup.
+    [<Test>]
+    member _.StartupThrottleCancellationStopsBeforeRetryOrListenerStartup() =
+        let retryAfter = TimeSpan.FromSeconds 59.0
+        let mutable synchronizationCalls = 0
+        let mutable listenerStarts = 0
+        let waits = ResizeArray<TimeSpan>()
+
+        let effects: StartupRotationEffects =
+            {
+                Synchronize =
+                    fun () ->
+                        synchronizationCalls <- synchronizationCalls + 1
+                        Ok(RotationRetryAfter retryAfter)
+                WaitForRetry =
+                    fun delay ->
+                        waits.Add delay
+                        false
+            }
+
+        match CacheStartupRotation.synchronizeBeforeListener effects with
+        | Ok () -> listenerStarts <- listenerStarts + 1
+        | Error error -> Assert.That(error, Is.EqualTo("Grace Cache startup was cancelled."))
+
+        Assert.That(synchronizationCalls, Is.EqualTo(1))
+        Assert.That((waits |> Seq.toList) = [ retryAfter ], Is.True)
+        Assert.That(listenerStarts, Is.EqualTo(0))
+
+    /// Verifies a failed post-promotion registration read retries only scheduling and uses the later server RotationDueAt without creating another candidate.
+    [<Test>]
+    member _.PostPromotionSchedulingRetryDoesNotRotateAgain() =
+        let now = Instant.FromUtc(2026, 7, 17, 20, 0)
+        let currentDue = now.Plus(Duration.FromMinutes 43.0)
+
+        let registration: CacheRegistration =
+            {
+                Class = nameof CacheRegistration
+                CacheId = Guid.NewGuid()
+                DisplayName = "test-cache"
+                BoundaryKind = CacheBoundaryKind.Owner
+                OwnerId = Guid.NewGuid()
+                OrganizationId = None
+                RepositoryScopes = Array.empty
+                ActivePublicKey = testPublicKey
+                CandidatePublicKey = None
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                Health = CacheHealthStatus.Unhealthy
+                SoftwareVersion = "1.0.0"
+                ProtocolVersion = "1"
+                PrefetchSupported = false
+                EnrolledBy = "test"
+                EnrolledAt = now
+                LastRefreshedAt = now
+                RefreshAfter = now.Plus(Duration.FromHours 1)
+                ExpiresAt = now.Plus(Duration.FromHours 2)
+                RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                LastRotatedAt = Some now
+                RotationDueAt = currentDue
+                RevokedAt = None
+            }
+
+        let mutable synchronizationCalls = 0
+        let mutable registrationReads = 0
+        let scheduled = ResizeArray<TimeSpan>()
+
+        let effects: KeyRotationSchedulingEffects =
+            {
+                Synchronize =
+                    fun () ->
+                        synchronizationCalls <- synchronizationCalls + 1
+                        Ok(Synchronized(CacheRuntimeStatus.registered registration.CacheId "https"))
+                ReadRegistration =
+                    fun () ->
+                        registrationReads <- registrationReads + 1
+
+                        if registrationReads = 1 then
+                            Error "Transient post-promotion registration read failure."
+                        else
+                            Ok registration
+                MarkUnhealthy = fun () -> Assert.Fail("A completed promotion with a scheduling read failure must not start a second rotation path.")
+                Schedule = fun delay -> scheduled.Add delay
+                Now = fun () -> now
+            }
+
+        let afterPromotion = CacheKeyRotationScheduling.run RotationRequired effects
+        let afterSchedulingRetry = CacheKeyRotationScheduling.run afterPromotion effects
+
+        Assert.That(afterPromotion, Is.EqualTo(RegistrationSchedulingRequired))
+        Assert.That(afterSchedulingRetry, Is.EqualTo(RotationRequired))
+        Assert.That(synchronizationCalls, Is.EqualTo(1))
+        Assert.That(registrationReads, Is.EqualTo(2))
+
+        Assert.That(
+            (scheduled |> Seq.toList) =
+                [
+                    CacheRefreshSchedule.retryInterval
+                    TimeSpan.FromMinutes 43.0
+                ],
+            Is.True
+        )
+
     /// Verifies known-CacheId recovery finalizes against the immutable original server URI even after the environment changes.
     [<Test>]
     member _.KnownEnrollmentRecoveryUsesRecordedServerUri() =
