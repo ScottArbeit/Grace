@@ -213,8 +213,8 @@ module CacheServerResponse =
         | :? JsonException
         | :? NotSupportedException -> Error()
 
-    /// Returns true only for the exact GraceError property pair that permits a same-candidate fresh-proof retry.
-    let isRetryableCandidateProofTimestampStale (body: string) =
+    /// Returns true only when a GraceError contains the exact one-property marker for a bounded fresh-proof retry.
+    let private hasExactRetryableProofTimestampMarker propertyKey propertyValue (body: string) =
         try
             let error = JsonSerializer.Deserialize<GraceError>(body, Constants.JsonSerializerOptions)
 
@@ -223,13 +223,26 @@ module CacheServerResponse =
                || error.Properties.Count <> 1 then
                 false
             else
-                match error.Properties.TryGetValue(CacheRegistrationProof.CandidateProofTimestampStalePropertyKey) with
-                | true, value when not (isNull value) ->
-                    String.Equals(value.ToString(), CacheRegistrationProof.CandidateProofTimestampStalePropertyValue, StringComparison.Ordinal)
+                match error.Properties.TryGetValue(propertyKey) with
+                | true, value when not (isNull value) -> String.Equals(value.ToString(), propertyValue, StringComparison.Ordinal)
                 | _ -> false
         with
         | :? JsonException
         | :? NotSupportedException -> false
+
+    /// Returns true only for the exact GraceError property pair that permits a same-candidate fresh-proof retry.
+    let isRetryableCandidateProofTimestampStale (body: string) =
+        hasExactRetryableProofTimestampMarker
+            CacheRegistrationProof.CandidateProofTimestampStalePropertyKey
+            CacheRegistrationProof.CandidateProofTimestampStalePropertyValue
+            body
+
+    /// Returns true only for the exact GraceError property pair that permits a same-registration refresh proof retry.
+    let isRetryableRefreshProofTimestampStale (body: string) =
+        hasExactRetryableProofTimestampMarker
+            CacheRegistrationProof.RefreshProofTimestampStalePropertyKey
+            CacheRegistrationProof.RefreshProofTimestampStalePropertyValue
+            body
 
 /// Parses and dispatches cache process verbs without letting the CLI reach cache configuration or identity storage.
 module CacheProcessCommand =
@@ -974,6 +987,13 @@ module CacheKeyRotationLifecycle =
     let requiresOperatorRecovery (configuration: CacheMachineConfiguration) =
         configuration.RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired
 
+    /// Persists a terminal lifecycle without deleting a pending key when the active key cannot be opened to establish cleanup authority.
+    let requireOperatorRecovery effects (configuration: CacheMachineConfiguration) =
+        let terminal = { configuration with RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired }
+
+        effects.WriteConfiguration terminal
+        |> Result.map (fun () -> terminal)
+
     /// Persists the active and candidate opaque references before candidate submission can reach Grace Server.
     let beginTransition effects (configuration: CacheMachineConfiguration) candidateKeyName candidatePublicKey =
         let pending: CandidateKeyTransition =
@@ -1051,6 +1071,7 @@ type CachePostFailure =
     | Retryable
     | Rejected
     | Ambiguous
+    | RefreshProofTimestampStale
 
 /// Classifies HTTP failures that are definite Grace contract rejections rather than post-dispatch unknown outcomes.
 module CacheHttpFailure =
@@ -1067,6 +1088,33 @@ module CacheRefreshHttpFailure =
     /// Returns true when a refresh response follows the existing transient retry path.
     let isRetryable statusCode = statusCode = 429 || statusCode >= 500
 
+/// Identifies whether a candidate-key refresh probe proves promotion, proves candidate rejection, or remains ambiguous.
+type CandidatePromotionProbeOutcome =
+    | CandidatePromoted
+    | CandidateProofDefinitivelyRejected
+    | CandidatePromotionAmbiguous
+
+/// Classifies candidate-key refresh probes before an active-key candidate submission can be considered.
+module CandidatePromotionProbe =
+
+    /// Returns true only when the authoritative registration proves the locally retained candidate is now the sole active identity.
+    let private confirmsPromotion candidatePublicKey (result: CacheRegistrationResult) =
+        (result.Status = CacheRegistrationRefreshStatus.Refreshed
+         || result.Status = CacheRegistrationRefreshStatus.RefreshNotDue)
+        && (result.Registration
+            |> Option.exists (fun registration ->
+                registration.ActivePublicKey = candidatePublicKey
+                && registration.CandidatePublicKey.IsNone))
+
+    /// Prevents ambiguous post-dispatch probe outcomes from discarding durable candidate and active-key recovery evidence.
+    let classify candidatePublicKey =
+        function
+        | Ok result when confirmsPromotion candidatePublicKey result -> CandidatePromoted
+        | Ok result when CacheKeyRotationLifecycle.isDefinitiveRegistrationRejection result.Status -> CandidateProofDefinitivelyRejected
+        | Error Rejected -> CandidateProofDefinitivelyRejected
+        | Ok _
+        | Error _ -> CandidatePromotionAmbiguous
+
 /// Reissues only transport-safe post attempts while preserving ambiguous success outcomes for reconciliation.
 module CachePostRetry =
     /// Executes at most three attempts and rebuilds the request payload for every retry.
@@ -1082,7 +1130,8 @@ module CachePostRetry =
             | Ok value ->
                 retry <- false
                 result <- Some(Ok value)
-            | Error Retryable when attempt < 3 -> pause attempt
+            | Error Retryable
+            | Error RefreshProofTimestampStale when attempt < 3 -> pause attempt
             | Error failure ->
                 retry <- false
                 result <- Some(Error failure)
@@ -1536,6 +1585,18 @@ module CacheRuntimeControl =
 
                     CacheServerResponse.tryReadRegistrationResult body
                     |> Result.mapError (fun () -> Ambiguous)
+                else if response.StatusCode = System.Net.HttpStatusCode.BadRequest then
+                    let body: string =
+                        response
+                            .Content
+                            .ReadAsStringAsync()
+                            .GetAwaiter()
+                            .GetResult()
+
+                    if CacheServerResponse.isRetryableRefreshProofTimestampStale body then
+                        Error RefreshProofTimestampStale
+                    else
+                        Error Rejected
                 else if CacheRefreshHttpFailure.isRetryable (int response.StatusCode) then
                     Error Retryable
                 else
@@ -2003,7 +2064,10 @@ module CacheRuntimeControl =
         | Error error -> Error error
         | Ok intervalMinutes ->
             match openKey configuration.ActiveKeyName, openKey pending.CandidateKeyName with
-            | Error _, _ -> Error "Grace Cache active identity is unavailable. Administrator revocation and re-enrollment are required."
+            | Error _, _ ->
+                CacheKeyRotationLifecycle.requireOperatorRecovery effects configuration
+                |> Result.map (fun _ ->
+                    OperatorRecoveryRequired "Grace Cache active identity is unavailable. Administrator revocation and re-enrollment are required.")
             | _, Error _ -> Error "Grace Cache candidate identity is unavailable. Administrator revocation and re-enrollment are required."
             | Ok activeKey, Ok candidateKey ->
                 use activeKey = activeKey
@@ -2024,15 +2088,6 @@ module CacheRuntimeControl =
 
                         OperatorRecoveryRequired message)
 
-                /// Recognizes both a just-promoted refresh and a post-promotion refresh throttle only when the authoritative registration proves the candidate is active.
-                let candidateRefreshConfirmsPromotion (result: CacheRegistrationResult) =
-                    (result.Status = CacheRegistrationRefreshStatus.Refreshed
-                     || result.Status = CacheRegistrationRefreshStatus.RefreshNotDue)
-                    && (result.Registration
-                        |> Option.exists (fun registration ->
-                            registration.ActivePublicKey = pending.CandidatePublicKey
-                            && registration.CandidatePublicKey.IsNone))
-
                 let unsignedRequest: CacheKeyCandidateRequest =
                     {
                         Class = nameof CacheKeyCandidateRequest
@@ -2043,18 +2098,26 @@ module CacheRuntimeControl =
                         Proof = Unchecked.defaultof<SignedCacheRequestProof>
                     }
 
-                match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
-                | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()
-                | _ ->
+                match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy
+                      |> CandidatePromotionProbe.classify pending.CandidatePublicKey
+                    with
+                | CandidatePromoted -> acceptPromotedCandidate ()
+                | CandidatePromotionAmbiguous ->
+                    Error "Grace Cache identity candidate promotion outcome is unknown; the same candidate remains pending for retry."
+                | CandidateProofDefinitivelyRejected ->
                     // The candidate probe can take longer than the server proof tolerance; sign only for the request being sent.
                     match
                         postCandidate (Uri(configuration.ServerUri)) (fun () ->
                             CacheCandidateSubmissionProof.create activeKey.Key unsignedRequest (NodaTime.SystemClock.Instance.GetCurrentInstant()))
                         with
                     | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.CandidateAccepted ->
-                        match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
-                        | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()
-                        | _ -> Error "Grace Cache identity candidate could not be promoted; the same candidate remains pending for retry."
+                        match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy
+                              |> CandidatePromotionProbe.classify pending.CandidatePublicKey
+                            with
+                        | CandidatePromoted -> acceptPromotedCandidate ()
+                        | CandidateProofDefinitivelyRejected
+                        | CandidatePromotionAmbiguous ->
+                            Error "Grace Cache identity candidate could not be promoted; the same candidate remains pending for retry."
                     | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.RotationRetryAfter ->
                         Ok(RotationRetryAfter(TimeSpan.FromSeconds(float (result.RetryAfterSeconds |> Option.defaultValue 60))))
                     | RotationAccepted result when CacheKeyRotationLifecycle.isDefinitiveRegistrationRejection result.Status -> requireOperatorRecovery ()
@@ -2070,29 +2133,36 @@ module CacheRuntimeControl =
             Ok(OperatorRecoveryRequired "Grace Cache identity recovery requires administrator revocation and re-enrollment.")
         | CandidatePending pending -> completeCandidateSynchronization configurationPath configuration pending isStartup
         | Ready ->
-            match KeyRotationPreparation.openCurrentBeforeCreatingReplacement (fun () -> openKey configuration.ActiveKeyName) createKey with
-            | Error error -> Error error
-            | Ok (activeKey, (candidateKeyName, candidateKey)) ->
-                use activeKey = activeKey
-                use candidateKey = candidateKey
+            let effects: CacheKeyRotationLifecycleEffects = { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey }
 
-                match publicKey candidateKey.Key with
+            match openKey configuration.ActiveKeyName with
+            | Error _ ->
+                CacheKeyRotationLifecycle.requireOperatorRecovery effects configuration
+                |> Result.map (fun _ ->
+                    OperatorRecoveryRequired "Grace Cache active identity is unavailable. Administrator revocation and re-enrollment are required.")
+            | Ok activeKey ->
+                match createKey () with
                 | Error error ->
-                    deleteKey candidateKeyName |> ignore
+                    use activeKey = activeKey
                     Error error
-                | Ok candidatePublicKey ->
-                    let effects: CacheKeyRotationLifecycleEffects =
-                        { WriteConfiguration = CacheMachineConfiguration.write configurationPath; DeleteKey = deleteKey }
+                | Ok (candidateKeyName, candidateKey) ->
+                    use activeKey = activeKey
+                    use candidateKey = candidateKey
 
-                    match CacheKeyRotationLifecycle.beginTransition effects configuration candidateKeyName candidatePublicKey with
+                    match publicKey candidateKey.Key with
                     | Error error ->
                         deleteKey candidateKeyName |> ignore
                         Error error
-                    | Ok candidateConfiguration ->
-                        match candidateConfiguration.RotationLifecycle with
-                        | CandidatePending pending -> completeCandidateSynchronization configurationPath candidateConfiguration pending isStartup
-                        | Ready
-                        | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Error "Grace Cache candidate state was not persisted."
+                    | Ok candidatePublicKey ->
+                        match CacheKeyRotationLifecycle.beginTransition effects configuration candidateKeyName candidatePublicKey with
+                        | Error error ->
+                            deleteKey candidateKeyName |> ignore
+                            Error error
+                        | Ok candidateConfiguration ->
+                            match candidateConfiguration.RotationLifecycle with
+                            | CandidatePending pending -> completeCandidateSynchronization configurationPath candidateConfiguration pending isStartup
+                            | Ready
+                            | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Error "Grace Cache candidate state was not persisted."
 
     /// Validates the active interval before any retained candidate can be opened, reconciled, or replaced.
     let private synchronizeIdentityCore isStartup =

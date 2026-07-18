@@ -606,6 +606,9 @@ type CacheRegistrationLifecycleTests() =
         let staleProof =
             CacheRegistrationProof.createProof activeKey cacheId CacheRegistrationProof.SubmitCandidateOperation digest (now.Minus(Duration.FromSeconds 31L))
 
+        let staleRefreshProof =
+            CacheRegistrationProof.createProof activeKey cacheId CacheRegistrationProof.RefreshOperation digest (now.Minus(Duration.FromSeconds 31L))
+
         let classify publicKey operation requestDigest proof = CacheRegistrationProof.classify now publicKey cacheId operation requestDigest proof
 
         let isStale =
@@ -644,6 +647,36 @@ type CacheRegistrationLifecycleTests() =
 
                 Assert.That(
                     classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation "wrong-request-digest" staleProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation digest staleRefreshProof
+                    |> isStale,
+                    Is.True
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation digest { staleRefreshProof with Signature = "invalid" }
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify otherPublicKey CacheRegistrationProof.RefreshOperation digest staleRefreshProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation digest staleRefreshProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation "wrong-request-digest" staleRefreshProof
                     |> isStale,
                     Is.False
                 ))

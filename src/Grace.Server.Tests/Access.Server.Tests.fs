@@ -1186,6 +1186,7 @@ open System
 open System.Net
 open System.Net.Http
 open System.Net.Http.Json
+open System.Security.Cryptography
 open System.Text
 
 /// Covers endpoint authorization scenarios.
@@ -1549,6 +1550,81 @@ type EndpointAuthorizationTests() =
 
             let! revocationResponse = unauthenticatedClient.PostAsync("/cache/revoke", createJsonContent Unchecked.defaultof<CacheRevocationRequest>)
             Assert.That(revocationResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+        }
+
+    /// Verifies an otherwise authenticated stale refresh proof survives actor and HTTP serialization as the exact retry-safe marker.
+    [<Test>]
+    member _.StaleCacheRefreshProofUsesTheExactRetryMarker() =
+        task {
+            let cacheAdministrator = $"{Guid.NewGuid()}"
+
+            let! organizationGrant = grantRoleAsync Client "org" ownerId organizationId "" "" cacheAdministrator "OrganizationAdmin"
+            Assert.That(organizationGrant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! repositoryGrant = grantRoleAsync Client "repo" ownerId organizationId repositoryIds[0] "" cacheAdministrator "RepositoryAdmin"
+
+            Assert.That(repositoryGrant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use administratorClient = createClientWithUserId cacheAdministrator
+            use signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+            let parameters = signingKey.ExportParameters(false)
+
+            let publicKey = CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode parameters.Q.X, ArtifactGrant.Base64Url.encode parameters.Q.Y)
+
+            let enrollmentRequest = { validCacheEnrollmentRequest () with PublicKey = publicKey }
+            let! enrollmentResponse = administratorClient.PostAsync("/cache/enroll", createJsonContent enrollmentRequest)
+            let! enrollmentBody = enrollmentResponse.Content.ReadAsStringAsync()
+            Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), enrollmentBody)
+
+            let enrollment = deserialize<GraceReturnValue<CacheRegistrationResult>> enrollmentBody
+            let registration = enrollment.ReturnValue.Registration.Value
+            let cacheId = registration.CacheId
+
+            let unsignedRefresh: CacheRegistrationRefreshRequest =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = enrollmentRequest.Endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = enrollmentRequest.SoftwareVersion
+                    ProtocolVersion = enrollmentRequest.ProtocolVersion
+                    PrefetchSupported = enrollmentRequest.PrefetchSupported
+                    ObservedAt = getCurrentInstant ()
+                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                }
+
+            let staleRefresh =
+                { unsignedRefresh with
+                    Proof =
+                        CacheRegistrationProof.createProof
+                            signingKey
+                            cacheId
+                            CacheRegistrationProof.RefreshOperation
+                            (CacheRegistrationProof.refreshRequestDigest unsignedRefresh)
+                            ((getCurrentInstant ())
+                                .Minus(NodaTime.Duration.FromMinutes 2.0))
+                }
+
+            use unauthenticatedClient = createUnauthenticatedClient ()
+            let! refreshResponse = unauthenticatedClient.PostAsync("/cache/refresh", createJsonContent staleRefresh)
+            let! refreshBody = refreshResponse.Content.ReadAsStringAsync()
+            Assert.That(refreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), refreshBody)
+
+            let error = deserialize<GraceError> refreshBody
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(error.Properties, Has.Count.EqualTo(1))
+
+                    Assert.That(
+                        error
+                            .Properties[
+                                CacheRegistrationProof.RefreshProofTimestampStalePropertyKey
+                            ]
+                            .ToString(),
+                        Is.EqualTo(CacheRegistrationProof.RefreshProofTimestampStalePropertyValue)
+                    ))
+            )
         }
 
     /// Verifies the metrics endpoint requires system admin scenario.

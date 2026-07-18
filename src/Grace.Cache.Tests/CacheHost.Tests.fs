@@ -1285,6 +1285,90 @@ type CacheHostTests() =
         Assert.That(scheduled, Is.False)
         Assert.That(markedUnhealthy, Is.False)
 
+    /// Verifies ambiguous candidate-key probe outcomes retain both durable key references and do not enter active-key candidate submission.
+    [<Test>]
+    member _.AmbiguousCandidateProbeRetainsPendingKeysUntilDefinitiveRejection() =
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle =
+                    CandidatePending
+                        { ActiveKeyName = "active"; ActivePublicKey = testPublicKey; CandidateKeyName = "candidate"; CandidatePublicKey = testPublicKey }
+            }
+
+        let ambiguous: Result<CacheRegistrationResult, CachePostFailure> = Error Retryable
+        let definitive = Ok(CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, None, "candidate proof rejected"))
+        let definitiveHttp: Result<CacheRegistrationResult, CachePostFailure> = Error Rejected
+
+        Assert.That(CandidatePromotionProbe.classify testPublicKey ambiguous, Is.EqualTo(CandidatePromotionAmbiguous))
+        Assert.That(CandidatePromotionProbe.classify testPublicKey definitive, Is.EqualTo(CandidateProofDefinitivelyRejected))
+        Assert.That(CandidatePromotionProbe.classify testPublicKey definitiveHttp, Is.EqualTo(CandidateProofDefinitivelyRejected))
+
+        match configuration.RotationLifecycle with
+        | CandidatePending pending ->
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(pending.ActiveKeyName, Is.EqualTo("active"))
+                    Assert.That(pending.CandidateKeyName, Is.EqualTo("candidate")))
+            )
+        | Ready
+        | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Assert.Fail("An ambiguous candidate probe must retain CandidatePending.")
+
+    /// Verifies unusable active-key recovery persists terminal status before startup aborts and fails closed when that persistence cannot complete.
+    [<Test>]
+    member _.ActiveKeyRecoveryPersistsTerminalLifecycleOrFailsClosed() =
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "missing-active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle = Ready
+            }
+
+        let writes = ResizeArray<CacheMachineConfiguration>()
+
+        let successfulEffects: CacheKeyRotationLifecycleEffects =
+            {
+                WriteConfiguration =
+                    fun terminal ->
+                        writes.Add terminal
+                        Ok()
+                DeleteKey =
+                    fun _ ->
+                        Assert.Fail("Active-key recovery must not delete keys before terminal state is durable.")
+                        Ok()
+            }
+
+        match CacheKeyRotationLifecycle.requireOperatorRecovery successfulEffects configuration with
+        | Error error -> Assert.Fail(error)
+        | Ok terminal ->
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(writes, Has.Count.EqualTo(1))
+                    Assert.That(terminal.RotationLifecycle, Is.EqualTo(CacheKeyRotationLifecycle.OperatorRecoveryRequired))
+
+                    Assert.That(
+                        (CacheMachineConfiguration.toStatus terminal)
+                            .Lifecycle,
+                        Is.EqualTo("operator-recovery-required")
+                    ))
+            )
+
+        let failedEffects: CacheKeyRotationLifecycleEffects = { WriteConfiguration = (fun _ -> Error "terminal persistence failed"); DeleteKey = fun _ -> Ok() }
+
+        Assert.That(
+            CacheKeyRotationLifecycle.requireOperatorRecovery failedEffects configuration,
+            Is.EqualTo(Error "terminal persistence failed": Result<CacheMachineConfiguration, string>)
+        )
+
     /// Verifies simultaneous cache starts have exactly one operating-system guard winner and the loser can cause no later effects.
     [<Test>]
     member _.MachineGuardAllowsExactlyOneConcurrentOwner() =

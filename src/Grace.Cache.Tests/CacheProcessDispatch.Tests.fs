@@ -271,6 +271,38 @@ type CacheProcessDispatchTests() =
                 Assert.That(CacheServerResponse.isRetryableCandidateProofTimestampStale "{", Is.False))
         )
 
+    /// Verifies the refresh-only stale marker is distinct from candidate proof recovery and rejects missing, extra, malformed, and unknown 400 bodies.
+    [<Test>]
+    member _.RefreshProofStaleMarkerRequiresTheExactStructuredGraceErrorPair() =
+        let marked = CacheRegistrationProof.refreshProofTimestampStaleError "correlation"
+        let markedBody = JsonSerializer.Serialize(marked, Constants.JsonSerializerOptions)
+        let candidateBody = JsonSerializer.Serialize(CacheRegistrationProof.candidateProofTimestampStaleError "correlation", Constants.JsonSerializerOptions)
+        let unknown = Grace.Types.Common.GraceError.Create "ignored" "correlation"
+
+        unknown.enhance (CacheRegistrationProof.RefreshProofTimestampStalePropertyKey, "unknown")
+        |> ignore
+
+        let extra = CacheRegistrationProof.refreshProofTimestampStaleError "correlation"
+        extra.enhance ("other", "value") |> ignore
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(CacheServerResponse.isRetryableRefreshProofTimestampStale markedBody, Is.True)
+                Assert.That(CacheServerResponse.isRetryableRefreshProofTimestampStale candidateBody, Is.False)
+
+                Assert.That(
+                    CacheServerResponse.isRetryableRefreshProofTimestampStale (JsonSerializer.Serialize(unknown, Constants.JsonSerializerOptions)),
+                    Is.False
+                )
+
+                Assert.That(
+                    CacheServerResponse.isRetryableRefreshProofTimestampStale (JsonSerializer.Serialize(extra, Constants.JsonSerializerOptions)),
+                    Is.False
+                )
+
+                Assert.That(CacheServerResponse.isRetryableRefreshProofTimestampStale "{", Is.False))
+        )
+
     /// Verifies route composition retains the configured Grace Server path base while cache endpoints remain independent origins.
     [<Test>]
     member _.ServerRoutePreservesPathBase() =
@@ -489,6 +521,41 @@ type CacheProcessDispatchTests() =
 
         Assert.That(result, Is.EqualTo(Ok "refreshed": Result<string, CachePostFailure>))
         Assert.That(built.ToArray() = [| 1; 2 |], Is.True)
+
+    /// Verifies a refresh immediately rebuilds only the exact stale-proof retry and leaves all other terminal HTTP 400 classifications at one attempt.
+    [<Test>]
+    member _.RefreshProofStaleRetryIsBoundedAndOtherBadRequestsRemainTerminal() =
+        let staleCalls = ResizeArray<int>()
+        let mutable staleRequest = 0
+
+        let staleResult =
+            CachePostRetry.executeWithRequest
+                (fun () ->
+                    staleRequest <- staleRequest + 1
+                    staleRequest)
+                (fun request ->
+                    staleCalls.Add request
+
+                    if request = 1 then Error RefreshProofTimestampStale else Ok "refreshed")
+                ignore
+
+        let mutable terminalCalls = 0
+
+        let terminalResult: Result<int, CachePostFailure> =
+            CachePostRetry.executeWithRequest
+                (fun () ->
+                    terminalCalls <- terminalCalls + 1
+                    terminalCalls)
+                (fun _ -> Error Rejected)
+                ignore
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(staleResult, Is.EqualTo(Ok "refreshed": Result<string, CachePostFailure>))
+                Assert.That(staleCalls.ToArray() = [| 1; 2 |], Is.True)
+                Assert.That(terminalResult, Is.EqualTo(Error Rejected: Result<int, CachePostFailure>))
+                Assert.That(terminalCalls, Is.EqualTo(1)))
+        )
 
     /// Verifies a malformed successful rotation result is ambiguous and cannot be retried or treated as a definite rejection.
     [<Test>]

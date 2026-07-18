@@ -80,8 +80,8 @@ module CacheRegistrationActor =
                     | Some registration ->
                         let digest = CacheRegistrationProof.refreshRequestDigest request
 
-                        let isActiveProof =
-                            CacheRegistrationProof.validate
+                        let activeProof =
+                            CacheRegistrationProof.classify
                                 now
                                 registration.ActivePublicKey
                                 request.CacheId
@@ -89,28 +89,26 @@ module CacheRegistrationActor =
                                 digest
                                 request.Proof
 
-                        let isCandidateProof =
+                        let candidateProof =
                             registration.CandidatePublicKey
-                            |> Option.exists (fun candidate ->
-                                CacheRegistrationProof.validate now candidate request.CacheId CacheRegistrationProof.RefreshOperation digest request.Proof)
+                            |> Option.map (fun candidate ->
+                                CacheRegistrationProof.classify now candidate request.CacheId CacheRegistrationProof.RefreshOperation digest request.Proof)
 
-                        if not isActiveProof && not isCandidateProof then
-                            return
-                                Error(
-                                    GraceError.Create
-                                        "Cache refresh proof is invalid, stale, or does not match the active or pending identity key."
-                                        correlationId
-                                )
-                        else
+                        match activeProof, candidateProof with
+                        | Ok (), _
+                        | _, Some (Ok ()) ->
                             let nextState, result =
-                                if isCandidateProof then
-                                    Lifecycle.promoteCandidate currentState request now
-                                else
-                                    Lifecycle.refresh currentState request now
+                                match candidateProof with
+                                | Some (Ok ()) -> Lifecycle.promoteCandidate currentState request now
+                                | _ -> Lifecycle.refresh currentState request now
 
                             if nextState <> currentState then do! this.Save nextState
 
                             return Ok(this.ReturnResult(result, correlationId))
+                        | Error TimestampOutsideTolerance, _
+                        | _, Some (Error TimestampOutsideTolerance) -> return Error(CacheRegistrationProof.refreshProofTimestampStaleError correlationId)
+                        | _ ->
+                            return Error(GraceError.Create "Cache refresh proof is invalid or does not match the active or pending identity key." correlationId)
                 }
 
             /// Applies an already-authorized explicit repository assignment replacement without altering Cache identity facts.

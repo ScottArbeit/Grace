@@ -45,6 +45,19 @@ module CacheRegistrationProof =
         let error = GraceError.Create "Cache candidate-submission proof is stale." correlationId
         error.enhance (CandidateProofTimestampStalePropertyKey, CandidateProofTimestampStalePropertyValue)
 
+    /// Names the sole GraceError property that permits a Cache refresh to retry with a newly signed proof.
+    [<Literal>]
+    let RefreshProofTimestampStalePropertyKey = "cacheRefreshProofTimestamp"
+
+    /// Marks a refresh proof whose otherwise valid timestamp falls outside the existing protocol tolerance.
+    [<Literal>]
+    let RefreshProofTimestampStalePropertyValue = "stale"
+
+    /// Builds the exact GraceError payload that allows only a stale refresh timestamp to be retried with a newly signed proof.
+    let refreshProofTimestampStaleError correlationId =
+        let error = GraceError.Create "Cache refresh proof is stale." correlationId
+        error.enhance (RefreshProofTimestampStalePropertyKey, RefreshProofTimestampStalePropertyValue)
+
     /// Writes one Cache identity public key in canonical field order.
     let private writePublicKey (writer: Utf8JsonWriter) (key: CacheIdentityPublicKey) =
         writer.WriteStartObject()
