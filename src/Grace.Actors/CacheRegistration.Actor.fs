@@ -145,37 +145,34 @@ module CacheRegistrationActor =
                     | None ->
                         let _, result = Lifecycle.submitCandidate currentState request now
                         return Ok(this.ReturnResult(result, correlationId))
-                    | Some registration when
-                        not
-                            (
-                                CacheRegistrationProof.validate
-                                    now
-                                    registration.ActivePublicKey
-                                    request.CacheId
-                                    CacheRegistrationProof.SubmitCandidateOperation
-                                    requestDigest
-                                    request.Proof
-                            )
-                        ->
-                        return
-                            Error(
-                                GraceError.Create "Cache candidate-submission proof is invalid, stale, or does not match the active identity key." correlationId
-                            )
-                    | Some _ when not (CacheRegistrationProof.isValidPublicKey request.CandidatePublicKey) ->
-                        return Error(GraceError.Create "Cache identity candidate requires a canonical P-256 public key." correlationId)
-                    | Some registration when registration.ActivePublicKey = request.CandidatePublicKey ->
-                        return Error(GraceError.Create "Cache identity candidate must differ from the active identity key." correlationId)
-                    | Some registration when
-                        registration.CandidatePublicKey
-                        |> Option.exists (fun candidate -> candidate <> request.CandidatePublicKey)
-                        ->
-                        return Error(GraceError.Create "Cache identity already has a different unresolved candidate." correlationId)
-                    | Some _ ->
-                        let nextState, result = Lifecycle.submitCandidate currentState request now
+                    | Some registration ->
+                        match
+                            CacheRegistrationProof.classify
+                                now
+                                registration.ActivePublicKey
+                                request.CacheId
+                                CacheRegistrationProof.SubmitCandidateOperation
+                                requestDigest
+                                request.Proof
+                            with
+                        | Error TimestampOutsideTolerance -> return Error(CacheRegistrationProof.candidateProofTimestampStaleError correlationId)
+                        | Error _ ->
+                            return
+                                Error(GraceError.Create "Cache candidate-submission proof is invalid or does not match the active identity key." correlationId)
+                        | Ok () ->
+                            if not (CacheRegistrationProof.isValidPublicKey request.CandidatePublicKey) then
+                                return Error(GraceError.Create "Cache identity candidate requires a canonical P-256 public key." correlationId)
+                            elif registration.ActivePublicKey = request.CandidatePublicKey then
+                                return Error(GraceError.Create "Cache identity candidate must differ from the active identity key." correlationId)
+                            elif registration.CandidatePublicKey
+                                 |> Option.exists (fun candidate -> candidate <> request.CandidatePublicKey) then
+                                return Error(GraceError.Create "Cache identity already has a different unresolved candidate." correlationId)
+                            else
+                                let nextState, result = Lifecycle.submitCandidate currentState request now
 
-                        if nextState <> currentState then do! this.Save nextState
+                                if nextState <> currentState then do! this.Save nextState
 
-                        return Ok(this.ReturnResult(result, correlationId))
+                                return Ok(this.ReturnResult(result, correlationId))
                 }
 
             /// Returns the authoritative stored record without applying selection eligibility filters.

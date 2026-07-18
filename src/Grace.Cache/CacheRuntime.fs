@@ -213,6 +213,24 @@ module CacheServerResponse =
         | :? JsonException
         | :? NotSupportedException -> Error()
 
+    /// Returns true only for the exact GraceError property pair that permits a same-candidate fresh-proof retry.
+    let isRetryableCandidateProofTimestampStale (body: string) =
+        try
+            let error = JsonSerializer.Deserialize<GraceError>(body, Constants.JsonSerializerOptions)
+
+            if isNull (box error)
+               || isNull error.Properties
+               || error.Properties.Count <> 1 then
+                false
+            else
+                match error.Properties.TryGetValue(CacheRegistrationProof.CandidateProofTimestampStalePropertyKey) with
+                | true, value when not (isNull value) ->
+                    String.Equals(value.ToString(), CacheRegistrationProof.CandidateProofTimestampStalePropertyValue, StringComparison.Ordinal)
+                | _ -> false
+        with
+        | :? JsonException
+        | :? NotSupportedException -> false
+
 /// Parses and dispatches cache process verbs without letting the CLI reach cache configuration or identity storage.
 module CacheProcessCommand =
 
@@ -886,18 +904,60 @@ module CacheServerRoute =
 /// Supplies the durable effects required to finish or roll back one pending service-key transition.
 type CacheKeyRotationLifecycleEffects = { WriteConfiguration: CacheMachineConfiguration -> Result<unit, string>; DeleteKey: string -> Result<unit, string> }
 
-/// Supplies the single protected configuration write required when registration expiry ends automatic recovery.
-type CacheRegistrationExpiryEffects = { PersistConfiguration: CacheMachineConfiguration -> Result<unit, string> }
+/// Supplies protected candidate cleanup and configuration persistence when registration expiry ends automatic recovery.
+type CacheRegistrationExpiryEffects = { DeleteKey: string -> Result<unit, string>; PersistConfiguration: CacheMachineConfiguration -> Result<unit, string> }
 
 /// Persists the existing terminal lifecycle before callers stop automatic registration refresh work.
 module CacheRegistrationExpiry =
 
-    /// Marks the current cache configuration for operator recovery without introducing another lifecycle state.
+    /// Removes an unaccepted candidate while its durable reference remains, then records terminal recovery so restarts cannot rotate again.
     let requireOperatorRecovery (effects: CacheRegistrationExpiryEffects) (configuration: CacheMachineConfiguration) =
         let terminal = { configuration with RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired }
 
-        effects.PersistConfiguration terminal
-        |> Result.map (fun () -> terminal)
+        match configuration.RotationLifecycle with
+        | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Ok configuration
+        | Ready ->
+            effects.PersistConfiguration terminal
+            |> Result.map (fun () -> terminal)
+        | CandidatePending pending ->
+            effects.DeleteKey pending.CandidateKeyName
+            |> Result.bind (fun () ->
+                effects.PersistConfiguration terminal
+                |> Result.map (fun () -> terminal))
+
+/// Supplies the current registration response and terminal persistence needed to make refresh decisions without a second HTTP request.
+type CacheRegistrationRefreshEffects =
+    {
+        Send: unit -> Result<CacheRegistrationResult, string>
+        RequireOperatorRecovery: CacheMachineConfiguration -> Result<unit, string>
+    }
+
+/// Identifies whether registration refresh produced usable timing, a terminal durable state, or an ordinary retryable failure.
+type CacheRegistrationRefreshOutcome =
+    | RegistrationRefreshed of CacheRegistration
+    | RegistrationRecoveryRequired
+    | RegistrationRetryableFailure
+
+/// Applies authoritative refresh results while preventing a terminal local lifecycle from extending server registration.
+module CacheRegistrationRefresh =
+
+    /// Stops refresh before HTTP dispatch once durable operator recovery has been recorded.
+    let run (effects: CacheRegistrationRefreshEffects) (configuration: CacheMachineConfiguration) =
+        if configuration.RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired then
+            Ok RegistrationRecoveryRequired
+        else
+            match effects.Send() with
+            | Error _ -> Ok RegistrationRetryableFailure
+            | Ok result ->
+                match result.Status, result.Registration with
+                | CacheRegistrationRefreshStatus.Refreshed, Some registration
+                | CacheRegistrationRefreshStatus.RefreshNotDue, Some registration -> Ok(RegistrationRefreshed registration)
+                | CacheRegistrationRefreshStatus.Expired, _
+                | CacheRegistrationRefreshStatus.Revoked, _
+                | CacheRegistrationRefreshStatus.NotFound, _ ->
+                    effects.RequireOperatorRecovery configuration
+                    |> Result.map (fun () -> RegistrationRecoveryRequired)
+                | _ -> Ok RegistrationRetryableFailure
 
 /// Coordinates the small durable state machine that prevents Cache and Grace Server key references from diverging.
 module CacheKeyRotationLifecycle =
@@ -1052,6 +1112,7 @@ type RotationAttemptResult<'T> =
     | RotationPreSendFailure
     | RotationMayHaveReachedServer
     | RotationRejectedByServer
+    | RotationCandidateProofTimestampStale
     | RotationCompleted of 'T
 
 /// Classifies the one rotation dispatch outcome while preserving pending key evidence for every uncertain result.
@@ -1097,13 +1158,18 @@ module RotationRetry =
             result <- send ()
 
             match result with
-            | RotationPreSendFailure when attempt < 3 -> pause attempt
+            | RotationPreSendFailure
+            | RotationCandidateProofTimestampStale when attempt < 3 -> pause attempt
             | RotationPreSendFailure -> retry <- false
+            | RotationCandidateProofTimestampStale -> retry <- false
             | RotationMayHaveReachedServer
             | RotationRejectedByServer
             | RotationCompleted _ -> retry <- false
 
         result
+
+    /// Rebuilds a candidate request for every permitted retry so only a newly signed proof can follow a stale proof response.
+    let executeWithRequest buildRequest send pause = execute (fun () -> send (buildRequest ())) pause
 
 /// Opens the established service identity before any replacement certificate can be created during key rotation.
 module KeyRotationPreparation =
@@ -1536,11 +1602,11 @@ module CacheRuntimeControl =
         | RejectedByServer -> EnrollmentRejected
         | MayHaveReachedServer -> EnrollmentUnknown
 
-    /// Sends one active-key candidate submission and treats an unreadable response as requiring reuse of the same local candidate.
-    let private postCandidate (serverUri: Uri) (request: CacheKeyCandidateRequest) =
+    /// Sends one active-key candidate submission, retrying only the exact stale-proof GraceError with a fresh proof for the same durable candidate.
+    let private postCandidate (serverUri: Uri) buildRequest =
         let requestUri = CacheServerRoute.append serverUri "cache/candidate"
 
-        let send () =
+        let send request =
             let prepared =
                 try
                     let client = new HttpClient()
@@ -1574,6 +1640,18 @@ module CacheRuntimeControl =
                         match CacheServerResponse.tryReadRegistrationResult body with
                         | Ok result -> RotationCompleted result
                         | Error () -> RotationMayHaveReachedServer
+                    elif response.StatusCode = System.Net.HttpStatusCode.BadRequest then
+                        let body =
+                            response
+                                .Content
+                                .ReadAsStringAsync()
+                                .GetAwaiter()
+                                .GetResult()
+
+                        if CacheServerResponse.isRetryableCandidateProofTimestampStale body then
+                            RotationCandidateProofTimestampStale
+                        else
+                            RotationRejectedByServer
                     elif CacheHttpFailure.isDefiniteContractRejection (int response.StatusCode) then
                         RotationRejectedByServer
                     else
@@ -1582,9 +1660,10 @@ module CacheRuntimeControl =
                 | :? HttpRequestException
                 | :? TaskCanceledException -> RotationMayHaveReachedServer
 
-        match RotationRetry.execute send (fun attempt -> Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 50)))) with
+        match RotationRetry.executeWithRequest buildRequest send (fun attempt -> Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 50)))) with
         | RotationCompleted result -> RotationAccepted result
         | RotationPreSendFailure -> RotationNotSent
+        | RotationCandidateProofTimestampStale -> RotationNotSent
         | RotationRejectedByServer -> RotationRejected
         | RotationMayHaveReachedServer -> RotationUnknown
 
@@ -1751,16 +1830,28 @@ module CacheRuntimeControl =
 
     /// Refreshes one prepared configuration without taking the lifecycle gate recursively and returns the server-issued expiry facts.
     let private refreshConfiguration configuration health =
-        match refreshWithKey configuration configuration.ActiveKeyName health with
+        let configurationPath = CacheMachineConfiguration.configurationPath ()
+
+        let effects: CacheRegistrationRefreshEffects =
+            {
+                Send =
+                    fun () ->
+                        refreshWithKey configuration configuration.ActiveKeyName health
+                        |> Result.mapError (fun _ -> "Grace Cache registration refresh transport failed.")
+                RequireOperatorRecovery =
+                    fun current ->
+                        let expiryEffects: CacheRegistrationExpiryEffects =
+                            { DeleteKey = deleteKey; PersistConfiguration = CacheMachineConfiguration.write configurationPath }
+
+                        CacheRegistrationExpiry.requireOperatorRecovery expiryEffects current
+                        |> Result.map ignore
+            }
+
+        match CacheRegistrationRefresh.run effects configuration with
+        | Ok (RegistrationRefreshed registration) -> Ok registration
+        | Ok RegistrationRecoveryRequired -> Error "Grace Cache identity recovery requires administrator revocation and re-enrollment."
+        | Ok RegistrationRetryableFailure
         | Error _ -> Error "Grace Cache registration refresh was not accepted."
-        | Ok result ->
-            match result.Status with
-            | CacheRegistrationRefreshStatus.Refreshed
-            | CacheRegistrationRefreshStatus.RefreshNotDue ->
-                match result.Registration with
-                | Some registration -> Ok registration
-                | None -> Error "Grace Cache registration refresh was not accepted."
-            | _ -> Error "Grace Cache registration refresh was not accepted."
 
     /// Refreshes through the exclusive lifecycle boundary while retaining both local configuration and actual server registration timing.
     let private refreshRegistrationCore health =
@@ -1781,6 +1872,12 @@ module CacheRuntimeControl =
             refreshRegistrationCore CacheHealthStatus.Unhealthy
             |> Result.map snd)
 
+    /// Reports whether durable terminal recovery prevents host schedulers from issuing another registration refresh request.
+    let requiresOperatorRecovery () =
+        serializeLifecycle (fun () ->
+            getReadyConfigurationCore ()
+            |> Result.map CacheKeyRotationLifecycle.requiresOperatorRecovery)
+
     /// Persists operator recovery at expiry through the serialized lifecycle boundary without another automatic refresh attempt.
     let markRegistrationExpired () =
         serializeLifecycle (fun () ->
@@ -1788,7 +1885,8 @@ module CacheRuntimeControl =
 
             CacheMachineConfiguration.tryRead configurationPath
             |> Result.bind (fun configuration ->
-                let effects: CacheRegistrationExpiryEffects = { PersistConfiguration = CacheMachineConfiguration.write configurationPath }
+                let effects: CacheRegistrationExpiryEffects =
+                    { DeleteKey = deleteKey; PersistConfiguration = CacheMachineConfiguration.write configurationPath }
 
                 CacheRegistrationExpiry.requireOperatorRecovery effects configuration
                 |> Result.map ignore))
@@ -1949,9 +2047,10 @@ module CacheRuntimeControl =
                 | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()
                 | _ ->
                     // The candidate probe can take longer than the server proof tolerance; sign only for the request being sent.
-                    let signedRequest = CacheCandidateSubmissionProof.create activeKey.Key unsignedRequest (NodaTime.SystemClock.Instance.GetCurrentInstant())
-
-                    match postCandidate (Uri(configuration.ServerUri)) signedRequest with
+                    match
+                        postCandidate (Uri(configuration.ServerUri)) (fun () ->
+                            CacheCandidateSubmissionProof.create activeKey.Key unsignedRequest (NodaTime.SystemClock.Instance.GetCurrentInstant()))
+                        with
                     | RotationAccepted result when result.Status = CacheRegistrationRefreshStatus.CandidateAccepted ->
                         match refreshWithKey configuration pending.CandidateKeyName CacheHealthStatus.Unhealthy with
                         | Ok promoted when candidateRefreshConfirmsPromotion promoted -> acceptPromotedCandidate ()

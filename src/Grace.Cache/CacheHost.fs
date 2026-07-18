@@ -111,6 +111,7 @@ type internal KeyRotationSchedulingEffects =
     {
         Synchronize: unit -> Result<IdentitySynchronizationResult, string>
         ReadRegistration: unit -> Result<CacheRegistration, string>
+        IsOperatorRecoveryRequired: unit -> bool
         MarkUnhealthy: unit -> unit
         Schedule: TimeSpan -> unit
         Now: unit -> Instant
@@ -126,8 +127,11 @@ module internal CacheKeyRotationScheduling =
             RotationRequired
 
         let retryRegistrationScheduling () =
-            effects.Schedule CacheRefreshSchedule.retryInterval
-            RegistrationSchedulingRequired
+            if effects.IsOperatorRecoveryRequired() then
+                AutomaticWorkStopped
+            else
+                effects.Schedule CacheRefreshSchedule.retryInterval
+                RegistrationSchedulingRequired
 
         match phase with
         | RotationRequired ->
@@ -224,10 +228,14 @@ module CacheHost =
                     currentExpiry <- registration.ExpiresAt
                     scheduleRefresh (CacheRefreshSchedule.normalRefreshDelay (SystemClock.Instance.GetCurrentInstant()) registration)
                 | Error _ ->
-                    match CacheRefreshSchedule.nextRetryAction (SystemClock.Instance.GetCurrentInstant()) currentExpiry with
-                    | CacheRefreshSchedule.RetryAfter delay -> scheduleRefresh delay
-                    | CacheRefreshSchedule.WaitForExpiry delay -> scheduleExpiry delay
-                    | CacheRefreshSchedule.Expired -> markExpired ()
+                    match CacheRuntimeControl.requiresOperatorRecovery () with
+                    | Ok true -> ()
+                    | Ok false
+                    | Error _ ->
+                        match CacheRefreshSchedule.nextRetryAction (SystemClock.Instance.GetCurrentInstant()) currentExpiry with
+                        | CacheRefreshSchedule.RetryAfter delay -> scheduleRefresh delay
+                        | CacheRefreshSchedule.WaitForExpiry delay -> scheduleExpiry delay
+                        | CacheRefreshSchedule.Expired -> markExpired ()
 
         do
             let refreshTimer = new Timer(TimerCallback onTimer, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan)
@@ -261,6 +269,11 @@ module CacheHost =
                 {
                     Synchronize = fun () -> CacheRuntimeControl.synchronizeIdentity false
                     ReadRegistration = CacheRuntimeControl.refreshRegistrationNow
+                    IsOperatorRecoveryRequired =
+                        fun () ->
+                            match CacheRuntimeControl.requiresOperatorRecovery () with
+                            | Ok required -> required
+                            | Error _ -> false
                     MarkUnhealthy = fun () -> CacheRuntimeControl.refreshNow () |> ignore
                     Schedule = schedule
                     Now = SystemClock.Instance.GetCurrentInstant

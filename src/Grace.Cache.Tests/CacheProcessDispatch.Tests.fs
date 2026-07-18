@@ -249,6 +249,28 @@ type CacheProcessDispatchTests() =
         |> Result.isError
         |> Assert.That
 
+    /// Verifies the documented GraceError property pair survives JSON and is the sole candidate response eligible for a fresh-proof retry.
+    [<Test>]
+    member _.CandidateProofStaleMarkerRequiresTheExactStructuredGraceErrorPair() =
+        let marked = CacheRegistrationProof.candidateProofTimestampStaleError "correlation"
+
+        let markedBody = JsonSerializer.Serialize(marked, Constants.JsonSerializerOptions)
+        let missingBody = JsonSerializer.Serialize(Grace.Types.Common.GraceError.Create "ignored" "correlation", Constants.JsonSerializerOptions)
+        let unknown = Grace.Types.Common.GraceError.Create "ignored" "correlation"
+
+        unknown.enhance (CacheRegistrationProof.CandidateProofTimestampStalePropertyKey, "unknown")
+        |> ignore
+
+        let unknownBody = JsonSerializer.Serialize(unknown, Constants.JsonSerializerOptions)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(CacheServerResponse.isRetryableCandidateProofTimestampStale markedBody, Is.True)
+                Assert.That(CacheServerResponse.isRetryableCandidateProofTimestampStale missingBody, Is.False)
+                Assert.That(CacheServerResponse.isRetryableCandidateProofTimestampStale unknownBody, Is.False)
+                Assert.That(CacheServerResponse.isRetryableCandidateProofTimestampStale "{", Is.False))
+        )
+
     /// Verifies route composition retains the configured Grace Server path base while cache endpoints remain independent origins.
     [<Test>]
     member _.ServerRoutePreservesPathBase() =
@@ -408,6 +430,45 @@ type CacheProcessDispatchTests() =
         Assert.That(preSendCalls, Is.EqualTo(3))
         Assert.That(ambiguousResult, Is.EqualTo(RotationMayHaveReachedServer))
         Assert.That(ambiguousCalls, Is.EqualTo(1))
+
+    /// Verifies only the documented stale-proof response rebuilds and resends the same candidate request with a fresh proof.
+    [<Test>]
+    member _.CandidateProofStaleRetryBuildsExactlyOneFreshRequest() =
+        let built = ResizeArray<int>()
+        let mutable nextRequest = 0
+
+        let result =
+            RotationRetry.executeWithRequest
+                (fun () ->
+                    nextRequest <- nextRequest + 1
+                    nextRequest)
+                (fun request ->
+                    built.Add request
+
+                    if request = 1 then
+                        RotationCandidateProofTimestampStale
+                    else
+                        RotationCompleted "accepted")
+                ignore
+
+        Assert.That(result, Is.EqualTo(RotationCompleted "accepted"))
+        Assert.That(built.ToArray() = [| 1; 2 |], Is.True)
+
+    /// Verifies missing, malformed, unknown, and other HTTP 400 candidate failures remain terminal instead of entering the stale-proof retry path.
+    [<Test>]
+    member _.CandidateProofRetryDoesNotRetryTerminalResponses() =
+        let mutable calls = 0
+
+        let result =
+            RotationRetry.executeWithRequest
+                (fun () ->
+                    calls <- calls + 1
+                    calls)
+                (fun _ -> RotationRejectedByServer)
+                ignore
+
+        Assert.That(result, Is.EqualTo(RotationRejectedByServer))
+        Assert.That(calls, Is.EqualTo(1))
 
     /// Verifies retryable refresh transport failures rebuild the request so later proof attempts have a new observation value.
     [<Test>]

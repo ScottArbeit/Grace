@@ -587,6 +587,68 @@ type CacheRegistrationLifecycleTests() =
             Is.False
         )
 
+    /// Verifies only a valid candidate proof outside the existing timestamp tolerance receives the retry-safe stale classification.
+    [<Test>]
+    member _.``candidate proof classifies only stale timestamp after all identity bindings validate``() =
+        use activeKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        use otherKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let activeParameters = activeKey.ExportParameters false
+        let otherParameters = otherKey.ExportParameters false
+
+        let activePublicKey =
+            CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode activeParameters.Q.X, ArtifactGrant.Base64Url.encode activeParameters.Q.Y)
+
+        let otherPublicKey =
+            CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode otherParameters.Q.X, ArtifactGrant.Base64Url.encode otherParameters.Q.Y)
+
+        let digest = "candidate-request-digest"
+
+        let staleProof =
+            CacheRegistrationProof.createProof activeKey cacheId CacheRegistrationProof.SubmitCandidateOperation digest (now.Minus(Duration.FromSeconds 31L))
+
+        let classify publicKey operation requestDigest proof = CacheRegistrationProof.classify now publicKey cacheId operation requestDigest proof
+
+        let isStale =
+            function
+            | Error CacheProofValidationFailure.TimestampOutsideTolerance -> true
+            | Ok ()
+            | Error _ -> false
+
+        Assert.That(
+            classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation digest staleProof
+            |> isStale,
+            Is.True
+        )
+
+        let invalidSignature = { staleProof with Signature = "invalid" }
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation digest invalidSignature
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify otherPublicKey CacheRegistrationProof.SubmitCandidateOperation digest staleProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation digest staleProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation "wrong-request-digest" staleProof
+                    |> isStale,
+                    Is.False
+                ))
+        )
+
     /// Verifies malformed external proof timestamps remain ordinary admission failures at inclusive skew boundaries.
     [<Test>]
     member _.``cache proof timestamp admission is inclusive and overflow safe``() =

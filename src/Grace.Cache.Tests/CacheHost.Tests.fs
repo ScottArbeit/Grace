@@ -485,6 +485,7 @@ type CacheHostTests() =
                             Error "Transient post-promotion registration read failure."
                         else
                             Ok registration
+                IsOperatorRecoveryRequired = fun () -> false
                 MarkUnhealthy = fun () -> Assert.Fail("A completed promotion with a scheduling read failure must not start a second rotation path.")
                 Schedule = fun delay -> scheduled.Add delay
                 Now = fun () -> now
@@ -522,6 +523,7 @@ type CacheHostTests() =
                         attemptedCandidates.Add retainedCandidate
                         Error "Grace Cache identity candidate outcome is unknown; the same candidate remains pending for retry."
                 ReadRegistration = fun () -> Error "A retryable candidate failure must not read a replacement registration."
+                IsOperatorRecoveryRequired = fun () -> false
                 MarkUnhealthy = fun () -> unhealthyPublications <- unhealthyPublications + 1
                 Schedule = fun delay -> scheduled.Add delay
                 Now = fun () -> Instant.FromUtc(2026, 7, 18, 13, 0)
@@ -533,6 +535,25 @@ type CacheHostTests() =
         Assert.That((attemptedCandidates |> Seq.toList) = [ retainedCandidate ], Is.True)
         Assert.That(unhealthyPublications, Is.EqualTo(1))
         Assert.That((scheduled |> Seq.toList) = [ CacheRefreshSchedule.retryInterval ], Is.True)
+
+    /// Verifies a terminal registration refresh stops the key-rotation registration callback instead of retaining a no-dispatch retry timer.
+    [<Test>]
+    member _.TerminalRegistrationRefreshStopsKeyRotationRegistrationScheduling() =
+        let mutable scheduled = false
+
+        let effects: KeyRotationSchedulingEffects =
+            {
+                Synchronize = fun () -> Ok(Synchronized(CacheRuntimeStatus.registered Guid.Empty "https"))
+                ReadRegistration = fun () -> Error "terminal registration refresh"
+                IsOperatorRecoveryRequired = fun () -> true
+                MarkUnhealthy = fun () -> Assert.Fail("A terminal registration refresh must not enter the unhealthy retry path.")
+                Schedule = fun _ -> scheduled <- true
+                Now = fun () -> Instant.FromUnixTimeSeconds 0L
+            }
+
+        let phase = CacheKeyRotationScheduling.run RotationRequired effects
+        Assert.That(phase, Is.EqualTo(AutomaticWorkStopped))
+        Assert.That(scheduled, Is.False)
 
     /// Verifies known-CacheId recovery finalizes against the immutable original server URI even after the environment changes.
     [<Test>]
@@ -680,6 +701,10 @@ type CacheHostTests() =
                     fun persisted ->
                         writes.Add persisted
                         Ok()
+                DeleteKey =
+                    fun _ ->
+                        Assert.Fail("Ready expiry must not delete an active key.")
+                        Ok()
             }
 
         match CacheRegistrationExpiry.requireOperatorRecovery effects configuration with
@@ -691,6 +716,194 @@ type CacheHostTests() =
             let status = CacheMachineConfiguration.toStatus persisted
             Assert.That(status.Lifecycle, Is.EqualTo("operator-recovery-required"))
             Assert.That(status.CacheId, Is.EqualTo(Some(cacheId.ToString("D"))))
+
+    /// Verifies candidate expiry deletes the unaccepted key before persisting terminal recovery while its durable reference still exists.
+    [<Test>]
+    member _.CandidatePendingExpiryCleansCandidateBeforePersistingTerminalRecovery() =
+        let operations = ResizeArray<string>()
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle =
+                    CandidatePending
+                        { ActiveKeyName = "active"; ActivePublicKey = testPublicKey; CandidateKeyName = "candidate"; CandidatePublicKey = testPublicKey }
+            }
+
+        let effects: CacheRegistrationExpiryEffects =
+            {
+                DeleteKey =
+                    fun candidate ->
+                        operations.Add $"delete:{candidate}"
+                        Ok()
+                PersistConfiguration =
+                    fun persisted ->
+                        operations.Add $"persist:{persisted.RotationLifecycle}"
+                        Ok()
+            }
+
+        match CacheRegistrationExpiry.requireOperatorRecovery effects configuration with
+        | Error error -> Assert.Fail(error)
+        | Ok terminal ->
+            Assert.That(terminal.RotationLifecycle, Is.EqualTo(CacheKeyRotationLifecycle.OperatorRecoveryRequired))
+
+            Assert.That(
+                operations.ToArray() =
+                    [|
+                        "delete:candidate"
+                        "persist:OperatorRecoveryRequired"
+                    |],
+                Is.True
+            )
+
+    /// Verifies failed pending-candidate cleanup retains durable recovery evidence and does not erase the reference before a later recovery attempt.
+    [<Test>]
+    member _.CandidatePendingExpiryCleanupFailureRetainsDurableCandidateReference() =
+        let mutable persisted = false
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle =
+                    CandidatePending
+                        { ActiveKeyName = "active"; ActivePublicKey = testPublicKey; CandidateKeyName = "candidate"; CandidatePublicKey = testPublicKey }
+            }
+
+        let effects: CacheRegistrationExpiryEffects =
+            {
+                DeleteKey = fun _ -> Error "cleanup failed"
+                PersistConfiguration =
+                    fun _ ->
+                        persisted <- true
+                        Ok()
+            }
+
+        match CacheRegistrationExpiry.requireOperatorRecovery effects configuration with
+        | Ok _ -> Assert.Fail("Terminal recovery must not be persisted before candidate cleanup succeeds.")
+        | Error _ ->
+            Assert.That(persisted, Is.False)
+
+            match configuration.RotationLifecycle with
+            | CandidatePending pending -> Assert.That(pending.CandidateKeyName, Is.EqualTo("candidate"))
+            | Ready
+            | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Assert.Fail("Cleanup failure must retain the pending durable reference.")
+
+    /// Verifies terminal lifecycle state blocks refresh dispatch and definitive server results persist operator recovery immediately.
+    [<Test>]
+    member _.RegistrationRefreshStopsForTerminalLifecycleAndDefinitiveResults() =
+        let configuration lifecycle =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle = lifecycle
+            }
+
+        let mutable sends = 0
+        let mutable terminalWrites = 0
+
+        let effects result : CacheRegistrationRefreshEffects =
+            {
+                Send =
+                    fun () ->
+                        sends <- sends + 1
+                        Ok result
+                RequireOperatorRecovery =
+                    fun _ ->
+                        terminalWrites <- terminalWrites + 1
+                        Ok()
+            }
+
+        let terminalConfiguration = configuration CacheKeyRotationLifecycle.OperatorRecoveryRequired
+        let revoked = CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Revoked, None, "revoked")
+        let notFound = CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, None, "not found")
+
+        let isRecoveryRequired =
+            function
+            | Ok RegistrationRecoveryRequired -> true
+            | Ok (RegistrationRefreshed _)
+            | Ok RegistrationRetryableFailure
+            | Error _ -> false
+
+        Assert.That(
+            CacheRegistrationRefresh.run (effects revoked) terminalConfiguration
+            |> isRecoveryRequired,
+            Is.True
+        )
+
+        Assert.That(sends, Is.Zero)
+        Assert.That(terminalWrites, Is.Zero)
+
+        Assert.That(
+            CacheRegistrationRefresh.run (effects revoked) (configuration Ready)
+            |> isRecoveryRequired,
+            Is.True
+        )
+
+        Assert.That(
+            CacheRegistrationRefresh.run (effects notFound) (configuration Ready)
+            |> isRecoveryRequired,
+            Is.True
+        )
+
+        Assert.That(sends, Is.EqualTo(2))
+        Assert.That(terminalWrites, Is.EqualTo(2))
+
+    /// Verifies transient refresh failure remains on the established retry path and does not persist terminal recovery.
+    [<Test>]
+    member _.TransientRegistrationRefreshRetainsRetrySchedule() =
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle = Ready
+            }
+
+        let mutable sends = 0
+        let mutable terminalWrites = 0
+
+        let effects: CacheRegistrationRefreshEffects =
+            {
+                Send =
+                    fun () ->
+                        sends <- sends + 1
+                        Error "transient"
+                RequireOperatorRecovery =
+                    fun _ ->
+                        terminalWrites <- terminalWrites + 1
+                        Ok()
+            }
+
+        match CacheRegistrationRefresh.run effects configuration with
+        | Ok RegistrationRetryableFailure -> ()
+        | Ok RegistrationRecoveryRequired
+        | Ok (RegistrationRefreshed _)
+        | Error _ -> Assert.Fail("A transient refresh failure must retain the normal retry path.")
+
+        Assert.That(sends, Is.EqualTo(1))
+        Assert.That(terminalWrites, Is.Zero)
+
+        Assert.That(
+            CacheRefreshSchedule.nextRetryAction (Instant.FromUnixTimeSeconds 0L) (Instant.FromUnixTimeSeconds 3600L),
+            Is.EqualTo(CacheRefreshSchedule.RetryAfter CacheRefreshSchedule.retryInterval)
+        )
 
     /// Verifies startup exceptions become a stable cache process failure without exposing bind or certificate details.
     [<Test>]
@@ -1061,6 +1274,7 @@ type CacheHostTests() =
             {
                 Synchronize = fun () -> Ok(OperatorRecoveryRequired "operator recovery")
                 ReadRegistration = fun () -> Error "registration must not be read after terminal candidate rejection"
+                IsOperatorRecoveryRequired = fun () -> true
                 MarkUnhealthy = fun () -> markedUnhealthy <- true
                 Schedule = fun _ -> scheduled <- true
                 Now = fun () -> Instant.FromUnixTimeSeconds 0L
