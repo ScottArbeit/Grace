@@ -54,6 +54,13 @@ function Get-FileSha256 {
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
 }
 
+function Get-CanonicalSourceSha256 {
+    param([string] $Path)
+
+    $text = [System.IO.File]::ReadAllText($Path) -replace "`r`n", "`n"
+    return Get-StringSha256 $text
+}
+
 function Get-StringSha256 {
     param([string] $Text)
 
@@ -168,7 +175,7 @@ function Test-OpenApiFreshness {
             continue
         }
 
-        $actualHash = Get-FileSha256 $sourcePath
+        $actualHash = Get-CanonicalSourceSha256 $sourcePath
         if ($actualHash -ne ([string] $entry.sha256).ToLowerInvariant()) {
             Add-Failure "OpenAPI source hash is stale for $($entry.path). Expected $($entry.sha256), actual $actualHash."
         }

@@ -1475,7 +1475,7 @@ type EndpointAuthorizationTests() =
             Assert.That(providerLoginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect, HttpStatusCode.NotFound))
         }
 
-    /// Verifies proof-only Cache runtime routes reach validation without a Grace user while administrative enrollment validates legacy input before its explicit authorization boundary.
+    /// Verifies proof-only Cache runtime routes reach validation without a Grace user while enrollment remains authentication-first.
     [<Test>]
     member _.CacheProofRoutesReachValidationWithoutGraceUserAndAdministrativeRoutesRemainProtected() =
         task {
@@ -1533,16 +1533,14 @@ type EndpointAuthorizationTests() =
             Assert.That(missingCandidateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
 
             let! malformedEnrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
-            Assert.That(malformedEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(malformedEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 
             let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent (validCacheEnrollmentRequest ()))
             Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 
             use legacyEnrollmentContent = new StringContent("{\"Health\":\"Healthy\"}", Encoding.UTF8, "application/json")
             let! legacyEnrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", legacyEnrollmentContent)
-            let! legacyEnrollmentBody = legacyEnrollmentResponse.Content.ReadAsStringAsync()
-            Assert.That(legacyEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
-            Assert.That(legacyEnrollmentBody, Does.Contain("Health is server-owned"))
+            Assert.That(legacyEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 
             let! assignmentResponse =
                 unauthenticatedClient.PostAsync("/cache/assign-repositories", createJsonContent Unchecked.defaultof<CacheRepositoryAssignmentRequest>)

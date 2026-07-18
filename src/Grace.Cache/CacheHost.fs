@@ -41,6 +41,20 @@ module CacheHostStartup =
         with
         | _ -> Error "Grace Cache host could not start."
 
+/// Reads the current protected cache status at request time without triggering reconciliation or other lifecycle effects.
+module CacheHostStatus =
+
+    /// Invokes the supplied status reader once for each hosted status observation.
+    let read readCurrentStatus = readCurrentStatus ()
+
+/// Replaces all inherited Kestrel addresses with the exact endpoint recorded in protected machine configuration.
+module CacheHostAddresses =
+
+    /// Clears process-derived addresses before adding the one enrolled listener endpoint.
+    let replace (addresses: System.Collections.Generic.ICollection<string>) endpoint =
+        addresses.Clear()
+        addresses.Add endpoint
+
 /// Calculates the in-memory recovery timing for a failed registration refresh from the server-issued expiry instant.
 module CacheRefreshSchedule =
 
@@ -276,12 +290,17 @@ module CacheHost =
         let builder = WebApplication.CreateBuilder(args)
         let app = builder.Build()
 
-        app.Urls.Add(configuration.Endpoint)
+        CacheHostAddresses.replace app.Urls configuration.Endpoint
+
+        let currentStatus () =
+            match CacheHostStatus.read CacheRuntimeControl.status with
+            | Ok status -> Results.Json(status, Constants.JsonSerializerOptions)
+            | Error _ -> Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
 
         app.MapGet("/healthz", Func<string>(fun () -> "Grace Cache scaffold healthy."))
         |> ignore
 
-        app.MapGet("/status", Func<IResult>(fun () -> Results.Json(CacheMachineConfiguration.toStatus configuration, Constants.JsonSerializerOptions)))
+        app.MapGet("/status", Func<IResult>(currentStatus))
         |> ignore
 
         Ok app

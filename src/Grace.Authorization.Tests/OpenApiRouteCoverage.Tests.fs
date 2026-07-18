@@ -31,6 +31,13 @@ type OpenApiRouteCoverageTests() =
     let openApiPathRegex = Regex("^  (?<path>/[^:]+):\\s*$", RegexOptions.Compiled)
     let openApiVersionRegex = Regex("""^  version: "(?<version>[^"]+)"\s*$""", RegexOptions.Compiled)
 
+    let canonicalSourceHash path =
+        File.ReadAllText(path).Replace("\r\n", "\n")
+        |> System.Text.Encoding.UTF8.GetBytes
+        |> System.Security.Cryptography.SHA256.HashData
+        |> Convert.ToHexString
+        |> fun hash -> hash.ToLowerInvariant()
+
     let startupRouteTokenRegex =
         Regex("(?<method>\\bGET\\b|\\bPOST\\b|\\bPUT\\b)\\s*\\[|(?<kind>subRoute|routef|route)\\s+\"(?<path>[^\"]+)\"", RegexOptions.Multiline)
 
@@ -314,10 +321,8 @@ type OpenApiRouteCoverageTests() =
             |> fun entry -> entry.GetProperty("sha256").GetString()
 
         let actualHash =
-            File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(openApiProofManifestPath), "Cache.Components.OpenAPI.yaml"))
-            |> System.Security.Cryptography.SHA256.HashData
-            |> Convert.ToHexString
-            |> fun hash -> hash.ToLowerInvariant()
+            Path.Combine(Path.GetDirectoryName(openApiProofManifestPath), "Cache.Components.OpenAPI.yaml")
+            |> canonicalSourceHash
 
         Assert.That(cacheComponentHash, Is.EqualTo actualHash)
 

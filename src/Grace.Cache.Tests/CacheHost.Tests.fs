@@ -25,6 +25,57 @@ type CacheHostTests() =
     [<Test>]
     member _.RouteInventoryContainsOnlyScaffoldRoutes() = Assert.That(CacheHost.routeInventory, Is.EquivalentTo([ "/healthz"; "/status" ]))
 
+    /// Verifies hosted status observes the latest protected configuration lifecycle without performing reconciliation.
+    [<Test>]
+    member _.HostedStatusReadsCurrentProtectedConfiguration() =
+        let cacheId = Guid.NewGuid()
+
+        let mutable configuration: CacheMachineConfiguration =
+            {
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active-key"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle = Ready
+            }
+
+        let mutable reads = 0
+
+        let readCurrentStatus () =
+            reads <- reads + 1
+            Ok(CacheMachineConfiguration.toStatus configuration)
+
+        match CacheHostStatus.read readCurrentStatus with
+        | Error error -> Assert.Fail(error)
+        | Ok status -> Assert.That(status.Lifecycle, Is.EqualTo("registered"))
+
+        configuration <- { configuration with RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired }
+
+        match CacheHostStatus.read readCurrentStatus with
+        | Error error -> Assert.Fail(error)
+        | Ok status ->
+            Assert.That(status.Lifecycle, Is.EqualTo("operator-recovery-required"))
+            Assert.That(status.CacheId, Is.EqualTo(Some(cacheId.ToString("D"))))
+
+        Assert.That(reads, Is.EqualTo(2))
+
+    /// Verifies the enrolled endpoint replaces every inherited Kestrel listener address.
+    [<Test>]
+    member _.HostReplacesInheritedKestrelAddresses() =
+        let addresses =
+            ResizeArray<string>(
+                [
+                    "http://127.0.0.1:5000"
+                    "https://127.0.0.1:5001"
+                ]
+            )
+
+        CacheHostAddresses.replace (addresses :> System.Collections.Generic.ICollection<string>) "https://cache.example.test:8443"
+
+        Assert.That(addresses, Is.EquivalentTo([ "https://cache.example.test:8443" ]))
+
     /// Verifies failed automatic rotation retries on the approved five-minute cadence rather than a fixed key-rotation timer.
     [<Test>]
     member _.HostRetriesFailedRotationAfterFiveMinutes() = Assert.That(CacheRefreshSchedule.retryInterval, Is.EqualTo(TimeSpan.FromMinutes 5.0))
@@ -590,13 +641,13 @@ type CacheHostTests() =
                 RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired
             }
 
+        let validateStorage _ = Ok()
+        let validateFile _ = Ok()
+        let readRecovery _ = Ok None
+        let readConfiguration _ = Ok configuration
+
         let effects: CacheRuntimeStatusReadEffects =
-            {
-                ValidateStorage = fun _ -> Ok()
-                ValidateFile = fun _ -> Ok()
-                ReadRecovery = fun _ -> Ok None
-                ReadConfiguration = fun _ -> Ok configuration
-            }
+            { ValidateStorage = validateStorage; ValidateFile = validateFile; ReadRecovery = readRecovery; ReadConfiguration = readConfiguration }
 
         match CacheRuntimeControl.readStatusWith effects configurationPath with
         | Error error -> Assert.Fail(error)
@@ -604,6 +655,42 @@ type CacheHostTests() =
             Assert.That(status.Lifecycle, Is.EqualTo("operator-recovery-required"))
             Assert.That(status.CacheId, Is.EqualTo(Some(cacheId.ToString("D"))))
             Assert.That(status.Transport, Is.EqualTo(Some "https"))
+
+    /// Verifies expiry persists the existing terminal lifecycle before a status reader can observe completion.
+    [<Test>]
+    member _.RegistrationExpiryPersistsOperatorRecoveryBeforeStatusObservation() =
+        let cacheId = Guid.NewGuid()
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active-key"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle = Ready
+            }
+
+        let writes = ResizeArray<CacheMachineConfiguration>()
+
+        let effects: CacheRegistrationExpiryEffects =
+            {
+                PersistConfiguration =
+                    fun persisted ->
+                        writes.Add persisted
+                        Ok()
+            }
+
+        match CacheRegistrationExpiry.requireOperatorRecovery effects configuration with
+        | Error error -> Assert.Fail(error)
+        | Ok persisted ->
+            Assert.That(writes, Has.Count.EqualTo(1))
+            Assert.That(persisted.RotationLifecycle, Is.EqualTo(CacheKeyRotationLifecycle.OperatorRecoveryRequired))
+
+            let status = CacheMachineConfiguration.toStatus persisted
+            Assert.That(status.Lifecycle, Is.EqualTo("operator-recovery-required"))
+            Assert.That(status.CacheId, Is.EqualTo(Some(cacheId.ToString("D"))))
 
     /// Verifies startup exceptions become a stable cache process failure without exposing bind or certificate details.
     [<Test>]

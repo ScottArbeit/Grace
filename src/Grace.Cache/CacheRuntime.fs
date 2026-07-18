@@ -886,6 +886,19 @@ module CacheServerRoute =
 /// Supplies the durable effects required to finish or roll back one pending service-key transition.
 type CacheKeyRotationLifecycleEffects = { WriteConfiguration: CacheMachineConfiguration -> Result<unit, string>; DeleteKey: string -> Result<unit, string> }
 
+/// Supplies the single protected configuration write required when registration expiry ends automatic recovery.
+type CacheRegistrationExpiryEffects = { PersistConfiguration: CacheMachineConfiguration -> Result<unit, string> }
+
+/// Persists the existing terminal lifecycle before callers stop automatic registration refresh work.
+module CacheRegistrationExpiry =
+
+    /// Marks the current cache configuration for operator recovery without introducing another lifecycle state.
+    let requireOperatorRecovery (effects: CacheRegistrationExpiryEffects) (configuration: CacheMachineConfiguration) =
+        let terminal = { configuration with RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired }
+
+        effects.PersistConfiguration terminal
+        |> Result.map (fun () -> terminal)
+
 /// Coordinates the small durable state machine that prevents Cache and Grace Server key references from diverging.
 module CacheKeyRotationLifecycle =
 
@@ -987,6 +1000,12 @@ module CacheHttpFailure =
         statusCode >= 400
         && statusCode < 500
         && statusCode <> 429
+
+/// Classifies refresh-only HTTP outcomes without changing the distinct enrollment or candidate ambiguity rules.
+module CacheRefreshHttpFailure =
+
+    /// Returns true when a refresh response follows the existing transient retry path.
+    let isRetryable statusCode = statusCode = 429 || statusCode >= 500
 
 /// Reissues only transport-safe post attempts while preserving ambiguous success outcomes for reconciliation.
 module CachePostRetry =
@@ -1451,7 +1470,7 @@ module CacheRuntimeControl =
 
                     CacheServerResponse.tryReadRegistrationResult body
                     |> Result.mapError (fun () -> Ambiguous)
-                else if int response.StatusCode >= 500 then
+                else if CacheRefreshHttpFailure.isRetryable (int response.StatusCode) then
                     Error Retryable
                 else
                     Error Rejected
@@ -1762,11 +1781,17 @@ module CacheRuntimeControl =
             refreshRegistrationCore CacheHealthStatus.Unhealthy
             |> Result.map snd)
 
-    /// Marks the registration unhealthy at expiry through the same serialized proof-only refresh boundary without re-enrollment.
+    /// Persists operator recovery at expiry through the serialized lifecycle boundary without another automatic refresh attempt.
     let markRegistrationExpired () =
         serializeLifecycle (fun () ->
-            refreshRegistrationCore CacheHealthStatus.Unhealthy
-            |> Result.map ignore)
+            let configurationPath = CacheMachineConfiguration.configurationPath ()
+
+            CacheMachineConfiguration.tryRead configurationPath
+            |> Result.bind (fun configuration ->
+                let effects: CacheRegistrationExpiryEffects = { PersistConfiguration = CacheMachineConfiguration.write configurationPath }
+
+                CacheRegistrationExpiry.requireOperatorRecovery effects configuration
+                |> Result.map ignore))
 
     /// Refreshes after the protected control channel and Kestrel listener are ready, publishing healthy only when artifacts are served.
     let startupRefresh artifactServingAvailable =

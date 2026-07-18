@@ -170,46 +170,39 @@ module CacheRegistration =
             task {
                 let correlationId = getCorrelationId context
 
-                match! bindEnrollmentJson context correlationId with
-                | Error error -> return! context |> result400BadRequest error
-                | Ok request ->
-                    match Lifecycle.validateEnrollmentRequest request with
-                    | Error errors ->
-                        return!
-                            context
-                            |> result400BadRequest (cacheError correlationId (String.concat " " errors))
-                    | Ok () when not (CacheRegistrationProof.isValidPublicKey request.PublicKey) ->
-                        return!
-                            context
-                            |> result400BadRequest (cacheError correlationId "PublicKey must be a canonical P-256 public key.")
-                    | Ok () when
-                        PrincipalMapper.tryGetUserId context.User
-                        |> Option.isNone
-                        ->
-                        return!
-                            context
-                            |> returnResult StatusCodes.Status401Unauthorized (cacheError correlationId "Authentication is required.")
-                    | Ok () ->
-                        match!
-                            authorizeBoundaryAndRepositories
-                                context
-                                request.BoundaryKind
-                                request.OwnerId
-                                request.OrganizationId
-                                request.RepositoryScopes
-                                correlationId
-                            with
-                        | Error error ->
+                match PrincipalMapper.tryGetUserId context.User with
+                | None ->
+                    return!
+                        context
+                        |> returnResult StatusCodes.Status401Unauthorized (cacheError correlationId "Authentication is required.")
+                | Some enrolledBy ->
+                    match! bindEnrollmentJson context correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok request ->
+                        match Lifecycle.validateEnrollmentRequest request with
+                        | Error errors ->
                             return!
                                 context
-                                |> returnResult StatusCodes.Status403Forbidden error
+                                |> result400BadRequest (cacheError correlationId (String.concat " " errors))
+                        | Ok () when not (CacheRegistrationProof.isValidPublicKey request.PublicKey) ->
+                            return!
+                                context
+                                |> result400BadRequest (cacheError correlationId "PublicKey must be a canonical P-256 public key.")
                         | Ok () ->
-                            match PrincipalMapper.tryGetUserId context.User with
-                            | None ->
+                            match!
+                                authorizeBoundaryAndRepositories
+                                    context
+                                    request.BoundaryKind
+                                    request.OwnerId
+                                    request.OrganizationId
+                                    request.RepositoryScopes
+                                    correlationId
+                                with
+                            | Error error ->
                                 return!
                                     context
-                                    |> returnResult StatusCodes.Status401Unauthorized (cacheError correlationId "Authentication is required.")
-                            | Some enrolledBy ->
+                                    |> returnResult StatusCodes.Status403Forbidden error
+                            | Ok () ->
                                 let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
 
                                 match! actor.Enroll(Guid.NewGuid(), request, enrolledBy, getCurrentInstant (), correlationId) with

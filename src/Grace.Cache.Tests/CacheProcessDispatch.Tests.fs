@@ -376,6 +376,14 @@ type CacheProcessDispatchTests() =
         Assert.That(CacheHttpFailure.isDefiniteContractRejection 500, Is.False)
         Assert.That(CacheHttpFailure.isDefiniteContractRejection 503, Is.False)
 
+    /// Verifies refresh treats rate limiting as transient while enrollment and candidate retain their existing ambiguity rules.
+    [<Test>]
+    member _.RefreshRateLimitUsesTheExistingRetryClassification() =
+        Assert.That(CacheRefreshHttpFailure.isRetryable 429, Is.True)
+        Assert.That(CacheRefreshHttpFailure.isRetryable 500, Is.True)
+        Assert.That(CacheRefreshHttpFailure.isRetryable 400, Is.False)
+        Assert.That(CacheHttpFailure.isDefiniteContractRejection 429, Is.False)
+
     /// Verifies rotation retries only pre-send failures and never resends after a transport outcome that may follow acceptance.
     [<Test>]
     member _.RotationRetryStopsAfterOneAmbiguousDispatch() =
