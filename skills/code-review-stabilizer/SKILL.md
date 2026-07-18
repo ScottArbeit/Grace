@@ -50,6 +50,13 @@ Start the stabilization pass after **2 substantive cycles** when the touched sur
 
 A fourth substantive cycle is always a hard stop, even outside high-risk areas.
 
+Apply the earliest applicable threshold. The generic `dev-process` cycle rules provide the default boundary census at
+cycle 3 and hard stop at cycle 4; this Grace overlay wins whenever its high-risk, same-invariant-family, related-finding,
+or immediate-stop rule triggers earlier. Before another review request after the boundary-census threshold, enumerate the
+affected producers and consumers, representations, execution hosts or modes, lifecycle phases, platform targets, and
+validation entry points. Mark every applicable surface `changed`, `verified unchanged`, or `not applicable` with proof in
+the stabilization status map.
+
 ## Immediate stop signals
 
 Invoke this skill immediately, regardless of cycle count, when any of these appear:
