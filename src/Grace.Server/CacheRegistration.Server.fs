@@ -39,23 +39,15 @@ module CacheRegistration =
             try
                 use! document = JsonDocument.ParseAsync(context.Request.Body)
 
-                if document.RootElement.ValueKind <> JsonValueKind.Object then
+                if document.RootElement.ValueKind
+                   <> JsonValueKind.Object then
                     return Error(cacheError correlationId "Cache request body is invalid.")
-                elif
-                    document.RootElement.EnumerateObject()
-                    |> Seq.exists (fun property ->
-                        String.Equals(property.Name, "Health", StringComparison.OrdinalIgnoreCase))
-                    then
-                    return
-                        Error(
-                            cacheError correlationId "Cache enrollment Health is server-owned and must not be supplied."
-                        )
+                elif document.RootElement.EnumerateObject()
+                     |> Seq.exists (fun property -> String.Equals(property.Name, "Health", StringComparison.OrdinalIgnoreCase)) then
+                    return Error(cacheError correlationId "Cache enrollment Health is server-owned and must not be supplied.")
                 else
                     return
-                        JsonSerializer.Deserialize<CacheEnrollmentRequest>(
-                            document.RootElement.GetRawText(),
-                            Constants.JsonSerializerOptions
-                        )
+                        JsonSerializer.Deserialize<CacheEnrollmentRequest>(document.RootElement.GetRawText(), Constants.JsonSerializerOptions)
                         |> Ok
             with
             | :? JsonException
@@ -190,6 +182,13 @@ module CacheRegistration =
                         return!
                             context
                             |> result400BadRequest (cacheError correlationId "PublicKey must be a canonical P-256 public key.")
+                    | Ok () when
+                        PrincipalMapper.tryGetUserId context.User
+                        |> Option.isNone
+                        ->
+                        return!
+                            context
+                            |> returnResult StatusCodes.Status401Unauthorized (cacheError correlationId "Authentication is required.")
                     | Ok () ->
                         match!
                             authorizeBoundaryAndRepositories

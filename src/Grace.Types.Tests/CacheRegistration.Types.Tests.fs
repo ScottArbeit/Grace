@@ -345,7 +345,11 @@ type CacheRegistrationLifecycleTests() =
 
         let state =
             { enrolledState with
-                Registrations = [| { enrolledState.Registrations[0] with Health = CacheHealthStatus.Healthy } |] }
+                Registrations =
+                    [|
+                        { enrolledState.Registrations[0] with Health = CacheHealthStatus.Healthy }
+                    |]
+            }
 
         let earlyUnhealthy =
             {
@@ -378,33 +382,81 @@ type CacheRegistrationLifecycleTests() =
 
         Assert.That(eligible, Is.Empty)
 
-    /// Verifies early healthy recovery remains throttled after an immediate unhealthy downgrade.
+    /// Verifies a ready Cache may publish Healthy before its normal refresh is due without extending registration lifetime or rotation facts.
     [<Test>]
-    member _.``early healthy refresh remains throttled after an unhealthy downgrade``() =
+    member _.``early healthy refresh publishes readiness without renewing lifetime``() =
         let state, _ = enrolled ()
+        let original = state.Registrations[0]
 
-        let unhealthy =
+        let earlyHealthy =
             {
                 Class = nameof CacheRegistrationRefreshRequest
                 CacheId = cacheId
                 Endpoint = "https://cache.example.test"
-                Health = CacheHealthStatus.Unhealthy
-                SoftwareVersion = "1.0.0"
-                ProtocolVersion = "v1"
-                PrefetchSupported = true
-                ObservedAt = now.Plus(Duration.FromMinutes 1L)
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion = "ignored"
+                ProtocolVersion = "ignored"
+                PrefetchSupported = false
+                ObservedAt = original.LastRefreshedAt
                 Proof = Unchecked.defaultof<SignedCacheRequestProof>
             }
 
-        let unhealthyState, _ = Lifecycle.refresh state unhealthy (now.Plus(Duration.FromMinutes 1L))
+        let readyAt = now.Plus(Duration.FromMinutes 1L)
+        let readyState, readyResult = Lifecycle.refresh state earlyHealthy readyAt
+        let ready = readyState.Registrations[0]
 
-        let earlyHealthy =
-            { unhealthy with Health = CacheHealthStatus.Healthy; Endpoint = "https://cache.example.test"; ObservedAt = now.Plus(Duration.FromMinutes 2L) }
+        Assert.That(readyResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(ready.Health, Is.EqualTo CacheHealthStatus.Healthy)
+        Assert.That(ready.LastRefreshedAt, Is.EqualTo original.LastRefreshedAt)
+        Assert.That(ready.RefreshAfter, Is.EqualTo original.RefreshAfter)
+        Assert.That(ready.ExpiresAt, Is.EqualTo original.ExpiresAt)
+        Assert.That(ready.LastRotatedAt, Is.EqualTo original.LastRotatedAt)
+        Assert.That(ready.RotationDueAt, Is.EqualTo original.RotationDueAt)
 
-        let throttledState, throttledResult = Lifecycle.refresh unhealthyState earlyHealthy (now.Plus(Duration.FromMinutes 2L))
+        let eligible = Lifecycle.selectEligible readyState (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) readyAt
 
-        Assert.That(throttledResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
-        Assert.That(throttledState, Is.EqualTo unhealthyState)
+        Assert.That(eligible, Has.Length.EqualTo 1)
+
+        let unchangedState, unchangedResult =
+            Lifecycle.refresh readyState { earlyHealthy with ObservedAt = original.LastRefreshedAt } (readyAt.Plus(Duration.FromMinutes 1L))
+
+        Assert.That(unchangedResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(unchangedState, Is.EqualTo readyState)
+
+    /// Verifies durable renewal is ordered only by Grace Server time when proof timestamps are inside the existing tolerance.
+    [<Test>]
+    member _.``due refresh accepts behind equal and ahead proof observations using server lifetime order``() =
+        let state, _ = enrolled ()
+        let original = state.Registrations[0]
+
+        for observedAt in
+            [
+                original.LastRefreshedAt.Minus(Duration.FromSeconds 30L)
+                original.LastRefreshedAt
+                original.LastRefreshedAt.Plus(Duration.FromSeconds 30L)
+            ] do
+            let request =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = original.Endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.1.0"
+                    ProtocolVersion = "v2"
+                    PrefetchSupported = false
+                    ObservedAt = observedAt
+                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                }
+
+            let next, result = Lifecycle.refresh state request original.RefreshAfter
+            let renewed = next.Registrations[0]
+
+            Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+            Assert.That(renewed.LastRefreshedAt, Is.EqualTo original.RefreshAfter)
+            Assert.That(renewed.RefreshAfter, Is.EqualTo(original.RefreshAfter.Plus RegistrationLifetime.RefreshAfter))
+            Assert.That(renewed.ExpiresAt, Is.EqualTo(original.RefreshAfter.Plus RegistrationLifetime.ActiveLifetime))
+            Assert.That(renewed.LastRotatedAt, Is.EqualTo original.LastRotatedAt)
+            Assert.That(renewed.RotationDueAt, Is.EqualTo original.RotationDueAt)
 
     /// Verifies malformed replacement scopes leave the durable lifecycle state unchanged.
     [<Test>]
@@ -452,7 +504,12 @@ type CacheRegistrationLifecycleTests() =
 
         let state =
             { enrolledState with
-                Registrations = [| { enrolledState.Registrations[0] with Health = CacheHealthStatus.Healthy } |] }
+                Registrations =
+                    [|
+                        { enrolledState.Registrations[0] with Health = CacheHealthStatus.Healthy }
+                    |]
+            }
+
         let exact = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) (now.Plus(Duration.FromMinutes 30L))
         let wrong = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some otherRepositoryId, false)) (now.Plus(Duration.FromMinutes 30L))
         let prefetch = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, true)) (now.Plus(Duration.FromMinutes 30L))

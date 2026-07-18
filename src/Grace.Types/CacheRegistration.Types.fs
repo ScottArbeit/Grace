@@ -439,13 +439,6 @@ module CacheRegistration =
                     Some registration,
                     "Cache registration is expired and must enroll again."
                 )
-            | Some registration when request.ObservedAt <= registration.LastRefreshedAt ->
-                current,
-                CacheRegistrationResult.Create(
-                    CacheRegistrationRefreshStatus.Expired,
-                    Some registration,
-                    "Cache refresh is stale and must not update registration state."
-                )
             | Some registration when not (String.Equals(registration.Endpoint, request.Endpoint.Trim(), StringComparison.Ordinal)) ->
                 current,
                 CacheRegistrationResult.Create(
@@ -455,24 +448,23 @@ module CacheRegistration =
                 )
             | Some registration when
                 now < registration.RefreshAfter
-                && request.Health = CacheHealthStatus.Unhealthy
-                && registration.Health <> CacheHealthStatus.Unhealthy
+                && request.Health <> registration.Health
                 ->
-                let unhealthy = { registration with Health = CacheHealthStatus.Unhealthy }
+                let healthUpdated = { registration with Health = request.Health }
 
                 let next =
                     {
                         Class = nameof CacheRegistrationState
                         Registrations =
                             current.Registrations
-                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then unhealthy else existing)
+                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then healthUpdated else existing)
                     }
 
                 next,
                 CacheRegistrationResult.Create(
                     CacheRegistrationRefreshStatus.Refreshed,
-                    Some unhealthy,
-                    "Cache health was downgraded immediately without extending operational freshness."
+                    Some healthUpdated,
+                    "Cache health changed immediately without extending operational freshness."
                 )
             | Some registration when now < registration.RefreshAfter ->
                 current,

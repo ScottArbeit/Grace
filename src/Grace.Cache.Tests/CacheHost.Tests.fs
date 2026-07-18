@@ -456,6 +456,33 @@ type CacheHostTests() =
             Is.True
         )
 
+    /// Verifies a retained candidate's retryable failure publishes Unhealthy and waits five minutes without beginning another candidate transition.
+    [<Test>]
+    member _.CandidateRetryableFailureSchedulesFiveMinuteRetryWithoutReplacement() =
+        let retainedCandidate = "candidate-reference"
+        let attemptedCandidates = ResizeArray<string>()
+        let scheduled = ResizeArray<TimeSpan>()
+        let mutable unhealthyPublications = 0
+
+        let effects: KeyRotationSchedulingEffects =
+            {
+                Synchronize =
+                    fun () ->
+                        attemptedCandidates.Add retainedCandidate
+                        Error "Grace Cache identity candidate outcome is unknown; the same candidate remains pending for retry."
+                ReadRegistration = fun () -> Error "A retryable candidate failure must not read a replacement registration."
+                MarkUnhealthy = fun () -> unhealthyPublications <- unhealthyPublications + 1
+                Schedule = fun delay -> scheduled.Add delay
+                Now = fun () -> Instant.FromUtc(2026, 7, 18, 13, 0)
+            }
+
+        let phase = CacheKeyRotationScheduling.run RotationRequired effects
+
+        Assert.That(phase, Is.EqualTo(RotationRequired))
+        Assert.That((attemptedCandidates |> Seq.toList) = [ retainedCandidate ], Is.True)
+        Assert.That(unhealthyPublications, Is.EqualTo(1))
+        Assert.That((scheduled |> Seq.toList) = [ CacheRefreshSchedule.retryInterval ], Is.True)
+
     /// Verifies known-CacheId recovery finalizes against the immutable original server URI even after the environment changes.
     [<Test>]
     member _.KnownEnrollmentRecoveryUsesRecordedServerUri() =
@@ -549,23 +576,27 @@ type CacheHostTests() =
     /// Verifies a persisted terminal lifecycle is exposed as stable redacted observation data without status-side effects.
     [<Test>]
     member _.StatusReportsOperatorRecoveryRequiredWithoutLifecycleEffects() =
-        let configurationPath =
-            Path.Combine(Path.GetTempPath(), $"grace-cache-terminal-status-{Guid.NewGuid():N}", "cache.runtime.json")
+        let configurationPath = Path.Combine(Path.GetTempPath(), $"grace-cache-terminal-status-{Guid.NewGuid():N}", "cache.runtime.json")
         let cacheId = Guid.NewGuid()
+
         let configuration: CacheMachineConfiguration =
-            { CacheId = cacheId
-              Endpoint = "https://cache.example.test"
-              AllowHttpEndpoint = false
-              ServerUri = "https://server.example.test/grace/"
-              ActiveKeyName = "active-key"
-              ActivePublicKey = testPublicKey
-              RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired }
+            {
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active-key"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired
+            }
 
         let effects: CacheRuntimeStatusReadEffects =
-            { ValidateStorage = fun _ -> Ok()
-              ValidateFile = fun _ -> Ok()
-              ReadRecovery = fun _ -> Ok None
-              ReadConfiguration = fun _ -> Ok configuration }
+            {
+                ValidateStorage = fun _ -> Ok()
+                ValidateFile = fun _ -> Ok()
+                ReadRecovery = fun _ -> Ok None
+                ReadConfiguration = fun _ -> Ok configuration
+            }
 
         match CacheRuntimeControl.readStatusWith effects configurationPath with
         | Error error -> Assert.Fail(error)

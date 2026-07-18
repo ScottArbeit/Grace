@@ -187,6 +187,7 @@ type CacheProcessDispatchTests() =
     [<Test>]
     member _.OperatorRecoveryRequiredStatusUsesStableJsonAndSuccessExit() =
         let cacheId = Guid.Parse "44444444-4444-4444-4444-444444444444"
+
         let effects: CacheProcessEffects =
             {
                 Enroll = fun _ -> failwith "Enrollment must not run for status."
@@ -198,6 +199,7 @@ type CacheProcessDispatchTests() =
 
         use document = JsonDocument.Parse(result.Payload)
         Assert.That(result.ExitCode, Is.EqualTo(0))
+
         Assert.That(
             document
                 .RootElement
@@ -365,11 +367,12 @@ type CacheProcessDispatchTests() =
         Assert.That(ambiguousResult, Is.EqualTo(MayHaveReachedServer))
         Assert.That(ambiguousCalls, Is.EqualTo(1))
 
-    /// Verifies only a 4xx response is a definite cache contract rejection while post-dispatch 5xx outcomes remain unknown.
+    /// Verifies rate-limited candidate submission remains pending while only non-rate-limited 4xx responses are definitive rejections.
     [<Test>]
-    member _.PostDispatchEnrollmentFiveXxIsNotDefiniteRejection() =
+    member _.CandidateRateLimitIsNotDefiniteRejection() =
         Assert.That(CacheHttpFailure.isDefiniteContractRejection 400, Is.True)
         Assert.That(CacheHttpFailure.isDefiniteContractRejection 499, Is.True)
+        Assert.That(CacheHttpFailure.isDefiniteContractRejection 429, Is.False)
         Assert.That(CacheHttpFailure.isDefiniteContractRejection 500, Is.False)
         Assert.That(CacheHttpFailure.isDefiniteContractRejection 503, Is.False)
 

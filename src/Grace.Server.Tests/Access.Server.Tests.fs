@@ -1210,6 +1210,28 @@ type EndpointAuthorizationTests() =
         CacheRequestProofPayload.Create(cacheId, operation, requestDigest, getCurrentInstant ())
         |> fun payload -> SignedCacheRequestProof.Create(payload, "invalid-signature")
 
+    /// Builds an otherwise valid administrator enrollment request for authorization-boundary tests.
+    let validCacheEnrollmentRequest () =
+        {
+            Class = nameof CacheEnrollmentRequest
+            DisplayName = "Authorization test cache"
+            BoundaryKind = CacheBoundaryKind.Organization
+            OwnerId = OwnerId.Parse(ownerId)
+            OrganizationId = Some(OrganizationId.Parse(organizationId))
+            RepositoryScopes =
+                System.Collections.Generic.List<CacheRepositoryScope>(
+                    [
+                        CacheRepositoryScope.Create(OrganizationId.Parse(organizationId), RepositoryId.Parse(repositoryIds[0]))
+                    ]
+                )
+            PublicKey = CacheIdentityPublicKey.Create("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            Endpoint = "https://cache.example.test"
+            AllowHttpEndpoint = false
+            SoftwareVersion = "1.0.0"
+            ProtocolVersion = "v1"
+            PrefetchSupported = false
+        }
+
     /// Builds a valid serialized refresh body whose health field is replaced with an undefined numeric value for route-boundary validation.
     let numericHealthRefreshContent request health =
         task {
@@ -1453,7 +1475,7 @@ type EndpointAuthorizationTests() =
             Assert.That(providerLoginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect, HttpStatusCode.NotFound))
         }
 
-    /// Verifies proof-only Cache runtime routes reach validation without a Grace user while administrative routes retain fallback authentication.
+    /// Verifies proof-only Cache runtime routes reach validation without a Grace user while administrative enrollment validates legacy input before its explicit authorization boundary.
     [<Test>]
     member _.CacheProofRoutesReachValidationWithoutGraceUserAndAdministrativeRoutesRemainProtected() =
         task {
@@ -1510,7 +1532,10 @@ type EndpointAuthorizationTests() =
 
             Assert.That(missingCandidateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
 
-            let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
+            let! malformedEnrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
+            Assert.That(malformedEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent (validCacheEnrollmentRequest ()))
             Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 
             use legacyEnrollmentContent = new StringContent("{\"Health\":\"Healthy\"}", Encoding.UTF8, "application/json")

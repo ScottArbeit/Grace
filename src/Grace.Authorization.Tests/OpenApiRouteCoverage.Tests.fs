@@ -23,6 +23,8 @@ type OpenApiRouteCoverageTests() =
     let cachePathsSourcePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Cache.Paths.OpenAPI.yaml"))
     let openApiBundlePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Grace.OpenAPI.yaml"))
     let openApiProjectionPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Grace.OpenAPI.3.1.2.yaml"))
+    let openApiProofManifestPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "OpenAPI.ProofManifest.json"))
+    let openApiProjectionGeneratorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "generate-openapi-projections.ps1"))
     let routeClassificationRegistryPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "RouteClassification.json"))
     let startupPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Startup.Server.fs"))
 
@@ -288,6 +290,36 @@ type OpenApiRouteCoverageTests() =
                     Does.Not.Contain "      security: []",
                     $"{Path.GetFileName artifactPath} must retain the global bearer requirement for {path}."
                 )
+
+    /// Verifies projection generation completes before the final canonical-source hash census and proof-manifest write.
+    [<Test>]
+    member _.CacheComponentProofHashUsesFinalCanonicalBytesAfterProjectionGeneration() =
+        let generatorText = File.ReadAllText(openApiProjectionGeneratorPath)
+        let projectionWriteIndex = generatorText.IndexOf("Write-Utf8NoBomLfFile $projectionPath", StringComparison.Ordinal)
+        let canonicalCensusIndex = generatorText.IndexOf("$canonicalSourceFiles = @(Get-CanonicalSourceFiles $openApiRoot)", StringComparison.Ordinal)
+        let manifestWriteIndex = generatorText.IndexOf("Write-Utf8NoBomLfFile $manifestPath", StringComparison.Ordinal)
+
+        Assert.That(projectionWriteIndex, Is.GreaterThanOrEqualTo 0)
+        Assert.That(canonicalCensusIndex, Is.GreaterThan(projectionWriteIndex))
+        Assert.That(manifestWriteIndex, Is.GreaterThan(canonicalCensusIndex))
+
+        use manifestDocument = JsonDocument.Parse(File.ReadAllText(openApiProofManifestPath))
+
+        let cacheComponentHash =
+            manifestDocument
+                .RootElement
+                .GetProperty("canonicalSourceFiles")
+                .EnumerateArray()
+            |> Seq.find (fun entry -> entry.GetProperty("path").GetString() = "Cache.Components.OpenAPI.yaml")
+            |> fun entry -> entry.GetProperty("sha256").GetString()
+
+        let actualHash =
+            File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(openApiProofManifestPath), "Cache.Components.OpenAPI.yaml"))
+            |> System.Security.Cryptography.SHA256.HashData
+            |> Convert.ToHexString
+            |> fun hash -> hash.ToLowerInvariant()
+
+        Assert.That(cacheComponentHash, Is.EqualTo actualHash)
 
     /// Verifies that OpenAPI info version matches current api contract version.
     [<Test>]

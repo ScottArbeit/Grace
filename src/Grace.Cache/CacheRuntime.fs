@@ -97,11 +97,7 @@ module CacheRuntimeStatus =
 
     /// Builds the stable terminal status emitted when persisted key recovery requires an administrator.
     let operatorRecoveryRequired (cacheId: Guid) transport =
-        {
-            Lifecycle = "operator-recovery-required"
-            CacheId = Some(cacheId.ToString("D"))
-            Transport = transport
-        }
+        { Lifecycle = "operator-recovery-required"; CacheId = Some(cacheId.ToString("D")); Transport = transport }
 
 /// Parses the cache identity rotation interval without accepting silently clamped or malformed deployment configuration.
 module CacheRotationInterval =
@@ -724,11 +720,9 @@ module CacheMachineConfiguration =
             | _ -> None
 
         match configuration.RotationLifecycle with
-        | CacheKeyRotationLifecycle.OperatorRecoveryRequired ->
-            CacheRuntimeStatus.operatorRecoveryRequired configuration.CacheId transport
+        | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> CacheRuntimeStatus.operatorRecoveryRequired configuration.CacheId transport
         | Ready
-        | CandidatePending _ ->
-            { Lifecycle = "registered"; CacheId = Some(configuration.CacheId.ToString("D")); Transport = transport }
+        | CandidatePending _ -> { Lifecycle = "registered"; CacheId = Some(configuration.CacheId.ToString("D")); Transport = transport }
 
 /// Persists one narrow enrollment-recovery record without becoming a retry ledger or general workflow engine.
 module CacheEnrollmentRecovery =
@@ -988,8 +982,11 @@ type CachePostFailure =
 /// Classifies HTTP failures that are definite Grace contract rejections rather than post-dispatch unknown outcomes.
 module CacheHttpFailure =
 
-    /// Returns true only for a completed client-error response that proves the request was rejected by Grace Server.
-    let isDefiniteContractRejection statusCode = statusCode >= 400 && statusCode < 500
+    /// Returns true only for a completed non-rate-limited client error that proves the request was rejected by Grace Server.
+    let isDefiniteContractRejection statusCode =
+        statusCode >= 400
+        && statusCode < 500
+        && statusCode <> 429
 
 /// Reissues only transport-safe post attempts while preserving ambiguous success outcomes for reconciliation.
 module CachePostRetry =

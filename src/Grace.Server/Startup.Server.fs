@@ -1354,6 +1354,7 @@ module Application =
 
                         POST [ route "/enroll" CacheRegistration.Enroll
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheEnrollmentRequest>
+                               |> addMetadata (AllowAnonymousAttribute())
 
                                route "/refresh" CacheRegistration.Refresh
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRegistrationRefreshRequest>
