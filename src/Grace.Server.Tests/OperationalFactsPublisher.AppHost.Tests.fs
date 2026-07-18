@@ -198,7 +198,8 @@ type OperationalFactsPublisherAppHostTests() =
             Action (fun () ->
                 Assert.That(validationScript, Does.Contain("FullyQualifiedName~Grace.Authorization.Tests"))
                 Assert.That(validationScript, Does.Contain("FullyQualifiedName~Grace.Cache.Tests"))
-                Assert.That(validationScript, Does.Contain("Get-ServerUnitTestFilterTerms"))
+
+                Assert.That(validationScript, Does.Match("(?s)function Get-FastTestFilterTerms\\s*\\{.*?Get-ServerUnitTestFilterTerms.*?\\n\\}"))
 
                 Assert.That(
                     validationScript,
