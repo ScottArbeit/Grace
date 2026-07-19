@@ -168,7 +168,28 @@ module private PromotionSetIntegrationHelpers =
                 { FilePath = "src/app.fs"; Accepted = true; OverrideContentArtifactId = Option.None }
             ]
 
-        postStatusContainsAsync $"/promotion-set/{promotionSetId}/resolve-conflicts" parameters HttpStatusCode.InternalServerError "ValidateIdsMiddleware"
+        task {
+            let! body =
+                postStatusContainsAsync
+                    $"/promotion-set/{promotionSetId}/resolve-conflicts"
+                    parameters
+                    HttpStatusCode.InternalServerError
+                    "A server error occurred."
+
+            let error = deserialize<GraceError> body
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(body, Does.Not.Contain("ValidateIdsMiddleware"))
+                    Assert.That(body, Does.Not.Contain("NullReferenceException"))
+                    Assert.That(error.Error, Is.EqualTo("A server error occurred."))
+                    Assert.That(error.Exception.Message, Is.Empty)
+                    Assert.That(error.Exception.StackTrace, Is.Empty)
+                    Assert.That(error.Exception.InnerException.IsNone, Is.True))
+            )
+
+            return body
+        }
 
     /// Defines delete behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let deleteAsync repositoryId promotionSetId =

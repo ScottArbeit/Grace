@@ -112,7 +112,6 @@ type internal KeyRotationSchedulingEffects =
         Synchronize: unit -> Result<IdentitySynchronizationResult, string>
         ReadRegistration: unit -> Result<CacheRegistration, string>
         IsOperatorRecoveryRequired: unit -> bool
-        MarkUnhealthy: unit -> unit
         Schedule: TimeSpan -> unit
         Now: unit -> Instant
     }
@@ -141,12 +140,10 @@ module internal CacheKeyRotationScheduling =
                 | Ok registration -> scheduleFromRegistration registration
                 | Error _ -> retryRegistrationScheduling ()
             | Ok (RotationRetryAfter _) ->
-                effects.MarkUnhealthy()
                 effects.Schedule CacheRefreshSchedule.retryInterval
                 RotationRequired
             | Ok (OperatorRecoveryRequired _) -> AutomaticWorkStopped
             | Error _ ->
-                effects.MarkUnhealthy()
                 effects.Schedule CacheRefreshSchedule.retryInterval
                 RotationRequired
         | RegistrationSchedulingRequired ->
@@ -263,7 +260,7 @@ module CacheHost =
                 activeTimer.Change(delay, Timeout.InfiniteTimeSpan)
                 |> ignore)
 
-        /// Rotates through the serialized runtime, retaining a failed candidate and publishing unhealthy state before retrying it.
+        /// Rotates through the serialized runtime, retaining a failed candidate until its same-key reconciliation retry.
         let onTimer _ =
             let effects: KeyRotationSchedulingEffects =
                 {
@@ -274,7 +271,6 @@ module CacheHost =
                             match CacheRuntimeControl.requiresOperatorRecovery () with
                             | Ok required -> required
                             | Error _ -> false
-                    MarkUnhealthy = fun () -> CacheRuntimeControl.refreshNow () |> ignore
                     Schedule = schedule
                     Now = SystemClock.Instance.GetCurrentInstant
                 }

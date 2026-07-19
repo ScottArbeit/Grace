@@ -228,9 +228,19 @@ type ValidationSetRouteIntegrationTests() =
                     "/validation-set/update"
                     (ValidationSetIntegrationHelpers.updateParameters repositoryId validationSetId targetBranchId "hosted-proof-updated")
                     HttpStatusCode.InternalServerError
-                    "ValidateIdsMiddleware"
+                    "A server error occurred."
 
-            Assert.That(updateBody, Does.Contain("ValidateIdsMiddleware"))
+            let error = deserialize<GraceError> updateBody
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(updateBody, Does.Not.Contain("ValidateIdsMiddleware"))
+                    Assert.That(updateBody, Does.Not.Contain("JsonException"))
+                    Assert.That(error.Error, Is.EqualTo("A server error occurred."))
+                    Assert.That(error.Exception.Message, Is.Empty)
+                    Assert.That(error.Exception.StackTrace, Is.Empty)
+                    Assert.That(error.Exception.InnerException.IsNone, Is.True))
+            )
 
             let! deleteBody = ValidationSetIntegrationHelpers.deleteAsync repositoryId validationSetId
             Assert.That(deleteBody, Does.Contain("Validation set command succeeded."))

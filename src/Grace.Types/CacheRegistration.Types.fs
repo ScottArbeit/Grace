@@ -52,10 +52,15 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheIdentityPublicKey =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Algorithm: string
+            [<Id(2u)>]
             Curve: string
+            [<Id(3u)>]
             PublicKeyX: string
+            [<Id(4u)>]
             PublicKeyY: string
         }
         /// Builds a canonical Cache identity public key from base64url P-256 coordinates.
@@ -66,8 +71,11 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRepositoryScope =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             OrganizationId: OrganizationId
+            [<Id(2u)>]
             RepositoryId: RepositoryId
         }
         /// Builds one explicit repository scope without permitting name-based or wildcard assignment.
@@ -78,10 +86,15 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRequestProofPayload =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             CacheId: Guid
+            [<Id(2u)>]
             Operation: string
+            [<Id(3u)>]
             RequestDigest: string
+            [<Id(4u)>]
             IssuedAt: Instant
         }
         /// Builds a protocol-millisecond Cache proof payload for one exact operation and request digest.
@@ -98,8 +111,11 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type SignedCacheRequestProof =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Payload: CacheRequestProofPayload
+            [<Id(2u)>]
             Signature: string
         }
         /// Builds the Cache proof envelope without exposing private-key material.
@@ -110,17 +126,29 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheEnrollmentRequest =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             DisplayName: string
+            [<Id(2u)>]
             BoundaryKind: CacheBoundaryKind
+            [<Id(3u)>]
             OwnerId: OwnerId
+            [<Id(4u)>]
             OrganizationId: OrganizationId option
+            [<Id(5u)>]
             RepositoryScopes: List<CacheRepositoryScope>
+            [<Id(6u)>]
             PublicKey: CacheIdentityPublicKey
+            [<Id(7u)>]
             Endpoint: string
+            [<Id(8u)>]
             AllowHttpEndpoint: bool
+            [<Id(9u)>]
             SoftwareVersion: string
+            [<Id(10u)>]
             ProtocolVersion: string
+            [<Id(11u)>]
             PrefetchSupported: bool
         }
 
@@ -128,34 +156,63 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationRefreshRequest =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             CacheId: Guid
+            [<Id(2u)>]
             Endpoint: string
+            [<Id(3u)>]
             Health: CacheHealthStatus
+            [<Id(4u)>]
             SoftwareVersion: string
+            [<Id(5u)>]
             ProtocolVersion: string
+            [<Id(6u)>]
             PrefetchSupported: bool
+            [<Id(7u)>]
             ObservedAt: Instant
+            [<Id(8u)>]
             Proof: SignedCacheRequestProof
         }
 
     /// Represents the administrator-authenticated replacement of the exact repository assignment set.
     [<CLIMutable; GenerateSerializer>]
-    type CacheRepositoryAssignmentRequest = { Class: string; CacheId: Guid; RepositoryScopes: List<CacheRepositoryScope> }
+    type CacheRepositoryAssignmentRequest =
+        {
+            [<Id(0u)>]
+            Class: string
+            [<Id(1u)>]
+            CacheId: Guid
+            [<Id(2u)>]
+            RepositoryScopes: List<CacheRepositoryScope>
+        }
 
     /// Represents the administrator-authenticated terminal revocation of one Cache identity.
     [<CLIMutable; GenerateSerializer>]
-    type CacheRevocationRequest = { Class: string; CacheId: Guid }
+    type CacheRevocationRequest =
+        {
+            [<Id(0u)>]
+            Class: string
+            [<Id(1u)>]
+            CacheId: Guid
+        }
 
     /// Represents active-key-proven submission of the one candidate Cache identity key that may be promoted by a later candidate proof.
     [<CLIMutable; GenerateSerializer>]
     type CacheKeyCandidateRequest =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             CacheId: Guid
+            [<Id(2u)>]
             CandidatePublicKey: CacheIdentityPublicKey
+            [<Id(3u)>]
             RotationIntervalMinutes: int
+            [<Id(4u)>]
             IsStartup: bool
+            [<Id(5u)>]
             Proof: SignedCacheRequestProof
         }
 
@@ -163,29 +220,53 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistration =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             CacheId: Guid
+            [<Id(2u)>]
             DisplayName: string
+            [<Id(3u)>]
             BoundaryKind: CacheBoundaryKind
+            [<Id(4u)>]
             OwnerId: OwnerId
+            [<Id(5u)>]
             OrganizationId: OrganizationId option
+            [<Id(6u)>]
             RepositoryScopes: CacheRepositoryScope array
+            [<Id(7u)>]
             ActivePublicKey: CacheIdentityPublicKey
+            [<Id(8u)>]
             CandidatePublicKey: CacheIdentityPublicKey option
+            [<Id(9u)>]
             Endpoint: string
+            [<Id(10u)>]
             AllowHttpEndpoint: bool
+            [<Id(11u)>]
             Health: CacheHealthStatus
+            [<Id(12u)>]
             SoftwareVersion: string
+            [<Id(13u)>]
             ProtocolVersion: string
+            [<Id(14u)>]
             PrefetchSupported: bool
+            [<Id(15u)>]
             EnrolledBy: string
+            [<Id(16u)>]
             EnrolledAt: Instant
+            [<Id(17u)>]
             LastRefreshedAt: Instant
+            [<Id(18u)>]
             RefreshAfter: Instant
+            [<Id(19u)>]
             ExpiresAt: Instant
+            [<Id(20u)>]
             RotationIntervalMinutes: int
+            [<Id(21u)>]
             LastRotatedAt: Instant option
+            [<Id(22u)>]
             RotationDueAt: Instant
+            [<Id(23u)>]
             RevokedAt: Instant option
         }
 
@@ -206,10 +287,15 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationResult =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Status: CacheRegistrationRefreshStatus
+            [<Id(2u)>]
             Registration: CacheRegistration option
+            [<Id(3u)>]
             Message: string
+            [<Id(4u)>]
             RetryAfterSeconds: int option
         }
         /// Builds a Cache lifecycle result without leaking private key material.
@@ -220,8 +306,11 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationSelectionQuery =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId option
+            [<Id(2u)>]
             RequirePrefetch: bool
         }
         /// Builds a current-Cache selection query from stable repository identity.
@@ -235,7 +324,9 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationState =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Registrations: CacheRegistration array
         }
         /// Represents the empty durable Cache registration state.

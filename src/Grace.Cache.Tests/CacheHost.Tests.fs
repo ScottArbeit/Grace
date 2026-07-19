@@ -486,7 +486,6 @@ type CacheHostTests() =
                         else
                             Ok registration
                 IsOperatorRecoveryRequired = fun () -> false
-                MarkUnhealthy = fun () -> Assert.Fail("A completed promotion with a scheduling read failure must not start a second rotation path.")
                 Schedule = fun delay -> scheduled.Add delay
                 Now = fun () -> now
             }
@@ -508,13 +507,12 @@ type CacheHostTests() =
             Is.True
         )
 
-    /// Verifies a retained candidate's retryable failure publishes Unhealthy and waits five minutes without beginning another candidate transition.
+    /// Verifies an ambiguous candidate probe retries only the same candidate after five minutes without active-key refresh or health publication.
     [<Test>]
-    member _.CandidateRetryableFailureSchedulesFiveMinuteRetryWithoutReplacement() =
+    member _.AmbiguousCandidateProbeSchedulesOnlyTheSameCandidateRetry() =
         let retainedCandidate = "candidate-reference"
         let attemptedCandidates = ResizeArray<string>()
         let scheduled = ResizeArray<TimeSpan>()
-        let mutable unhealthyPublications = 0
 
         let effects: KeyRotationSchedulingEffects =
             {
@@ -524,7 +522,6 @@ type CacheHostTests() =
                         Error "Grace Cache identity candidate outcome is unknown; the same candidate remains pending for retry."
                 ReadRegistration = fun () -> Error "A retryable candidate failure must not read a replacement registration."
                 IsOperatorRecoveryRequired = fun () -> false
-                MarkUnhealthy = fun () -> unhealthyPublications <- unhealthyPublications + 1
                 Schedule = fun delay -> scheduled.Add delay
                 Now = fun () -> Instant.FromUtc(2026, 7, 18, 13, 0)
             }
@@ -533,7 +530,6 @@ type CacheHostTests() =
 
         Assert.That(phase, Is.EqualTo(RotationRequired))
         Assert.That((attemptedCandidates |> Seq.toList) = [ retainedCandidate ], Is.True)
-        Assert.That(unhealthyPublications, Is.EqualTo(1))
         Assert.That((scheduled |> Seq.toList) = [ CacheRefreshSchedule.retryInterval ], Is.True)
 
     /// Verifies a terminal registration refresh stops the key-rotation registration callback instead of retaining a no-dispatch retry timer.
@@ -546,7 +542,6 @@ type CacheHostTests() =
                 Synchronize = fun () -> Ok(Synchronized(CacheRuntimeStatus.registered Guid.Empty "https"))
                 ReadRegistration = fun () -> Error "terminal registration refresh"
                 IsOperatorRecoveryRequired = fun () -> true
-                MarkUnhealthy = fun () -> Assert.Fail("A terminal registration refresh must not enter the unhealthy retry path.")
                 Schedule = fun _ -> scheduled <- true
                 Now = fun () -> Instant.FromUnixTimeSeconds 0L
             }
@@ -881,6 +876,40 @@ type CacheHostTests() =
                 { Send = (fun () -> Error Rejected); RequireOperatorRecovery = (fun _ -> Error "terminal persistence failed") }
                 (configuration Ready),
             Is.EqualTo(Error "terminal persistence failed": Result<CacheRegistrationRefreshOutcome, string>)
+        )
+
+    /// Verifies every direct or scheduled refresh helper converges on the pending-lifecycle gate before it can use the old active key.
+    [<Test>]
+    member _.CandidatePendingRegistrationRefreshNeverDispatchesTheActiveKey() =
+        let pending: CandidateKeyTransition =
+            { ActiveKeyName = "active"; ActivePublicKey = testPublicKey; CandidateKeyName = "candidate"; CandidatePublicKey = testPublicKey }
+
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = pending.ActiveKeyName
+                ActivePublicKey = pending.ActivePublicKey
+                RotationLifecycle = CandidatePending pending
+            }
+
+        let effects: CacheRegistrationRefreshEffects =
+            {
+                Send =
+                    fun () ->
+                        Assert.Fail("CandidatePending must prevent active-key registration refresh dispatch.")
+                        Error Retryable
+                RequireOperatorRecovery =
+                    fun _ ->
+                        Assert.Fail("CandidatePending must retain its durable reconciliation state.")
+                        Error "unreachable"
+            }
+
+        Assert.That(
+            CacheRegistrationRefresh.run effects configuration,
+            Is.EqualTo(Ok RegistrationRetryableFailure: Result<CacheRegistrationRefreshOutcome, string>)
         )
 
     /// Verifies transient refresh failure remains on the established retry path and does not persist terminal recovery.
@@ -1289,14 +1318,12 @@ type CacheHostTests() =
     [<Test>]
     member _.DefinitiveCandidateRejectionStopsRuntimeRotation() =
         let mutable scheduled = false
-        let mutable markedUnhealthy = false
 
         let effects: KeyRotationSchedulingEffects =
             {
                 Synchronize = fun () -> Ok(OperatorRecoveryRequired "operator recovery")
                 ReadRegistration = fun () -> Error "registration must not be read after terminal candidate rejection"
                 IsOperatorRecoveryRequired = fun () -> true
-                MarkUnhealthy = fun () -> markedUnhealthy <- true
                 Schedule = fun _ -> scheduled <- true
                 Now = fun () -> Instant.FromUnixTimeSeconds 0L
             }
@@ -1304,7 +1331,6 @@ type CacheHostTests() =
         let phase = CacheKeyRotationScheduling.run RotationRequired effects
         Assert.That(phase, Is.EqualTo(AutomaticWorkStopped))
         Assert.That(scheduled, Is.False)
-        Assert.That(markedUnhealthy, Is.False)
 
     /// Verifies ambiguous candidate-key probe outcomes retain both durable key references and do not enter active-key candidate submission.
     [<Test>]

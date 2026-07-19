@@ -1573,6 +1573,7 @@ type EndpointAuthorizationTests() =
 
             let enrollmentRequest =
                 { validCacheEnrollmentRequest () with
+                    DisplayName = "Actor serialization cache"
                     OwnerId = OwnerId.Parse(ownerId)
                     OrganizationId = Some(OrganizationId.Parse(organizationId))
                     RepositoryScopes =
@@ -1582,21 +1583,10 @@ type EndpointAuthorizationTests() =
                             ]
                         )
                     PublicKey = publicKey
+                    SoftwareVersion = "1.2.3-actor-boundary"
+                    ProtocolVersion = "actor-boundary-v1"
+                    PrefetchSupported = true
                 }
-
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(enrollmentRequest.OwnerId, Is.EqualTo(OwnerId.Parse(ownerId)))
-                    Assert.That(enrollmentRequest.OrganizationId, Is.EqualTo(Some(OrganizationId.Parse(organizationId))))
-
-                    Assert.That(
-                        enrollmentRequest.RepositoryScopes[0]
-                            .OrganizationId,
-                        Is.EqualTo(OrganizationId.Parse(organizationId))
-                    )
-
-                    Assert.That(enrollmentRequest.RepositoryScopes[0].RepositoryId, Is.EqualTo(RepositoryId.Parse(repositoryIds[0]))))
-            )
 
             let! enrollmentResponse = administratorClient.PostAsync("/cache/enroll", createJsonContent enrollmentRequest)
             let! enrollmentBody = enrollmentResponse.Content.ReadAsStringAsync()
@@ -1606,6 +1596,40 @@ type EndpointAuthorizationTests() =
             let enrollment = deserialize<GraceReturnValue<CacheRegistrationResult>> enrollmentBody
             let registration = enrollment.ReturnValue.Registration.Value
             let cacheId = registration.CacheId
+            let returnedScope = registration.RepositoryScopes[0]
+            let returnedPublicKey = registration.ActivePublicKey
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(registration.Class, Is.EqualTo(nameof CacheRegistration))
+                    Assert.That(registration.CacheId, Is.Not.EqualTo(Guid.Empty))
+                    Assert.That(registration.DisplayName, Is.EqualTo(enrollmentRequest.DisplayName))
+                    Assert.That(registration.BoundaryKind, Is.EqualTo(enrollmentRequest.BoundaryKind))
+                    Assert.That(registration.OwnerId, Is.EqualTo(enrollmentRequest.OwnerId))
+                    Assert.That(registration.OrganizationId, Is.EqualTo(enrollmentRequest.OrganizationId))
+                    Assert.That(registration.RepositoryScopes, Has.Length.EqualTo(1))
+                    Assert.That(returnedScope.Class, Is.EqualTo(enrollmentRequest.RepositoryScopes[0].Class))
+
+                    Assert.That(
+                        returnedScope.OrganizationId,
+                        Is.EqualTo(
+                            enrollmentRequest.RepositoryScopes[0]
+                                .OrganizationId
+                        )
+                    )
+
+                    Assert.That(returnedScope.RepositoryId, Is.EqualTo(enrollmentRequest.RepositoryScopes[0].RepositoryId))
+                    Assert.That(returnedPublicKey.Class, Is.EqualTo(enrollmentRequest.PublicKey.Class))
+                    Assert.That(returnedPublicKey.Algorithm, Is.EqualTo(enrollmentRequest.PublicKey.Algorithm))
+                    Assert.That(returnedPublicKey.Curve, Is.EqualTo(enrollmentRequest.PublicKey.Curve))
+                    Assert.That(returnedPublicKey.PublicKeyX, Is.EqualTo(enrollmentRequest.PublicKey.PublicKeyX))
+                    Assert.That(returnedPublicKey.PublicKeyY, Is.EqualTo(enrollmentRequest.PublicKey.PublicKeyY))
+                    Assert.That(registration.Endpoint, Is.EqualTo(enrollmentRequest.Endpoint))
+                    Assert.That(registration.AllowHttpEndpoint, Is.EqualTo(enrollmentRequest.AllowHttpEndpoint))
+                    Assert.That(registration.SoftwareVersion, Is.EqualTo(enrollmentRequest.SoftwareVersion))
+                    Assert.That(registration.ProtocolVersion, Is.EqualTo(enrollmentRequest.ProtocolVersion))
+                    Assert.That(registration.PrefetchSupported, Is.EqualTo(enrollmentRequest.PrefetchSupported)))
+            )
 
             let unsignedRefresh: CacheRegistrationRefreshRequest =
                 {

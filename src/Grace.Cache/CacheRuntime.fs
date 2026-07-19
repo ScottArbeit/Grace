@@ -962,11 +962,12 @@ type CacheRegistrationRefreshOutcome =
 /// Applies authoritative refresh results while preventing a terminal local lifecycle from extending server registration.
 module CacheRegistrationRefresh =
 
-    /// Stops refresh before HTTP dispatch once durable operator recovery has been recorded.
+    /// Stops active-key refresh before HTTP dispatch while candidate reconciliation or durable operator recovery owns the lifecycle.
     let run (effects: CacheRegistrationRefreshEffects) (configuration: CacheMachineConfiguration) =
-        if configuration.RotationLifecycle = CacheKeyRotationLifecycle.OperatorRecoveryRequired then
-            Ok RegistrationRecoveryRequired
-        else
+        match configuration.RotationLifecycle with
+        | CandidatePending _ -> Ok RegistrationRetryableFailure
+        | CacheKeyRotationLifecycle.OperatorRecoveryRequired -> Ok RegistrationRecoveryRequired
+        | Ready ->
             match effects.Send() with
             | Error Rejected
             | Error KeyUnavailable ->
