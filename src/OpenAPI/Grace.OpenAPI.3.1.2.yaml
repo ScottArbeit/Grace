@@ -1806,26 +1806,24 @@ paths:
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /cache/rotate-key:
+  /cache/candidate:
     post:
       tags:
         - Cache
-      summary: Rotate a Cache identity key after proof by the currently accepted key.
-      operationId: RotateCacheKey
+      summary: Submit or reuse one Cache identity candidate after active-key proof.
+      operationId: SubmitCacheKeyCandidate
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CacheKeyRotationRequest'
+              $ref: '#/components/schemas/CacheKeyCandidateRequest'
       responses:
         '200':
           $ref: '#/components/responses/CacheRegistrationResponse'
         '400':
           $ref: '#/components/responses/400'
-        '401':
-          $ref: '#/components/responses/401'
         '500':
           $ref: '#/components/responses/500'
   /cache/validation-keys:
@@ -4370,11 +4368,10 @@ components:
         Endpoint:
           type: string
           format: uri
+          description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
         AllowHttpEndpoint:
           type: boolean
           description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
-        Health:
-          $ref: '#/components/schemas/CacheHealthStatus'
         SoftwareVersion:
           type: string
         ProtocolVersion:
@@ -4390,7 +4387,6 @@ components:
         - PublicKey
         - Endpoint
         - AllowHttpEndpoint
-        - Health
         - SoftwareVersion
         - ProtocolVersion
         - PrefetchSupported
@@ -4407,6 +4403,7 @@ components:
         Endpoint:
           type: string
           format: uri
+          description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
         Health:
           $ref: '#/components/schemas/CacheHealthStatus'
         SoftwareVersion:
@@ -4459,23 +4456,33 @@ components:
       required:
         - Class
         - CacheId
-    CacheKeyRotationRequest:
+    CacheKeyCandidateRequest:
+      description: Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
       type: object
       properties:
         Class:
           type: string
-          example: CacheKeyRotationRequest
+          example: CacheKeyCandidateRequest
         CacheId:
           type: string
           format: uuid
-        NewPublicKey:
+        CandidatePublicKey:
           $ref: '#/components/schemas/CacheIdentityPublicKey'
+        RotationIntervalMinutes:
+          type: integer
+          minimum: 15
+          maximum: 10080
+          default: 240
+        IsStartup:
+          type: boolean
         Proof:
           $ref: '#/components/schemas/SignedCacheRequestProof'
       required:
         - Class
         - CacheId
-        - NewPublicKey
+        - CandidatePublicKey
+        - RotationIntervalMinutes
+        - IsStartup
         - Proof
     CacheRegistrationRefreshStatus:
       description: Result classification for Cache enrollment and lifecycle operations.
@@ -4488,8 +4495,9 @@ components:
         - notFound
         - revoked
         - updated
-        - rotated
+        - candidateAccepted
         - endpointMismatch
+        - rotationRetryAfter
       x-enumNames:
         - Enrolled
         - Refreshed
@@ -4498,8 +4506,9 @@ components:
         - NotFound
         - Revoked
         - Updated
-        - Rotated
+        - CandidateAccepted
         - EndpointMismatch
+        - RotationRetryAfter
       example: enrolled
     CacheRegistration:
       description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
@@ -4526,11 +4535,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CacheRepositoryScope'
-        PublicKey:
+        ActivePublicKey:
           $ref: '#/components/schemas/CacheIdentityPublicKey'
+        CandidatePublicKey:
+          $ref: '#/components/schemas/CacheIdentityPublicKey'
+          nullable: true
         Endpoint:
           type: string
           format: uri
+          description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
         AllowHttpEndpoint:
           type: boolean
           description: Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
@@ -4552,6 +4565,13 @@ components:
           $ref: '#/components/schemas/Instant'
         ExpiresAt:
           $ref: '#/components/schemas/Instant'
+        RotationIntervalMinutes:
+          type: integer
+          minimum: 15
+          maximum: 10080
+        LastRotatedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
         RotationDueAt:
           $ref: '#/components/schemas/Instant'
         RevokedAt:
@@ -4564,7 +4584,7 @@ components:
         - BoundaryKind
         - OwnerId
         - RepositoryScopes
-        - PublicKey
+        - ActivePublicKey
         - Endpoint
         - AllowHttpEndpoint
         - Health
@@ -4576,6 +4596,7 @@ components:
         - LastRefreshedAt
         - RefreshAfter
         - ExpiresAt
+        - RotationIntervalMinutes
         - RotationDueAt
     CacheRegistrationResult:
       description: Result returned by Cache registration and refresh routes.
@@ -4592,6 +4613,10 @@ components:
         Message:
           type: string
           example: Cache registration is current.
+        RetryAfterSeconds:
+          type: integer
+          minimum: 1
+          nullable: true
       required:
         - Class
         - Status
@@ -4752,7 +4777,7 @@ components:
         CacheEndpoint:
           type: string
           format: uri
-          description: Exact selected Cache endpoint covered by this signature.
+          description: Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature.
         TargetRootDirectoryVersionId:
           $ref: '#/components/schemas/DirectoryVersionId'
         ExecutionMode:

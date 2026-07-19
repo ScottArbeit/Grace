@@ -6,7 +6,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **class** | **String** |  | 
 **cache_id** | **uuid::Uuid** |  | 
-**endpoint** | **String** |  | 
+**endpoint** | **String** | Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment. | 
 **health** | [**models::CacheHealthStatus**](CacheHealthStatus.md) |  | 
 **software_version** | **String** |  | 
 **protocol_version** | **String** |  | 

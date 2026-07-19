@@ -9,7 +9,7 @@ Method | HTTP request | Description
 [**get_artifact_grant_validation_keys**](CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 [**refresh_cache**](CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
 [**revoke_cache**](CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
-[**rotate_cache_key**](CacheApi.md#rotate_cache_key) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
+[**submit_cache_key_candidate**](CacheApi.md#submit_cache_key_candidate) | **POST** /cache/candidate | Submit or reuse one Cache identity candidate after active-key proof.
 
 
 
@@ -152,17 +152,17 @@ Name | Type | Description  | Required | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
-## rotate_cache_key
+## submit_cache_key_candidate
 
-> models::CacheRegistrationReturnValue rotate_cache_key(cache_key_rotation_request)
-Rotate a Cache identity key after proof by the currently accepted key.
+> models::CacheRegistrationReturnValue submit_cache_key_candidate(cache_key_candidate_request)
+Submit or reuse one Cache identity candidate after active-key proof.
 
 ### Parameters
 
 
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
-**cache_key_rotation_request** | [**CacheKeyRotationRequest**](CacheKeyRotationRequest.md) |  | [required] |
+**cache_key_candidate_request** | [**CacheKeyCandidateRequest**](CacheKeyCandidateRequest.md) |  | [required] |
 
 ### Return type
 
@@ -175,7 +175,7 @@ No authorization required
 ### HTTP request headers
 
 - **Content-Type**: application/json
-- **Accept**: application/json, text/plain
+- **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

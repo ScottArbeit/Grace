@@ -10,6 +10,7 @@ Name | Type | Description | Notes
 **status** | [**CacheRegistrationRefreshStatus**](CacheRegistrationRefreshStatus.md) |  | 
 **registration** | [**CacheRegistration**](CacheRegistration.md) |  | [optional] 
 **message** | **str** |  | 
+**retry_after_seconds** | **int** |  | [optional] 
 
 ## Example
 

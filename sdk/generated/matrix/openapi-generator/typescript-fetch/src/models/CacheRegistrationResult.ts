@@ -58,6 +58,12 @@ export interface CacheRegistrationResult {
      * @memberof CacheRegistrationResult
      */
     message: string;
+    /**
+     * 
+     * @type {number}
+     * @memberof CacheRegistrationResult
+     */
+    retryAfterSeconds?: number;
 }
 
 
@@ -86,6 +92,7 @@ export function CacheRegistrationResultFromJSONTyped(json: any, ignoreDiscrimina
         'status': CacheRegistrationRefreshStatusFromJSON(json['Status']),
         'registration': json['Registration'] == null ? undefined : CacheRegistrationFromJSON(json['Registration']),
         'message': json['Message'],
+        'retryAfterSeconds': json['RetryAfterSeconds'] == null ? undefined : json['RetryAfterSeconds'],
     };
 }
 
@@ -104,6 +111,7 @@ export function CacheRegistrationResultToJSONTyped(value?: CacheRegistrationResu
         'Status': CacheRegistrationRefreshStatusToJSON(value['status']),
         'Registration': CacheRegistrationToJSON(value['registration']),
         'Message': value['message'],
+        'RetryAfterSeconds': value['retryAfterSeconds'],
     };
 }
 

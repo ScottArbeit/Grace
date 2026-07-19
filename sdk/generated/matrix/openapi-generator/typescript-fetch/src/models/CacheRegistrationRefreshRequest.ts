@@ -47,7 +47,7 @@ export interface CacheRegistrationRefreshRequest {
      */
     cacheId: string;
     /**
-     * 
+     * Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
      * @type {string}
      * @memberof CacheRegistrationRefreshRequest
      */

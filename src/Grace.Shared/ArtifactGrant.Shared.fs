@@ -424,6 +424,7 @@ module ArtifactGrant =
                 <> nameof ArtifactGrantValidationRequest
              || String.IsNullOrWhiteSpace request.CacheId
              || String.IsNullOrWhiteSpace request.CacheEndpoint
+             || not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint request.CacheEndpoint)
              || request.TargetRootDirectoryVersionId = Guid.Empty
              || not (Grace.Types.MaterializationPlan.Validation.isSupportedExecutionMode request.ExecutionMode)
              || String.IsNullOrWhiteSpace request.ArtifactIdentity then
@@ -440,6 +441,8 @@ module ArtifactGrant =
             Error(UnsupportedAlgorithm grant.Header.Algorithm)
         elif not (String.Equals(grant.Payload.Issuer, ArtifactGrantContract.Issuer, StringComparison.Ordinal)) then
             Error InvalidIssuer
+        elif not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint grant.Payload.CacheEndpoint) then
+            Error WrongCacheEndpoint
         elif grant.Payload.RequesterPrincipalType
              <> ArtifactGrantRequesterPrincipalType.User
              || String.IsNullOrWhiteSpace grant.Payload.RequesterPrincipalId then
@@ -518,6 +521,8 @@ module ArtifactGrant =
         elif request.ExecutionMode = MaterializationExecutionMode.Direct then
             Ok()
         elif String.IsNullOrWhiteSpace request.CacheEndpoint then
+            Error WrongCacheEndpoint
+        elif not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint request.CacheEndpoint) then
             Error WrongCacheEndpoint
         elif not (isValidValidationKeySet keySet) then
             Error InvalidValidationKeySet

@@ -9,7 +9,7 @@ All URIs are relative to *http://localhost:5000*
 | [**getArtifactGrantValidationKeys**](CacheApi.md#getartifactgrantvalidationkeys) | **GET** /cache/validation-keys | Publish artifact grant validation keys. |
 | [**refreshCache**](CacheApi.md#refreshcache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof. |
 | [**revokeCache**](CacheApi.md#revokecache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator. |
-| [**rotateCacheKey**](CacheApi.md#rotatecachekey) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key. |
+| [**submitCacheKeyCandidate**](CacheApi.md#submitcachekeycandidate) | **POST** /cache/candidate | Submit or reuse one Cache identity candidate after active-key proof. |
 
 
 
@@ -361,11 +361,11 @@ example().catch(console.error);
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
-## rotateCacheKey
+## submitCacheKeyCandidate
 
-> CacheRegistrationReturnValue rotateCacheKey(cacheKeyRotationRequest)
+> CacheRegistrationReturnValue submitCacheKeyCandidate(cacheKeyCandidateRequest)
 
-Rotate a Cache identity key after proof by the currently accepted key.
+Submit or reuse one Cache identity candidate after active-key proof.
 
 ### Example
 
@@ -374,19 +374,19 @@ import {
   Configuration,
   CacheApi,
 } from '@grace-vcs/generated-openapi-probe';
-import type { RotateCacheKeyRequest } from '@grace-vcs/generated-openapi-probe';
+import type { SubmitCacheKeyCandidateRequest } from '@grace-vcs/generated-openapi-probe';
 
 async function example() {
   console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
   const api = new CacheApi();
 
   const body = {
-    // CacheKeyRotationRequest
-    cacheKeyRotationRequest: ...,
-  } satisfies RotateCacheKeyRequest;
+    // CacheKeyCandidateRequest
+    cacheKeyCandidateRequest: ...,
+  } satisfies SubmitCacheKeyCandidateRequest;
 
   try {
-    const data = await api.rotateCacheKey(body);
+    const data = await api.submitCacheKeyCandidate(body);
     console.log(data);
   } catch (error) {
     console.error(error);
@@ -402,7 +402,7 @@ example().catch(console.error);
 
 | Name | Type | Description  | Notes |
 |------------- | ------------- | ------------- | -------------|
-| **cacheKeyRotationRequest** | [CacheKeyRotationRequest](CacheKeyRotationRequest.md) |  | |
+| **cacheKeyCandidateRequest** | [CacheKeyCandidateRequest](CacheKeyCandidateRequest.md) |  | |
 
 ### Return type
 
@@ -415,7 +415,7 @@ No authorization required
 ### HTTP request headers
 
 - **Content-Type**: `application/json`
-- **Accept**: `application/json`, `text/plain`
+- **Accept**: `application/json`
 
 
 ### HTTP response details
@@ -423,7 +423,6 @@ No authorization required
 |-------------|-------------|------------------|
 | **200** | OK |  -  |
 | **400** | Bad Request |  -  |
-| **401** | Unauthorized |  * WWW-Authenticate - Authentication challenge emitted by the configured ASP.NET Core authentication handler. <br>  |
 | **500** | Internal Server Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)

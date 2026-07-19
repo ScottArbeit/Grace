@@ -11,8 +11,9 @@
 | NotFound | notFound |
 | Revoked | revoked |
 | Updated | updated |
-| Rotated | rotated |
+| CandidateAccepted | candidateAccepted |
 | EndpointMismatch | endpointMismatch |
+| RotationRetryAfter | rotationRetryAfter |
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

@@ -262,7 +262,17 @@ module GraceCommand =
     /// Evaluates has blocking introspection parse errors against parsed options and command state.
     let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =
         parseResult.Errors
-        |> Seq.exists (isIgnorableIntrospectionParseError >> not)
+        |> Seq.exists (fun error ->
+            let command = parseResult.CommandResult.Command
+
+            let cacheMissingRequiredOption =
+                command.Name.Equals("enroll", StringComparison.OrdinalIgnoreCase)
+                && (command.Parents
+                    |> Seq.exists (fun parent -> parent.Name.Equals("cache", StringComparison.OrdinalIgnoreCase)))
+                && error.Message.StartsWith("Required option missing", StringComparison.Ordinal)
+
+            not cacheMissingRequiredOption
+            && not (isIgnorableIntrospectionParseError error))
 
     /// Writes introspection parse error data through the CLI output contract.
     let private writeIntrospectionParseError (parseResult: ParseResult) =
@@ -505,7 +515,7 @@ module GraceCommand =
     /// Defines structured data exchanged by CLI helpers.
     type HelpSection = { Heading: string; CommandNames: string list }
 
-    let private rootHelpSections =
+    let rootHelpSections =
         [
             { Heading = "Getting started"; CommandNames = [ "authenticate"; "connect"; "config" ] }
             {
@@ -547,6 +557,7 @@ module GraceCommand =
                 Heading = "Local utilities"
                 CommandNames =
                     [
+                        "cache"
                         "doctor"
                         "history"
                         "maintenance"
@@ -554,6 +565,25 @@ module GraceCommand =
                     ]
             }
         ]
+
+    /// Returns true only for command groups that own machine-scoped state and must run outside a repository configuration.
+    let isAllowedWithoutRepositoryConfiguration commandName isCaseInsensitive =
+        let comparison =
+            if isCaseInsensitive then
+                StringComparison.InvariantCultureIgnoreCase
+            else
+                StringComparison.InvariantCulture
+
+        [
+            "config"
+            "history"
+            "authenticate"
+            "connect"
+            "alias"
+            "doctor"
+            "cache"
+        ]
+        |> List.exists (fun allowed -> allowed.Equals(commandName, comparison))
 
     let private repositoryHelpSections =
         [
@@ -869,6 +899,7 @@ module GraceCommand =
 
         // Add subcommands.
         rootCommand.Subcommands.Add(Connect.Build)
+        rootCommand.Subcommands.Add(CacheCommand.Build)
         rootCommand.Subcommands.Add(Watch.Build)
         rootCommand.Subcommands.Add(Branch.Build)
         rootCommand.Subcommands.Add(DirectoryVersion.Build)
@@ -997,6 +1028,14 @@ module GraceCommand =
     /// Checks if the command is a `grace watch` command.
     let isGraceWatch (parseResult: ParseResult) = if (parseResult.CommandResult.Command.Name = "watch") then true else false
 
+    /// Identifies machine-scoped cache commands so repository presentation and local-state behavior cannot alter child JSON output.
+    let isGraceCache (parseResult: ParseResult) =
+        if isNull parseResult then
+            false
+        else
+            Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
+            |> Seq.exists (fun command -> command.Name.Equals("cache", StringComparison.OrdinalIgnoreCase))
+
     /// Checks if the command is a `grace doctor` command.
     let isGraceDoctor (parseResult: ParseResult) =
         if isNull parseResult then
@@ -1004,6 +1043,12 @@ module GraceCommand =
         else
             Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
             |> Seq.exists (fun command -> command.Name.Equals("doctor", StringComparison.OrdinalIgnoreCase))
+
+    /// Returns true only when a command may use repository- and user-scoped CLI history without affecting machine-scoped cache execution.
+    let shouldRecordHistory isIntrospection (parseResult: ParseResult) =
+        not isIntrospection
+        && not (parseResult |> isGraceDoctor)
+        && not (parseResult |> isGraceCache)
 
     /// Checks if the command is a foreground `grace watch` command.
     let isGraceWatchForeground (parseResult: ParseResult) =
@@ -1376,6 +1421,9 @@ module GraceCommand =
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
                         returnValue <- invokedReturnValue
+                    else if parseResult |> isGraceCache then
+                        let! invokedReturnValue = parseResult.InvokeAsync()
+                        returnValue <- invokedReturnValue
                     else if configurationFileExists () then
                         match tryGetJsonConfigurationError parseResult with
                         | Some error ->
@@ -1448,33 +1496,13 @@ module GraceCommand =
                                     AnsiConsole.WriteLine()
                     else
                         // We don't have a config file, so write an error message and exit.
-                        let comparison =
-                            if isCaseInsensitive then
-                                StringComparison.InvariantCultureIgnoreCase
-                            else
-                                StringComparison.InvariantCulture
-
-                        let allowedCommands =
-                            [
-                                "config"
-                                "history"
-                                "authenticate"
-                                "connect"
-                                "alias"
-                                "doctor"
-                            ]
-
                         let isAllowed =
                             let command = parseResult.CommandResult.Command
 
                             Seq.append [ command ] (command.Parents.OfType<Command>())
-                            |> Seq.exists (fun cmd ->
-                                allowedCommands
-                                |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
+                            |> Seq.exists (fun cmd -> isAllowedWithoutRepositoryConfiguration cmd.Name isCaseInsensitive)
                             || (tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive
-                                |> Option.exists (fun topLevel ->
-                                    allowedCommands
-                                    |> List.exists (fun allowed -> topLevel.Equals(allowed, comparison))))
+                                |> Option.exists (fun topLevel -> isAllowedWithoutRepositoryConfiguration topLevel isCaseInsensitive))
 
                         if isAllowed then
                             let! invokedReturnValue = parseResult.InvokeAsync()
@@ -1523,10 +1551,7 @@ module GraceCommand =
                     (finishTime - startTime).TotalMilliseconds
                     |> int64
 
-                if
-                    not isIntrospection
-                    && not (parseResult |> isGraceDoctor)
-                then
+                if shouldRecordHistory isIntrospection parseResult then
                     HistoryStorage.tryRecordInvocation
                         {
                             argvOriginal = argvOriginal

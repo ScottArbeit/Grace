@@ -55,22 +55,27 @@ CacheEnrollmentRequest:
       minItems: 1
       items: { $ref: '#/CacheRepositoryScope' }
     PublicKey: { $ref: '#/CacheIdentityPublicKey' }
-    Endpoint: { type: string, format: uri }
+    Endpoint:
+      type: string
+      format: uri
+      description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     AllowHttpEndpoint:
       type: boolean
       description: Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.
-    Health: { $ref: '#/CacheHealthStatus' }
     SoftwareVersion: { type: string }
     ProtocolVersion: { type: string }
     PrefetchSupported: { type: boolean }
-  required: [Class, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, AllowHttpEndpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported]
+  required: [Class, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, AllowHttpEndpoint, SoftwareVersion, ProtocolVersion, PrefetchSupported]
 CacheRegistrationRefreshRequest:
   description: Cache-authenticated refresh that may update operational facts only.
   type: object
   properties:
     Class: { type: string, example: CacheRegistrationRefreshRequest }
     CacheId: { type: string, format: uuid }
-    Endpoint: { type: string, format: uri }
+    Endpoint:
+      type: string
+      format: uri
+      description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     Health: { $ref: '#/CacheHealthStatus' }
     SoftwareVersion: { type: string }
     ProtocolVersion: { type: string }
@@ -94,19 +99,22 @@ CacheRevocationRequest:
     Class: { type: string, example: CacheRevocationRequest }
     CacheId: { type: string, format: uuid }
   required: [Class, CacheId]
-CacheKeyRotationRequest:
+CacheKeyCandidateRequest:
+  description: Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
   type: object
   properties:
-    Class: { type: string, example: CacheKeyRotationRequest }
+    Class: { type: string, example: CacheKeyCandidateRequest }
     CacheId: { type: string, format: uuid }
-    NewPublicKey: { $ref: '#/CacheIdentityPublicKey' }
+    CandidatePublicKey: { $ref: '#/CacheIdentityPublicKey' }
+    RotationIntervalMinutes: { type: integer, minimum: 15, maximum: 10080, default: 240 }
+    IsStartup: { type: boolean }
     Proof: { $ref: '#/SignedCacheRequestProof' }
-  required: [Class, CacheId, NewPublicKey, Proof]
+  required: [Class, CacheId, CandidatePublicKey, RotationIntervalMinutes, IsStartup, Proof]
 CacheRegistrationRefreshStatus:
   description: Result classification for Cache enrollment and lifecycle operations.
   type: string
-  enum: [enrolled, refreshed, refreshNotDue, expired, notFound, revoked, updated, rotated, endpointMismatch]
-  x-enumNames: [Enrolled, Refreshed, RefreshNotDue, Expired, NotFound, Revoked, Updated, Rotated, EndpointMismatch]
+  enum: [enrolled, refreshed, refreshNotDue, expired, notFound, revoked, updated, candidateAccepted, endpointMismatch, rotationRetryAfter]
+  x-enumNames: [Enrolled, Refreshed, RefreshNotDue, Expired, NotFound, Revoked, Updated, CandidateAccepted, EndpointMismatch, RotationRetryAfter]
   example: enrolled
 CacheRegistration:
   description: Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
@@ -119,8 +127,12 @@ CacheRegistration:
     OwnerId: { type: string, format: uuid }
     OrganizationId: { type: string, format: uuid, nullable: true }
     RepositoryScopes: { type: array, items: { $ref: '#/CacheRepositoryScope' } }
-    PublicKey: { $ref: '#/CacheIdentityPublicKey' }
-    Endpoint: { type: string, format: uri }
+    ActivePublicKey: { $ref: '#/CacheIdentityPublicKey' }
+    CandidatePublicKey: { $ref: '#/CacheIdentityPublicKey', nullable: true }
+    Endpoint:
+      type: string
+      format: uri
+      description: Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     AllowHttpEndpoint:
       type: boolean
       description: Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
@@ -133,9 +145,11 @@ CacheRegistration:
     LastRefreshedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
     RefreshAfter: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
     ExpiresAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
+    RotationIntervalMinutes: { type: integer, minimum: 15, maximum: 10080 }
+    LastRotatedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant', nullable: true }
     RotationDueAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant' }
     RevokedAt: { $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/Instant', nullable: true }
-  required: [Class, CacheId, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, PublicKey, Endpoint, AllowHttpEndpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported, EnrolledBy, EnrolledAt, LastRefreshedAt, RefreshAfter, ExpiresAt, RotationDueAt]
+  required: [Class, CacheId, DisplayName, BoundaryKind, OwnerId, RepositoryScopes, ActivePublicKey, Endpoint, AllowHttpEndpoint, Health, SoftwareVersion, ProtocolVersion, PrefetchSupported, EnrolledBy, EnrolledAt, LastRefreshedAt, RefreshAfter, ExpiresAt, RotationIntervalMinutes, RotationDueAt]
 CacheRegistrationResult:
   description: Result returned by Cache registration and refresh routes.
   type: object
@@ -151,6 +165,10 @@ CacheRegistrationResult:
     Message:
       type: string
       example: Cache registration is current.
+    RetryAfterSeconds:
+      type: integer
+      minimum: 1
+      nullable: true
   required: [Class, Status, Message]
 CacheRegistrationReturnValue:
   description: Grace response envelope whose ReturnValue contains a Cache registration result.
@@ -277,7 +295,7 @@ ArtifactGrantPayload:
     CacheEndpoint:
       type: string
       format: uri
-      description: Exact selected Cache endpoint covered by this signature.
+      description: Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature.
     TargetRootDirectoryVersionId:
       $ref: './Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
     ExecutionMode:

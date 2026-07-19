@@ -129,10 +129,10 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `206`
+- Total leaf commands: `209`
 - JSON-ready routed commands: `185`
 - Intentionally human-only commands: `1`
-- Deferred routed commands with explicit V2 scope: `11`
+- Deferred routed commands with explicit V2 scope: `14`
 - Source-only/unrouted commands: `9`
 - Deleted commands: `0`
 
@@ -158,6 +158,9 @@ metadata and V2 scope because their success paths still need migration before Gr
 - `branch.rebase`
 - `branch.status`
 - `branch.switch`
+- `cache.enroll`
+- `cache.run`
+- `cache.status`
 - `diff.checkpoint`
 - `diff.commit`
 - `diff.directoryid`
@@ -170,6 +173,11 @@ metadata and V2 scope because their success paths still need migration before Gr
 The `watch` command is not counted in those V2 routed-success migrations. It is intentionally human-only for success
 behavior because it is a continuous foreground workflow; JSON mode returns an explicit error envelope instead of
 starting the watcher.
+
+`grace cache status` is a successful, pure observation command. Its `Lifecycle` value is `registered`,
+`enrollment-recovery-required`, or `operator-recovery-required`; the latter is emitted exactly when persisted key
+rotation recovery requires administrator revocation and re-enrollment. Status does not contact Grace Server, mutate
+machine configuration, create or delete keys, start listeners, refresh, rotate, enroll, or expose secret values.
 
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.

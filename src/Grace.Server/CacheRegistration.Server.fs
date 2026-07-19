@@ -33,6 +33,28 @@ module CacheRegistration =
             | :? NullReferenceException -> return Error(cacheError correlationId "Cache request body is invalid.")
         }
 
+    /// Binds enrollment while rejecting the removed client-controlled Health field instead of silently accepting a legacy request shape.
+    let private bindEnrollmentJson (context: HttpContext) correlationId =
+        task {
+            try
+                use! document = JsonDocument.ParseAsync(context.Request.Body)
+
+                if document.RootElement.ValueKind
+                   <> JsonValueKind.Object then
+                    return Error(cacheError correlationId "Cache request body is invalid.")
+                elif document.RootElement.EnumerateObject()
+                     |> Seq.exists (fun property -> String.Equals(property.Name, "Health", StringComparison.OrdinalIgnoreCase)) then
+                    return Error(cacheError correlationId "Cache enrollment Health is server-owned and must not be supplied.")
+                else
+                    return
+                        JsonSerializer.Deserialize<CacheEnrollmentRequest>(document.RootElement.GetRawText(), Constants.JsonSerializerOptions)
+                        |> Ok
+            with
+            | :? JsonException
+            | :? BadHttpRequestException
+            | :? NullReferenceException -> return Error(cacheError correlationId "Cache request body is invalid.")
+        }
+
     /// Evaluates one current Grace administrative permission without relying on enrollment-time roles.
     let private hasPermission (context: HttpContext) operation resource =
         task {
@@ -148,39 +170,39 @@ module CacheRegistration =
             task {
                 let correlationId = getCorrelationId context
 
-                match! bindJson<CacheEnrollmentRequest> context correlationId with
-                | Error error -> return! context |> result400BadRequest error
-                | Ok request ->
-                    match Lifecycle.validateEnrollmentRequest request with
-                    | Error errors ->
-                        return!
-                            context
-                            |> result400BadRequest (cacheError correlationId (String.concat " " errors))
-                    | Ok () when not (CacheRegistrationProof.isValidPublicKey request.PublicKey) ->
-                        return!
-                            context
-                            |> result400BadRequest (cacheError correlationId "PublicKey must be a canonical P-256 public key.")
-                    | Ok () ->
-                        match!
-                            authorizeBoundaryAndRepositories
-                                context
-                                request.BoundaryKind
-                                request.OwnerId
-                                request.OrganizationId
-                                request.RepositoryScopes
-                                correlationId
-                            with
-                        | Error error ->
+                match PrincipalMapper.tryGetUserId context.User with
+                | None ->
+                    return!
+                        context
+                        |> returnResult StatusCodes.Status401Unauthorized (cacheError correlationId "Authentication is required.")
+                | Some enrolledBy ->
+                    match! bindEnrollmentJson context correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok request ->
+                        match Lifecycle.validateEnrollmentRequest request with
+                        | Error errors ->
                             return!
                                 context
-                                |> returnResult StatusCodes.Status403Forbidden error
+                                |> result400BadRequest (cacheError correlationId (String.concat " " errors))
+                        | Ok () when not (CacheRegistrationProof.isValidPublicKey request.PublicKey) ->
+                            return!
+                                context
+                                |> result400BadRequest (cacheError correlationId "PublicKey must be a canonical P-256 public key.")
                         | Ok () ->
-                            match PrincipalMapper.tryGetUserId context.User with
-                            | None ->
+                            match!
+                                authorizeBoundaryAndRepositories
+                                    context
+                                    request.BoundaryKind
+                                    request.OwnerId
+                                    request.OrganizationId
+                                    request.RepositoryScopes
+                                    correlationId
+                                with
+                            | Error error ->
                                 return!
                                     context
-                                    |> returnResult StatusCodes.Status401Unauthorized (cacheError correlationId "Authentication is required.")
-                            | Some enrolledBy ->
+                                    |> returnResult StatusCodes.Status403Forbidden error
+                            | Ok () ->
                                 let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
 
                                 match! actor.Enroll(Guid.NewGuid(), request, enrolledBy, getCurrentInstant (), correlationId) with
@@ -303,28 +325,28 @@ module CacheRegistration =
                             | Error error -> return! context |> result400BadRequest error
             }
 
-    /// Handles POST /cache/rotate-key using proof of the old key before the actor durably accepts the new key.
-    let RotateKey: HttpHandler =
+    /// Handles the proof-only candidate route without requiring a Grace user bearer token.
+    let SubmitCandidate: HttpHandler =
         fun _next context ->
             task {
                 let correlationId = getCorrelationId context
 
-                match! bindJson<CacheKeyRotationRequest> context correlationId with
+                match! bindJson<CacheKeyCandidateRequest> context correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok request when
                     isNull (box request)
-                    || request.Class <> nameof CacheKeyRotationRequest
+                    || request.Class <> nameof CacheKeyCandidateRequest
                     || request.CacheId = Guid.Empty
                     || isNull (box request.Proof)
-                    || not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey)
+                    || not (CacheRegistrationProof.isValidPublicKey request.CandidatePublicKey)
                     ->
                     return!
                         context
-                        |> result400BadRequest (cacheError correlationId "Cache key rotation request is invalid.")
+                        |> result400BadRequest (cacheError correlationId "Cache identity candidate request is invalid.")
                 | Ok request ->
                     let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
 
-                    match! actor.RotateKey(request, getCurrentInstant (), correlationId) with
+                    match! actor.SubmitCandidate(request, getCurrentInstant (), correlationId) with
                     | Ok result -> return! context |> result200Ok result
                     | Error error -> return! context |> result400BadRequest error
             }

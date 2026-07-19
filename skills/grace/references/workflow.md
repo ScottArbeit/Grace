@@ -12,6 +12,13 @@ Load this reference for non-trivial planning, issue orchestration, implementatio
 
 Re-read these files during the current session before relying on older memory or this summary.
 
+## Generic Orchestration And Grace Overlay
+
+Load the installed `dev-process` skill for generic GitHub development orchestration: executable issue contracts,
+worktree isolation, worker boundaries, current-head review evidence, generic stabilization, merge readiness, and cleanup.
+This reference contains only Grace-specific deltas. `AGENTS.md` and `docs/Development process.md` remain authoritative for
+Grace topology, worker status paths, bounded waits, validation, review guards, deferral, and completion rules.
+
 ## Planning Versus Tracked Work
 
 - When the user says `Plan <work item>`, plan in chat and stop. Do not create GitHub issues unless asked.
@@ -106,6 +113,9 @@ When acting as the main implementation orchestrator, follow the repo policy:
   worker subagent. After the worker hands off, the orchestrator replies to the bot comment with the fix commit and
   validation evidence, includes the prevention line from `docs/Development process.md`, resolves the conversation,
   updates `Review Status`, and waits for the next bot review.
+- When stabilization reveals a new product construct, persisted shape, semantic role, or business rule, stop coding.
+  Resume only from recorded maintainer approval. When the user invokes `#unblock`, use its approval packet to capture
+  that approval without turning routine implementation choices into maintainer questions.
 
 If subagent tools are unavailable or cannot be used under the active tool policy, state that limitation and preserve the
 rest of the Grace workflow as far as possible.

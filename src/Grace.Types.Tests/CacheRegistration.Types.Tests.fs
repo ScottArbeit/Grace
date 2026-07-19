@@ -1,12 +1,14 @@
 namespace Grace.Types.Tests
 
 open Grace.Shared
+open Grace.Shared.ArtifactGrant
 open Grace.Types.CacheRegistration
 open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.Security.Cryptography
+open System.Text.Json
 
 /// Covers deterministic administrator-owned Cache enrollment and runtime proof behavior.
 [<Parallelizable(ParallelScope.All)>]
@@ -38,7 +40,6 @@ type CacheRegistrationLifecycleTests() =
             PublicKey = publicKey ()
             Endpoint = "https://cache.example.test"
             AllowHttpEndpoint = false
-            Health = CacheHealthStatus.Healthy
             SoftwareVersion = "1.0.0"
             ProtocolVersion = "v1"
             PrefetchSupported = true
@@ -59,13 +60,42 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.RepositoryScopes, Has.Length.EqualTo 1)
         Assert.That(registration.RepositoryScopes[0].RepositoryId, Is.EqualTo repositoryId)
         Assert.That(registration.EnrolledBy, Is.EqualTo "admin-user")
+        Assert.That(registration.Health, Is.EqualTo CacheHealthStatus.Unhealthy)
         Assert.That(registration.PrefetchSupported, Is.True)
         Assert.That(registration.RotationDueAt, Is.EqualTo(now.Plus RegistrationLifetime.KeyRotationInterval))
 
-    /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact endpoint.
+    /// Verifies administrator enrollment request JSON retains the server-owned PublicKey field and never borrows registration state fields.
+    [<Test>]
+    member _.``enrollment request JSON uses PublicKey rather than registration key fields``() =
+        use document = JsonDocument.Parse(JsonSerializer.Serialize(enrollment [ repositoryId ], Constants.JsonSerializerOptions))
+        let mutable ignoredProperty = Unchecked.defaultof<JsonElement>
+
+        Assert.That(document.RootElement.TryGetProperty("PublicKey", &ignoredProperty), Is.True)
+        Assert.That(document.RootElement.TryGetProperty("Health", &ignoredProperty), Is.False)
+        Assert.That(document.RootElement.TryGetProperty("ActivePublicKey", &ignoredProperty), Is.False)
+        Assert.That(document.RootElement.TryGetProperty("CandidatePublicKey", &ignoredProperty), Is.False)
+
+    /// Verifies lifecycle responses preserve retry-after values through the JSON contract used by generated clients.
+    [<Test>]
+    member _.``registration result JSON round trips RetryAfterSeconds``() =
+        let result: CacheRegistrationResult =
+            {
+                Class = nameof CacheRegistrationResult
+                Status = CacheRegistrationRefreshStatus.RotationRetryAfter
+                Registration = None
+                Message = "Retry later."
+                RetryAfterSeconds = Some 42
+            }
+
+        let json = JsonSerializer.Serialize(result, Constants.JsonSerializerOptions)
+        let roundTripped = JsonSerializer.Deserialize<CacheRegistrationResult>(json, Constants.JsonSerializerOptions)
+
+        Assert.That(roundTripped.RetryAfterSeconds, Is.EqualTo(Some 42))
+
+    /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact origin.
     [<Test>]
     member _.``enrollment accepts only coherent explicit HTTP endpoint approval``() =
-        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080/artifacts"; AllowHttpEndpoint = true }
+        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080"; AllowHttpEndpoint = true }
 
         let state, result = Lifecycle.enroll CacheRegistrationState.Empty cacheId httpEnrollment "admin-user" now
         let registration = state.Registrations[0]
@@ -94,15 +124,15 @@ type CacheRegistrationLifecycleTests() =
     /// Verifies cache-authenticated refresh cannot substitute the scheme, host, port, or path of the stored endpoint.
     [<Test>]
     member _.``refresh rejects every endpoint substitution before durable mutation``() =
-        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080/artifacts"; AllowHttpEndpoint = true }
+        let httpEnrollment = { enrollment [ repositoryId ] with Endpoint = "http://cache.example.test:8080"; AllowHttpEndpoint = true }
 
         let state, _ = Lifecycle.enroll CacheRegistrationState.Empty cacheId httpEnrollment "admin-user" now
 
         let substitutions =
             [
                 "https://cache.example.test:8080/artifacts"
-                "http://other-cache.example.test:8080/artifacts"
-                "http://cache.example.test:8081/artifacts"
+                "http://other-cache.example.test:8080"
+                "http://cache.example.test:8081"
                 "http://cache.example.test:8080/other-artifacts"
             ]
 
@@ -123,6 +153,156 @@ type CacheRegistrationLifecycleTests() =
             let next, result = Lifecycle.refresh state request (now.Plus(Duration.FromMinutes 90L))
             Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.EndpointMismatch)
             Assert.That(next, Is.EqualTo state)
+
+    /// Verifies every public registration boundary rejects endpoint paths, credentials, queries, and fragments before actor mutation.
+    [<TestCase("https://cache.example.test/cache")>]
+    [<TestCase("https://cache.example.test/?preview=true")>]
+    [<TestCase("https://cache.example.test/#fragment")>]
+    [<TestCase("https://operator@cache.example.test")>]
+    member _.``registration validators reject non-origin endpoints`` endpoint =
+        let enrollmentRequest = { enrollment [ repositoryId ] with Endpoint = endpoint }
+
+        let refreshRequest: CacheRegistrationRefreshRequest =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = endpoint
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion = "1.0.0"
+                ProtocolVersion = "v1"
+                PrefetchSupported = true
+                ObservedAt = now.Plus(Duration.FromMinutes 90L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        for validation in
+            [
+                Lifecycle.validateEnrollmentRequest enrollmentRequest
+                Lifecycle.validateRefreshRequest refreshRequest
+            ] do
+            match validation with
+            | Ok () -> Assert.Fail("A path-qualified Cache endpoint must be rejected before lifecycle mutation.")
+            | Error errors -> Assert.That(errors, Does.Contain "Endpoint must be an absolute HTTP or HTTPS origin with path '/'.")
+
+    /// Verifies candidate proof cannot promote or extend a registration through an endpoint other than its exact stored endpoint.
+    [<Test>]
+    member _.``candidate promotion rejects endpoint substitution before durable mutation``() =
+        let state, _ = enrolled ()
+        let registration = { state.Registrations[0] with CandidatePublicKey = Some(publicKey ()) }
+        let pendingState = { state with Registrations = [| registration |] }
+
+        let request =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://other-cache.example.test"
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion = "1.1.0"
+                ProtocolVersion = "v2"
+                PrefetchSupported = false
+                ObservedAt = now.Plus(Duration.FromMinutes 90L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let next, result = Lifecycle.promoteCandidate pendingState request (now.Plus(Duration.FromMinutes 90L))
+
+        Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.EndpointMismatch)
+        Assert.That(next, Is.EqualTo pendingState)
+
+    /// Verifies a response lost after candidate promotion can still prove the selected candidate through a normal refresh throttle result.
+    [<Test>]
+    member _.``promoted candidate remains identifiable through refresh throttling``() =
+        let state, _ = enrolled ()
+        use candidateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let candidateParameters = candidateKey.ExportParameters(false)
+        let candidate = CacheIdentityPublicKey.Create(Base64Url.encode candidateParameters.Q.X, Base64Url.encode candidateParameters.Q.Y)
+
+        let candidateRequest =
+            {
+                Class = nameof CacheKeyCandidateRequest
+                CacheId = cacheId
+                CandidatePublicKey = candidate
+                RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                IsStartup = true
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let pendingState, _ = Lifecycle.submitCandidate state candidateRequest (now.Plus(Duration.FromMinutes 90L))
+
+        let refreshRequest =
+            {
+                Class = nameof CacheRegistrationRefreshRequest
+                CacheId = cacheId
+                Endpoint = "https://cache.example.test"
+                Health = CacheHealthStatus.Unhealthy
+                SoftwareVersion = "1.1.0"
+                ProtocolVersion = "v2"
+                PrefetchSupported = false
+                ObservedAt = now.Plus(Duration.FromMinutes 90L)
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let promotedState, promotion = Lifecycle.promoteCandidate pendingState refreshRequest (now.Plus(Duration.FromMinutes 90L))
+        let promoted = promotedState.Registrations[0]
+
+        let throttledRequest = { refreshRequest with ObservedAt = now.Plus(Duration.FromMinutes 91L) }
+
+        let _, throttled = Lifecycle.refresh promotedState throttledRequest (now.Plus(Duration.FromMinutes 91L))
+
+        Assert.That(promotion.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(throttled.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(promoted.ActivePublicKey, Is.EqualTo(candidate))
+        Assert.That(promoted.LastRotatedAt, Is.EqualTo(Some(now.Plus(Duration.FromMinutes 90L))))
+
+        Assert.That(
+            promoted.RotationDueAt,
+            Is.EqualTo(
+                now.Plus(
+                    Duration.FromMinutes(
+                        float RegistrationLifetime.DefaultRotationIntervalMinutes
+                        + 90.0
+                    )
+                )
+            )
+        )
+
+        Assert.That(
+            throttled.Registration
+            |> Option.map (fun registration -> registration.ActivePublicKey),
+            Is.EqualTo(Some candidate)
+        )
+
+        Assert.That(
+            throttled.Registration
+            |> Option.bind (fun registration -> registration.CandidatePublicKey),
+            Is.EqualTo(None)
+        )
+
+    /// Verifies an active-key duplicate cannot become a no-op candidate or advance the durable rotation schedule.
+    [<Test>]
+    member _.``active key cannot be submitted as a candidate``() =
+        let state, _ = enrolled ()
+        let registration = state.Registrations[0]
+
+        let request =
+            {
+                Class = nameof CacheKeyCandidateRequest
+                CacheId = cacheId
+                CandidatePublicKey = registration.ActivePublicKey
+                RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                IsStartup = false
+                Proof = Unchecked.defaultof<SignedCacheRequestProof>
+            }
+
+        let next, result = Lifecycle.submitCandidate state request (now.Plus(Duration.FromMinutes 90L))
+        let retained = next.Registrations[0]
+
+        Assert.That(result.Status, Is.EqualTo(CacheRegistrationRefreshStatus.NotFound))
+        Assert.That(result.Message, Is.EqualTo("Cache identity candidate must differ from the active identity key."))
+        Assert.That(next, Is.EqualTo(state))
+        Assert.That(retained.CandidatePublicKey, Is.EqualTo(None))
+        Assert.That(retained.LastRotatedAt, Is.EqualTo(registration.LastRotatedAt))
+        Assert.That(retained.RotationDueAt, Is.EqualTo(registration.RotationDueAt))
 
     [<Test>]
     member _.``refresh updates only allowed operational facts and preserves administrator owned endpoint identity``() =
@@ -155,13 +335,21 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.RepositoryScopes, Has.Length.EqualTo 1)
         Assert.That(registration.RepositoryScopes[0].RepositoryId, Is.EqualTo repositoryId)
         Assert.That(registration.DisplayName, Is.EqualTo "Seattle cache")
-        Assert.That(registration.PublicKey, Is.EqualTo state.Registrations[0].PublicKey)
+        Assert.That(registration.ActivePublicKey, Is.EqualTo state.Registrations[0].ActivePublicKey)
         Assert.That(registration.EnrolledBy, Is.EqualTo "admin-user")
 
     /// Verifies an early unhealthy report immediately removes a Cache from selection without extending any other operational fact.
     [<Test>]
     member _.``early unhealthy refresh persists only the health downgrade and excludes later selection``() =
-        let state, _ = enrolled ()
+        let enrolledState, _ = enrolled ()
+
+        let state =
+            { enrolledState with
+                Registrations =
+                    [|
+                        { enrolledState.Registrations[0] with Health = CacheHealthStatus.Healthy }
+                    |]
+            }
 
         let earlyUnhealthy =
             {
@@ -194,33 +382,81 @@ type CacheRegistrationLifecycleTests() =
 
         Assert.That(eligible, Is.Empty)
 
-    /// Verifies early healthy recovery remains throttled after an immediate unhealthy downgrade.
+    /// Verifies a ready Cache may publish Healthy before its normal refresh is due without extending registration lifetime or rotation facts.
     [<Test>]
-    member _.``early healthy refresh remains throttled after an unhealthy downgrade``() =
+    member _.``early healthy refresh publishes readiness without renewing lifetime``() =
         let state, _ = enrolled ()
+        let original = state.Registrations[0]
 
-        let unhealthy =
+        let earlyHealthy =
             {
                 Class = nameof CacheRegistrationRefreshRequest
                 CacheId = cacheId
                 Endpoint = "https://cache.example.test"
-                Health = CacheHealthStatus.Unhealthy
-                SoftwareVersion = "1.0.0"
-                ProtocolVersion = "v1"
-                PrefetchSupported = true
-                ObservedAt = now.Plus(Duration.FromMinutes 1L)
+                Health = CacheHealthStatus.Healthy
+                SoftwareVersion = "ignored"
+                ProtocolVersion = "ignored"
+                PrefetchSupported = false
+                ObservedAt = original.LastRefreshedAt
                 Proof = Unchecked.defaultof<SignedCacheRequestProof>
             }
 
-        let unhealthyState, _ = Lifecycle.refresh state unhealthy (now.Plus(Duration.FromMinutes 1L))
+        let readyAt = now.Plus(Duration.FromMinutes 1L)
+        let readyState, readyResult = Lifecycle.refresh state earlyHealthy readyAt
+        let ready = readyState.Registrations[0]
 
-        let earlyHealthy =
-            { unhealthy with Health = CacheHealthStatus.Healthy; Endpoint = "https://cache.example.test"; ObservedAt = now.Plus(Duration.FromMinutes 2L) }
+        Assert.That(readyResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+        Assert.That(ready.Health, Is.EqualTo CacheHealthStatus.Healthy)
+        Assert.That(ready.LastRefreshedAt, Is.EqualTo original.LastRefreshedAt)
+        Assert.That(ready.RefreshAfter, Is.EqualTo original.RefreshAfter)
+        Assert.That(ready.ExpiresAt, Is.EqualTo original.ExpiresAt)
+        Assert.That(ready.LastRotatedAt, Is.EqualTo original.LastRotatedAt)
+        Assert.That(ready.RotationDueAt, Is.EqualTo original.RotationDueAt)
 
-        let throttledState, throttledResult = Lifecycle.refresh unhealthyState earlyHealthy (now.Plus(Duration.FromMinutes 2L))
+        let eligible = Lifecycle.selectEligible readyState (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) readyAt
 
-        Assert.That(throttledResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
-        Assert.That(throttledState, Is.EqualTo unhealthyState)
+        Assert.That(eligible, Has.Length.EqualTo 1)
+
+        let unchangedState, unchangedResult =
+            Lifecycle.refresh readyState { earlyHealthy with ObservedAt = original.LastRefreshedAt } (readyAt.Plus(Duration.FromMinutes 1L))
+
+        Assert.That(unchangedResult.Status, Is.EqualTo CacheRegistrationRefreshStatus.RefreshNotDue)
+        Assert.That(unchangedState, Is.EqualTo readyState)
+
+    /// Verifies durable renewal is ordered only by Grace Server time when proof timestamps are inside the existing tolerance.
+    [<Test>]
+    member _.``due refresh accepts behind equal and ahead proof observations using server lifetime order``() =
+        let state, _ = enrolled ()
+        let original = state.Registrations[0]
+
+        for observedAt in
+            [
+                original.LastRefreshedAt.Minus(Duration.FromSeconds 30L)
+                original.LastRefreshedAt
+                original.LastRefreshedAt.Plus(Duration.FromSeconds 30L)
+            ] do
+            let request =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = original.Endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.1.0"
+                    ProtocolVersion = "v2"
+                    PrefetchSupported = false
+                    ObservedAt = observedAt
+                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                }
+
+            let next, result = Lifecycle.refresh state request original.RefreshAfter
+            let renewed = next.Registrations[0]
+
+            Assert.That(result.Status, Is.EqualTo CacheRegistrationRefreshStatus.Refreshed)
+            Assert.That(renewed.LastRefreshedAt, Is.EqualTo original.RefreshAfter)
+            Assert.That(renewed.RefreshAfter, Is.EqualTo(original.RefreshAfter.Plus RegistrationLifetime.RefreshAfter))
+            Assert.That(renewed.ExpiresAt, Is.EqualTo(original.RefreshAfter.Plus RegistrationLifetime.ActiveLifetime))
+            Assert.That(renewed.LastRotatedAt, Is.EqualTo original.LastRotatedAt)
+            Assert.That(renewed.RotationDueAt, Is.EqualTo original.RotationDueAt)
 
     /// Verifies malformed replacement scopes leave the durable lifecycle state unchanged.
     [<Test>]
@@ -264,7 +500,16 @@ type CacheRegistrationLifecycleTests() =
 
     [<Test>]
     member _.``selection uses exact repository identity and current health without mode or read-through capability``() =
-        let state, _ = enrolled ()
+        let enrolledState, _ = enrolled ()
+
+        let state =
+            { enrolledState with
+                Registrations =
+                    [|
+                        { enrolledState.Registrations[0] with Health = CacheHealthStatus.Healthy }
+                    |]
+            }
+
         let exact = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, false)) (now.Plus(Duration.FromMinutes 30L))
         let wrong = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some otherRepositoryId, false)) (now.Plus(Duration.FromMinutes 30L))
         let prefetch = Lifecycle.selectEligible state (CacheRegistrationSelectionQuery.Create(Some repositoryId, true)) (now.Plus(Duration.FromMinutes 30L))
@@ -287,9 +532,9 @@ type CacheRegistrationLifecycleTests() =
             Assert.That(errors, Does.Contain "Owner boundary must not include OrganizationId.")
             Assert.That(errors, Does.Contain "RepositoryScopes must not include duplicate repositories.")
 
-    /// Verifies only the named durable Cache health cases can pass enrollment and refresh validation.
+    /// Verifies only the named durable Cache health cases can pass refresh validation after enrollment has fixed its initial health.
     [<Test>]
-    member _.``enrollment and refresh accept named health values and reject undefined numeric values``() =
+    member _.``refresh accepts named health values and rejects undefined numeric values``() =
         let refresh health =
             {
                 Class = nameof CacheRegistrationRefreshRequest
@@ -313,12 +558,6 @@ type CacheRegistrationLifecycleTests() =
                 CacheHealthStatus.Unhealthy
             ] do
             Assert.That(
-                Lifecycle.validateEnrollmentRequest { enrollment [ repositoryId ] with Health = health }
-                |> Result.isOk,
-                Is.True
-            )
-
-            Assert.That(
                 Lifecycle.validateRefreshRequest (refresh health)
                 |> Result.isOk,
                 Is.True
@@ -329,10 +568,6 @@ type CacheRegistrationLifecycleTests() =
                 enum<CacheHealthStatus> 0
                 enum<CacheHealthStatus> 999
             ] do
-            match Lifecycle.validateEnrollmentRequest { enrollment [ repositoryId ] with Health = health } with
-            | Ok () -> Assert.Fail($"Undefined enrollment health value {int health} was accepted.")
-            | Error errors -> Assert.That(errors, Does.Contain "Health must be Healthy or Unhealthy.")
-
             match Lifecycle.validateRefreshRequest (refresh health) with
             | Ok () -> Assert.Fail($"Undefined refresh health value {int health} was accepted.")
             | Error errors -> Assert.That(errors, Does.Contain "Health must be Healthy or Unhealthy.")
@@ -345,11 +580,106 @@ type CacheRegistrationLifecycleTests() =
         let digest = "canonical-request-digest"
         let proof = CacheRegistrationProof.createProof privateKey cacheId CacheRegistrationProof.RefreshOperation digest now
         Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.RefreshOperation digest proof, Is.True)
-        Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.RotateKeyOperation digest proof, Is.False)
+        Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.SubmitCandidateOperation digest proof, Is.False)
 
         Assert.That(
             CacheRegistrationProof.validate (now.Plus(Duration.FromSeconds 31L)) key cacheId CacheRegistrationProof.RefreshOperation digest proof,
             Is.False
+        )
+
+    /// Verifies only a valid candidate proof outside the existing timestamp tolerance receives the retry-safe stale classification.
+    [<Test>]
+    member _.``candidate proof classifies only stale timestamp after all identity bindings validate``() =
+        use activeKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        use otherKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+        let activeParameters = activeKey.ExportParameters false
+        let otherParameters = otherKey.ExportParameters false
+
+        let activePublicKey =
+            CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode activeParameters.Q.X, ArtifactGrant.Base64Url.encode activeParameters.Q.Y)
+
+        let otherPublicKey =
+            CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode otherParameters.Q.X, ArtifactGrant.Base64Url.encode otherParameters.Q.Y)
+
+        let digest = "candidate-request-digest"
+
+        let staleProof =
+            CacheRegistrationProof.createProof activeKey cacheId CacheRegistrationProof.SubmitCandidateOperation digest (now.Minus(Duration.FromSeconds 31L))
+
+        let staleRefreshProof =
+            CacheRegistrationProof.createProof activeKey cacheId CacheRegistrationProof.RefreshOperation digest (now.Minus(Duration.FromSeconds 31L))
+
+        let classify publicKey operation requestDigest proof = CacheRegistrationProof.classify now publicKey cacheId operation requestDigest proof
+
+        let isStale =
+            function
+            | Error CacheProofValidationFailure.TimestampOutsideTolerance -> true
+            | Ok ()
+            | Error _ -> false
+
+        Assert.That(
+            classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation digest staleProof
+            |> isStale,
+            Is.True
+        )
+
+        let invalidSignature = { staleProof with Signature = "invalid" }
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation digest invalidSignature
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify otherPublicKey CacheRegistrationProof.SubmitCandidateOperation digest staleProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation digest staleProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation "wrong-request-digest" staleProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation digest staleRefreshProof
+                    |> isStale,
+                    Is.True
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation digest { staleRefreshProof with Signature = "invalid" }
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify otherPublicKey CacheRegistrationProof.RefreshOperation digest staleRefreshProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.SubmitCandidateOperation digest staleRefreshProof
+                    |> isStale,
+                    Is.False
+                )
+
+                Assert.That(
+                    classify activePublicKey CacheRegistrationProof.RefreshOperation "wrong-request-digest" staleRefreshProof
+                    |> isStale,
+                    Is.False
+                ))
         )
 
     /// Verifies malformed external proof timestamps remain ordinary admission failures at inclusive skew boundaries.
@@ -369,7 +699,7 @@ type CacheRegistrationLifecycleTests() =
                 for operation in
                     [
                         CacheRegistrationProof.RefreshOperation
-                        CacheRegistrationProof.RotateKeyOperation
+                        CacheRegistrationProof.SubmitCandidateOperation
                     ] do
                     Assert.That(validateAt operation (now.Minus(Duration.FromSeconds 30L)), Is.True)
                     Assert.That(validateAt operation (now.Plus(Duration.FromSeconds 30L)), Is.True)

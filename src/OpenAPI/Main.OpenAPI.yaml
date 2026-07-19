@@ -178,8 +178,8 @@ paths:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1assign-repositories'
   /cache/revoke:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1revoke'
-  /cache/rotate-key:
-    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1rotate-key'
+  /cache/candidate:
+    $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1candidate'
   /cache/validation-keys:
     $ref: './Cache.Paths.OpenAPI.yaml#/~1cache~1validation-keys'
       
@@ -455,8 +455,8 @@ components:
       $ref: 'Cache.Components.OpenAPI.yaml#/CacheRepositoryAssignmentRequest'
     CacheRevocationRequest:
       $ref: 'Cache.Components.OpenAPI.yaml#/CacheRevocationRequest'
-    CacheKeyRotationRequest:
-      $ref: 'Cache.Components.OpenAPI.yaml#/CacheKeyRotationRequest'
+    CacheKeyCandidateRequest:
+      $ref: 'Cache.Components.OpenAPI.yaml#/CacheKeyCandidateRequest'
     CacheRegistrationRefreshStatus:
       $ref: 'Cache.Components.OpenAPI.yaml#/CacheRegistrationRefreshStatus'
     CacheRegistration:

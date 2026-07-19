@@ -79,7 +79,7 @@ __all__ = [
     "CacheEnrollmentRequest",
     "CacheHealthStatus",
     "CacheIdentityPublicKey",
-    "CacheKeyRotationRequest",
+    "CacheKeyCandidateRequest",
     "CacheRegistration",
     "CacheRegistrationRefreshRequest",
     "CacheRegistrationRefreshStatus",
@@ -365,7 +365,7 @@ from grace_generated_openapi_probe.models.cache_boundary_kind import CacheBounda
 from grace_generated_openapi_probe.models.cache_enrollment_request import CacheEnrollmentRequest as CacheEnrollmentRequest
 from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus as CacheHealthStatus
 from grace_generated_openapi_probe.models.cache_identity_public_key import CacheIdentityPublicKey as CacheIdentityPublicKey
-from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest as CacheKeyRotationRequest
+from grace_generated_openapi_probe.models.cache_key_candidate_request import CacheKeyCandidateRequest as CacheKeyCandidateRequest
 from grace_generated_openapi_probe.models.cache_registration import CacheRegistration as CacheRegistration
 from grace_generated_openapi_probe.models.cache_registration_refresh_request import CacheRegistrationRefreshRequest as CacheRegistrationRefreshRequest
 from grace_generated_openapi_probe.models.cache_registration_refresh_status import CacheRegistrationRefreshStatus as CacheRegistrationRefreshStatus

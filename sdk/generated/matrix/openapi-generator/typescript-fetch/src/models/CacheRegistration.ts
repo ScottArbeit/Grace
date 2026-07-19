@@ -95,9 +95,15 @@ export interface CacheRegistration {
      * @type {CacheIdentityPublicKey}
      * @memberof CacheRegistration
      */
-    publicKey: CacheIdentityPublicKey;
+    activePublicKey: CacheIdentityPublicKey;
     /**
      * 
+     * @type {CacheIdentityPublicKey}
+     * @memberof CacheRegistration
+     */
+    candidatePublicKey?: CacheIdentityPublicKey;
+    /**
+     * Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
      * @type {string}
      * @memberof CacheRegistration
      */
@@ -164,6 +170,18 @@ export interface CacheRegistration {
     expiresAt: Date;
     /**
      * 
+     * @type {number}
+     * @memberof CacheRegistration
+     */
+    rotationIntervalMinutes: number;
+    /**
+     * 
+     * @type {Date}
+     * @memberof CacheRegistration
+     */
+    lastRotatedAt?: Date;
+    /**
+     * 
      * @type {Date}
      * @memberof CacheRegistration
      */
@@ -188,7 +206,7 @@ export function instanceOfCacheRegistration(value: object): value is CacheRegist
     if (!('boundaryKind' in value) || value['boundaryKind'] === undefined) return false;
     if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
     if (!('repositoryScopes' in value) || value['repositoryScopes'] === undefined) return false;
-    if (!('publicKey' in value) || value['publicKey'] === undefined) return false;
+    if (!('activePublicKey' in value) || value['activePublicKey'] === undefined) return false;
     if (!('endpoint' in value) || value['endpoint'] === undefined) return false;
     if (!('allowHttpEndpoint' in value) || value['allowHttpEndpoint'] === undefined) return false;
     if (!('health' in value) || value['health'] === undefined) return false;
@@ -200,6 +218,7 @@ export function instanceOfCacheRegistration(value: object): value is CacheRegist
     if (!('lastRefreshedAt' in value) || value['lastRefreshedAt'] === undefined) return false;
     if (!('refreshAfter' in value) || value['refreshAfter'] === undefined) return false;
     if (!('expiresAt' in value) || value['expiresAt'] === undefined) return false;
+    if (!('rotationIntervalMinutes' in value) || value['rotationIntervalMinutes'] === undefined) return false;
     if (!('rotationDueAt' in value) || value['rotationDueAt'] === undefined) return false;
     return true;
 }
@@ -221,7 +240,8 @@ export function CacheRegistrationFromJSONTyped(json: any, ignoreDiscriminator: b
         'ownerId': json['OwnerId'],
         'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
         'repositoryScopes': ((json['RepositoryScopes'] as Array<any>).map(CacheRepositoryScopeFromJSON)),
-        'publicKey': CacheIdentityPublicKeyFromJSON(json['PublicKey']),
+        'activePublicKey': CacheIdentityPublicKeyFromJSON(json['ActivePublicKey']),
+        'candidatePublicKey': json['CandidatePublicKey'] == null ? undefined : CacheIdentityPublicKeyFromJSON(json['CandidatePublicKey']),
         'endpoint': json['Endpoint'],
         'allowHttpEndpoint': json['AllowHttpEndpoint'],
         'health': CacheHealthStatusFromJSON(json['Health']),
@@ -233,6 +253,8 @@ export function CacheRegistrationFromJSONTyped(json: any, ignoreDiscriminator: b
         'lastRefreshedAt': (new Date(json['LastRefreshedAt'])),
         'refreshAfter': (new Date(json['RefreshAfter'])),
         'expiresAt': (new Date(json['ExpiresAt'])),
+        'rotationIntervalMinutes': json['RotationIntervalMinutes'],
+        'lastRotatedAt': json['LastRotatedAt'] == null ? undefined : (new Date(json['LastRotatedAt'])),
         'rotationDueAt': (new Date(json['RotationDueAt'])),
         'revokedAt': json['RevokedAt'] == null ? undefined : (new Date(json['RevokedAt'])),
     };
@@ -256,7 +278,8 @@ export function CacheRegistrationToJSONTyped(value?: CacheRegistration | null, i
         'OwnerId': value['ownerId'],
         'OrganizationId': value['organizationId'],
         'RepositoryScopes': ((value['repositoryScopes'] as Array<any>).map(CacheRepositoryScopeToJSON)),
-        'PublicKey': CacheIdentityPublicKeyToJSON(value['publicKey']),
+        'ActivePublicKey': CacheIdentityPublicKeyToJSON(value['activePublicKey']),
+        'CandidatePublicKey': CacheIdentityPublicKeyToJSON(value['candidatePublicKey']),
         'Endpoint': value['endpoint'],
         'AllowHttpEndpoint': value['allowHttpEndpoint'],
         'Health': CacheHealthStatusToJSON(value['health']),
@@ -268,6 +291,8 @@ export function CacheRegistrationToJSONTyped(value?: CacheRegistration | null, i
         'LastRefreshedAt': value['lastRefreshedAt'].toISOString(),
         'RefreshAfter': value['refreshAfter'].toISOString(),
         'ExpiresAt': value['expiresAt'].toISOString(),
+        'RotationIntervalMinutes': value['rotationIntervalMinutes'],
+        'LastRotatedAt': value['lastRotatedAt'] == null ? value['lastRotatedAt'] : value['lastRotatedAt'].toISOString(),
         'RotationDueAt': value['rotationDueAt'].toISOString(),
         'RevokedAt': value['revokedAt'] == null ? value['revokedAt'] : value['revokedAt'].toISOString(),
     };

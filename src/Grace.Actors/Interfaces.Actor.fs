@@ -621,8 +621,9 @@ module Interfaces =
         /// Revokes one Cache identity after server-side administrator authorization.
         abstract member Revoke: request: CacheRevocationRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
 
-        /// Rotates an identity key only after the actor validates a proof from the currently accepted key.
-        abstract member RotateKey: request: CacheKeyRotationRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
+        /// Submits the single candidate key after active-key proof; an equal candidate is idempotent and a different candidate is rejected.
+        abstract member SubmitCandidate:
+            request: CacheKeyCandidateRequest * now: Instant * correlationId: CorrelationId -> Task<GraceResult<CacheRegistrationResult>>
 
         /// Returns one stored registration, including terminal lifecycle state, for administrator authorization preflight.
         abstract member Get: cacheId: Guid * correlationId: CorrelationId -> Task<CacheRegistration option>

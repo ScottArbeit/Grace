@@ -20,13 +20,6 @@ import {
     CacheBoundaryKindToJSON,
     CacheBoundaryKindToJSONTyped,
 } from './CacheBoundaryKind';
-import type { CacheHealthStatus } from './CacheHealthStatus';
-import {
-    CacheHealthStatusFromJSON,
-    CacheHealthStatusFromJSONTyped,
-    CacheHealthStatusToJSON,
-    CacheHealthStatusToJSONTyped,
-} from './CacheHealthStatus';
 import type { CacheIdentityPublicKey } from './CacheIdentityPublicKey';
 import {
     CacheIdentityPublicKeyFromJSON,
@@ -91,7 +84,7 @@ export interface CacheEnrollmentRequest {
      */
     publicKey: CacheIdentityPublicKey;
     /**
-     * 
+     * Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
      * @type {string}
      * @memberof CacheEnrollmentRequest
      */
@@ -102,12 +95,6 @@ export interface CacheEnrollmentRequest {
      * @memberof CacheEnrollmentRequest
      */
     allowHttpEndpoint: boolean;
-    /**
-     * 
-     * @type {CacheHealthStatus}
-     * @memberof CacheEnrollmentRequest
-     */
-    health: CacheHealthStatus;
     /**
      * 
      * @type {string}
@@ -142,7 +129,6 @@ export function instanceOfCacheEnrollmentRequest(value: object): value is CacheE
     if (!('publicKey' in value) || value['publicKey'] === undefined) return false;
     if (!('endpoint' in value) || value['endpoint'] === undefined) return false;
     if (!('allowHttpEndpoint' in value) || value['allowHttpEndpoint'] === undefined) return false;
-    if (!('health' in value) || value['health'] === undefined) return false;
     if (!('softwareVersion' in value) || value['softwareVersion'] === undefined) return false;
     if (!('protocolVersion' in value) || value['protocolVersion'] === undefined) return false;
     if (!('prefetchSupported' in value) || value['prefetchSupported'] === undefined) return false;
@@ -168,7 +154,6 @@ export function CacheEnrollmentRequestFromJSONTyped(json: any, ignoreDiscriminat
         'publicKey': CacheIdentityPublicKeyFromJSON(json['PublicKey']),
         'endpoint': json['Endpoint'],
         'allowHttpEndpoint': json['AllowHttpEndpoint'],
-        'health': CacheHealthStatusFromJSON(json['Health']),
         'softwareVersion': json['SoftwareVersion'],
         'protocolVersion': json['ProtocolVersion'],
         'prefetchSupported': json['PrefetchSupported'],
@@ -195,7 +180,6 @@ export function CacheEnrollmentRequestToJSONTyped(value?: CacheEnrollmentRequest
         'PublicKey': CacheIdentityPublicKeyToJSON(value['publicKey']),
         'Endpoint': value['endpoint'],
         'AllowHttpEndpoint': value['allowHttpEndpoint'],
-        'Health': CacheHealthStatusToJSON(value['health']),
         'SoftwareVersion': value['softwareVersion'],
         'ProtocolVersion': value['protocolVersion'],
         'PrefetchSupported': value['prefetchSupported'],

@@ -18,7 +18,7 @@ from typing_extensions import Annotated
 
 from grace_generated_openapi_probe.models.artifact_grant_validation_key_set import ArtifactGrantValidationKeySet
 from grace_generated_openapi_probe.models.cache_enrollment_request import CacheEnrollmentRequest
-from grace_generated_openapi_probe.models.cache_key_rotation_request import CacheKeyRotationRequest
+from grace_generated_openapi_probe.models.cache_key_candidate_request import CacheKeyCandidateRequest
 from grace_generated_openapi_probe.models.cache_registration_refresh_request import CacheRegistrationRefreshRequest
 from grace_generated_openapi_probe.models.cache_registration_return_value import CacheRegistrationReturnValue
 from grace_generated_openapi_probe.models.cache_repository_assignment_request import CacheRepositoryAssignmentRequest
@@ -1426,9 +1426,9 @@ class CacheApi:
 
 
     @validate_call
-    def rotate_cache_key(
+    def submit_cache_key_candidate(
         self,
-        cache_key_rotation_request: CacheKeyRotationRequest,
+        cache_key_candidate_request: CacheKeyCandidateRequest,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1442,11 +1442,11 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> CacheRegistrationReturnValue:
-        """Rotate a Cache identity key after proof by the currently accepted key.
+        """Submit or reuse one Cache identity candidate after active-key proof.
 
 
-        :param cache_key_rotation_request: (required)
-        :type cache_key_rotation_request: CacheKeyRotationRequest
+        :param cache_key_candidate_request: (required)
+        :type cache_key_candidate_request: CacheKeyCandidateRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1469,8 +1469,8 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._rotate_cache_key_serialize(
-            cache_key_rotation_request=cache_key_rotation_request,
+        _param = self._submit_cache_key_candidate_serialize(
+            cache_key_candidate_request=cache_key_candidate_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1480,7 +1480,6 @@ class CacheApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "CacheRegistrationReturnValue",
             '400': "GraceError",
-            '401': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -1495,9 +1494,9 @@ class CacheApi:
 
 
     @validate_call
-    def rotate_cache_key_with_http_info(
+    def submit_cache_key_candidate_with_http_info(
         self,
-        cache_key_rotation_request: CacheKeyRotationRequest,
+        cache_key_candidate_request: CacheKeyCandidateRequest,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1511,11 +1510,11 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[CacheRegistrationReturnValue]:
-        """Rotate a Cache identity key after proof by the currently accepted key.
+        """Submit or reuse one Cache identity candidate after active-key proof.
 
 
-        :param cache_key_rotation_request: (required)
-        :type cache_key_rotation_request: CacheKeyRotationRequest
+        :param cache_key_candidate_request: (required)
+        :type cache_key_candidate_request: CacheKeyCandidateRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1538,8 +1537,8 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._rotate_cache_key_serialize(
-            cache_key_rotation_request=cache_key_rotation_request,
+        _param = self._submit_cache_key_candidate_serialize(
+            cache_key_candidate_request=cache_key_candidate_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1549,7 +1548,6 @@ class CacheApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "CacheRegistrationReturnValue",
             '400': "GraceError",
-            '401': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -1564,9 +1562,9 @@ class CacheApi:
 
 
     @validate_call
-    def rotate_cache_key_without_preload_content(
+    def submit_cache_key_candidate_without_preload_content(
         self,
-        cache_key_rotation_request: CacheKeyRotationRequest,
+        cache_key_candidate_request: CacheKeyCandidateRequest,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1580,11 +1578,11 @@ class CacheApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Rotate a Cache identity key after proof by the currently accepted key.
+        """Submit or reuse one Cache identity candidate after active-key proof.
 
 
-        :param cache_key_rotation_request: (required)
-        :type cache_key_rotation_request: CacheKeyRotationRequest
+        :param cache_key_candidate_request: (required)
+        :type cache_key_candidate_request: CacheKeyCandidateRequest
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1607,8 +1605,8 @@ class CacheApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._rotate_cache_key_serialize(
-            cache_key_rotation_request=cache_key_rotation_request,
+        _param = self._submit_cache_key_candidate_serialize(
+            cache_key_candidate_request=cache_key_candidate_request,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1618,7 +1616,6 @@ class CacheApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "CacheRegistrationReturnValue",
             '400': "GraceError",
-            '401': "str",
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -1628,9 +1625,9 @@ class CacheApi:
         return response_data.response
 
 
-    def _rotate_cache_key_serialize(
+    def _submit_cache_key_candidate_serialize(
         self,
-        cache_key_rotation_request,
+        cache_key_candidate_request,
         _request_auth,
         _content_type,
         _headers,
@@ -1656,16 +1653,15 @@ class CacheApi:
         # process the header parameters
         # process the form parameters
         # process the body parameter
-        if cache_key_rotation_request is not None:
-            _body_params = cache_key_rotation_request
+        if cache_key_candidate_request is not None:
+            _body_params = cache_key_candidate_request
 
 
         # set the HTTP header `Accept`
         if 'Accept' not in _header_params:
             _header_params['Accept'] = self.api_client.select_header_accept(
                 [
-                    'application/json', 
-                    'text/plain'
+                    'application/json'
                 ]
             )
 
@@ -1689,7 +1685,7 @@ class CacheApi:
 
         return self.api_client.param_serialize(
             method='POST',
-            resource_path='/cache/rotate-key',
+            resource_path='/cache/candidate',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,

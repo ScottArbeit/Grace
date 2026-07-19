@@ -71,7 +71,7 @@ export interface ArtifactGrantPayload {
      */
     cacheId: string;
     /**
-     * Exact selected Cache endpoint covered by this signature.
+     * Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature.
      * @type {string}
      * @memberof ArtifactGrantPayload
      */

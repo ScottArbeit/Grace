@@ -683,6 +683,10 @@ module CommandOutputContract =
                     "Representative scalar ReturnValue schema for a common Grace result envelope command."
                 ]
         | "watch", JsonModeErrorOnly reason -> unsupportedReturnValueContract "WatchResultDto" reason
+        | "cache.status", MigrationRequiredToGraceResultEnvelope RequiresCliDto ->
+            incompleteReturnValueContract
+                "CacheRuntimeStatus"
+                "Cache status is a pure successful observation with redacted Lifecycle, CacheId, and Transport values; Lifecycle includes registered, enrollment-recovery-required, and operator-recovery-required."
         | _, SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
         | _, JsonModeErrorOnly reason -> unsupportedReturnValueContract "unsupported" reason
         | _, MigrationRequiredToGraceResultEnvelope disposition ->
@@ -1061,6 +1065,9 @@ module CommandOutputContract =
             row [ "candidate" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate" ] "required-actions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate" ] "retry" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "cache" ] "enroll" true true human_proc_only mutating_state_transition local_client RequiresCliDto
+            row [ "cache" ] "run" true true human_proc_only fire_and_forget_progress local_client RequiresCliDto
+            row [ "cache" ] "status" true false human_proc_only read_list_search local_client RequiresCliDto
             row [ "config" ] "write" true false common_renderOutput_envelope read_or_mutating_verify local_client ReuseExistingApiOrSdkDto
             row [] "connect" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "blake3" true true common_renderOutput_envelope progress_local_workflow composite_local_server ReuseExistingApiOrSdkDto

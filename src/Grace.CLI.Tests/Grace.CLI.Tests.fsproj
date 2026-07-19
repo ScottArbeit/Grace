@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Include="Agent.CLI.Parsing.Tests.fs" />
+    <Compile Include="Cache.CLI.Parsing.Tests.fs" />
     <Compile Include="Agent.CLI.Tests.fs" />
     <Compile Include="Auth.Tests.fs" />
     <Compile Include="AuthTokenBundle.Tests.fs" />

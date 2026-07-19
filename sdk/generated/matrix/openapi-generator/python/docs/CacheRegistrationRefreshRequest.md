@@ -8,7 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **var_class** | **str** |  | 
 **cache_id** | **UUID** |  | 
-**endpoint** | **str** |  | 
+**endpoint** | **str** | Absolute HTTP(S) Cache origin with path &#39;/&#39;, no user info, query, or fragment. | 
 **health** | [**CacheHealthStatus**](CacheHealthStatus.md) |  | 
 **software_version** | **str** |  | 
 **protocol_version** | **str** |  | 

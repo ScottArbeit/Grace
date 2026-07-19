@@ -18,6 +18,7 @@ pub struct CacheRegistrationRefreshRequest {
     pub class: String,
     #[serde(rename = "CacheId")]
     pub cache_id: uuid::Uuid,
+    /// Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
     #[serde(rename = "Health")]

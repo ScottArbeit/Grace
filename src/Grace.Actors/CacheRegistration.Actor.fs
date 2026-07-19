@@ -77,26 +77,38 @@ module CacheRegistrationActor =
                     | None ->
                         let _, result = Lifecycle.refresh currentState request now
                         return Ok(this.ReturnResult(result, correlationId))
-                    | Some registration when
-                        not
-                            (
-                                CacheRegistrationProof.validate
-                                    now
-                                    registration.PublicKey
-                                    request.CacheId
-                                    CacheRegistrationProof.RefreshOperation
-                                    (CacheRegistrationProof.refreshRequestDigest request)
-                                    request.Proof
-                            )
-                        ->
-                        return Error(GraceError.Create "Cache refresh proof is invalid, stale, or does not match the current identity key." correlationId)
-                    | Some _ ->
-                        let nextState, result = Lifecycle.refresh currentState request now
+                    | Some registration ->
+                        let digest = CacheRegistrationProof.refreshRequestDigest request
 
-                        if result.Status = CacheRegistrationRefreshStatus.Refreshed then
-                            do! this.Save nextState
+                        let activeProof =
+                            CacheRegistrationProof.classify
+                                now
+                                registration.ActivePublicKey
+                                request.CacheId
+                                CacheRegistrationProof.RefreshOperation
+                                digest
+                                request.Proof
 
-                        return Ok(this.ReturnResult(result, correlationId))
+                        let candidateProof =
+                            registration.CandidatePublicKey
+                            |> Option.map (fun candidate ->
+                                CacheRegistrationProof.classify now candidate request.CacheId CacheRegistrationProof.RefreshOperation digest request.Proof)
+
+                        match activeProof, candidateProof with
+                        | Ok (), _
+                        | _, Some (Ok ()) ->
+                            let nextState, result =
+                                match candidateProof with
+                                | Some (Ok ()) -> Lifecycle.promoteCandidate currentState request now
+                                | _ -> Lifecycle.refresh currentState request now
+
+                            if nextState <> currentState then do! this.Save nextState
+
+                            return Ok(this.ReturnResult(result, correlationId))
+                        | Error TimestampOutsideTolerance, _
+                        | _, Some (Error TimestampOutsideTolerance) -> return Error(CacheRegistrationProof.refreshProofTimestampStaleError correlationId)
+                        | _ ->
+                            return Error(GraceError.Create "Cache refresh proof is invalid or does not match the active or pending identity key." correlationId)
                 }
 
             /// Applies an already-authorized explicit repository assignment replacement without altering Cache identity facts.
@@ -122,35 +134,43 @@ module CacheRegistrationActor =
                     return Ok(this.ReturnResult(result, correlationId))
                 }
 
-            /// Replaces the accepted identity key only after verifying the request against the pre-rotation key.
-            member this.RotateKey(request, now, correlationId) =
+            /// Accepts one canonical candidate only after a current active-key proof and preserves it durably until candidate-key promotion.
+            member this.SubmitCandidate(request, now, correlationId) =
                 task {
+                    let requestDigest = CacheRegistrationProof.candidateRequestDigest request
+
                     match this.TryGet(request.CacheId) with
                     | None ->
-                        let _, result = Lifecycle.rotateKey currentState request now
+                        let _, result = Lifecycle.submitCandidate currentState request now
                         return Ok(this.ReturnResult(result, correlationId))
-                    | Some registration when
-                        not
-                            (
-                                CacheRegistrationProof.validate
-                                    now
-                                    registration.PublicKey
-                                    request.CacheId
-                                    CacheRegistrationProof.RotateKeyOperation
-                                    (CacheRegistrationProof.rotationRequestDigest request)
-                                    request.Proof
-                            )
-                        ->
-                        return Error(GraceError.Create "Cache key-rotation proof is invalid, stale, or does not match the current identity key." correlationId)
-                    | Some _ when not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey) ->
-                        return Error(GraceError.Create "Cache key rotation requires a canonical P-256 public key." correlationId)
-                    | Some _ ->
-                        let nextState, result = Lifecycle.rotateKey currentState request now
+                    | Some registration ->
+                        match
+                            CacheRegistrationProof.classify
+                                now
+                                registration.ActivePublicKey
+                                request.CacheId
+                                CacheRegistrationProof.SubmitCandidateOperation
+                                requestDigest
+                                request.Proof
+                            with
+                        | Error TimestampOutsideTolerance -> return Error(CacheRegistrationProof.candidateProofTimestampStaleError correlationId)
+                        | Error _ ->
+                            return
+                                Error(GraceError.Create "Cache candidate-submission proof is invalid or does not match the active identity key." correlationId)
+                        | Ok () ->
+                            if not (CacheRegistrationProof.isValidPublicKey request.CandidatePublicKey) then
+                                return Error(GraceError.Create "Cache identity candidate requires a canonical P-256 public key." correlationId)
+                            elif registration.ActivePublicKey = request.CandidatePublicKey then
+                                return Error(GraceError.Create "Cache identity candidate must differ from the active identity key." correlationId)
+                            elif registration.CandidatePublicKey
+                                 |> Option.exists (fun candidate -> candidate <> request.CandidatePublicKey) then
+                                return Error(GraceError.Create "Cache identity already has a different unresolved candidate." correlationId)
+                            else
+                                let nextState, result = Lifecycle.submitCandidate currentState request now
 
-                        if result.Status = CacheRegistrationRefreshStatus.Rotated then
-                            do! this.Save nextState
+                                if nextState <> currentState then do! this.Save nextState
 
-                        return Ok(this.ReturnResult(result, correlationId))
+                                return Ok(this.ReturnResult(result, correlationId))
                 }
 
             /// Returns the authoritative stored record without applying selection eligibility filters.

@@ -10,7 +10,7 @@ Name | Type | Description | Notes
 **requester_principal_id** | **String** | Stable authenticated grace_user_id supplied by Grace Server. | 
 **holder_key_thumbprint** | **String** | Base64url SHA-256 thumbprint of the canonical ephemeral holder public key. | 
 **cache_id** | **String** |  | 
-**cache_endpoint** | **String** | Exact selected Cache endpoint covered by this signature. | 
+**cache_endpoint** | **String** | Exact selected Cache origin with path '/', no user info, query, or fragment, covered by this signature. | 
 **target_root_directory_version_id** | **uuid::Uuid** |  | 
 **execution_mode** | [**models::MaterializationExecutionMode**](MaterializationExecutionMode.md) |  | 
 **artifact_identities** | **Vec<String>** |  | 

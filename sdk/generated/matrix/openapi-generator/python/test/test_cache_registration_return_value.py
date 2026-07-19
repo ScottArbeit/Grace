@@ -40,7 +40,8 @@ class TestCacheRegistrationReturnValue(unittest.TestCase):
                     class = 'CacheRegistrationResult', 
                     status = 'enrolled', 
                     registration = null, 
-                    message = 'Cache registration is current.', ),
+                    message = 'Cache registration is current.', 
+                    retry_after_seconds = 1, ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
@@ -53,7 +54,8 @@ class TestCacheRegistrationReturnValue(unittest.TestCase):
                     class = 'CacheRegistrationResult', 
                     status = 'enrolled', 
                     registration = null, 
-                    message = 'Cache registration is current.', ),
+                    message = 'Cache registration is current.', 
+                    retry_after_seconds = 1, ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {

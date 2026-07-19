@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="CacheRuntime.fs" />
     <Compile Include="CacheHost.fs" />
     <Compile Include="CacheStore.fs" />
     <Compile Include="Program.fs" />
@@ -19,5 +20,10 @@
     <PackageReference Update="FSharp.Core" Version="10.1.301" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.9" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
+    <ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
   </ItemGroup>
 </Project>

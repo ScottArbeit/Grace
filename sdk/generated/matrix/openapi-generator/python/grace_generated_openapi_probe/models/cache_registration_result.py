@@ -20,6 +20,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from grace_generated_openapi_probe.models.cache_registration import CacheRegistration
 from grace_generated_openapi_probe.models.cache_registration_refresh_status import CacheRegistrationRefreshStatus
 from typing import Optional, Set
@@ -34,7 +35,8 @@ class CacheRegistrationResult(BaseModel):
     status: CacheRegistrationRefreshStatus = Field(alias="Status")
     registration: Optional[CacheRegistration] = Field(default=None, alias="Registration")
     message: StrictStr = Field(alias="Message")
-    __properties: ClassVar[List[str]] = ["Class", "Status", "Registration", "Message"]
+    retry_after_seconds: Optional[Annotated[int, Field(strict=True, ge=1)]] = Field(default=None, alias="RetryAfterSeconds")
+    __properties: ClassVar[List[str]] = ["Class", "Status", "Registration", "Message", "RetryAfterSeconds"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -93,7 +95,8 @@ class CacheRegistrationResult(BaseModel):
             "Class": obj.get("Class"),
             "Status": obj.get("Status"),
             "Registration": CacheRegistration.from_dict(obj["Registration"]) if obj.get("Registration") is not None else None,
-            "Message": obj.get("Message")
+            "Message": obj.get("Message"),
+            "RetryAfterSeconds": obj.get("RetryAfterSeconds")
         })
         return _obj
 

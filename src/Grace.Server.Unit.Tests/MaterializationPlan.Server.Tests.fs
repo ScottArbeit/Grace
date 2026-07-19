@@ -53,7 +53,8 @@ type MaterializationPlanRouteTests() =
                 [|
                     CacheRepositoryScope.Create(organizationId, repositoryId)
                 |]
-            PublicKey = CacheIdentityPublicKey.Create("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            ActivePublicKey = CacheIdentityPublicKey.Create("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            CandidatePublicKey = None
             Endpoint = "https://cache.example.test"
             AllowHttpEndpoint = false
             Health = CacheHealthStatus.Healthy
@@ -65,6 +66,8 @@ type MaterializationPlanRouteTests() =
             LastRefreshedAt = Instant.FromUtc(2026, 7, 11, 20, 0)
             RefreshAfter = Instant.FromUtc(2026, 7, 11, 21, 0)
             ExpiresAt = Instant.FromUtc(2026, 7, 11, 22, 0)
+            RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+            LastRotatedAt = None
             RotationDueAt = Instant.FromUtc(2026, 7, 12, 0, 0)
             RevokedAt = None
         }
@@ -1211,7 +1214,7 @@ type MaterializationPlanRouteTests() =
         task {
             let selected = cacheRegistration MaterializationExecutionMode.CacheRequired
 
-            let initialState = { Class = nameof CacheRegistrationState; Registrations = [| selected |] }
+            let initialState: CacheRegistrationState = { Class = nameof CacheRegistrationState; Registrations = [| selected |] }
 
             let mutable laterState = initialState
             let mutable selectionCalls = 0
@@ -1312,7 +1315,7 @@ type MaterializationPlanRouteTests() =
 
         let eligible =
             Grace.Types.CacheRegistration.Lifecycle.selectEligible
-                { Class = nameof CacheRegistrationState; Registrations = [| current; unhealthy; unrelated |] }
+                ({ Class = nameof CacheRegistrationState; Registrations = [| current; unhealthy; unrelated |] }: CacheRegistrationState)
                 (CacheRegistrationSelectionQuery.Create(Some repositoryId, false))
                 (Instant.FromUtc(2026, 7, 11, 20, 30))
 

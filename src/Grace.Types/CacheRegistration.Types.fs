@@ -36,14 +36,31 @@ module CacheRegistration =
         /// The default Cache host key-rotation schedule advertised by the server contract.
         let KeyRotationInterval = Duration.FromHours 4
 
+        /// Supplies the default accepted cache identity-key rotation interval in minutes.
+        [<Literal>]
+        let DefaultRotationIntervalMinutes = 240
+
+        /// Defines the inclusive lower bound for the cache rotation interval supplied by the machine runtime.
+        [<Literal>]
+        let MinimumRotationIntervalMinutes = 15
+
+        /// Defines the inclusive upper bound for the cache rotation interval supplied by the machine runtime.
+        [<Literal>]
+        let MaximumRotationIntervalMinutes = 10080
+
     /// Carries the canonical public half of a Cache identity P-256 key. No private material appears in this contract.
     [<CLIMutable; GenerateSerializer>]
     type CacheIdentityPublicKey =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Algorithm: string
+            [<Id(2u)>]
             Curve: string
+            [<Id(3u)>]
             PublicKeyX: string
+            [<Id(4u)>]
             PublicKeyY: string
         }
         /// Builds a canonical Cache identity public key from base64url P-256 coordinates.
@@ -54,8 +71,11 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRepositoryScope =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             OrganizationId: OrganizationId
+            [<Id(2u)>]
             RepositoryId: RepositoryId
         }
         /// Builds one explicit repository scope without permitting name-based or wildcard assignment.
@@ -66,10 +86,15 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRequestProofPayload =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             CacheId: Guid
+            [<Id(2u)>]
             Operation: string
+            [<Id(3u)>]
             RequestDigest: string
+            [<Id(4u)>]
             IssuedAt: Instant
         }
         /// Builds a protocol-millisecond Cache proof payload for one exact operation and request digest.
@@ -86,8 +111,11 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type SignedCacheRequestProof =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Payload: CacheRequestProofPayload
+            [<Id(2u)>]
             Signature: string
         }
         /// Builds the Cache proof envelope without exposing private-key material.
@@ -98,18 +126,29 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheEnrollmentRequest =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             DisplayName: string
+            [<Id(2u)>]
             BoundaryKind: CacheBoundaryKind
+            [<Id(3u)>]
             OwnerId: OwnerId
+            [<Id(4u)>]
             OrganizationId: OrganizationId option
+            [<Id(5u)>]
             RepositoryScopes: List<CacheRepositoryScope>
+            [<Id(6u)>]
             PublicKey: CacheIdentityPublicKey
+            [<Id(7u)>]
             Endpoint: string
+            [<Id(8u)>]
             AllowHttpEndpoint: bool
-            Health: CacheHealthStatus
+            [<Id(9u)>]
             SoftwareVersion: string
+            [<Id(10u)>]
             ProtocolVersion: string
+            [<Id(11u)>]
             PrefetchSupported: bool
         }
 
@@ -117,53 +156,117 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationRefreshRequest =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             CacheId: Guid
+            [<Id(2u)>]
             Endpoint: string
+            [<Id(3u)>]
             Health: CacheHealthStatus
+            [<Id(4u)>]
             SoftwareVersion: string
+            [<Id(5u)>]
             ProtocolVersion: string
+            [<Id(6u)>]
             PrefetchSupported: bool
+            [<Id(7u)>]
             ObservedAt: Instant
+            [<Id(8u)>]
             Proof: SignedCacheRequestProof
         }
 
     /// Represents the administrator-authenticated replacement of the exact repository assignment set.
     [<CLIMutable; GenerateSerializer>]
-    type CacheRepositoryAssignmentRequest = { Class: string; CacheId: Guid; RepositoryScopes: List<CacheRepositoryScope> }
+    type CacheRepositoryAssignmentRequest =
+        {
+            [<Id(0u)>]
+            Class: string
+            [<Id(1u)>]
+            CacheId: Guid
+            [<Id(2u)>]
+            RepositoryScopes: List<CacheRepositoryScope>
+        }
 
     /// Represents the administrator-authenticated terminal revocation of one Cache identity.
     [<CLIMutable; GenerateSerializer>]
-    type CacheRevocationRequest = { Class: string; CacheId: Guid }
+    type CacheRevocationRequest =
+        {
+            [<Id(0u)>]
+            Class: string
+            [<Id(1u)>]
+            CacheId: Guid
+        }
 
-    /// Represents a current-key-proven Cache identity rotation. The server accepts the new public key before retiring the old key.
+    /// Represents active-key-proven submission of the one candidate Cache identity key that may be promoted by a later candidate proof.
     [<CLIMutable; GenerateSerializer>]
-    type CacheKeyRotationRequest = { Class: string; CacheId: Guid; NewPublicKey: CacheIdentityPublicKey; Proof: SignedCacheRequestProof }
+    type CacheKeyCandidateRequest =
+        {
+            [<Id(0u)>]
+            Class: string
+            [<Id(1u)>]
+            CacheId: Guid
+            [<Id(2u)>]
+            CandidatePublicKey: CacheIdentityPublicKey
+            [<Id(3u)>]
+            RotationIntervalMinutes: int
+            [<Id(4u)>]
+            IsStartup: bool
+            [<Id(5u)>]
+            Proof: SignedCacheRequestProof
+        }
 
     /// Represents the server-owned durable registration for one Cache identity.
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistration =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             CacheId: Guid
+            [<Id(2u)>]
             DisplayName: string
+            [<Id(3u)>]
             BoundaryKind: CacheBoundaryKind
+            [<Id(4u)>]
             OwnerId: OwnerId
+            [<Id(5u)>]
             OrganizationId: OrganizationId option
+            [<Id(6u)>]
             RepositoryScopes: CacheRepositoryScope array
-            PublicKey: CacheIdentityPublicKey
+            [<Id(7u)>]
+            ActivePublicKey: CacheIdentityPublicKey
+            [<Id(8u)>]
+            CandidatePublicKey: CacheIdentityPublicKey option
+            [<Id(9u)>]
             Endpoint: string
+            [<Id(10u)>]
             AllowHttpEndpoint: bool
+            [<Id(11u)>]
             Health: CacheHealthStatus
+            [<Id(12u)>]
             SoftwareVersion: string
+            [<Id(13u)>]
             ProtocolVersion: string
+            [<Id(14u)>]
             PrefetchSupported: bool
+            [<Id(15u)>]
             EnrolledBy: string
+            [<Id(16u)>]
             EnrolledAt: Instant
+            [<Id(17u)>]
             LastRefreshedAt: Instant
+            [<Id(18u)>]
             RefreshAfter: Instant
+            [<Id(19u)>]
             ExpiresAt: Instant
+            [<Id(20u)>]
+            RotationIntervalMinutes: int
+            [<Id(21u)>]
+            LastRotatedAt: Instant option
+            [<Id(22u)>]
             RotationDueAt: Instant
+            [<Id(23u)>]
             RevokedAt: Instant option
         }
 
@@ -176,28 +279,38 @@ module CacheRegistration =
         | NotFound = 5
         | Revoked = 6
         | Updated = 7
-        | Rotated = 8
+        | CandidateAccepted = 8
         | EndpointMismatch = 9
+        | RotationRetryAfter = 10
 
     /// Represents a server response for Cache enrollment and lifecycle operations.
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationResult =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Status: CacheRegistrationRefreshStatus
+            [<Id(2u)>]
             Registration: CacheRegistration option
+            [<Id(3u)>]
             Message: string
+            [<Id(4u)>]
+            RetryAfterSeconds: int option
         }
         /// Builds a Cache lifecycle result without leaking private key material.
-        static member Create(status, registration, message) =
-            { Class = nameof CacheRegistrationResult; Status = status; Registration = registration; Message = message }
+        static member Create(status, registration, message, ?retryAfterSeconds) =
+            { Class = nameof CacheRegistrationResult; Status = status; Registration = registration; Message = message; RetryAfterSeconds = retryAfterSeconds }
 
     /// Represents the exact repository and optional prefetch capability required during plan selection.
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationSelectionQuery =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             RepositoryId: RepositoryId option
+            [<Id(2u)>]
             RequirePrefetch: bool
         }
         /// Builds a current-Cache selection query from stable repository identity.
@@ -211,7 +324,9 @@ module CacheRegistration =
     [<CLIMutable; GenerateSerializer>]
     type CacheRegistrationState =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             Registrations: CacheRegistration array
         }
         /// Represents the empty durable Cache registration state.
@@ -224,6 +339,7 @@ module CacheRegistration =
             not (isNull (box registration))
             && registration.RevokedAt.IsNone
             && registration.Health = CacheHealthStatus.Healthy
+            && Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint registration.Endpoint
             && match Uri.TryCreate(registration.Endpoint, UriKind.Absolute) with
                | true, endpoint when endpoint.Scheme = Uri.UriSchemeHttps -> not registration.AllowHttpEndpoint
                | true, endpoint when endpoint.Scheme = Uri.UriSchemeHttp -> registration.AllowHttpEndpoint
@@ -273,9 +389,6 @@ module CacheRegistration =
                 if request.Class <> nameof CacheEnrollmentRequest then
                     errors.Add("Class must be CacheEnrollmentRequest.")
 
-                if not (isDefinedHealth request.Health) then
-                    errors.Add("Health must be Healthy or Unhealthy.")
-
                 if String.IsNullOrWhiteSpace request.DisplayName then
                     errors.Add("DisplayName is required.")
 
@@ -297,6 +410,8 @@ module CacheRegistration =
                     errors.Add("Endpoint is required.")
                 else
                     match Uri.TryCreate(request.Endpoint, UriKind.Absolute) with
+                    | true, _ when not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint request.Endpoint) ->
+                        errors.Add("Endpoint must be an absolute HTTP or HTTPS origin with path '/'.")
                     | true, uri when
                         uri.Scheme = Uri.UriSchemeHttps
                         && not request.AllowHttpEndpoint
@@ -341,6 +456,8 @@ module CacheRegistration =
                     errors.Add("Endpoint is required.")
                 else
                     match Uri.TryCreate(request.Endpoint, UriKind.Absolute) with
+                    | true, _ when not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint request.Endpoint) ->
+                        errors.Add("Endpoint must be an absolute HTTP or HTTPS origin with path '/'.")
                     | true, uri when
                         uri.Scheme = Uri.UriSchemeHttps
                         || uri.Scheme = Uri.UriSchemeHttp
@@ -369,10 +486,12 @@ module CacheRegistration =
                     OwnerId = request.OwnerId
                     OrganizationId = request.OrganizationId
                     RepositoryScopes = request.RepositoryScopes |> Seq.toArray
-                    PublicKey = request.PublicKey
+                    ActivePublicKey = request.PublicKey
+                    CandidatePublicKey = None
                     Endpoint = request.Endpoint.Trim()
                     AllowHttpEndpoint = request.AllowHttpEndpoint
-                    Health = request.Health
+                    // Enrollment is never a readiness claim. Only a later authenticated refresh can publish Healthy.
+                    Health = CacheHealthStatus.Unhealthy
                     SoftwareVersion = request.SoftwareVersion.Trim()
                     ProtocolVersion = request.ProtocolVersion.Trim()
                     PrefetchSupported = request.PrefetchSupported
@@ -381,7 +500,9 @@ module CacheRegistration =
                     LastRefreshedAt = now
                     RefreshAfter = now.Plus RegistrationLifetime.RefreshAfter
                     ExpiresAt = now.Plus RegistrationLifetime.ActiveLifetime
-                    RotationDueAt = now.Plus RegistrationLifetime.KeyRotationInterval
+                    RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                    LastRotatedAt = None
+                    RotationDueAt = now.Plus(RegistrationLifetime.KeyRotationInterval)
                     RevokedAt = None
                 }
 
@@ -409,13 +530,6 @@ module CacheRegistration =
                     Some registration,
                     "Cache registration is expired and must enroll again."
                 )
-            | Some registration when request.ObservedAt <= registration.LastRefreshedAt ->
-                current,
-                CacheRegistrationResult.Create(
-                    CacheRegistrationRefreshStatus.Expired,
-                    Some registration,
-                    "Cache refresh is stale and must not update registration state."
-                )
             | Some registration when not (String.Equals(registration.Endpoint, request.Endpoint.Trim(), StringComparison.Ordinal)) ->
                 current,
                 CacheRegistrationResult.Create(
@@ -425,24 +539,23 @@ module CacheRegistration =
                 )
             | Some registration when
                 now < registration.RefreshAfter
-                && request.Health = CacheHealthStatus.Unhealthy
-                && registration.Health <> CacheHealthStatus.Unhealthy
+                && request.Health <> registration.Health
                 ->
-                let unhealthy = { registration with Health = CacheHealthStatus.Unhealthy }
+                let healthUpdated = { registration with Health = request.Health }
 
                 let next =
                     {
                         Class = nameof CacheRegistrationState
                         Registrations =
                             current.Registrations
-                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then unhealthy else existing)
+                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then healthUpdated else existing)
                     }
 
                 next,
                 CacheRegistrationResult.Create(
                     CacheRegistrationRefreshStatus.Refreshed,
-                    Some unhealthy,
-                    "Cache health was downgraded immediately without extending operational freshness."
+                    Some healthUpdated,
+                    "Cache health changed immediately without extending operational freshness."
                 )
             | Some registration when now < registration.RefreshAfter ->
                 current,
@@ -528,8 +641,8 @@ module CacheRegistration =
 
                 next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Revoked, Some revoked, "Cache registration was revoked.")
 
-        /// Replaces the current public key only after the caller proved possession of the accepted old key.
-        let rotateKey (state: CacheRegistrationState) (request: CacheKeyRotationRequest) (now: Instant) =
+        /// Accepts the exact canonical candidate public key once after proof by the currently active key.
+        let submitCandidate (state: CacheRegistrationState) (request: CacheKeyCandidateRequest) (now: Instant) =
             let current = if isNull (box state) then CacheRegistrationState.Empty else state
 
             match current.Registrations
@@ -545,18 +658,127 @@ module CacheRegistration =
                     Some registration,
                     "Cache registration is expired and must enroll again."
                 )
+            | Some registration when
+                request.RotationIntervalMinutes < RegistrationLifetime.MinimumRotationIntervalMinutes
+                || request.RotationIntervalMinutes > RegistrationLifetime.MaximumRotationIntervalMinutes
+                ->
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.NotFound,
+                    Some registration,
+                    "Cache rotation interval is outside the accepted range."
+                )
+            | Some registration when registration.ActivePublicKey = request.CandidatePublicKey ->
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.NotFound,
+                    Some registration,
+                    "Cache identity candidate must differ from the active identity key."
+                )
+            | Some registration when
+                request.IsStartup
+                && (registration.LastRotatedAt
+                    |> Option.exists (fun lastRotated -> now < lastRotated.Plus(Duration.FromMinutes 1.0)))
+                ->
+                let retryAfter =
+                    registration.LastRotatedAt
+                    |> Option.map (fun lastRotated ->
+                        max
+                            1
+                            (int
+                                (lastRotated.Plus(Duration.FromMinutes 1.0) - now)
+                                    .TotalSeconds))
+                    |> Option.defaultValue 60
+
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.RotationRetryAfter,
+                    Some registration,
+                    "A completed startup rotation is not yet eligible for this CacheId.",
+                    retryAfter
+                )
+            | Some registration when registration.CandidatePublicKey.IsSome ->
+                let candidate = registration.CandidatePublicKey.Value
+
+                if candidate = request.CandidatePublicKey then
+                    current,
+                    CacheRegistrationResult.Create(
+                        CacheRegistrationRefreshStatus.CandidateAccepted,
+                        Some registration,
+                        "Cache identity candidate is already accepted."
+                    )
+                else
+                    current,
+                    CacheRegistrationResult.Create(
+                        CacheRegistrationRefreshStatus.NotFound,
+                        Some registration,
+                        "A different Cache identity candidate remains unresolved."
+                    )
             | Some registration ->
-                let rotated = { registration with PublicKey = request.NewPublicKey; RotationDueAt = now.Plus RegistrationLifetime.KeyRotationInterval }
+                let submitted =
+                    { registration with CandidatePublicKey = Some request.CandidatePublicKey; RotationIntervalMinutes = request.RotationIntervalMinutes }
 
                 let next =
                     {
                         Class = nameof CacheRegistrationState
                         Registrations =
                             current.Registrations
-                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then rotated else existing)
+                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then submitted else existing)
                     }
 
-                next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Rotated, Some rotated, "Cache identity key was rotated.")
+                next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.CandidateAccepted, Some submitted, "Cache identity candidate was accepted.")
+
+        /// Promotes only the currently stored candidate after a proof by that candidate and advances the server-owned rotation schedule.
+        let promoteCandidate (state: CacheRegistrationState) (request: CacheRegistrationRefreshRequest) (now: Instant) =
+            let current = if isNull (box state) then CacheRegistrationState.Empty else state
+
+            match current.Registrations
+                  |> Array.tryFind (fun registration -> registration.CacheId = request.CacheId)
+                with
+            | None -> current, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, None, "Cache registration was not found.")
+            | Some registration when registration.RevokedAt.IsSome ->
+                current, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Revoked, Some registration, "Cache registration is revoked.")
+            | Some registration when now >= registration.ExpiresAt ->
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.Expired,
+                    Some registration,
+                    "Cache registration is expired and must enroll again."
+                )
+            | Some registration when not (String.Equals(registration.Endpoint, request.Endpoint.Trim(), StringComparison.Ordinal)) ->
+                current,
+                CacheRegistrationResult.Create(
+                    CacheRegistrationRefreshStatus.EndpointMismatch,
+                    Some registration,
+                    "Cache refresh Endpoint must exactly match the registered endpoint."
+                )
+            | Some registration when registration.CandidatePublicKey.IsNone ->
+                current, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, Some registration, "Cache identity candidate was not found.")
+            | Some registration ->
+                let promoted =
+                    { registration with
+                        ActivePublicKey = registration.CandidatePublicKey.Value
+                        CandidatePublicKey = None
+                        Health = request.Health
+                        SoftwareVersion = request.SoftwareVersion.Trim()
+                        ProtocolVersion = request.ProtocolVersion.Trim()
+                        PrefetchSupported = request.PrefetchSupported
+                        LastRefreshedAt = now
+                        RefreshAfter = now.Plus RegistrationLifetime.RefreshAfter
+                        ExpiresAt = now.Plus RegistrationLifetime.ActiveLifetime
+                        LastRotatedAt = Some now
+                        RotationDueAt = now.Plus(Duration.FromMinutes(float registration.RotationIntervalMinutes))
+                    }
+
+                let next =
+                    {
+                        Class = nameof CacheRegistrationState
+                        Registrations =
+                            current.Registrations
+                            |> Array.map (fun existing -> if existing.CacheId = request.CacheId then promoted else existing)
+                    }
+
+                next, CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Refreshed, Some promoted, "Cache identity candidate was promoted.")
 
         /// Selects active healthy Cache registrations by exact durable repository assignment only.
         let selectEligible (state: CacheRegistrationState) (query: CacheRegistrationSelectionQuery) (now: Instant) =

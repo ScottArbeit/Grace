@@ -78,24 +78,23 @@
         '403': { $ref: './Responses.OpenAPI.yaml#/403' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
-  /cache/rotate-key:
+  /cache/candidate:
     post:
       tags:
         - Cache
-      summary: Rotate a Cache identity key after proof by the currently accepted key.
-      operationId: RotateCacheKey
+      summary: Submit or reuse one Cache identity candidate after active-key proof.
+      operationId: SubmitCacheKeyCandidate
       security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: './Cache.Components.OpenAPI.yaml#/CacheKeyRotationRequest'
+              $ref: './Cache.Components.OpenAPI.yaml#/CacheKeyCandidateRequest'
       responses:
         '200': { $ref: './Cache.Components.OpenAPI.yaml#/CacheRegistrationResponse' }
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
-        '401': { $ref: './Responses.OpenAPI.yaml#/401' }
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
   /cache/validation-keys:

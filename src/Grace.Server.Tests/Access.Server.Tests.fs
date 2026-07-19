@@ -1186,6 +1186,7 @@ open System
 open System.Net
 open System.Net.Http
 open System.Net.Http.Json
+open System.Security.Cryptography
 open System.Text
 
 /// Covers endpoint authorization scenarios.
@@ -1209,6 +1210,28 @@ type EndpointAuthorizationTests() =
     let invalidCacheProof cacheId operation requestDigest =
         CacheRequestProofPayload.Create(cacheId, operation, requestDigest, getCurrentInstant ())
         |> fun payload -> SignedCacheRequestProof.Create(payload, "invalid-signature")
+
+    /// Builds an otherwise valid administrator enrollment request for authorization-boundary tests.
+    let validCacheEnrollmentRequest () =
+        {
+            Class = nameof CacheEnrollmentRequest
+            DisplayName = "Authorization test cache"
+            BoundaryKind = CacheBoundaryKind.Organization
+            OwnerId = OwnerId.Parse(ownerId)
+            OrganizationId = Some(OrganizationId.Parse(organizationId))
+            RepositoryScopes =
+                System.Collections.Generic.List<CacheRepositoryScope>(
+                    [
+                        CacheRepositoryScope.Create(OrganizationId.Parse(organizationId), RepositoryId.Parse(repositoryIds[0]))
+                    ]
+                )
+            PublicKey = CacheIdentityPublicKey.Create("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            Endpoint = "https://cache.example.test"
+            AllowHttpEndpoint = false
+            SoftwareVersion = "1.0.0"
+            ProtocolVersion = "v1"
+            PrefetchSupported = false
+        }
 
     /// Builds a valid serialized refresh body whose health field is replaced with an undefined numeric value for route-boundary validation.
     let numericHealthRefreshContent request health =
@@ -1453,7 +1476,7 @@ type EndpointAuthorizationTests() =
             Assert.That(providerLoginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect, HttpStatusCode.NotFound))
         }
 
-    /// Verifies proof-only Cache runtime routes reach validation without a Grace user while administrative routes retain fallback authentication.
+    /// Verifies proof-only Cache runtime routes reach validation without a Grace user while enrollment remains authentication-first.
     [<Test>]
     member _.CacheProofRoutesReachValidationWithoutGraceUserAndAdministrativeRoutesRemainProtected() =
         task {
@@ -1491,25 +1514,34 @@ type EndpointAuthorizationTests() =
 
             let invalidKey = { Class = nameof CacheIdentityPublicKey; Algorithm = "ES256"; Curve = "P-256"; PublicKeyX = "invalid"; PublicKeyY = "invalid" }
 
-            let rotationRequest =
+            let candidateRequest =
                 {
-                    Class = nameof CacheKeyRotationRequest
+                    Class = nameof CacheKeyCandidateRequest
                     CacheId = cacheId
-                    NewPublicKey = invalidKey
-                    Proof = invalidCacheProof cacheId CacheRegistrationProof.RotateKeyOperation "invalid-rotation-digest"
+                    CandidatePublicKey = invalidKey
+                    RotationIntervalMinutes = RegistrationLifetime.DefaultRotationIntervalMinutes
+                    IsStartup = true
+                    Proof = invalidCacheProof cacheId CacheRegistrationProof.SubmitCandidateOperation "invalid-candidate-digest"
                 }
 
-            let! rotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent rotationRequest)
-            Assert.That(rotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! candidateResponse = unauthenticatedClient.PostAsync("/cache/candidate", createJsonContent candidateRequest)
+            Assert.That(candidateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
 
-            let missingKeyRotationRequest = { rotationRequest with NewPublicKey = Unchecked.defaultof<CacheIdentityPublicKey> }
+            let missingCandidateRequest = { candidateRequest with CandidatePublicKey = Unchecked.defaultof<CacheIdentityPublicKey> }
 
-            let! missingKeyRotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent missingKeyRotationRequest)
+            let! missingCandidateResponse = unauthenticatedClient.PostAsync("/cache/candidate", createJsonContent missingCandidateRequest)
 
-            Assert.That(missingKeyRotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(missingCandidateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
 
-            let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
+            let! malformedEnrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
+            Assert.That(malformedEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent (validCacheEnrollmentRequest ()))
             Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            use legacyEnrollmentContent = new StringContent("{\"Health\":\"Healthy\"}", Encoding.UTF8, "application/json")
+            let! legacyEnrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", legacyEnrollmentContent)
+            Assert.That(legacyEnrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 
             let! assignmentResponse =
                 unauthenticatedClient.PostAsync("/cache/assign-repositories", createJsonContent Unchecked.defaultof<CacheRepositoryAssignmentRequest>)
@@ -1518,6 +1550,133 @@ type EndpointAuthorizationTests() =
 
             let! revocationResponse = unauthenticatedClient.PostAsync("/cache/revoke", createJsonContent Unchecked.defaultof<CacheRevocationRequest>)
             Assert.That(revocationResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+        }
+
+    /// Verifies an otherwise authenticated stale refresh proof survives actor and HTTP serialization as the exact retry-safe marker.
+    [<Test>]
+    member _.StaleCacheRefreshProofUsesTheExactRetryMarker() =
+        task {
+            let cacheAdministrator = $"{Guid.NewGuid()}"
+
+            let! organizationGrant = grantRoleAsync Client "org" ownerId organizationId "" "" cacheAdministrator "OrganizationAdmin"
+            Assert.That(organizationGrant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! repositoryGrant = grantRoleAsync Client "repo" ownerId organizationId repositoryIds[0] "" cacheAdministrator "RepositoryAdmin"
+
+            Assert.That(repositoryGrant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use administratorClient = createClientWithUserId cacheAdministrator
+            use signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+            let parameters = signingKey.ExportParameters(false)
+
+            let publicKey = CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode parameters.Q.X, ArtifactGrant.Base64Url.encode parameters.Q.Y)
+
+            let enrollmentRequest =
+                { validCacheEnrollmentRequest () with
+                    DisplayName = "Actor serialization cache"
+                    OwnerId = OwnerId.Parse(ownerId)
+                    OrganizationId = Some(OrganizationId.Parse(organizationId))
+                    RepositoryScopes =
+                        System.Collections.Generic.List<CacheRepositoryScope>(
+                            [
+                                CacheRepositoryScope.Create(OrganizationId.Parse(organizationId), RepositoryId.Parse(repositoryIds[0]))
+                            ]
+                        )
+                    PublicKey = publicKey
+                    SoftwareVersion = "1.2.3-actor-boundary"
+                    ProtocolVersion = "actor-boundary-v1"
+                    PrefetchSupported = true
+                }
+
+            let! enrollmentResponse = administratorClient.PostAsync("/cache/enroll", createJsonContent enrollmentRequest)
+            let! enrollmentBody = enrollmentResponse.Content.ReadAsStringAsync()
+            Assert.That(enrollmentBody, Does.Not.Contain("ValidateIdsMiddleware"))
+            Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), enrollmentBody)
+
+            let enrollment = deserialize<GraceReturnValue<CacheRegistrationResult>> enrollmentBody
+            let registration = enrollment.ReturnValue.Registration.Value
+            let cacheId = registration.CacheId
+            let returnedScope = registration.RepositoryScopes[0]
+            let returnedPublicKey = registration.ActivePublicKey
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(registration.Class, Is.EqualTo(nameof CacheRegistration))
+                    Assert.That(registration.CacheId, Is.Not.EqualTo(Guid.Empty))
+                    Assert.That(registration.DisplayName, Is.EqualTo(enrollmentRequest.DisplayName))
+                    Assert.That(registration.BoundaryKind, Is.EqualTo(enrollmentRequest.BoundaryKind))
+                    Assert.That(registration.OwnerId, Is.EqualTo(enrollmentRequest.OwnerId))
+                    Assert.That(registration.OrganizationId, Is.EqualTo(enrollmentRequest.OrganizationId))
+                    Assert.That(registration.RepositoryScopes, Has.Length.EqualTo(1))
+                    Assert.That(returnedScope.Class, Is.EqualTo(enrollmentRequest.RepositoryScopes[0].Class))
+
+                    Assert.That(
+                        returnedScope.OrganizationId,
+                        Is.EqualTo(
+                            enrollmentRequest.RepositoryScopes[0]
+                                .OrganizationId
+                        )
+                    )
+
+                    Assert.That(returnedScope.RepositoryId, Is.EqualTo(enrollmentRequest.RepositoryScopes[0].RepositoryId))
+                    Assert.That(returnedPublicKey.Class, Is.EqualTo(enrollmentRequest.PublicKey.Class))
+                    Assert.That(returnedPublicKey.Algorithm, Is.EqualTo(enrollmentRequest.PublicKey.Algorithm))
+                    Assert.That(returnedPublicKey.Curve, Is.EqualTo(enrollmentRequest.PublicKey.Curve))
+                    Assert.That(returnedPublicKey.PublicKeyX, Is.EqualTo(enrollmentRequest.PublicKey.PublicKeyX))
+                    Assert.That(returnedPublicKey.PublicKeyY, Is.EqualTo(enrollmentRequest.PublicKey.PublicKeyY))
+                    Assert.That(registration.Endpoint, Is.EqualTo(enrollmentRequest.Endpoint))
+                    Assert.That(registration.AllowHttpEndpoint, Is.EqualTo(enrollmentRequest.AllowHttpEndpoint))
+                    Assert.That(registration.SoftwareVersion, Is.EqualTo(enrollmentRequest.SoftwareVersion))
+                    Assert.That(registration.ProtocolVersion, Is.EqualTo(enrollmentRequest.ProtocolVersion))
+                    Assert.That(registration.PrefetchSupported, Is.EqualTo(enrollmentRequest.PrefetchSupported)))
+            )
+
+            let unsignedRefresh: CacheRegistrationRefreshRequest =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = enrollmentRequest.Endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = enrollmentRequest.SoftwareVersion
+                    ProtocolVersion = enrollmentRequest.ProtocolVersion
+                    PrefetchSupported = enrollmentRequest.PrefetchSupported
+                    ObservedAt = getCurrentInstant ()
+                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                }
+
+            let staleRefresh =
+                { unsignedRefresh with
+                    Proof =
+                        CacheRegistrationProof.createProof
+                            signingKey
+                            cacheId
+                            CacheRegistrationProof.RefreshOperation
+                            (CacheRegistrationProof.refreshRequestDigest unsignedRefresh)
+                            ((getCurrentInstant ())
+                                .Minus(NodaTime.Duration.FromMinutes 2.0))
+                }
+
+            use unauthenticatedClient = createUnauthenticatedClient ()
+            let! refreshResponse = unauthenticatedClient.PostAsync("/cache/refresh", createJsonContent staleRefresh)
+            let! refreshBody = refreshResponse.Content.ReadAsStringAsync()
+            Assert.That(refreshBody, Does.Not.Contain("ValidateIdsMiddleware"))
+            Assert.That(refreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), refreshBody)
+
+            let error = deserialize<GraceError> refreshBody
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(error.Properties, Has.Count.EqualTo(1))
+
+                    Assert.That(
+                        error
+                            .Properties[
+                                CacheRegistrationProof.RefreshProofTimestampStalePropertyKey
+                            ]
+                            .ToString(),
+                        Is.EqualTo(CacheRegistrationProof.RefreshProofTimestampStalePropertyValue)
+                    ))
+            )
         }
 
     /// Verifies the metrics endpoint requires system admin scenario.

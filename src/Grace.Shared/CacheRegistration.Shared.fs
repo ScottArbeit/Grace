@@ -1,6 +1,7 @@
 namespace Grace.Shared
 
 open Grace.Shared.ArtifactGrant
+open Grace.Types.Common
 open Grace.Types.ArtifactGrant
 open Grace.Types.CacheRegistration
 open NodaTime
@@ -10,6 +11,16 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 
+/// Identifies the precise reason a Cache proof cannot authenticate the requested operation.
+type CacheProofValidationFailure =
+    | InvalidPublicKey
+    | InvalidProofShape
+    | WrongCacheId
+    | WrongOperation
+    | WrongRequestDigest
+    | InvalidSignature
+    | TimestampOutsideTolerance
+
 /// Provides canonical Cache identity proof creation and fail-closed validation helpers.
 module CacheRegistrationProof =
 
@@ -17,9 +28,35 @@ module CacheRegistrationProof =
     [<Literal>]
     let RefreshOperation = "cache-registration-refresh-v1"
 
-    /// Identifies the canonical runtime operation for Cache public-key rotation.
+    /// Identifies the canonical active-key proof used to submit or replay the one candidate public key.
     [<Literal>]
-    let RotateKeyOperation = "cache-registration-rotate-key-v1"
+    let SubmitCandidateOperation = "cache-registration-submit-candidate-v1"
+
+    /// Names the sole GraceError property that permits a Cache candidate submission to retry with a newly signed proof.
+    [<Literal>]
+    let CandidateProofTimestampStalePropertyKey = "cacheCandidateProofTimestamp"
+
+    /// Marks a candidate proof whose otherwise valid timestamp falls outside the existing protocol tolerance.
+    [<Literal>]
+    let CandidateProofTimestampStalePropertyValue = "stale"
+
+    /// Builds the exact GraceError payload that allows only a stale candidate timestamp to be retried with a newly signed proof.
+    let candidateProofTimestampStaleError correlationId =
+        let error = GraceError.Create "Cache candidate-submission proof is stale." correlationId
+        error.enhance (CandidateProofTimestampStalePropertyKey, CandidateProofTimestampStalePropertyValue)
+
+    /// Names the sole GraceError property that permits a Cache refresh to retry with a newly signed proof.
+    [<Literal>]
+    let RefreshProofTimestampStalePropertyKey = "cacheRefreshProofTimestamp"
+
+    /// Marks a refresh proof whose otherwise valid timestamp falls outside the existing protocol tolerance.
+    [<Literal>]
+    let RefreshProofTimestampStalePropertyValue = "stale"
+
+    /// Builds the exact GraceError payload that allows only a stale refresh timestamp to be retried with a newly signed proof.
+    let refreshProofTimestampStaleError correlationId =
+        let error = GraceError.Create "Cache refresh proof is stale." correlationId
+        error.enhance (RefreshProofTimestampStalePropertyKey, RefreshProofTimestampStalePropertyValue)
 
     /// Writes one Cache identity public key in canonical field order.
     let private writePublicKey (writer: Utf8JsonWriter) (key: CacheIdentityPublicKey) =
@@ -56,14 +93,16 @@ module CacheRegistrationProof =
             writer.WriteString("software", request.SoftwareVersion)
             writer.WriteEndObject())
 
-    /// Computes the canonical digest bound into a key-rotation proof without including its signature.
-    let rotationRequestDigest (request: CacheKeyRotationRequest) =
+    /// Computes the canonical digest bound into an active-key candidate-submission proof without including its signature.
+    let candidateRequestDigest (request: CacheKeyCandidateRequest) =
         digest (fun writer ->
             writer.WriteStartObject()
             writer.WriteString("cache", request.CacheId.ToString("D"))
             writer.WriteString("class", request.Class)
-            writer.WritePropertyName("newKey")
-            writePublicKey writer request.NewPublicKey
+            writer.WritePropertyName("candidate")
+            writePublicKey writer request.CandidatePublicKey
+            writer.WriteNumber("intervalMinutes", request.RotationIntervalMinutes)
+            writer.WriteBoolean("startup", request.IsStartup)
             writer.WriteEndObject())
 
     /// Encodes the signed Cache proof payload in canonical JSON field order.
@@ -110,8 +149,8 @@ module CacheRegistrationProof =
         let signature = privateKey.SignData(canonicalProofPayloadBytes payload, HashAlgorithmName.SHA256)
         SignedCacheRequestProof.Create(payload, Base64Url.encode signature)
 
-    /// Verifies one current Cache key proof against its exact operation, canonical request digest, and 30-second protocol tolerance.
-    let validate
+    /// Classifies one Cache proof after all identity bindings and the signature are proven before timestamp tolerance is considered.
+    let classify
         (now: Instant)
         (publicKey: CacheIdentityPublicKey)
         (cacheId: Guid)
@@ -127,28 +166,40 @@ module CacheRegistrationProof =
             timestamp >= earliestAcceptedTimestamp
             && timestamp <= latestAcceptedTimestamp
 
-        if
-            not (isValidPublicKey publicKey)
-            || isNull (box proof)
-            || proof.Class <> nameof SignedCacheRequestProof
-            || isNull (box proof.Payload)
-            || proof.Payload.Class
-               <> nameof CacheRequestProofPayload
-            || proof.Payload.CacheId <> cacheId
-            || not (String.Equals(proof.Payload.Operation, operation, StringComparison.Ordinal))
-            || not (String.Equals(proof.Payload.RequestDigest, requestDigest, StringComparison.Ordinal))
-            || String.IsNullOrWhiteSpace proof.Signature
-            || not (validTimestamp proof.Payload.IssuedAt)
-        then
-            false
+        if not (isValidPublicKey publicKey) then
+            Error InvalidPublicKey
+        elif isNull (box proof)
+             || proof.Class <> nameof SignedCacheRequestProof
+             || isNull (box proof.Payload)
+             || proof.Payload.Class
+                <> nameof CacheRequestProofPayload
+             || String.IsNullOrWhiteSpace proof.Signature then
+            Error InvalidProofShape
+        elif proof.Payload.CacheId <> cacheId then
+            Error WrongCacheId
+        elif not (String.Equals(proof.Payload.Operation, operation, StringComparison.Ordinal)) then
+            Error WrongOperation
+        elif not (String.Equals(proof.Payload.RequestDigest, requestDigest, StringComparison.Ordinal)) then
+            Error WrongRequestDigest
         else
             match Base64Url.tryDecode publicKey.PublicKeyX, Base64Url.tryDecode publicKey.PublicKeyY, Base64Url.tryDecode proof.Signature with
             | Some x, Some y, Some signature ->
                 try
                     use verifier = ECDsa.Create(ECParameters(Curve = ECCurve.NamedCurves.nistP256, Q = ECPoint(X = x, Y = y)))
-                    verifier.VerifyData(canonicalProofPayloadBytes proof.Payload, signature, HashAlgorithmName.SHA256)
+
+                    if not (verifier.VerifyData(canonicalProofPayloadBytes proof.Payload, signature, HashAlgorithmName.SHA256)) then
+                        Error InvalidSignature
+                    elif not (validTimestamp proof.Payload.IssuedAt) then
+                        Error TimestampOutsideTolerance
+                    else
+                        Ok()
                 with
                 | :? CryptographicException
                 | :? ArgumentException
-                | :? PlatformNotSupportedException -> false
-            | _ -> false
+                | :? PlatformNotSupportedException -> Error InvalidSignature
+            | _ -> Error InvalidSignature
+
+    /// Verifies one current Cache key proof against its exact operation, canonical request digest, and 30-second protocol tolerance.
+    let validate now publicKey cacheId operation requestDigest proof =
+        classify now publicKey cacheId operation requestDigest proof
+        |> Result.isOk

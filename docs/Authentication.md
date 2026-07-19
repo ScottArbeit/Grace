@@ -754,18 +754,63 @@ stable repository IDs within that boundary. Grace Server revalidates the adminis
 permissions before the atomic enrollment or assignment change; no installation-wide service-principal allowlist or
 global cache-scope configuration exists.
 
-The future Cache host generates a canonical P-256 key pair and sends only its public key to `/cache/enroll`. Grace Server
-stores that public key, the display name, operational facts, explicit repository assignments, and enrollment audit identity.
-It never receives or stores the private key. A refresh or key rotation proves possession of the currently accepted key by
-signing the canonical request payload that binds `CacheId`, operation, request digest, and Unix-millisecond timestamp.
-Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration state.
+Use `grace cache enroll` on the target cache machine with an explicit display name, Owner, optional Organization boundary,
+matching `--repository-id` and `--repository-organization-id` values, and exact endpoint. The CLI resolves the current
+Grace login and passes it only as transient child-process environment state. The cache host generates a canonical P-256
+service identity and sends only its public key to `/cache/enroll`; its persisted machine configuration keeps only an
+opaque key reference, never tokens or private-key data. Grace Server stores the public key, display name, operational
+facts, explicit repository assignments, and enrollment audit identity. A refresh or key rotation proves possession of the
+currently accepted key by signing the canonical request payload that binds `CacheId`, operation, request digest, and
+Unix-millisecond timestamp. Malformed, wrong-key, stale, or tampered proofs are rejected without changing registration
+state.
+
+Run `grace cache enroll` under the same local OS account that will run `grace cache run`. On Windows, Grace Cache uses a
+non-exportable P-256 machine X.509 key that is accessible only to the configured cache service account. On macOS, it
+uses the platform X.509 key store. On Linux, it stores the P-256 identity as a service-owned PKCS#8 file beneath the
+protected machine cache directory. Linux requires a root-owned `0755` parent and a service-account-owned `0700` cache
+directory; each key is a regular, non-linked `0600` file created through a same-directory atomic temporary file and
+revalidated before use. This is a reduced Linux custody guarantee: the cache service account, or a backup process that
+runs as that account, can copy the key. Operators must isolate the service account, restrict backup access, and protect
+backup retention. `GRACE_TOKEN` PATs, M2M credentials, and interactive login authenticate the Grace principal through
+the normal CLI resolver; the resolved bearer token is transient and is never stored or logged by Grace Cache. Changing
+the service OS account requires an administrator to revoke the existing Cache and explicitly enroll again. Grace does
+not migrate a private key, mutate key access, retain the previous `CacheId`, or persist an OS-account or service
+identity for an in-place account change.
 
 Cache endpoints use HTTPS by default. An administrator may explicitly approve one exact HTTP endpoint during enrollment
-when the future `grace cache --allow-http` host is deliberately configured for it. Grace persists that approval with the
-exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
-transport choice. Server-issued cache plans and their signed artifact grants bind the exact endpoint, so clients reject
-scheme, host, port, or path substitution before presenting a grant or holder proof. Direct artifact URI behavior is
-unchanged.
+when `grace cache enroll --allow-http` deliberately enrolls that exact HTTP endpoint. Every cache endpoint is an absolute
+HTTP(S) origin with path `/`, no user info, query, or fragment; this does not limit the independent Grace Server URI path
+base. Grace persists that approval with
+the exact endpoint. Cache-authenticated refresh must report that same endpoint and cannot add, remove, or substitute the
+transport choice. `grace cache status` emits only redacted lifecycle, `CacheId`, and transport information. `grace cache
+run` performs mandatory active/candidate identity-key synchronization at startup. The running host schedules automatic
+rotation from `GRACE_CACHE_KEY_ROTATION_INTERVAL_MINUTES`, which defaults to 240 and accepts 15 through 10080 minutes.
+Its machine-local rotation lifecycle is exactly ready with no candidate, pending with the complete candidate transition,
+or operator recovery required with no candidate material. It retains one candidate key only for transient, unknown, or
+ambiguous outcomes and promotes it only after candidate-key proof reaches Grace Server. `Expired`, `Revoked`, `NotFound`,
+and definitive candidate rejection durably write operator recovery before candidate-key deletion, stop automatic work
+across restart even when cleanup fails, and require administrator revocation and re-enrollment; the old local key is
+deleted only after durable local selection of the promoted candidate. The host independently refreshes the
+live registration every hour, before its two-hour active lifetime expires. Neither command prints or exports private key
+material, tokens, grants, repository assignments, server URLs, or secret configuration. Server-issued cache plans and
+their signed artifact grants bind the exact endpoint, so clients reject scheme, host, port, or path substitution before
+presenting a grant or holder proof. Direct artifact URI behavior is unchanged.
+
+Grace Cache enrollment begins as `Unhealthy` and remains non-selectable until mandatory startup synchronization, Kestrel
+readiness, and the artifact-serving contract are all available. The current scaffold therefore does not publish a healthy
+cache. Before
+the enrollment request, Cache writes one narrow machine-local recovery record with the endpoint, explicit repository inputs,
+opaque signing-key reference, and recovery status. A valid server `CacheId` completes that record before local configuration
+is finalized. If finalization fails, a later start finalizes the known registration before normal work. If a request
+may have
+reached Grace Server without a valid `CacheId`, Grace retains only the permitted evidence, stops with a redacted operator
+result, and requires administrator inspection or revocation before another explicit enrollment. It never retries,
+looks up,
+refreshes, rotates, or compensates an unknown registration automatically.
+
+Stopping and restarting the cache is the only operator-requested immediate rotation. There is no live local-control
+channel. Startup, automatic rotation, registration refresh, and health publication share the serialized lifecycle gate;
+a running synchronization failure marks the registration unhealthy and retries the same candidate after five minutes.
 
 Read-through is mandatory for every current healthy Cache assigned to the exact resolved repository. It is not a
 negotiated capability or configuration switch. `PrefetchSupported` is the only optional Cache software capability in this
@@ -773,10 +818,11 @@ foundation. Refresh reports the enrolled endpoint as an exact immutable match an
 software/protocol version, Prefetch support, and liveness timestamps; it cannot change the endpoint, `AllowHttpEndpoint`,
 a Cache's display name, repository assignments, boundary, public key, or administrative state.
 
-Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. A current-key-proven
-`/cache/rotate-key` request immediately accepts the new canonical P-256 public key, retires the old key, and resets the
-four-hour rotation schedule. A lost key requires revocation and re-enrollment. Cache enrollment does not require cache
-environment variables, service principal IDs, or private-key configuration in Grace Server.
+Administrators use dedicated routes to replace explicit repository assignments or revoke a Cache. The proof-only
+`/cache/candidate` route accepts or reuses one candidate public key after active-key proof; a refresh signed by that
+candidate atomically promotes it and resets the configured rotation schedule. A lost key requires revocation and
+re-enrollment. Cache enrollment does not require cache environment variables, service principal IDs, or private-key
+configuration in Grace Server.
 
 ---
 

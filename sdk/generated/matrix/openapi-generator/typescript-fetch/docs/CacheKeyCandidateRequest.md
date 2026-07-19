@@ -1,6 +1,7 @@
 
-# CacheKeyRotationRequest
+# CacheKeyCandidateRequest
 
+Active-key-proven submission of the one candidate Cache identity key. The candidate key promotes itself through a later refresh proof.
 
 ## Properties
 
@@ -8,21 +9,25 @@ Name | Type
 ------------ | -------------
 `_class` | string
 `cacheId` | string
-`newPublicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
+`candidatePublicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
+`rotationIntervalMinutes` | number
+`isStartup` | boolean
 `proof` | [SignedCacheRequestProof](SignedCacheRequestProof.md)
 
 ## Example
 
 ```typescript
-import type { CacheKeyRotationRequest } from '@grace-vcs/generated-openapi-probe'
+import type { CacheKeyCandidateRequest } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
-  "_class": CacheKeyRotationRequest,
+  "_class": CacheKeyCandidateRequest,
   "cacheId": null,
-  "newPublicKey": null,
+  "candidatePublicKey": null,
+  "rotationIntervalMinutes": null,
+  "isStartup": null,
   "proof": null,
-} satisfies CacheKeyRotationRequest
+} satisfies CacheKeyCandidateRequest
 
 console.log(example)
 
@@ -31,7 +36,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as CacheKeyRotationRequest
+const exampleParsed = JSON.parse(exampleJSON) as CacheKeyCandidateRequest
 console.log(exampleParsed)
 ```
 

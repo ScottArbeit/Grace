@@ -25,6 +25,13 @@ function Get-FileSha256 {
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
 }
 
+function Get-CanonicalSourceSha256 {
+    param([string] $Path)
+
+    $text = [System.IO.File]::ReadAllText($Path) -replace "`r`n", "`n"
+    return Get-StringSha256 $text
+}
+
 function Get-StringSha256 {
     param([string] $Text)
 
@@ -58,7 +65,7 @@ function Get-CanonicalSourceFiles {
         ForEach-Object {
             [pscustomobject]@{
                 path = $_.Name
-                sha256 = Get-FileSha256 $_.FullName
+                sha256 = Get-CanonicalSourceSha256 $_.FullName
             }
         }
 }

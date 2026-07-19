@@ -23,7 +23,6 @@ from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.cache_boundary_kind import CacheBoundaryKind
-from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus
 from grace_generated_openapi_probe.models.cache_identity_public_key import CacheIdentityPublicKey
 from grace_generated_openapi_probe.models.cache_repository_scope import CacheRepositoryScope
 from typing import Optional, Set
@@ -41,13 +40,12 @@ class CacheEnrollmentRequest(BaseModel):
     organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
     repository_scopes: Annotated[List[CacheRepositoryScope], Field(min_length=1)] = Field(alias="RepositoryScopes")
     public_key: CacheIdentityPublicKey = Field(alias="PublicKey")
-    endpoint: StrictStr = Field(alias="Endpoint")
+    endpoint: StrictStr = Field(description="Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.", alias="Endpoint")
     allow_http_endpoint: StrictBool = Field(description="Explicit administrator approval for this exact Endpoint to use HTTP instead of the HTTPS default.", alias="AllowHttpEndpoint")
-    health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")
     protocol_version: StrictStr = Field(alias="ProtocolVersion")
     prefetch_supported: StrictBool = Field(alias="PrefetchSupported")
-    __properties: ClassVar[List[str]] = ["Class", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported"]
+    __properties: ClassVar[List[str]] = ["Class", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -119,7 +117,6 @@ class CacheEnrollmentRequest(BaseModel):
             "PublicKey": CacheIdentityPublicKey.from_dict(obj["PublicKey"]) if obj.get("PublicKey") is not None else None,
             "Endpoint": obj.get("Endpoint"),
             "AllowHttpEndpoint": obj.get("AllowHttpEndpoint"),
-            "Health": obj.get("Health"),
             "SoftwareVersion": obj.get("SoftwareVersion"),
             "ProtocolVersion": obj.get("ProtocolVersion"),
             "PrefetchSupported": obj.get("PrefetchSupported")

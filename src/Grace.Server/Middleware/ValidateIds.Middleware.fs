@@ -363,9 +363,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     nameof ValidateIdsMiddleware
                 )
 
-                context.Response.StatusCode <- 500
+                let! _ =
+                    context
+                    |> result500ServerError (GraceError.Create "A server error occurred." (getCorrelationId context))
 
-                do! context.Response.WriteAsync($"{getCurrentInstantExtended ()}: An unhandled exception occurred in the ValidateIdsMiddleware middleware.")
+                return ()
 
         }
         :> Task

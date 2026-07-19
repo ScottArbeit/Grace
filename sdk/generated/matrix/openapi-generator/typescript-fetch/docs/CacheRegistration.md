@@ -14,7 +14,8 @@ Name | Type
 `ownerId` | string
 `organizationId` | string
 `repositoryScopes` | [Array&lt;CacheRepositoryScope&gt;](CacheRepositoryScope.md)
-`publicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
+`activePublicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
+`candidatePublicKey` | [CacheIdentityPublicKey](CacheIdentityPublicKey.md)
 `endpoint` | string
 `allowHttpEndpoint` | boolean
 `health` | [CacheHealthStatus](CacheHealthStatus.md)
@@ -26,6 +27,8 @@ Name | Type
 `lastRefreshedAt` | Date
 `refreshAfter` | Date
 `expiresAt` | Date
+`rotationIntervalMinutes` | number
+`lastRotatedAt` | Date
 `rotationDueAt` | Date
 `revokedAt` | Date
 
@@ -43,7 +46,8 @@ const example = {
   "ownerId": null,
   "organizationId": null,
   "repositoryScopes": null,
-  "publicKey": null,
+  "activePublicKey": null,
+  "candidatePublicKey": null,
   "endpoint": null,
   "allowHttpEndpoint": null,
   "health": null,
@@ -55,6 +59,8 @@ const example = {
   "lastRefreshedAt": null,
   "refreshAfter": null,
   "expiresAt": null,
+  "rotationIntervalMinutes": null,
+  "lastRotatedAt": null,
   "rotationDueAt": null,
   "revokedAt": null,
 } satisfies CacheRegistration

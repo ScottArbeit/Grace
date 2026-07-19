@@ -21,6 +21,7 @@ import json
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.cache_boundary_kind import CacheBoundaryKind
 from grace_generated_openapi_probe.models.cache_health_status import CacheHealthStatus
@@ -41,8 +42,9 @@ class CacheRegistration(BaseModel):
     owner_id: UUID = Field(alias="OwnerId")
     organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
     repository_scopes: List[CacheRepositoryScope] = Field(alias="RepositoryScopes")
-    public_key: CacheIdentityPublicKey = Field(alias="PublicKey")
-    endpoint: StrictStr = Field(alias="Endpoint")
+    active_public_key: CacheIdentityPublicKey = Field(alias="ActivePublicKey")
+    candidate_public_key: Optional[CacheIdentityPublicKey] = Field(default=None, alias="CandidatePublicKey")
+    endpoint: StrictStr = Field(description="Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.", alias="Endpoint")
     allow_http_endpoint: StrictBool = Field(description="Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.", alias="AllowHttpEndpoint")
     health: CacheHealthStatus = Field(alias="Health")
     software_version: StrictStr = Field(alias="SoftwareVersion")
@@ -53,9 +55,11 @@ class CacheRegistration(BaseModel):
     last_refreshed_at: datetime = Field(alias="LastRefreshedAt")
     refresh_after: datetime = Field(alias="RefreshAfter")
     expires_at: datetime = Field(alias="ExpiresAt")
+    rotation_interval_minutes: Annotated[int, Field(le=10080, strict=True, ge=15)] = Field(alias="RotationIntervalMinutes")
+    last_rotated_at: Optional[datetime] = Field(default=None, alias="LastRotatedAt")
     rotation_due_at: datetime = Field(alias="RotationDueAt")
     revoked_at: Optional[datetime] = Field(default=None, alias="RevokedAt")
-    __properties: ClassVar[List[str]] = ["Class", "CacheId", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "EnrolledBy", "EnrolledAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "RotationDueAt", "RevokedAt"]
+    __properties: ClassVar[List[str]] = ["Class", "CacheId", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "ActivePublicKey", "CandidatePublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "EnrolledBy", "EnrolledAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "RotationIntervalMinutes", "LastRotatedAt", "RotationDueAt", "RevokedAt"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -103,9 +107,12 @@ class CacheRegistration(BaseModel):
                 if _item_repository_scopes:
                     _items.append(_item_repository_scopes.to_dict())
             _dict['RepositoryScopes'] = _items
-        # override the default output from pydantic by calling `to_dict()` of public_key
-        if self.public_key:
-            _dict['PublicKey'] = self.public_key.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of active_public_key
+        if self.active_public_key:
+            _dict['ActivePublicKey'] = self.active_public_key.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of candidate_public_key
+        if self.candidate_public_key:
+            _dict['CandidatePublicKey'] = self.candidate_public_key.to_dict()
         return _dict
 
     @classmethod
@@ -125,7 +132,8 @@ class CacheRegistration(BaseModel):
             "OwnerId": obj.get("OwnerId"),
             "OrganizationId": obj.get("OrganizationId"),
             "RepositoryScopes": [CacheRepositoryScope.from_dict(_item) for _item in obj["RepositoryScopes"]] if obj.get("RepositoryScopes") is not None else None,
-            "PublicKey": CacheIdentityPublicKey.from_dict(obj["PublicKey"]) if obj.get("PublicKey") is not None else None,
+            "ActivePublicKey": CacheIdentityPublicKey.from_dict(obj["ActivePublicKey"]) if obj.get("ActivePublicKey") is not None else None,
+            "CandidatePublicKey": CacheIdentityPublicKey.from_dict(obj["CandidatePublicKey"]) if obj.get("CandidatePublicKey") is not None else None,
             "Endpoint": obj.get("Endpoint"),
             "AllowHttpEndpoint": obj.get("AllowHttpEndpoint"),
             "Health": obj.get("Health"),
@@ -137,6 +145,8 @@ class CacheRegistration(BaseModel):
             "LastRefreshedAt": obj.get("LastRefreshedAt"),
             "RefreshAfter": obj.get("RefreshAfter"),
             "ExpiresAt": obj.get("ExpiresAt"),
+            "RotationIntervalMinutes": obj.get("RotationIntervalMinutes"),
+            "LastRotatedAt": obj.get("LastRotatedAt"),
             "RotationDueAt": obj.get("RotationDueAt"),
             "RevokedAt": obj.get("RevokedAt")
         })

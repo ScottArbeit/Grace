@@ -28,8 +28,11 @@ pub struct CacheRegistration {
     pub organization_id: Option<uuid::Uuid>,
     #[serde(rename = "RepositoryScopes")]
     pub repository_scopes: Vec<models::CacheRepositoryScope>,
-    #[serde(rename = "PublicKey")]
-    pub public_key: Box<models::CacheIdentityPublicKey>,
+    #[serde(rename = "ActivePublicKey")]
+    pub active_public_key: Box<models::CacheIdentityPublicKey>,
+    #[serde(rename = "CandidatePublicKey", skip_serializing_if = "Option::is_none")]
+    pub candidate_public_key: Option<Box<models::CacheIdentityPublicKey>>,
+    /// Absolute HTTP(S) Cache origin with path '/', no user info, query, or fragment.
     #[serde(rename = "Endpoint")]
     pub endpoint: String,
     /// Persisted administrator approval for this exact Endpoint to use HTTP instead of HTTPS.
@@ -53,6 +56,10 @@ pub struct CacheRegistration {
     pub refresh_after: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "ExpiresAt")]
     pub expires_at: chrono::DateTime<chrono::FixedOffset>,
+    #[serde(rename = "RotationIntervalMinutes")]
+    pub rotation_interval_minutes: i32,
+    #[serde(rename = "LastRotatedAt", skip_serializing_if = "Option::is_none")]
+    pub last_rotated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     #[serde(rename = "RotationDueAt")]
     pub rotation_due_at: chrono::DateTime<chrono::FixedOffset>,
     #[serde(rename = "RevokedAt", skip_serializing_if = "Option::is_none")]
@@ -61,7 +68,7 @@ pub struct CacheRegistration {
 
 impl CacheRegistration {
     /// Durable Cache registration with immutable CacheId, explicit repository assignments, and no private key material.
-    pub fn new(class: String, cache_id: uuid::Uuid, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, enrolled_by: String, enrolled_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>, rotation_due_at: chrono::DateTime<chrono::FixedOffset>) -> CacheRegistration {
+    pub fn new(class: String, cache_id: uuid::Uuid, display_name: String, boundary_kind: models::CacheBoundaryKind, owner_id: uuid::Uuid, repository_scopes: Vec<models::CacheRepositoryScope>, active_public_key: models::CacheIdentityPublicKey, endpoint: String, allow_http_endpoint: bool, health: models::CacheHealthStatus, software_version: String, protocol_version: String, prefetch_supported: bool, enrolled_by: String, enrolled_at: chrono::DateTime<chrono::FixedOffset>, last_refreshed_at: chrono::DateTime<chrono::FixedOffset>, refresh_after: chrono::DateTime<chrono::FixedOffset>, expires_at: chrono::DateTime<chrono::FixedOffset>, rotation_interval_minutes: i32, rotation_due_at: chrono::DateTime<chrono::FixedOffset>) -> CacheRegistration {
         CacheRegistration {
             class,
             cache_id,
@@ -70,7 +77,8 @@ impl CacheRegistration {
             owner_id,
             organization_id: None,
             repository_scopes,
-            public_key: Box::new(public_key),
+            active_public_key: Box::new(active_public_key),
+            candidate_public_key: None,
             endpoint,
             allow_http_endpoint,
             health,
@@ -82,6 +90,8 @@ impl CacheRegistration {
             last_refreshed_at,
             refresh_after,
             expires_at,
+            rotation_interval_minutes,
+            last_rotated_at: None,
             rotation_due_at,
             revoked_at: None,
         }

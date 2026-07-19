@@ -46,7 +46,7 @@ docs/CacheBoundaryKind.md
 docs/CacheEnrollmentRequest.md
 docs/CacheHealthStatus.md
 docs/CacheIdentityPublicKey.md
-docs/CacheKeyRotationRequest.md
+docs/CacheKeyCandidateRequest.md
 docs/CacheRegistration.md
 docs/CacheRegistrationRefreshRequest.md
 docs/CacheRegistrationRefreshStatus.md
@@ -328,7 +328,7 @@ src/models/cache_boundary_kind.rs
 src/models/cache_enrollment_request.rs
 src/models/cache_health_status.rs
 src/models/cache_identity_public_key.rs
-src/models/cache_key_rotation_request.rs
+src/models/cache_key_candidate_request.rs
 src/models/cache_registration.rs
 src/models/cache_registration_refresh_request.rs
 src/models/cache_registration_refresh_status.rs

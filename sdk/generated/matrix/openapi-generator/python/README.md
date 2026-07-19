@@ -147,7 +147,7 @@ Class | Method | HTTP request | Description
 *CacheApi* | [**get_artifact_grant_validation_keys**](docs/CacheApi.md#get_artifact_grant_validation_keys) | **GET** /cache/validation-keys | Publish artifact grant validation keys.
 *CacheApi* | [**refresh_cache**](docs/CacheApi.md#refresh_cache) | **POST** /cache/refresh | Refresh Cache operational facts with a current identity-key proof.
 *CacheApi* | [**revoke_cache**](docs/CacheApi.md#revoke_cache) | **POST** /cache/revoke | Revoke a Cache registration as a current administrator.
-*CacheApi* | [**rotate_cache_key**](docs/CacheApi.md#rotate_cache_key) | **POST** /cache/rotate-key | Rotate a Cache identity key after proof by the currently accepted key.
+*CacheApi* | [**submit_cache_key_candidate**](docs/CacheApi.md#submit_cache_key_candidate) | **POST** /cache/candidate | Submit or reuse one Cache identity candidate after active-key proof.
 *DiffsApi* | [**get_diff**](docs/DiffsApi.md#get_diff) | **POST** /diff/getDiff | Get a diff.
 *DiffsApi* | [**get_diff_by_blake3_hash**](docs/DiffsApi.md#get_diff_by_blake3_hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 *DiffsApi* | [**get_diff_by_sha256_hash**](docs/DiffsApi.md#get_diff_by_sha256_hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
@@ -262,7 +262,7 @@ Class | Method | HTTP request | Description
  - [CacheEnrollmentRequest](docs/CacheEnrollmentRequest.md)
  - [CacheHealthStatus](docs/CacheHealthStatus.md)
  - [CacheIdentityPublicKey](docs/CacheIdentityPublicKey.md)
- - [CacheKeyRotationRequest](docs/CacheKeyRotationRequest.md)
+ - [CacheKeyCandidateRequest](docs/CacheKeyCandidateRequest.md)
  - [CacheRegistration](docs/CacheRegistration.md)
  - [CacheRegistrationRefreshRequest](docs/CacheRegistrationRefreshRequest.md)
  - [CacheRegistrationRefreshStatus](docs/CacheRegistrationRefreshStatus.md)

@@ -189,6 +189,8 @@ module ArtifactGrantSigningKeyActor =
                 Error InvalidCacheId
             elif String.IsNullOrWhiteSpace request.CacheEndpoint then
                 Error InvalidCacheEndpoint
+            elif not (Grace.Types.MaterializationPlan.Validation.isAllowedCacheEndpoint request.CacheEndpoint) then
+                Error InvalidCacheEndpoint
             elif request.TargetRootDirectoryVersionId = Guid.Empty then
                 Error InvalidTargetRoot
             elif

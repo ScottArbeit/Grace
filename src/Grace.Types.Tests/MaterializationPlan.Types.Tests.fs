@@ -1744,7 +1744,7 @@ type MaterializationPlanContractTests() =
     [<Test>]
     member _.CacheBackedPlanAllowsGrantBoundHttpEndpoint() =
         let validPlan = MaterializationPlanTestData.validPlan ()
-        let httpEndpoint = "http://cache.example.test:8080/artifacts"
+        let httpEndpoint = "http://cache.example.test:8080"
 
         let httpArtifacts =
             validPlan.RequiredArtifacts

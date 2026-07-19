@@ -483,8 +483,18 @@ module MaterializationPlan =
             && (parsedUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
                 || parsedUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
 
-        /// Returns true when a cache endpoint has an HTTP(S) transport shape before its signed grant binds the exact endpoint.
-        let isAllowedCacheEndpoint (endpoint: string) = isAllowedDirectUri endpoint
+        /// Returns true only when a cache endpoint is a credential-free HTTP(S) origin before its signed grant binds the exact endpoint.
+        let isAllowedCacheEndpoint (endpoint: string) =
+            let mutable parsedEndpoint = Unchecked.defaultof<Uri>
+
+            not (String.IsNullOrWhiteSpace endpoint)
+            && Uri.TryCreate(endpoint, UriKind.Absolute, &parsedEndpoint)
+            && (parsedEndpoint.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || parsedEndpoint.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            && String.IsNullOrEmpty parsedEndpoint.UserInfo
+            && parsedEndpoint.AbsolutePath = "/"
+            && String.IsNullOrEmpty parsedEndpoint.Query
+            && String.IsNullOrEmpty parsedEndpoint.Fragment
 
         /// Returns true when a whole-file artifact path is normalized for repository-relative materialization.
         let isNormalizedRepositoryRelativePath (relativePath: string) =
