@@ -920,6 +920,14 @@ type CacheKeyRotationLifecycleEffects = { WriteConfiguration: CacheMachineConfig
 /// Supplies protected candidate cleanup and configuration persistence when registration expiry ends automatic recovery.
 type CacheRegistrationExpiryEffects = { DeleteKey: string -> Result<unit, string>; PersistConfiguration: CacheMachineConfiguration -> Result<unit, string> }
 
+/// Distinguishes retryable transport failures, definitive local or server rejection, and committed-or-unreadable post outcomes.
+type CachePostFailure =
+    | Retryable
+    | Rejected
+    | KeyUnavailable
+    | Ambiguous
+    | RefreshProofTimestampStale
+
 /// Persists the existing terminal lifecycle before callers stop automatic registration refresh work.
 module CacheRegistrationExpiry =
 
@@ -941,7 +949,7 @@ module CacheRegistrationExpiry =
 /// Supplies the current registration response and terminal persistence needed to make refresh decisions without a second HTTP request.
 type CacheRegistrationRefreshEffects =
     {
-        Send: unit -> Result<CacheRegistrationResult, string>
+        Send: unit -> Result<CacheRegistrationResult, CachePostFailure>
         RequireOperatorRecovery: CacheMachineConfiguration -> Result<unit, string>
     }
 
@@ -960,6 +968,10 @@ module CacheRegistrationRefresh =
             Ok RegistrationRecoveryRequired
         else
             match effects.Send() with
+            | Error Rejected
+            | Error KeyUnavailable ->
+                effects.RequireOperatorRecovery configuration
+                |> Result.map (fun () -> RegistrationRecoveryRequired)
             | Error _ -> Ok RegistrationRetryableFailure
             | Ok result ->
                 match result.Status, result.Registration with
@@ -1066,13 +1078,6 @@ module CacheRetry =
 
         result |> Option.defaultValue (Error true)
 
-/// Distinguishes a retryable transport failure from a server rejection and a committed-or-unreadable result.
-type CachePostFailure =
-    | Retryable
-    | Rejected
-    | Ambiguous
-    | RefreshProofTimestampStale
-
 /// Classifies HTTP failures that are definite Grace contract rejections rather than post-dispatch unknown outcomes.
 module CacheHttpFailure =
 
@@ -1092,6 +1097,7 @@ module CacheRefreshHttpFailure =
 type CandidatePromotionProbeOutcome =
     | CandidatePromoted
     | CandidateProofDefinitivelyRejected
+    | CandidateKeyUnavailable
     | CandidatePromotionAmbiguous
 
 /// Classifies candidate-key refresh probes before an active-key candidate submission can be considered.
@@ -1112,6 +1118,7 @@ module CandidatePromotionProbe =
         | Ok result when confirmsPromotion candidatePublicKey result -> CandidatePromoted
         | Ok result when CacheKeyRotationLifecycle.isDefinitiveRegistrationRejection result.Status -> CandidateProofDefinitivelyRejected
         | Error Rejected -> CandidateProofDefinitivelyRejected
+        | Error KeyUnavailable -> CandidateKeyUnavailable
         | Ok _
         | Error _ -> CandidatePromotionAmbiguous
 
@@ -1786,10 +1793,10 @@ module CacheRuntimeControl =
 
         { unsignedRequest with Proof = proof }
 
-    /// Sends a refresh proof with a new observation timestamp and signature for every retry attempt.
+    /// Opens the requested identity key before producing a refresh proof so unusable local custody is never confused with a server rejection.
     let private refreshWithKey (configuration: CacheMachineConfiguration) keyReference health =
         match openKey keyReference with
-        | Error _ -> Error Rejected
+        | Error _ -> Error KeyUnavailable
         | Ok key ->
             use key = key
             postWithRetry (Uri(configuration.ServerUri)) "cache/refresh" String.Empty (fun () -> refreshRequest configuration key.Key health)
@@ -1895,10 +1902,7 @@ module CacheRuntimeControl =
 
         let effects: CacheRegistrationRefreshEffects =
             {
-                Send =
-                    fun () ->
-                        refreshWithKey configuration configuration.ActiveKeyName health
-                        |> Result.mapError (fun _ -> "Grace Cache registration refresh transport failed.")
+                Send = fun () -> refreshWithKey configuration configuration.ActiveKeyName health
                 RequireOperatorRecovery =
                     fun current ->
                         let expiryEffects: CacheRegistrationExpiryEffects =
@@ -2068,7 +2072,12 @@ module CacheRuntimeControl =
                 CacheKeyRotationLifecycle.requireOperatorRecovery effects configuration
                 |> Result.map (fun _ ->
                     OperatorRecoveryRequired "Grace Cache active identity is unavailable. Administrator revocation and re-enrollment are required.")
-            | _, Error _ -> Error "Grace Cache candidate identity is unavailable. Administrator revocation and re-enrollment are required."
+            | Ok activeKey, Error _ ->
+                use activeKey = activeKey
+
+                CacheKeyRotationLifecycle.requireOperatorRecovery effects configuration
+                |> Result.map (fun _ ->
+                    OperatorRecoveryRequired "Grace Cache candidate identity is unavailable. Administrator revocation and re-enrollment are required.")
             | Ok activeKey, Ok candidateKey ->
                 use activeKey = activeKey
                 use candidateKey = candidateKey
@@ -2102,6 +2111,10 @@ module CacheRuntimeControl =
                       |> CandidatePromotionProbe.classify pending.CandidatePublicKey
                     with
                 | CandidatePromoted -> acceptPromotedCandidate ()
+                | CandidateKeyUnavailable ->
+                    CacheKeyRotationLifecycle.requireOperatorRecovery effects configuration
+                    |> Result.map (fun _ ->
+                        OperatorRecoveryRequired "Grace Cache candidate identity is unavailable. Administrator revocation and re-enrollment are required.")
                 | CandidatePromotionAmbiguous ->
                     Error "Grace Cache identity candidate promotion outcome is unknown; the same candidate remains pending for retry."
                 | CandidateProofDefinitivelyRejected ->
@@ -2115,6 +2128,11 @@ module CacheRuntimeControl =
                               |> CandidatePromotionProbe.classify pending.CandidatePublicKey
                             with
                         | CandidatePromoted -> acceptPromotedCandidate ()
+                        | CandidateKeyUnavailable ->
+                            CacheKeyRotationLifecycle.requireOperatorRecovery effects configuration
+                            |> Result.map (fun _ ->
+                                OperatorRecoveryRequired
+                                    "Grace Cache candidate identity is unavailable. Administrator revocation and re-enrollment are required.")
                         | CandidateProofDefinitivelyRejected
                         | CandidatePromotionAmbiguous ->
                             Error "Grace Cache identity candidate could not be promoted; the same candidate remains pending for retry."

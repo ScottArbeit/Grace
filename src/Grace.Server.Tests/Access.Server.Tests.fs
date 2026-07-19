@@ -1571,9 +1571,36 @@ type EndpointAuthorizationTests() =
 
             let publicKey = CacheIdentityPublicKey.Create(ArtifactGrant.Base64Url.encode parameters.Q.X, ArtifactGrant.Base64Url.encode parameters.Q.Y)
 
-            let enrollmentRequest = { validCacheEnrollmentRequest () with PublicKey = publicKey }
+            let enrollmentRequest =
+                { validCacheEnrollmentRequest () with
+                    OwnerId = OwnerId.Parse(ownerId)
+                    OrganizationId = Some(OrganizationId.Parse(organizationId))
+                    RepositoryScopes =
+                        System.Collections.Generic.List<CacheRepositoryScope>(
+                            [
+                                CacheRepositoryScope.Create(OrganizationId.Parse(organizationId), RepositoryId.Parse(repositoryIds[0]))
+                            ]
+                        )
+                    PublicKey = publicKey
+                }
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(enrollmentRequest.OwnerId, Is.EqualTo(OwnerId.Parse(ownerId)))
+                    Assert.That(enrollmentRequest.OrganizationId, Is.EqualTo(Some(OrganizationId.Parse(organizationId))))
+
+                    Assert.That(
+                        enrollmentRequest.RepositoryScopes[0]
+                            .OrganizationId,
+                        Is.EqualTo(OrganizationId.Parse(organizationId))
+                    )
+
+                    Assert.That(enrollmentRequest.RepositoryScopes[0].RepositoryId, Is.EqualTo(RepositoryId.Parse(repositoryIds[0]))))
+            )
+
             let! enrollmentResponse = administratorClient.PostAsync("/cache/enroll", createJsonContent enrollmentRequest)
             let! enrollmentBody = enrollmentResponse.Content.ReadAsStringAsync()
+            Assert.That(enrollmentBody, Does.Not.Contain("ValidateIdsMiddleware"))
             Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), enrollmentBody)
 
             let enrollment = deserialize<GraceReturnValue<CacheRegistrationResult>> enrollmentBody
@@ -1608,6 +1635,7 @@ type EndpointAuthorizationTests() =
             use unauthenticatedClient = createUnauthenticatedClient ()
             let! refreshResponse = unauthenticatedClient.PostAsync("/cache/refresh", createJsonContent staleRefresh)
             let! refreshBody = refreshResponse.Content.ReadAsStringAsync()
+            Assert.That(refreshBody, Does.Not.Contain("ValidateIdsMiddleware"))
             Assert.That(refreshResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), refreshBody)
 
             let error = deserialize<GraceError> refreshBody

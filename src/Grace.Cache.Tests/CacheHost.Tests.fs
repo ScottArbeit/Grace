@@ -830,6 +830,8 @@ type CacheHostTests() =
         let terminalConfiguration = configuration CacheKeyRotationLifecycle.OperatorRecoveryRequired
         let revoked = CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Revoked, None, "revoked")
         let notFound = CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, None, "not found")
+        let rejected: Result<CacheRegistrationResult, CachePostFailure> = Error Rejected
+        let unavailable: Result<CacheRegistrationResult, CachePostFailure> = Error KeyUnavailable
 
         let isRecoveryRequired =
             function
@@ -859,8 +861,27 @@ type CacheHostTests() =
             Is.True
         )
 
+        Assert.That(
+            CacheRegistrationRefresh.run { effects revoked with Send = fun () -> rejected } (configuration Ready)
+            |> isRecoveryRequired,
+            Is.True
+        )
+
+        Assert.That(
+            CacheRegistrationRefresh.run { effects revoked with Send = fun () -> unavailable } (configuration Ready)
+            |> isRecoveryRequired,
+            Is.True
+        )
+
         Assert.That(sends, Is.EqualTo(2))
-        Assert.That(terminalWrites, Is.EqualTo(2))
+        Assert.That(terminalWrites, Is.EqualTo(4))
+
+        Assert.That(
+            CacheRegistrationRefresh.run
+                { Send = (fun () -> Error Rejected); RequireOperatorRecovery = (fun _ -> Error "terminal persistence failed") }
+                (configuration Ready),
+            Is.EqualTo(Error "terminal persistence failed": Result<CacheRegistrationRefreshOutcome, string>)
+        )
 
     /// Verifies transient refresh failure remains on the established retry path and does not persist terminal recovery.
     [<Test>]
@@ -884,7 +905,7 @@ type CacheHostTests() =
                 Send =
                     fun () ->
                         sends <- sends + 1
-                        Error "transient"
+                        Error Retryable
                 RequireOperatorRecovery =
                     fun _ ->
                         terminalWrites <- terminalWrites + 1
@@ -1304,10 +1325,12 @@ type CacheHostTests() =
         let ambiguous: Result<CacheRegistrationResult, CachePostFailure> = Error Retryable
         let definitive = Ok(CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.NotFound, None, "candidate proof rejected"))
         let definitiveHttp: Result<CacheRegistrationResult, CachePostFailure> = Error Rejected
+        let unavailable: Result<CacheRegistrationResult, CachePostFailure> = Error KeyUnavailable
 
         Assert.That(CandidatePromotionProbe.classify testPublicKey ambiguous, Is.EqualTo(CandidatePromotionAmbiguous))
         Assert.That(CandidatePromotionProbe.classify testPublicKey definitive, Is.EqualTo(CandidateProofDefinitivelyRejected))
         Assert.That(CandidatePromotionProbe.classify testPublicKey definitiveHttp, Is.EqualTo(CandidateProofDefinitivelyRejected))
+        Assert.That(CandidatePromotionProbe.classify testPublicKey unavailable, Is.EqualTo(CandidateKeyUnavailable))
 
         match configuration.RotationLifecycle with
         | CandidatePending pending ->
@@ -1367,6 +1390,68 @@ type CacheHostTests() =
         Assert.That(
             CacheKeyRotationLifecycle.requireOperatorRecovery failedEffects configuration,
             Is.EqualTo(Error "terminal persistence failed": Result<CacheMachineConfiguration, string>)
+        )
+
+    /// Verifies every unavailable candidate-key classification becomes durable terminal recovery before rotation can abort or retry.
+    [<TestCase("missing")>]
+    [<TestCase("corrupt")>]
+    [<TestCase("inaccessible")>]
+    member _.CandidateKeyUnavailabilityPersistsTerminalRecoveryAndFailsClosed(failureKind) =
+        let configuration: CacheMachineConfiguration =
+            {
+                CacheId = Guid.NewGuid()
+                Endpoint = "https://cache.example.test"
+                AllowHttpEndpoint = false
+                ServerUri = "https://server.example.test/grace/"
+                ActiveKeyName = "active"
+                ActivePublicKey = testPublicKey
+                RotationLifecycle =
+                    CandidatePending
+                        {
+                            ActiveKeyName = "active"
+                            ActivePublicKey = testPublicKey
+                            CandidateKeyName = $"candidate-{failureKind}"
+                            CandidatePublicKey = testPublicKey
+                        }
+            }
+
+        let writes = ResizeArray<CacheMachineConfiguration>()
+
+        let successfulEffects: CacheKeyRotationLifecycleEffects =
+            {
+                WriteConfiguration =
+                    fun terminal ->
+                        writes.Add terminal
+                        Ok()
+                DeleteKey =
+                    fun _ ->
+                        Assert.Fail("Candidate key unavailability must not delete either key before durable terminal recovery.")
+                        Ok()
+            }
+
+        match CacheKeyRotationLifecycle.requireOperatorRecovery successfulEffects configuration with
+        | Error error -> Assert.Fail(error)
+        | Ok terminal ->
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(writes, Has.Count.EqualTo(1))
+                    Assert.That(terminal.RotationLifecycle, Is.EqualTo(CacheKeyRotationLifecycle.OperatorRecoveryRequired))
+
+                    Assert.That(
+                        (CacheMachineConfiguration.toStatus terminal)
+                            .Lifecycle,
+                        Is.EqualTo("operator-recovery-required")
+                    )
+
+                    Assert.That(CacheKeyRotationLifecycle.requiresOperatorRecovery terminal, Is.True))
+            )
+
+        let failingEffects: CacheKeyRotationLifecycleEffects =
+            { WriteConfiguration = (fun _ -> Error $"{failureKind} terminal persistence failed"); DeleteKey = (fun _ -> Ok()) }
+
+        Assert.That(
+            CacheKeyRotationLifecycle.requireOperatorRecovery failingEffects configuration,
+            Is.EqualTo(Error $"{failureKind} terminal persistence failed": Result<CacheMachineConfiguration, string>)
         )
 
     /// Verifies simultaneous cache starts have exactly one operating-system guard winner and the loser can cause no later effects.
