@@ -10,6 +10,7 @@ open Grace.Types.Events
 open Grace.Types.ManifestContributionAccounting
 open Grace.Types.Reference
 open Grace.Types.RepositoryContentCounter
+open Grace.Types.Validation
 open Microsoft.Azure.Cosmos
 open NUnit.Framework
 open System
@@ -159,14 +160,21 @@ type ManifestContributionAccountingAspireTests() =
             Assert.That(envelope.MessageId, Is.EqualTo($"Reference/{referenceId}/Created"))
             Assert.That(envelope.Subject, Is.EqualTo("GraceEvent"))
 
-            match graceEvent with
-            | GraceEvent.ReferenceEvent referenceEvent ->
-                Assert.That(envelope.CorrelationId, Is.EqualTo(referenceEvent.Metadata.CorrelationId))
+            let persistedCreatedAt =
+                match graceEvent with
+                | GraceEvent.ReferenceEvent referenceEvent ->
+                    Assert.That(envelope.CorrelationId, Is.EqualTo(referenceEvent.Metadata.CorrelationId))
 
-                match referenceEvent.Event with
-                | ReferenceEventType.Created (_, _, _, _, _, _, _, _, referenceType, _, _) -> Assert.That(referenceType, Is.EqualTo(ReferenceType.Commit))
-                | _ -> Assert.Fail("Expected Reference Created.")
-            | _ -> Assert.Fail("Expected Reference event.")
+                    match referenceEvent.Event with
+                    | ReferenceEventType.Created (_, _, _, _, _, _, _, _, referenceType, _, _) ->
+                        Assert.That(referenceType, Is.EqualTo(ReferenceType.Commit))
+                        referenceEvent.Metadata.Timestamp
+                    | _ ->
+                        Assert.Fail("Expected Reference Created.")
+                        Constants.DefaultTimestamp
+                | _ ->
+                    Assert.Fail("Expected Reference event.")
+                    Constants.DefaultTimestamp
 
             do!
                 waitForExactRelationshipAsync
@@ -191,6 +199,33 @@ type ManifestContributionAccountingAspireTests() =
             Assert.That(retryResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), retryBody)
 
             do! Task.Delay(TimeSpan.FromMilliseconds(500.0))
+
+            let! recoveredBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            Assert.That(recoveredBranch.LatestCommit.ReferenceId, Is.EqualTo(referenceId))
+            Assert.That(recoveredBranch.LatestReference.ReferenceId, Is.EqualTo(referenceId))
+
+            let! validationResultEventStreams =
+                ManifestContributionAccountingAspireTestHelpers.readActorEventStreamsAsync<ValidationResultEvent> state "ValidationResult"
+
+            let expectedValidationResultId = Grace.Server.DerivedComputation.buildQuickScanValidationResultId (Guid.Parse repositoryId) referenceId
+
+            let matchingValidationResultEvents =
+                validationResultEventStreams
+                |> Seq.collect id
+                |> Seq.filter (fun validationResultEvent ->
+                    match validationResultEvent.Event with
+                    | ValidationResultEventType.Recorded validationResult -> validationResult.ValidationResultId = expectedValidationResultId)
+                |> Seq.toArray
+
+            Assert.That(matchingValidationResultEvents.Length, Is.EqualTo(1), "Duplicate Commit delivery must retain one durable quick-scan result.")
+
+            let validationResult =
+                matchingValidationResultEvents
+                |> Seq.fold (fun current validationResultEvent -> ValidationResultDto.UpdateDto validationResultEvent current) ValidationResultDto.Default
+
+            Assert.That(validationResult.CreatedAt, Is.EqualTo(persistedCreatedAt))
+            Assert.That(validationResult.ValidationName, Is.EqualTo("quick-scan"))
+            Assert.That(validationResult.ValidationVersion, Is.EqualTo("1.0"))
 
             let! counterEventStreams =
                 ManifestContributionAccountingAspireTestHelpers.readActorEventStreamsAsync<RepositoryContentCounterEvent> state "RepoContentCounter"

@@ -342,3 +342,14 @@ type ReferenceActorHashValidationTests() =
         match body with
         | GraceEvent.ReferenceEvent bodyEvent -> Assert.That(bodyEvent.Event, Is.EqualTo(referenceEvent.Event))
         | _ -> Assert.Fail("Expected a ReferenceEvent GraceEvent body.")
+
+    /// Verifies strict Created publication remains staged to the Commit tracer until producer identity migration completes.
+    [<Test>]
+    member _.StrictCreatedPublicationIsCommitOnly() =
+        Assert.That(requiresStrictCreatedPublication ReferenceType.Commit, Is.True)
+        Assert.That(requiresStrictCreatedPublication ReferenceType.Save, Is.False)
+        Assert.That(requiresStrictCreatedPublication ReferenceType.Checkpoint, Is.False)
+        Assert.That(requiresStrictCreatedPublication ReferenceType.Promotion, Is.False)
+        Assert.That(requiresStrictCreatedPublication ReferenceType.Rebase, Is.False)
+        Assert.That(requiresStrictCreatedPublication ReferenceType.Tag, Is.False)
+        Assert.That(requiresStrictCreatedPublication ReferenceType.External, Is.False)

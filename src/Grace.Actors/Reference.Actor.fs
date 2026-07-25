@@ -37,6 +37,17 @@ module Reference =
             do! publish ()
         }
 
+    /// Reports whether this tracer requires broker acceptance and deterministic replay for a Created Reference.
+    let internal requiresStrictCreatedPublication referenceType =
+        match referenceType with
+        | ReferenceType.Commit -> true
+        | ReferenceType.Save
+        | ReferenceType.Checkpoint
+        | ReferenceType.Promotion
+        | ReferenceType.Rebase
+        | ReferenceType.Tag
+        | ReferenceType.External -> false
+
     /// Wraps manifest save contribution plan records exchanged by actor queries or projections.
     type ManifestSaveContributionPlan =
         {
@@ -604,7 +615,7 @@ module Reference =
                         :> Task
 
                     match referenceEvent.Event with
-                    | ReferenceEventType.Created _ ->
+                    | ReferenceEventType.Created (_, _, _, _, _, _, _, _, referenceType, _, _) when requiresStrictCreatedPublication referenceType ->
                         do! persistReferenceCreatedThenPublish persistEvent (fun () -> publishReferenceCreatedGraceEventStrict referenceEvent)
                     | _ ->
                         do! persistEvent ()
@@ -813,7 +824,12 @@ module Reference =
 
                     task {
                         match command with
-                        | Create _ when createCommandMatchesReference referenceDto command -> return! republishSavedCreatedEvent ()
+                        | Create _ when
+                            createCommandMatchesReference referenceDto command
+                            && requiresStrictCreatedPublication referenceDto.ReferenceType
+                            ->
+                            return! republishSavedCreatedEvent ()
+                        | Create _ when createCommandMatchesReference referenceDto command -> return Ok(existingReferenceReturnValue ())
                         | _ ->
                             let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
                                 task {

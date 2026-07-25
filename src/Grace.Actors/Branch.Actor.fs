@@ -77,6 +77,49 @@ module Branch =
     /// Emits a Branch Committed transition only when the caller-owned Reference does not already exist.
     let internal shouldApplyCommitEvent disposition = disposition = NewCommit
 
+    /// Reports whether a Branch event owns durable state and publication rather than only updating the in-memory projection.
+    let internal shouldPersistAndPublishBranchEvent branchEventType =
+        match branchEventType with
+        | Assigned _
+        | Promoted _
+        | Committed _
+        | Checkpointed _
+        | Saved _
+        | Tagged _
+        | ExternalCreated _
+        | Rebased _ -> false
+        | _ -> true
+
+    /// Reconciles a successfully republished durable Commit into missing or older Branch projection slots.
+    let internal reconcileCommitProjection (branchDto: BranchDto) (commitReference: ReferenceDto) =
+        if commitReference.ReferenceType
+           <> ReferenceType.Commit then
+            invalidArg (nameof commitReference) "Commit projection recovery requires a Commit Reference."
+
+        let shouldAdvance (currentReference: ReferenceDto) =
+            if currentReference.ReferenceId = ReferenceId.Empty then
+                true
+            else
+                match currentReference.UpdatedAt, commitReference.UpdatedAt with
+                | None, Some _ -> true
+                | Some currentTimestamp, Some commitTimestamp -> commitTimestamp > currentTimestamp
+                | _ -> false
+
+        let advanceLatestCommit = shouldAdvance branchDto.LatestCommit
+        let advanceLatestReference = shouldAdvance branchDto.LatestReference
+        let projectionChanged = advanceLatestCommit || advanceLatestReference
+
+        let recovered =
+            { branchDto with
+                LatestCommit = if advanceLatestCommit then commitReference else branchDto.LatestCommit
+                LatestReference = if advanceLatestReference then commitReference else branchDto.LatestReference
+                ShouldRecomputeLatestReferences =
+                    branchDto.ShouldRecomputeLatestReferences
+                    || projectionChanged
+            }
+
+        recovered, projectionChanged
+
     /// Builds the public Branch command result without mutating the aggregate a second time for exact Commit retries.
     let private createBranchCommandReturnValue (branchDto: BranchDto) (branchEvent: BranchEvent) =
         let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
@@ -221,8 +264,8 @@ module Branch =
                     branchDto <- branchDto |> BranchDto.UpdateDto branchEvent
                     branchEvent.Metadata.Properties[ nameof RepositoryId ] <- $"{branchDto.RepositoryId}"
 
+                    // Reference creation events update only this activation's projection; the Reference actor owns their durable event and publication.
                     match branchEvent.Event with
-                    // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
                     | Assigned (referenceDto, _, _, _, _)
                     | Promoted (referenceDto, _, _, _, _)
                     | Committed (referenceDto, _, _, _, _)
@@ -231,13 +274,12 @@ module Branch =
                     | Tagged (referenceDto, _, _, _, _)
                     | ExternalCreated (referenceDto, _, _, _, _) -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceDto.ReferenceId}"
                     | Rebased referenceId -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
-                    // Save the rest of the events.
-                    | _ ->
-                        // For all other events, add the event to the branchEvents list, and save it to actor state.
+                    | _ -> ()
+
+                    if shouldPersistAndPublishBranchEvent branchEvent.Event then
                         state.State.Add branchEvent
                         do! state.WriteStateAsync()
 
-                        // Publish the event to the rest of the world.
                         let graceEvent = GraceEvent.BranchEvent branchEvent
                         do! publishGraceEvent graceEvent branchEvent.Metadata
 
@@ -829,6 +871,10 @@ module Branch =
                                 }
 
                             match event, commitDisposition with
+                            | Ok (Committed (referenceDto, _, _, _, _) as event), Some MatchingRetry ->
+                                let recoveredBranchDto, _ = reconcileCommitProjection branchDto referenceDto
+                                branchDto <- recoveredBranchDto
+                                return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, Some disposition when not (shouldApplyCommitEvent disposition) ->
                                 return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, _ -> return! this.ApplyEvent { Event = event; Metadata = metadata }

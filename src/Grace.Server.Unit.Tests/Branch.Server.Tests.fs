@@ -6,6 +6,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.Reference
+open NodaTime
 open NUnit.Framework
 open System
 
@@ -92,11 +93,13 @@ type BranchActorCommitRetryTests() =
     let sha256Hash = Sha256Hash "commit-sha256"
     let blake3Hash = Blake3Hash "commit-blake3"
     let referenceText = ReferenceText "idempotent commit"
+    let earlier = Instant.FromUtc(2026, 7, 24, 12, 0)
+    let later = Instant.FromUtc(2026, 7, 24, 12, 1)
 
     /// Builds the durable Commit Reference produced before an HTTP outcome becomes unknown.
-    let persistedCommit () =
+    let persistedCommitAt referenceIdentity timestamp =
         { ReferenceDto.Default with
-            ReferenceId = referenceId
+            ReferenceId = referenceIdentity
             OwnerId = ownerId
             OrganizationId = organizationId
             RepositoryId = repositoryId
@@ -106,41 +109,76 @@ type BranchActorCommitRetryTests() =
             Blake3Hash = blake3Hash
             ReferenceType = ReferenceType.Commit
             ReferenceText = referenceText
-            UpdatedAt = Some(Grace.Shared.Utilities.getCurrentInstant ())
+            UpdatedAt = Some timestamp
         }
+
+    /// Builds the durable Commit Reference produced before an HTTP outcome becomes unknown.
+    let persistedCommit () = persistedCommitAt referenceId earlier
+
+    /// Builds a Branch projection with explicit latest Reference slots.
+    let branchProjection latestReference latestCommit =
+        { BranchDto.Default with LatestReference = latestReference; LatestCommit = latestCommit; ShouldRecomputeLatestReferences = false }
 
     /// Builds the Branch Commit command that owns the stable Reference identity.
     let commitCommand (text: string) = BranchCommand.Commit(referenceId, directoryVersionId, sha256Hash, blake3Hash, ReferenceText text)
 
-    /// Verifies an exact retry with the original correlation bypasses duplicate-correlation rejection and emits no second transition.
+    /// Verifies an exact retry with the original correlation repairs an absent projection without a durable Branch transition.
     [<Test>]
-    member _.SameCorrelationRetryAfterUnknownOutcomeReusesCommitWithoutSecondEvent() =
-        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some(persistedCommit ()))
+    member _.SameCorrelationRetryAfterUnknownOutcomeRecoversProjectionOnly() =
+        let durableCommit = persistedCommit ()
+        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some durableCommit)
+        let recovered, changed = reconcileCommitProjection (branchProjection ReferenceDto.Default ReferenceDto.Default) durableCommit
 
         Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.MatchingRetry))
         Assert.That(shouldRejectDuplicateCorrelation true disposition, Is.False)
         Assert.That(shouldApplyCommitEvent disposition, Is.False)
+        Assert.That(changed, Is.True)
+        Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
+        Assert.That(recovered.LatestReference, Is.EqualTo(durableCommit))
+        Assert.That(recovered.ShouldRecomputeLatestReferences, Is.True)
+        Assert.That(shouldPersistAndPublishBranchEvent (Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)), Is.False)
 
-        let committedEventCount =
-            1
-            + (if shouldApplyCommitEvent disposition then 1 else 0)
-
-        Assert.That(committedEventCount, Is.EqualTo(1), "The retry must not append a second Committed event.")
-
-    /// Verifies an exact retry with a fresh correlation republishes the Reference but emits no second Branch transition.
+    /// Verifies a fresh-correlation retry against a completed projection is a projection no-op.
     [<Test>]
-    member _.FreshCorrelationRetryAfterUnknownOutcomeReusesCommitWithoutSecondEvent() =
-        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some(persistedCommit ()))
+    member _.FreshCorrelationRetryAfterCompletedCommitIsProjectionNoOp() =
+        let durableCommit = persistedCommit ()
+        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some durableCommit)
+        let current = branchProjection durableCommit durableCommit
+        let recovered, changed = reconcileCommitProjection current durableCommit
 
         Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.MatchingRetry))
         Assert.That(shouldRejectDuplicateCorrelation false disposition, Is.False)
         Assert.That(shouldApplyCommitEvent disposition, Is.False)
+        Assert.That(changed, Is.False)
+        Assert.That(recovered, Is.EqualTo(current))
 
-        let committedEventCount =
-            1
-            + (if shouldApplyCommitEvent disposition then 1 else 0)
+    /// Verifies a fresh-correlation retry advances stale projection slots from the newer durable Commit.
+    [<Test>]
+    member _.FreshCorrelationRetryRecoversStaleProjection() =
+        let durableCommit = persistedCommitAt referenceId later
+        let staleCommit = persistedCommitAt (Guid.Parse("77777777-7291-4000-8000-777777777777")) earlier
+        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some durableCommit)
+        let recovered, changed = reconcileCommitProjection (branchProjection staleCommit staleCommit) durableCommit
 
-        Assert.That(committedEventCount, Is.EqualTo(1), "The retry must not append a second Committed event.")
+        Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.MatchingRetry))
+        Assert.That(shouldRejectDuplicateCorrelation false disposition, Is.False)
+        Assert.That(changed, Is.True)
+        Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
+        Assert.That(recovered.LatestReference, Is.EqualTo(durableCommit))
+        Assert.That(recovered.ShouldRecomputeLatestReferences, Is.True)
+
+    /// Verifies a late retry cannot replace newer latest Commit or Reference projections.
+    [<Test>]
+    member _.LateOlderRetryPreservesNewerProjection() =
+        let olderCommit = persistedCommit ()
+        let newerCommit = persistedCommitAt (Guid.Parse("77777777-7291-4000-8000-777777777777")) later
+        let current = branchProjection newerCommit newerCommit
+        let recovered, changed = reconcileCommitProjection current olderCommit
+
+        Assert.That(changed, Is.False)
+        Assert.That(recovered.LatestCommit, Is.EqualTo(newerCommit))
+        Assert.That(recovered.LatestReference, Is.EqualTo(newerCommit))
+        Assert.That(recovered.ShouldRecomputeLatestReferences, Is.False)
 
     /// Verifies stable Reference reuse with different Commit data remains rejected.
     [<Test>]
