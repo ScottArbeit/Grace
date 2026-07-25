@@ -543,6 +543,24 @@ worktree and branch, current git status, prior objective, owned and forbidden pa
 review findings or review-ledger notes already recorded. The main orchestrator may inspect enough metadata to route the
 work safely, but it must not take over code implementation or code-fix validation itself.
 
+### Execution Budget
+
+Add this table to the issue and keep it current in PR `Review Status`:
+
+| Resource              | Limit | Used | Next gate               |
+| --------------------- | ----- | ---- | ----------------------- |
+| Subagent starts       | 4     | 0    | Owner approval before 5 |
+| Aspire starts         | 3     | 0    | Owner approval before 4 |
+| Codex review sessions | 3     | 0    | Timeline audit before 4 |
+
+Every created agent task counts, including owner-requested and failed tasks that began a turn; replacement work does
+not reset usage. Before a start, record: `N/limit - trigger; current-head evidence; issue criterion; why the active
+worker cannot continue; result if this attempt fails`.
+
+Keep local RED/GREEN, build, test, and Aspire diagnosis with the active worker. Fresh fix workers are for post-push
+current-head CI or Codex findings, or a lost worker. Never run parallel analyses of one head or stop decision. At a
+limit or stop condition, freeze, preserve state, update GitHub, and ask the owner.
+
 Every worker prompt should include a status-reporting protocol so the orchestrator does not have to infer whether the
 worker is active, blocked, validating, or ready for review. For Grace work, ask the worker to create or update a temp
 status file outside the repository, such as `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with these fields:
