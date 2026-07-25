@@ -146,6 +146,28 @@ type ManifestContributionAccountingTypesTests() =
         assertRoundTrip lower
         assertRoundTrip shiftedDelimiter
 
+    /// Verifies valid Unicode text round trips while distinct ill-formed UTF-16 inputs are rejected before encoding.
+    [<Test>]
+    member _.UnicodeComponentsRoundTripAndIllFormedUtf16CannotCollide() =
+        let relationship (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+            ExactRelationship.DirectoryVersionManifest
+                { RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress; DirectoryVersionId = rootDirectoryVersionId }
+
+        let supplementaryCharacter = Char.ConvertFromUtf32(0x1F680)
+        let validUnicode = relationship $"pool-{supplementaryCharacter}" $"manifest-{supplementaryCharacter}"
+        let firstUnpairedSurrogate = String(char 0xD800, 1)
+        let secondUnpairedSurrogate = String(char 0xD801, 1)
+
+        assertRoundTrip validUnicode
+
+        [|
+            relationship firstUnpairedSurrogate "manifest-address"
+            relationship secondUnpairedSurrogate "manifest-address"
+            relationship "pool" firstUnpairedSurrogate
+            relationship "pool" secondUnpairedSurrogate
+        |]
+        |> Array.iter (ExactRelationshipKey.create >> assertError)
+
     /// Verifies malformed or non-canonical key strings cannot masquerade as exact relationships.
     [<Test>]
     member _.MalformedAndNonCanonicalKeysAreRejected() =
@@ -162,6 +184,10 @@ type ManifestContributionAccountingTypesTests() =
                 PartitionKey = $"manifest:{repositoryId:N}:not+base64:{Convert.ToBase64String([| 0uy |])}"
                 ItemId = $"directory-version-manifest:{rootDirectoryVersionId:N}"
             }
+        |> assertError
+
+        ExactRelationshipKey.tryParse
+            { PartitionKey = $"manifest:{repositoryId:N}:_w:cG9vbA"; ItemId = $"directory-version-manifest:{rootDirectoryVersionId:N}" }
         |> assertError
 
     /// Verifies that empty identity components are rejected before a storage key can exist.
@@ -209,3 +235,17 @@ type ManifestContributionAccountingTypesTests() =
 
         Assert.That(ExactRelationshipReadBound.value minimum, Is.EqualTo(1))
         Assert.That(ExactRelationshipReadBound.value maximum, Is.EqualTo(ExactRelationshipReadBound.Maximum))
+
+    /// Verifies a language-default value is observably absent and cannot unwrap as an accidental zero bound.
+    [<Test>]
+    member _.DefaultEnumerationBoundCannotMasqueradeAsZero() =
+        let defaultBound = Unchecked.defaultof<ExactRelationshipReadBound>
+
+        Assert.That(box defaultBound, Is.Null)
+
+        Assert.Throws<ArgumentException>(
+            Action (fun () ->
+                ExactRelationshipReadBound.value defaultBound
+                |> ignore)
+        )
+        |> ignore

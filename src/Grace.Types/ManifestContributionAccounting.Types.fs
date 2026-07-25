@@ -59,13 +59,20 @@ module ManifestContributionAccounting =
         [<Literal>]
         let private DirectoryVersionManifestItemPrefix = "directory-version-manifest"
 
-        /// Encodes one variable-length component so delimiters remain data rather than key structure.
-        let private encodeComponent (value: string) =
-            Convert
-                .ToBase64String(Encoding.UTF8.GetBytes value)
-                .TrimEnd('=')
-                .Replace('+', '-')
-                .Replace('/', '_')
+        /// Rejects malformed UTF-16 instead of replacing distinct identity text with the same UTF-8 bytes.
+        let private strictUtf8 = UTF8Encoding(false, true)
+
+        /// Encodes one well-formed variable-length component so delimiters remain data rather than key structure.
+        let private tryEncodeComponent (value: string) =
+            try
+                Convert
+                    .ToBase64String(strictUtf8.GetBytes value)
+                    .TrimEnd('=')
+                    .Replace('+', '-')
+                    .Replace('/', '_')
+                |> Some
+            with
+            | :? EncoderFallbackException -> None
 
         /// Decodes one canonical variable-length key component.
         let private tryDecodeComponent (value: string) =
@@ -82,10 +89,11 @@ module ManifestContributionAccounting =
                 if String.IsNullOrEmpty padded then
                     None
                 else
-                    Encoding.UTF8.GetString(Convert.FromBase64String padded)
+                    strictUtf8.GetString(Convert.FromBase64String padded)
                     |> Some
             with
-            | :? FormatException -> None
+            | :? FormatException
+            | :? DecoderFallbackException -> None
 
         /// Parses a non-empty canonical GUID component.
         let private tryParseGuid value =
@@ -121,7 +129,10 @@ module ManifestContributionAccounting =
                 elif String.IsNullOrWhiteSpace manifestAddress then
                     Error "Manifest partition ManifestAddress must not be empty."
                 else
-                    Ok $"{ManifestPartitionPrefix}:{repositoryId:N}:{encodeComponent storagePoolId}:{encodeComponent manifestAddress}"
+                    match tryEncodeComponent storagePoolId, tryEncodeComponent manifestAddress with
+                    | Some encodedStoragePoolId, Some encodedManifestAddress ->
+                        Ok $"{ManifestPartitionPrefix}:{repositoryId:N}:{encodedStoragePoolId}:{encodedManifestAddress}"
+                    | _ -> Error "Manifest partition StoragePoolId and ManifestAddress must contain well-formed UTF-16."
 
         /// Validates an exact relationship before deriving a persistent key.
         let private validate relationship =
@@ -230,7 +241,6 @@ module ManifestContributionAccounting =
                     | _ -> invalid ()
 
     /// Carries an explicit finite maximum for one exact-relationship enumeration.
-    [<Struct>]
     type ExactRelationshipReadBound = private ExactRelationshipReadBound of int
 
     /// Validates and unwraps exact-relationship enumeration bounds.
@@ -249,8 +259,13 @@ module ManifestContributionAccounting =
             else
                 Ok(ExactRelationshipReadBound maximumCount)
 
-        /// Returns the validated maximum relationship count.
-        let value (ExactRelationshipReadBound maximumCount) = maximumCount
+        /// Returns the validated maximum relationship count and rejects a language-default null value.
+        let value bound =
+            if isNull (box bound) then
+                invalidArg (nameof bound) "Exact relationship maximum count must be created explicitly."
+            else
+                let (ExactRelationshipReadBound maximumCount) = bound
+                maximumCount
 
     /// Reports whether an idempotent exact-relationship write changed current membership.
     type ExactRelationshipWriteOutcome =
