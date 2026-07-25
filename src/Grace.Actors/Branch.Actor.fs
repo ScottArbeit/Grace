@@ -37,6 +37,66 @@ open System.Threading
 /// Groups Orleans actor helpers for branch keys, proxies, state, or workflow transitions.
 module Branch =
 
+    /// Classifies whether a caller-owned Commit identity is new, an exact retry, or conflicting reuse.
+    type internal CommitReferenceDisposition =
+        | NewCommit
+        | MatchingRetry
+        | ConflictingReference
+
+    /// Compares a Branch Commit command with the durable Reference stored under its caller-owned identity.
+    let internal classifyCommitReference ownerId organizationId repositoryId branchId command existingReference =
+        match command, existingReference with
+        | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText), Some referenceDto ->
+            let referenceCommand =
+                ReferenceCommand.Create(
+                    referenceId,
+                    ownerId,
+                    organizationId,
+                    repositoryId,
+                    branchId,
+                    directoryVersionId,
+                    sha256Hash,
+                    blake3Hash,
+                    ReferenceType.Commit,
+                    referenceText,
+                    List.empty
+                )
+
+            if Reference.createCommandMatchesReference referenceDto referenceCommand then
+                MatchingRetry
+            else
+                ConflictingReference
+        | BranchCommand.Commit _, None -> NewCommit
+        | _ -> invalidArg (nameof command) "Commit reference classification requires a Branch Commit command."
+
+    /// Preserves duplicate-correlation rejection except when a durable exact Commit retry proves idempotency.
+    let internal shouldRejectDuplicateCorrelation hasDuplicateCorrelation disposition =
+        hasDuplicateCorrelation
+        && disposition <> MatchingRetry
+
+    /// Emits a Branch Committed transition only when the caller-owned Reference does not already exist.
+    let internal shouldApplyCommitEvent disposition = disposition = NewCommit
+
+    /// Builds the public Branch command result without mutating the aggregate a second time for exact Commit retries.
+    let private createBranchCommandReturnValue (branchDto: BranchDto) (branchEvent: BranchEvent) =
+        let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
+
+        returnValue
+            .enhance(nameof RepositoryId, branchDto.RepositoryId)
+            .enhance(nameof BranchId, branchDto.BranchId)
+            .enhance(nameof BranchName, branchDto.BranchName)
+            .enhance(nameof ParentBranchId, branchDto.ParentBranchId)
+            .enhance (nameof BranchEventType, getDiscriminatedUnionFullName branchEvent.Event)
+        |> ignore
+
+        if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
+            returnValue.Properties.Add(nameof ReferenceId, Guid.Parse(branchEvent.Metadata.Properties[nameof ReferenceId]))
+
+        if branchEvent.Metadata.Properties.ContainsKey("ChildBranchResults") then
+            returnValue.Properties.Add("ChildBranchResults", branchEvent.Metadata.Properties["ChildBranchResults"])
+
+        returnValue
+
     /// Implements the Orleans grain for branch actor.
     type BranchActor([<PersistentState(StateName.Branch, Constants.GraceActorStorage)>] state: IPersistentState<List<BranchEvent>>) =
         inherit Grain()
@@ -181,25 +241,7 @@ module Branch =
                         let graceEvent = GraceEvent.BranchEvent branchEvent
                         do! publishGraceEvent graceEvent branchEvent.Metadata
 
-                    let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
-
-                    returnValue
-                        .enhance(nameof RepositoryId, branchDto.RepositoryId)
-                        .enhance(nameof BranchId, branchDto.BranchId)
-                        .enhance(nameof BranchName, branchDto.BranchName)
-                        .enhance(nameof ParentBranchId, branchDto.ParentBranchId)
-                        .enhance (nameof BranchEventType, getDiscriminatedUnionFullName branchEvent.Event)
-                    |> ignore
-
-                    // If the event has a referenceId, add it to the return properties.
-                    if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
-                        returnValue.Properties.Add(nameof ReferenceId, Guid.Parse(branchEvent.Metadata.Properties[nameof ReferenceId]))
-
-                    // If there are child branch results, add them to the return properties.
-                    if branchEvent.Metadata.Properties.ContainsKey("ChildBranchResults") then
-                        returnValue.Properties.Add("ChildBranchResults", branchEvent.Metadata.Properties["ChildBranchResults"])
-
-                    return Ok returnValue
+                    return Ok(createBranchCommandReturnValue branchDto branchEvent)
                 with
                 | ex ->
                     let graceError = GraceError.CreateWithException ex (getErrorMessage BranchError.FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
@@ -301,10 +343,18 @@ module Branch =
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 /// Checks whether command validation succeeded before emitting the domain event.
-                let isValid (command: BranchCommand) (metadata: EventMetadata) =
+                let isValid (command: BranchCommand) (metadata: EventMetadata) commitDisposition =
                     task {
-                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
-                           && (state.State.Count > 3) then
+                        let hasDuplicateCorrelation =
+                            state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
+                            && (state.State.Count > 3)
+
+                        let rejectDuplicateCorrelation =
+                            match commitDisposition with
+                            | Some disposition -> shouldRejectDuplicateCorrelation hasDuplicateCorrelation disposition
+                            | None -> hasDuplicateCorrelation
+
+                        if rejectDuplicateCorrelation then
                             return Error(GraceError.Create (getErrorMessage BranchError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
@@ -372,8 +422,44 @@ module Branch =
 
                 let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
 
+                /// Reads the durable Reference before dispatch so Commit retries can avoid a second Branch transition.
+                let getCommitReferenceDisposition command =
+                    task {
+                        match command, branchDto.UpdatedAt with
+                        | BranchCommand.Commit _, None -> return None
+                        | BranchCommand.Commit (referenceId, _, _, _, _), Some _ ->
+                            let referenceActor = Reference.CreateActorProxy referenceId branchDto.RepositoryId metadata.CorrelationId
+                            let! exists = referenceActor.Exists metadata.CorrelationId
+
+                            if exists then
+                                let! referenceDto = referenceActor.Get metadata.CorrelationId
+
+                                return
+                                    Some(
+                                        classifyCommitReference
+                                            branchDto.OwnerId
+                                            branchDto.OrganizationId
+                                            branchDto.RepositoryId
+                                            branchDto.BranchId
+                                            command
+                                            (Some referenceDto)
+                                    )
+                            else
+                                return
+                                    Some(
+                                        classifyCommitReference
+                                            branchDto.OwnerId
+                                            branchDto.OrganizationId
+                                            branchDto.RepositoryId
+                                            branchDto.BranchId
+                                            command
+                                            None
+                                    )
+                        | _ -> return None
+                    }
+
                 /// Runs Branch command decisions, applies emitted events, and persists the result.
-                let processCommand (command: BranchCommand) (metadata: EventMetadata) =
+                let processCommand (command: BranchCommand) (metadata: EventMetadata) commitDisposition =
                     task {
                         try
                             //logToConsole
@@ -742,9 +828,11 @@ module Branch =
                                     | Undelete -> return Ok Undeleted
                                 }
 
-                            match event with
-                            | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
-                            | Error error -> return Error error
+                            match event, commitDisposition with
+                            | Ok event, Some disposition when not (shouldApplyCommitEvent disposition) ->
+                                return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                            | Ok event, _ -> return! this.ApplyEvent { Event = event; Metadata = metadata }
+                            | Error error, _ -> return Error error
                         with
                         | ex ->
                             log.LogError(
@@ -761,8 +849,10 @@ module Branch =
                     currentCommand <- getDiscriminatedUnionCaseName command
                     this.correlationId <- metadata.CorrelationId
 
-                    match! isValid command metadata with
-                    | Ok command -> return! processCommand command metadata
+                    let! commitDisposition = getCommitReferenceDisposition command
+
+                    match! isValid command metadata commitDisposition with
+                    | Ok command -> return! processCommand command metadata commitDisposition
                     | Error error -> return Error error
                 }
 
