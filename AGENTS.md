@@ -138,6 +138,12 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   and required validation. The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status,
   docs/process updates, Codex Code Review Bot monitoring, and final integration evidence. Follow the required bot-review
   loop in `docs/Development process.md`.
+- Apply the `dev-process` issue-level execution budget before every subagent or Aspire start. Grace defaults are four
+  subagent starts and three Aspire starts, cumulative across branches, PRs, replacements, compactions, and model
+  changes. Record usage in the issue and PR `Review Status`.
+- The active worker owns local implementation and validation failures. Do not fan out one issue/head. At the limit or
+  any stop condition, preserve state, update GitHub, and return to the owner; no further worker, runtime start, or
+  replacement is authorized without an explicit new numbered limit.
 - When assigning a worker subagent, include an explicit status protocol in the prompt. For Grace work, ask the worker to
   create or update a temp status file outside the repo, for example
   `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with `phase`, `lastUpdate`, `changedFiles`, `validation`,
