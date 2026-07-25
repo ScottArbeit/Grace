@@ -57,6 +57,51 @@ type ManifestContributionAccountingTypesTests() =
 
         relationships |> Array.iter assertRoundTrip
 
+    /// Verifies bounded enumeration and relationship writes use the same canonical partition identity.
+    [<Test>]
+    member _.EnumerationPartitionsMatchRelationshipStorageKeys() =
+        let relationships =
+            [|
+                ExactRelationship.ReferenceRoot { RepositoryId = repositoryId; RootDirectoryVersionId = rootDirectoryVersionId; ReferenceId = referenceId }
+                ExactRelationship.ParentChild
+                    { RepositoryId = repositoryId; ParentDirectoryVersionId = parentDirectoryVersionId; ChildDirectoryVersionId = childDirectoryVersionId }
+                ExactRelationship.DirectoryVersionManifest
+                    {
+                        RepositoryId = repositoryId
+                        StoragePoolId = "pool|primary:/A"
+                        ManifestAddress = "manifest:blake3/a|b?c"
+                        DirectoryVersionId = rootDirectoryVersionId
+                    }
+            |]
+
+        relationships
+        |> Array.iter (fun relationship ->
+            let relationshipKey =
+                ExactRelationshipKey.create relationship
+                |> expectOk
+
+            let enumerationPartitionKey =
+                relationship
+                |> ExactRelationshipKey.partition
+                |> ExactRelationshipKey.createPartitionKey
+                |> expectOk
+
+            Assert.That(enumerationPartitionKey, Is.EqualTo(relationshipKey.PartitionKey)))
+
+    /// Verifies invalid partition dimensions cannot produce an enumeration key.
+    [<Test>]
+    member _.EnumerationPartitionKeysRejectEmptyComponents() =
+        [|
+            ExactRelationshipPartition.IncomingDirectoryVersion(Guid.Empty, rootDirectoryVersionId)
+            ExactRelationshipPartition.IncomingDirectoryVersion(repositoryId, Guid.Empty)
+            ExactRelationshipPartition.Manifest(repositoryId, String.Empty, "manifest-address")
+            ExactRelationshipPartition.Manifest(repositoryId, "pool", " ")
+        |]
+        |> Array.iter (
+            ExactRelationshipKey.createPartitionKey
+            >> assertError
+        )
+
     /// Verifies that relationship kinds and tuple positions cannot collapse to the same key.
     [<Test>]
     member _.RelationshipKindsAndTuplePositionsCannotCollide() =

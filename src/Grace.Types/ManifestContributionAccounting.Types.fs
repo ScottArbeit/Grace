@@ -103,6 +103,26 @@ module ManifestContributionAccounting =
             | ExactRelationship.DirectoryVersionManifest relationship ->
                 ExactRelationshipPartition.Manifest(relationship.RepositoryId, relationship.StoragePoolId, relationship.ManifestAddress)
 
+        /// Creates the canonical storage partition key shared by relationship writes and bounded enumeration.
+        let createPartitionKey partition =
+            match partition with
+            | ExactRelationshipPartition.IncomingDirectoryVersion (repositoryId, targetDirectoryVersionId) ->
+                if repositoryId = Guid.Empty then
+                    Error "Incoming DirectoryVersion partition RepositoryId must not be empty."
+                elif targetDirectoryVersionId = Guid.Empty then
+                    Error "Incoming DirectoryVersion partition target DirectoryVersionId must not be empty."
+                else
+                    Ok $"{IncomingPartitionPrefix}:{repositoryId:N}:{targetDirectoryVersionId:N}"
+            | ExactRelationshipPartition.Manifest (repositoryId, storagePoolId, manifestAddress) ->
+                if repositoryId = Guid.Empty then
+                    Error "Manifest partition RepositoryId must not be empty."
+                elif String.IsNullOrWhiteSpace storagePoolId then
+                    Error "Manifest partition StoragePoolId must not be empty."
+                elif String.IsNullOrWhiteSpace manifestAddress then
+                    Error "Manifest partition ManifestAddress must not be empty."
+                else
+                    Ok $"{ManifestPartitionPrefix}:{repositoryId:N}:{encodeComponent storagePoolId}:{encodeComponent manifestAddress}"
+
         /// Validates an exact relationship before deriving a persistent key.
         let private validate relationship =
             match relationship with
@@ -141,26 +161,16 @@ module ManifestContributionAccounting =
             match validate relationship with
             | Error error -> Error error
             | Ok _ ->
-                match relationship with
-                | ExactRelationship.ReferenceRoot relationship ->
-                    Ok
-                        {
-                            PartitionKey = $"{IncomingPartitionPrefix}:{relationship.RepositoryId:N}:{relationship.RootDirectoryVersionId:N}"
-                            ItemId = $"{ReferenceRootItemPrefix}:{relationship.ReferenceId:N}"
-                        }
-                | ExactRelationship.ParentChild relationship ->
-                    Ok
-                        {
-                            PartitionKey = $"{IncomingPartitionPrefix}:{relationship.RepositoryId:N}:{relationship.ChildDirectoryVersionId:N}"
-                            ItemId = $"{ParentChildItemPrefix}:{relationship.ParentDirectoryVersionId:N}"
-                        }
-                | ExactRelationship.DirectoryVersionManifest relationship ->
-                    Ok
-                        {
-                            PartitionKey =
-                                $"{ManifestPartitionPrefix}:{relationship.RepositoryId:N}:{encodeComponent relationship.StoragePoolId}:{encodeComponent relationship.ManifestAddress}"
-                            ItemId = $"{DirectoryVersionManifestItemPrefix}:{relationship.DirectoryVersionId:N}"
-                        }
+                match createPartitionKey (partition relationship) with
+                | Error error -> Error error
+                | Ok partitionKey ->
+                    match relationship with
+                    | ExactRelationship.ReferenceRoot relationship ->
+                        Ok { PartitionKey = partitionKey; ItemId = $"{ReferenceRootItemPrefix}:{relationship.ReferenceId:N}" }
+                    | ExactRelationship.ParentChild relationship ->
+                        Ok { PartitionKey = partitionKey; ItemId = $"{ParentChildItemPrefix}:{relationship.ParentDirectoryVersionId:N}" }
+                    | ExactRelationship.DirectoryVersionManifest relationship ->
+                        Ok { PartitionKey = partitionKey; ItemId = $"{DirectoryVersionManifestItemPrefix}:{relationship.DirectoryVersionId:N}" }
 
         /// Parses a canonical key back into its exact relationship identity.
         let tryParse key =
