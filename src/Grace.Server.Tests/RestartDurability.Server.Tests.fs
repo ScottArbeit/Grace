@@ -24,7 +24,7 @@ open System.Text
 open System.Text.RegularExpressions
 
 /// Groups shared helpers for restart durability helpers.
-module private RestartDurabilityHelpers =
+module RestartDurabilityHelpers =
     /// Requires ok and fails the test when missing.
     let requireOkAsync (response: HttpResponseMessage) =
         task {
@@ -73,6 +73,9 @@ module private RestartDurabilityHelpers =
                 App = app
                 Client = Client
                 GraceServerBaseAddress = graceServerBaseAddress
+                CosmosConnectionString = String.Empty
+                CosmosDatabaseName = String.Empty
+                CosmosContainerName = String.Empty
                 ServiceBusConnectionString = serviceBusConnectionString
                 ServiceBusTopic = serviceBusTopic
                 ServiceBusServerSubscription = serviceBusServerSubscription

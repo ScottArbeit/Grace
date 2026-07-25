@@ -54,3 +54,24 @@ type BranchServerValidationTests() =
                 .Result
 
         Assert.That(Result.isOk result, Is.True)
+
+    /// Verifies Commit rejects a missing stable Reference identity before command dispatch.
+    [<Test>]
+    member _.``commit validation requires a stable reference id``() =
+        let parameters = CommitReferenceParameters()
+
+        let missingResult =
+            (Grace.Server.Branch.validateCommitReferenceId parameters)
+                .Result
+
+        parameters.ReferenceId <- Guid.NewGuid()
+
+        let presentResult =
+            (Grace.Server.Branch.validateCommitReferenceId parameters)
+                .Result
+
+        match missingResult with
+        | Error error -> Assert.That(error, Is.EqualTo(BranchError.InvalidReferenceId))
+        | Ok _ -> Assert.Fail("Expected an empty Commit ReferenceId to be rejected.")
+
+        Assert.That(Result.isOk presentResult, Is.True)

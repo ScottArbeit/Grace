@@ -319,9 +319,20 @@ module Branch =
                     }
 
                 /// Creates a reference DTO for branch promotion, commit, or save-boundary updates.
-                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
+                let addReferenceWithId
+                    referenceId
+                    ownerId
+                    organizationId
+                    repositoryId
+                    branchId
+                    directoryId
+                    sha256Hash
+                    blake3Hash
+                    referenceText
+                    referenceType
+                    links
+                    =
                     task {
-                        let referenceId: ReferenceId = ReferenceId.NewGuid()
                         let referenceActor = Reference.CreateActorProxy referenceId repositoryId this.correlationId
 
                         let referenceCommand =
@@ -340,8 +351,24 @@ module Branch =
                             )
 
                         metadata.Properties[ nameof (RepositoryId) ] <- $"{repositoryId}"
+                        metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
                         return! referenceActor.Handle referenceCommand metadata
                     }
+
+                /// Creates a Reference with a server-generated identity for producer contracts not yet carrying one.
+                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
+                    addReferenceWithId
+                        (ReferenceId.NewGuid())
+                        ownerId
+                        organizationId
+                        repositoryId
+                        branchId
+                        directoryId
+                        sha256Hash
+                        blake3Hash
+                        referenceText
+                        referenceType
+                        links
 
                 let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
 
@@ -461,9 +488,20 @@ module Branch =
                                         | Ok returnValue ->
                                             return Ok(Promoted(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Commit (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                    | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
                                         match!
-                                            addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.Commit List.empty
+                                            addReferenceWithId
+                                                referenceId
+                                                branchDto.OwnerId
+                                                branchDto.OrganizationId
+                                                branchDto.RepositoryId
+                                                branchDto.BranchId
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.Commit
+                                                List.empty
                                             with
                                         | Ok returnValue ->
                                             return Ok(Committed(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))

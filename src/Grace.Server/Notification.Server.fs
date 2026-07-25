@@ -887,7 +887,6 @@ module Notification =
                     )
                 | ReferenceEvent referenceEvent ->
                     let correlationId = referenceEvent.Metadata.CorrelationId
-                    let repositoryId = Guid.Parse($"{referenceEvent.Metadata.Properties[nameof RepositoryId]}")
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ReferenceEvent notification.",
@@ -896,6 +895,7 @@ module Notification =
                         correlationId
                     )
 
+                    do! ManifestContributionAccounting.handleReferenceEvent referenceEvent
                     do! DerivedComputation.handleReferenceEvent referenceEvent
 
                     match referenceEvent.Event with
