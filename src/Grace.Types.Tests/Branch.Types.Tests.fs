@@ -203,7 +203,7 @@ type BranchDtoHashTests() =
             [
                 BranchCommand.Assign(directoryVersionId, sha256Hash, blake3Hash, referenceText)
                 BranchCommand.Promote(directoryVersionId, sha256Hash, blake3Hash, referenceText)
-                BranchCommand.Commit(directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                BranchCommand.Commit(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
                 BranchCommand.Checkpoint(directoryVersionId, sha256Hash, blake3Hash, referenceText)
                 BranchCommand.Save(directoryVersionId, sha256Hash, blake3Hash, referenceText)
                 BranchCommand.Tag(directoryVersionId, sha256Hash, blake3Hash, referenceText)
@@ -212,9 +212,14 @@ type BranchDtoHashTests() =
 
         for command in commands do
             match command with
+            | BranchCommand.Commit (commandReferenceId, directoryId, sha, blake3, text) ->
+                Assert.That(commandReferenceId, Is.EqualTo(referenceId))
+                Assert.That(directoryId, Is.EqualTo(directoryVersionId))
+                Assert.That(sha, Is.EqualTo(sha256Hash))
+                Assert.That(blake3, Is.EqualTo(blake3Hash))
+                Assert.That(text, Is.EqualTo(referenceText))
             | BranchCommand.Assign (directoryId, sha, blake3, text)
             | BranchCommand.Promote (directoryId, sha, blake3, text)
-            | BranchCommand.Commit (directoryId, sha, blake3, text)
             | BranchCommand.Checkpoint (directoryId, sha, blake3, text)
             | BranchCommand.Save (directoryId, sha, blake3, text)
             | BranchCommand.Tag (directoryId, sha, blake3, text)

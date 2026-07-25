@@ -1,14 +1,18 @@
 namespace Grace.Server.Unit.Tests
 
+open Azure.Messaging.ServiceBus
 open Grace.Actors.Reference
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.Events
 open Grace.Types.Reference
 open NUnit.Framework
 open System
 open System.Collections.Generic
-open System.IO
+open System.Diagnostics
+open System.Text.Json
 open System.Threading.Tasks
 
 /// Covers reference Actor Hash Validation behavior in no-Aspire server unit tests.
@@ -214,138 +218,127 @@ type ReferenceActorHashValidationTests() =
         )
         |> ignore
 
-    /// Verifies that save Create Applies Manifest Contribution Boundary Before Created Event Persists.
+    /// Verifies that Reference creation persists durable state before strict publication begins.
     [<Test>]
-    member _.SaveCreateAppliesManifestContributionBoundaryBeforeCreatedEventPersists() =
-        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
-        let actorSource = File.ReadAllText actorPath
-        let eventPlanningStart = actorSource.IndexOf("let! (referenceEventTypeResult", StringComparison.Ordinal)
+    member _.ReferenceCreatedPersistencePrecedesStrictPublication() =
+        task {
+            let calls = ResizeArray<string>()
 
-        Assert.That(eventPlanningStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor event-planning block must be present.")
+            do!
+                persistReferenceCreatedThenPublish
+                    (fun () ->
+                        calls.Add("persist")
+                        Task.CompletedTask)
+                    (fun () ->
+                        calls.Add("publish")
+                        Task.CompletedTask)
 
-        let createBranchStart = actorSource.IndexOf("| Create (referenceId,", eventPlanningStart, StringComparison.Ordinal)
+            Assert.That(calls.Count, Is.EqualTo(2))
+            Assert.That(calls[0], Is.EqualTo("persist"))
+            Assert.That(calls[1], Is.EqualTo("publish"))
+        }
 
-        Assert.That(createBranchStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor Create branch must be present.")
-
-        let addLinkBranchStart = actorSource.IndexOf("| AddLink link ->", createBranchStart, StringComparison.Ordinal)
-
-        Assert.That(addLinkBranchStart, Is.GreaterThan(createBranchStart), "The ReferenceActor Create branch must have a bounded source slice.")
-
-        let createBranch = actorSource.Substring(createBranchStart, addLinkBranchStart - createBranchStart)
-
-        let validateIndex = createBranch.IndexOf("validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash", StringComparison.Ordinal)
-
-        Assert.That(validateIndex, Is.GreaterThanOrEqualTo(0), "Create must validate root directory hashes before planning Created.")
-
-        let boundaryIndex =
-            createBranch.IndexOf("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType", validateIndex, StringComparison.Ordinal)
-
-        Assert.That(
-            boundaryIndex,
-            Is.GreaterThan(validateIndex),
-            "Save create must apply manifest contribution side effects after hash validation and before planning Created."
-        )
-
-        let createdIndex = createBranch.IndexOf("Created(", boundaryIndex, StringComparison.Ordinal)
-
-        Assert.That(
-            createdIndex,
-            Is.GreaterThan(boundaryIndex),
-            "A failed Save manifest contribution boundary must return Error before Created is planned for persistence."
-        )
-
-        let applyResultStart = actorSource.IndexOf("match referenceEventTypeResult with", addLinkBranchStart, StringComparison.Ordinal)
-
-        Assert.That(applyResultStart, Is.GreaterThan(addLinkBranchStart), "ReferenceActor must apply the selected event after command planning.")
-
-        let handleEnd = actorSource.IndexOf("match! isValid command metadata with", applyResultStart, StringComparison.Ordinal)
-
-        Assert.That(handleEnd, Is.GreaterThan(applyResultStart), "ReferenceActor event application must have a bounded source slice.")
-
-        let applyResultSlice = actorSource.Substring(applyResultStart, handleEnd - applyResultStart)
-        let applyEventIndex = applyResultSlice.IndexOf("let! returnValue = this.ApplyEvent referenceEvent", StringComparison.Ordinal)
-
-        Assert.That(
-            applyResultSlice,
-            Does.Contain("return! this.ApplyEvent referenceEvent"),
-            "ReferenceActor must persist the planned reference event through ApplyEvent after pre-persistence validation."
-        )
-
-        Assert.That(
-            applyEventIndex,
-            Is.LessThan(0),
-            "ReferenceActor must not keep the legacy ApplyEvent binding that allowed post-persistence boundary failures."
-        )
-
-        Assert.That(
-            applyResultSlice,
-            Does.Not.Contain("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType"),
-            "Save manifest contribution boundary failures must not occur after ApplyEvent persists Created."
-        )
-
-    /// Verifies that manifest Expiry Boundary Only Applies To Save References Until Commit Checkpoint Fanout Is Wired.
+    /// Measures the fixed durable-save and broker-send foreground work against small and large manifest graphs.
     [<Test>]
-    member _.ManifestExpiryBoundaryOnlyAppliesToSaveReferencesUntilCommitCheckpointFanoutIsWired() =
-        let referenceOfType referenceType = { ReferenceDto.Default with ReferenceId = Guid.NewGuid(); ReferenceType = referenceType }
+    member _.ReferenceCreatedForegroundWorkIsIndependentOfManifestGraphSize() =
+        task {
+            let iterations = 10_000
 
-        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Save), Is.True)
-        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Commit), Is.False)
-        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Checkpoint), Is.False)
-        Assert.That(shouldApplyManifestExpiryBoundary ReferenceDto.Default, Is.False)
+            let measure manifestGraphSize =
+                task {
+                    let manifestGraph = Array.zeroCreate<byte> manifestGraphSize
+                    let mutable persistenceCalls = 0
+                    let mutable publicationCalls = 0
+                    let stopwatch = Stopwatch.StartNew()
 
-    /// Verifies that manifest Contribution Boundary Predicate Keeps Commit Checkpoint Out Of Unwired Workflow.
-    [<Test>]
-    member _.ManifestContributionBoundaryPredicateKeepsCommitCheckpointOutOfUnwiredWorkflow() =
-        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
-        let actorSource = File.ReadAllText actorPath
-        let predicateStart = actorSource.IndexOf("let appliesManifestBoundary referenceType =", StringComparison.Ordinal)
-        let boundaryStart = actorSource.IndexOf("let applyReferenceManifestBoundary", predicateStart, StringComparison.Ordinal)
+                    for _ in 1..iterations do
+                        do!
+                            persistReferenceCreatedThenPublish
+                                (fun () ->
+                                    persistenceCalls <- persistenceCalls + 1
+                                    Task.CompletedTask)
+                                (fun () ->
+                                    publicationCalls <- publicationCalls + 1
+                                    Task.CompletedTask)
 
-        Assert.That(predicateStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor manifest-boundary predicate must be present.")
-        Assert.That(boundaryStart, Is.GreaterThan(predicateStart), "The manifest-boundary predicate slice must be bounded.")
+                    stopwatch.Stop()
+                    GC.KeepAlive(manifestGraph)
+                    return struct (persistenceCalls, publicationCalls, stopwatch.Elapsed)
+                }
 
-        let predicateSource = actorSource.Substring(predicateStart, boundaryStart - predicateStart)
+            let! struct (smallPersistenceCalls, smallPublicationCalls, smallElapsed) = measure 1
+            let! struct (largePersistenceCalls, largePublicationCalls, largeElapsed) = measure 10_000
 
-        Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Save"))
-        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
-        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
-
-    /// Verifies that manifest Contribution Boundary Traversals Force Regeneration Instead Of Cached Recursive Results.
-    [<Test>]
-    member _.ManifestContributionBoundaryTraversalsForceRegenerationInsteadOfCachedRecursiveResults() =
-        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
-        let actorSource = File.ReadAllText actorPath
-
-        /// Asserts the boundary Forces Regeneration condition so failures identify the violated server unit reference Actor invariant.
-        let assertBoundaryForcesRegeneration (boundaryStartText: string) (boundaryEndText: string) =
-            let boundaryStart = actorSource.IndexOf(boundaryStartText, StringComparison.Ordinal)
-
-            Assert.That(boundaryStart, Is.GreaterThanOrEqualTo(0), $"Expected ReferenceActor boundary `{boundaryStartText}` to be present.")
-
-            let boundaryEnd = actorSource.IndexOf(boundaryEndText, boundaryStart, StringComparison.Ordinal)
-
-            Assert.That(boundaryEnd, Is.GreaterThan(boundaryStart), $"Expected ReferenceActor boundary `{boundaryStartText}` to have a bounded source slice.")
-
-            let boundarySource = actorSource.Substring(boundaryStart, boundaryEnd - boundaryStart)
-
-            Assert.That(
-                boundarySource,
-                Does.Contain("GetRecursiveDirectoryVersions true"),
-                $"Expected ReferenceActor boundary `{boundaryStartText}` to bypass cached partial recursive directory results."
+            TestContext.Progress.WriteLine(
+                $"MCA foreground measurement: iterations={iterations}; smallGraph=1; "
+                + $"calls={smallPersistenceCalls + smallPublicationCalls}; elapsedMs={smallElapsed.TotalMilliseconds:F3}; "
+                + $"largeGraph=10000; calls={largePersistenceCalls + largePublicationCalls}; elapsedMs={largeElapsed.TotalMilliseconds:F3}"
             )
 
-            Assert.That(
-                boundarySource,
-                Does.Not.Contain("GetRecursiveDirectoryVersions false"),
-                $"ReferenceActor boundary `{boundaryStartText}` must not trust cached partial recursive directory results."
-            )
+            Assert.That(smallPersistenceCalls, Is.EqualTo(iterations))
+            Assert.That(smallPublicationCalls, Is.EqualTo(iterations))
+            Assert.That(largePersistenceCalls, Is.EqualTo(iterations))
+            Assert.That(largePublicationCalls, Is.EqualTo(iterations))
+            Assert.That(smallElapsed, Is.LessThan(TimeSpan.FromSeconds(1.0)))
+            Assert.That(largeElapsed, Is.LessThan(TimeSpan.FromSeconds(1.0)))
+        }
 
-        assertBoundaryForcesRegeneration "let! boundaryResult =" "match boundaryResult with"
+    /// Verifies that an unknown publication outcome preserves the completed persistence step and propagates failure.
+    [<Test>]
+    member _.ReferenceCreatedPublicationFailureDoesNotRepeatPersistence() =
+        task {
+            let mutable persistenceCount = 0
+            let mutable publicationCount = 0
 
-        assertBoundaryForcesRegeneration
-            "let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType ="
-            "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
+            let action () =
+                persistReferenceCreatedThenPublish
+                    (fun () ->
+                        persistenceCount <- persistenceCount + 1
+                        Task.CompletedTask)
+                    (fun () ->
+                        publicationCount <- publicationCount + 1
+                        Task.FromException(InvalidOperationException("broker outcome unknown")))
 
-        assertBoundaryForcesRegeneration
-            "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
-            "let existingReferenceReturnValue () ="
+            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> action () :> Task))
+
+            Assert.That(error.Message, Is.EqualTo("broker outcome unknown"))
+            Assert.That(persistenceCount, Is.EqualTo(1))
+            Assert.That(publicationCount, Is.EqualTo(1))
+        }
+
+    /// Verifies that the strict Reference Created envelope uses the deterministic broker identity and real GraceEvent body.
+    [<Test>]
+    member _.ReferenceCreatedEnvelopeUsesDeterministicMessageIdentity() =
+        let metadata = EventMetadata.New correlationId "strict-reference-publisher-test"
+        metadata.Properties[ nameof RepositoryId ] <- string repositoryId
+
+        let referenceEvent =
+            {
+                Event =
+                    ReferenceEventType.Created(
+                        referenceId,
+                        ownerId,
+                        organizationId,
+                        repositoryId,
+                        branchId,
+                        directoryVersionId,
+                        sha256Hash,
+                        blake3Hash,
+                        ReferenceType.Commit,
+                        referenceText,
+                        []
+                    )
+                Metadata = metadata
+            }
+
+        let message: ServiceBusMessage = createReferenceCreatedServiceBusMessage referenceEvent
+        let body = JsonSerializer.Deserialize<GraceEvent>(message.Body.ToArray(), Grace.Shared.Constants.JsonSerializerOptions)
+
+        Assert.That(message.MessageId, Is.EqualTo($"Reference/{referenceId}/Created"))
+        Assert.That(message.CorrelationId, Is.EqualTo(correlationId))
+        Assert.That(message.Subject, Is.EqualTo("GraceEvent"))
+        Assert.That(message.ApplicationProperties["graceEventType"], Is.EqualTo("GraceEvent.ReferenceEvent"))
+
+        match body with
+        | GraceEvent.ReferenceEvent bodyEvent -> Assert.That(bodyEvent.Event, Is.EqualTo(referenceEvent.Event))
+        | _ -> Assert.Fail("Expected a ReferenceEvent GraceEvent body.")

@@ -30,6 +30,9 @@ type TestHostState =
         App: DistributedApplication
         Client: HttpClient
         GraceServerBaseAddress: string
+        CosmosConnectionString: string
+        CosmosDatabaseName: string
+        CosmosContainerName: string
         ServiceBusConnectionString: string
         ServiceBusTopic: string
         ServiceBusServerSubscription: string
@@ -757,6 +760,7 @@ module AspireTestHost =
     let private createLocalCosmosClientOptions () =
         let options = CosmosClientOptions(ConnectionMode = ConnectionMode.Gateway, LimitToEndpoint = true)
         options.RequestTimeout <- TimeSpan.FromSeconds(10.0)
+        options.UseSystemTextJsonSerializerWithOptions <- Constants.JsonSerializerOptions
         options.HttpClientFactory <- (fun () -> createPermissiveCosmosHttpClient ())
         options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
         options
@@ -1349,6 +1353,9 @@ module AspireTestHost =
                     App = app
                     Client = client
                     GraceServerBaseAddress = baseAddress
+                    CosmosConnectionString = cosmosConnectionString
+                    CosmosDatabaseName = cosmosDatabaseName
+                    CosmosContainerName = cosmosContainerName
                     ServiceBusConnectionString = serviceBusConnectionString
                     ServiceBusTopic = serviceBusTopic
                     ServiceBusServerSubscription = serviceBusSubscription
@@ -1644,4 +1651,90 @@ module AspireTestHost =
                             $"Timed out waiting for {description} on Service Bus test subscription. Topic={state.ServiceBusTopic}; TestSubscription={state.ServiceBusTestSubscription}; Connection={redactServiceBusConnectionString state.ServiceBusConnectionString}"
                         )
                     )
+        }
+
+    /// Waits for a matching GraceEvent and returns the real Service Bus envelope that carried it.
+    let waitForGraceEventMessageAsync (state: TestHostState) (timeout: TimeSpan) (description: string) (predicate: Events.GraceEvent -> bool) =
+        task {
+            let client, receiver = createServiceBusReceiver state
+            use _client = client
+            use _receiver = receiver
+
+            let sw = Stopwatch.StartNew()
+            let mutable found: (Events.GraceEvent * ServiceBusReceivedMessage) option = None
+
+            while found.IsNone && sw.Elapsed < timeout do
+                let remaining = timeout - sw.Elapsed
+                let waitTime = min remaining (TimeSpan.FromSeconds(1.0))
+                let! message = receiver.ReceiveMessageAsync(waitTime)
+
+                if not (isNull message) then
+                    try
+                        let graceEvent = JsonSerializer.Deserialize<Events.GraceEvent>(message.Body.ToArray(), Constants.JsonSerializerOptions)
+
+                        if predicate graceEvent then found <- Some(graceEvent, message)
+                    with
+                    | _ -> ()
+
+            return
+                found
+                |> Option.defaultWith (fun () ->
+                    raise (
+                        TimeoutException(
+                            $"Timed out waiting for {description} and its Service Bus envelope. Topic={state.ServiceBusTopic}; TestSubscription={state.ServiceBusTestSubscription}."
+                        )
+                    ))
+        }
+
+    /// Creates a permissive local Cosmos client for integration assertions against the Aspire emulator.
+    let createCosmosClient (state: TestHostState) = new CosmosClient(state.CosmosConnectionString, createLocalCosmosClientOptions ())
+
+    /// Returns current Grace.Server resource logs for focused Aspire failure diagnostics.
+    let getGraceServerLogsAsync (state: TestHostState) = getResourceLogsAsync state.App graceServerResourceName
+
+    /// Returns the latest Grace.Server file-log tail for focused Aspire failure diagnostics.
+    let getGraceServerFileLogAsync (state: TestHostState) =
+        task {
+            let! env = getEnvironmentVariablesAsync state.App graceServerResourceName
+
+            let configuredDirectory =
+                env
+                |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory
+
+            let defaultLocalDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grace", "aspire", "logs")
+
+            return
+                [
+                    configuredDirectory
+                    Some defaultLocalDirectory
+                ]
+                |> List.choose id
+                |> List.distinct
+                |> List.tryPick tryGetLatestLogTail
+                |> Option.defaultValue "No Grace.Server log file captured."
+        }
+
+    /// Peeks active and dead-letter messages on the Grace.Server subscription for subscriber diagnostics.
+    let describeGraceServerSubscriptionAsync (state: TestHostState) =
+        task {
+            let client = ServiceBusClient(state.ServiceBusConnectionString)
+            use _client = client
+            let activeReceiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusServerSubscription)
+
+            let deadLetterReceiver =
+                client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusServerSubscription, ServiceBusReceiverOptions(SubQueue = SubQueue.DeadLetter))
+
+            use _activeReceiver = activeReceiver
+            use _deadLetterReceiver = deadLetterReceiver
+            let! active = activeReceiver.PeekMessagesAsync(50)
+            let! deadLetter = deadLetterReceiver.PeekMessagesAsync(50)
+
+            let describe (messages: IReadOnlyList<ServiceBusReceivedMessage>) =
+                messages
+                |> Seq.map (fun message ->
+                    $"{message.MessageId} delivery={message.DeliveryCount} subject={message.Subject} "
+                    + $"deadLetterReason={message.DeadLetterReason} deadLetterErrorDescription={message.DeadLetterErrorDescription}")
+                |> String.concat Environment.NewLine
+
+            return $"Active:{Environment.NewLine}{describe active}{Environment.NewLine}DeadLetter:{Environment.NewLine}{describe deadLetter}"
         }

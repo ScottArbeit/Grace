@@ -37,8 +37,27 @@ type Branch() =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Promote)}")
 
     /// Records a commit reference in this branch.
+    static member public Commit(parameters: CommitReferenceParameters) =
+        postServer<CommitReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Commit)}")
+
+    /// Records a commit for legacy callers while MCA-02 completes explicit ReferenceId propagation across every producer.
     static member public Commit(parameters: CreateReferenceParameters) =
-        postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Commit)}")
+        let commitParameters = CommitReferenceParameters()
+        commitParameters.OwnerId <- parameters.OwnerId
+        commitParameters.OwnerName <- parameters.OwnerName
+        commitParameters.OrganizationId <- parameters.OrganizationId
+        commitParameters.OrganizationName <- parameters.OrganizationName
+        commitParameters.RepositoryId <- parameters.RepositoryId
+        commitParameters.RepositoryName <- parameters.RepositoryName
+        commitParameters.BranchId <- parameters.BranchId
+        commitParameters.BranchName <- parameters.BranchName
+        commitParameters.DirectoryVersionId <- parameters.DirectoryVersionId
+        commitParameters.Sha256Hash <- parameters.Sha256Hash
+        commitParameters.Blake3Hash <- parameters.Blake3Hash
+        commitParameters.Message <- parameters.Message
+        commitParameters.CorrelationId <- parameters.CorrelationId
+        commitParameters.ReferenceId <- ReferenceId.NewGuid()
+        Branch.Commit(commitParameters)
 
     /// Records a checkpoint reference in this branch.
     static member public Checkpoint(parameters: CreateReferenceParameters) =
