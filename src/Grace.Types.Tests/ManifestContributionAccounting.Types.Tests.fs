@@ -2,8 +2,10 @@ namespace Grace.Types.Tests
 
 open Grace.Types.Common
 open Grace.Types.ManifestContributionAccounting
+open Microsoft.FSharp.Reflection
 open NUnit.Framework
 open System
+open System.Reflection
 
 /// Covers deterministic exact-relationship identities and explicit read bounds.
 [<Parallelizable(ParallelScope.All)>]
@@ -28,14 +30,37 @@ type ManifestContributionAccountingTypesTests() =
         | Error _ -> ()
         | Ok _ -> Assert.Fail("Expected contract validation to reject the input.")
 
+    /// Requires a Result-returning boundary to reject invalid input without leaking a runtime exception.
+    let assertRejectedWithoutThrowing operation =
+        try
+            operation () |> assertError
+        with
+        | ex -> Assert.Fail($"Expected contract validation to return Error, but it threw {ex.GetType().Name}: {ex.Message}")
+
+    /// Materializes a private union payload so defensive unwrapping can be tested independently of its creator.
+    let materializeReadBound maximumCount =
+        let unionCase =
+            FSharpType.GetUnionCases(typeof<ExactRelationshipReadBound>, BindingFlags.NonPublic)
+            |> Array.exactlyOne
+
+        FSharpValue.MakeUnion(unionCase, [| box maximumCount |], BindingFlags.NonPublic) :?> ExactRelationshipReadBound
+
     /// Verifies that a relationship survives its deterministic storage-key round trip.
     let assertRoundTrip relationship =
         let key =
             ExactRelationshipKey.create relationship
             |> expectOk
 
+        let partitionKey =
+            relationship
+            |> ExactRelationshipKey.partition
+            |> expectOk
+            |> ExactRelationshipKey.createPartitionKey
+            |> expectOk
+
         let parsed = ExactRelationshipKey.tryParse key |> expectOk
 
+        Assert.That(partitionKey, Is.EqualTo(key.PartitionKey))
         Assert.That(parsed, Is.EqualTo(relationship))
 
     /// Verifies deterministic round trips for each exact relationship kind.
@@ -83,6 +108,7 @@ type ManifestContributionAccountingTypesTests() =
             let enumerationPartitionKey =
                 relationship
                 |> ExactRelationshipKey.partition
+                |> expectOk
                 |> ExactRelationshipKey.createPartitionKey
                 |> expectOk
 
@@ -155,10 +181,26 @@ type ManifestContributionAccountingTypesTests() =
 
         let supplementaryCharacter = Char.ConvertFromUtf32(0x1F680)
         let validUnicode = relationship $"pool-{supplementaryCharacter}" $"manifest-{supplementaryCharacter}"
+        let composedUnicode = relationship "pool-\u00E9" "manifest-\u00E9"
+        let decomposedUnicode = relationship "pool-e\u0301" "manifest-e\u0301"
         let firstUnpairedSurrogate = String(char 0xD800, 1)
         let secondUnpairedSurrogate = String(char 0xD801, 1)
 
-        assertRoundTrip validUnicode
+        let acceptedRelationships =
+            [|
+                validUnicode
+                composedUnicode
+                decomposedUnicode
+            |]
+
+        acceptedRelationships
+        |> Array.iter assertRoundTrip
+
+        let acceptedKeys =
+            acceptedRelationships
+            |> Array.map (ExactRelationshipKey.create >> expectOk)
+
+        Assert.That(acceptedKeys |> Array.distinct |> Array.length, Is.EqualTo(acceptedKeys.Length))
 
         [|
             relationship firstUnpairedSurrogate "manifest-address"
@@ -166,7 +208,82 @@ type ManifestContributionAccountingTypesTests() =
             relationship "pool" firstUnpairedSurrogate
             relationship "pool" secondUnpairedSurrogate
         |]
-        |> Array.iter (ExactRelationshipKey.create >> assertError)
+        |> Array.iter (fun malformedRelationship ->
+            ExactRelationshipKey.create malformedRelationship
+            |> assertError
+
+            ExactRelationshipKey.partition malformedRelationship
+            |> assertError)
+
+        [|
+            ExactRelationshipPartition.Manifest(repositoryId, firstUnpairedSurrogate, "manifest-address")
+            ExactRelationshipPartition.Manifest(repositoryId, "pool", secondUnpairedSurrogate)
+        |]
+        |> Array.iter (
+            ExactRelationshipKey.createPartitionKey
+            >> assertError
+        )
+
+        assertRejectedWithoutThrowing (fun () ->
+            ExactRelationshipKey.tryParse
+                {
+                    PartitionKey = $"manifest:{repositoryId:N}:{firstUnpairedSurrogate}:cG9vbA"
+                    ItemId = $"directory-version-manifest:{rootDirectoryVersionId:N}"
+                })
+
+    /// Verifies null public values are rejected by Result-returning key boundaries without throwing.
+    [<Test>]
+    member _.ResultBoundariesRejectNullPublicValuesWithoutThrowing() =
+        let nullRelationship = Unchecked.defaultof<ExactRelationship>
+        let nullPartition = Unchecked.defaultof<ExactRelationshipPartition>
+        let nullKey = Unchecked.defaultof<ExactRelationshipKey>
+
+        assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.create nullRelationship)
+        assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.partition nullRelationship)
+        assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.createPartitionKey nullPartition)
+        assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.tryParse nullKey)
+
+    /// Verifies every ExactRelationship case rejects a null record payload without throwing.
+    [<Test>]
+    member _.RelationshipCasesRejectNullRecordPayloadsWithoutThrowing() =
+        [|
+            ExactRelationship.ReferenceRoot Unchecked.defaultof<ReferenceRootRelationship>
+            ExactRelationship.ParentChild Unchecked.defaultof<ParentChildRelationship>
+            ExactRelationship.DirectoryVersionManifest Unchecked.defaultof<DirectoryVersionManifestRelationship>
+        |]
+        |> Array.iter (fun relationship ->
+            assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.create relationship)
+            assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.partition relationship))
+
+    /// Verifies null string-bearing values from CLR callers are rejected by every relevant boundary.
+    [<Test>]
+    member _.NullStringBearingValuesAreRejectedWithoutThrowing() =
+        let relationships =
+            [|
+                ExactRelationship.DirectoryVersionManifest
+                    { RepositoryId = repositoryId; StoragePoolId = null; ManifestAddress = "manifest-address"; DirectoryVersionId = rootDirectoryVersionId }
+                ExactRelationship.DirectoryVersionManifest
+                    { RepositoryId = repositoryId; StoragePoolId = "pool"; ManifestAddress = null; DirectoryVersionId = rootDirectoryVersionId }
+            |]
+
+        relationships
+        |> Array.iter (fun relationship ->
+            assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.create relationship)
+            assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.partition relationship))
+
+        [|
+            ExactRelationshipPartition.Manifest(repositoryId, null, "manifest-address")
+            ExactRelationshipPartition.Manifest(repositoryId, "pool", null)
+        |]
+        |> Array.iter (fun partition -> assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.createPartitionKey partition))
+
+        [|
+            { PartitionKey = null; ItemId = $"reference-root:{referenceId:N}" }
+            { PartitionKey = $"incoming-directory-version:{repositoryId:N}:{rootDirectoryVersionId:N}"; ItemId = null }
+            { PartitionKey = " "; ItemId = $"reference-root:{referenceId:N}" }
+            { PartitionKey = $"incoming-directory-version:{repositoryId:N}:{rootDirectoryVersionId:N}"; ItemId = "\t" }
+        |]
+        |> Array.iter (fun key -> assertRejectedWithoutThrowing (fun () -> ExactRelationshipKey.tryParse key))
 
     /// Verifies malformed or non-canonical key strings cannot masquerade as exact relationships.
     [<Test>]
@@ -214,7 +331,12 @@ type ManifestContributionAccountingTypesTests() =
             emptyStoragePool
             emptyManifest
         |]
-        |> Array.iter (ExactRelationshipKey.create >> assertError)
+        |> Array.iter (fun relationship ->
+            ExactRelationshipKey.create relationship
+            |> assertError
+
+            ExactRelationshipKey.partition relationship
+            |> assertError)
 
     /// Verifies that exact-relationship enumeration always carries a positive finite maximum count.
     [<Test>]
@@ -224,7 +346,13 @@ type ManifestContributionAccountingTypesTests() =
         ExactRelationshipReadBound.create -1
         |> assertError
 
+        ExactRelationshipReadBound.create Int32.MinValue
+        |> assertError
+
         ExactRelationshipReadBound.create (ExactRelationshipReadBound.Maximum + 1)
+        |> assertError
+
+        ExactRelationshipReadBound.create Int32.MaxValue
         |> assertError
 
         let minimum = ExactRelationshipReadBound.create 1 |> expectOk
@@ -249,3 +377,23 @@ type ManifestContributionAccountingTypesTests() =
                 |> ignore)
         )
         |> ignore
+
+    /// Verifies defensive unwrapping cannot expose a representationally invalid finite bound.
+    [<Test>]
+    member _.InvalidMaterializedEnumerationBoundsCannotBeUnwrapped() =
+        [|
+            Int32.MinValue
+            -1
+            0
+            ExactRelationshipReadBound.Maximum + 1
+            Int32.MaxValue
+        |]
+        |> Array.iter (fun maximumCount ->
+            let invalidBound = materializeReadBound maximumCount
+
+            Assert.Throws<ArgumentException>(
+                Action (fun () ->
+                    ExactRelationshipReadBound.value invalidBound
+                    |> ignore)
+            )
+            |> ignore)
