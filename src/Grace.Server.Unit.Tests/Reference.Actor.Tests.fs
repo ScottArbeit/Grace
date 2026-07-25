@@ -2,7 +2,6 @@ namespace Grace.Server.Unit.Tests
 
 open Azure.Messaging.ServiceBus
 open Grace.Actors.Reference
-open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
@@ -306,50 +305,119 @@ type ReferenceActorHashValidationTests() =
             Assert.That(publicationCount, Is.EqualTo(1))
         }
 
-    /// Verifies that the strict Reference Created envelope uses the deterministic broker identity and real GraceEvent body.
+    /// Verifies every ReferenceType uses the same deterministic Reference Created broker envelope.
     [<Test>]
     member _.ReferenceCreatedEnvelopeUsesDeterministicMessageIdentity() =
-        let metadata = EventMetadata.New correlationId "strict-reference-publisher-test"
-        metadata.Properties[ nameof RepositoryId ] <- string repositoryId
+        let referenceTypes =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+                ReferenceType.Checkpoint
+                ReferenceType.Save
+                ReferenceType.Tag
+                ReferenceType.External
+                ReferenceType.Rebase
+            ]
 
-        let referenceEvent =
-            {
-                Event =
-                    ReferenceEventType.Created(
-                        referenceId,
-                        ownerId,
-                        organizationId,
-                        repositoryId,
-                        branchId,
-                        directoryVersionId,
-                        sha256Hash,
-                        blake3Hash,
-                        ReferenceType.Commit,
-                        referenceText,
-                        []
-                    )
-                Metadata = metadata
-            }
+        for referenceType in referenceTypes do
+            let metadata = EventMetadata.New correlationId "reference-publisher-test"
+            metadata.Properties[ nameof RepositoryId ] <- string repositoryId
 
-        let message: ServiceBusMessage = createReferenceCreatedServiceBusMessage referenceEvent
-        let body = JsonSerializer.Deserialize<GraceEvent>(message.Body.ToArray(), Grace.Shared.Constants.JsonSerializerOptions)
+            let referenceEvent =
+                {
+                    Event =
+                        ReferenceEventType.Created(
+                            referenceId,
+                            ownerId,
+                            organizationId,
+                            repositoryId,
+                            branchId,
+                            directoryVersionId,
+                            sha256Hash,
+                            blake3Hash,
+                            referenceType,
+                            referenceText,
+                            []
+                        )
+                    Metadata = metadata
+                }
 
-        Assert.That(message.MessageId, Is.EqualTo($"Reference/{referenceId}/Created"))
-        Assert.That(message.CorrelationId, Is.EqualTo(correlationId))
-        Assert.That(message.Subject, Is.EqualTo("GraceEvent"))
-        Assert.That(message.ApplicationProperties["graceEventType"], Is.EqualTo("GraceEvent.ReferenceEvent"))
+            let message: ServiceBusMessage = createReferenceCreatedServiceBusMessage referenceEvent
+            let body = JsonSerializer.Deserialize<GraceEvent>(message.Body.ToArray(), Grace.Shared.Constants.JsonSerializerOptions)
 
-        match body with
-        | GraceEvent.ReferenceEvent bodyEvent -> Assert.That(bodyEvent.Event, Is.EqualTo(referenceEvent.Event))
-        | _ -> Assert.Fail("Expected a ReferenceEvent GraceEvent body.")
+            Assert.That(message.MessageId, Is.EqualTo($"Reference/{referenceId}/Created"))
+            Assert.That(message.CorrelationId, Is.EqualTo(correlationId))
+            Assert.That(message.Subject, Is.EqualTo("GraceEvent"))
+            Assert.That(message.ApplicationProperties["graceEventType"], Is.EqualTo("GraceEvent.ReferenceEvent"))
 
-    /// Verifies strict Created publication remains staged to the Commit tracer until producer identity migration completes.
+            match body with
+            | GraceEvent.ReferenceEvent bodyEvent ->
+                Assert.That(bodyEvent.Event, Is.EqualTo(referenceEvent.Event), $"Expected {referenceType} to round-trip in the GraceEvent body.")
+            | _ -> Assert.Fail("Expected a ReferenceEvent GraceEvent body.")
+
+    /// Verifies broker-acceptance staging depends on stable identity capability rather than ReferenceType.
     [<Test>]
-    member _.StrictCreatedPublicationIsCommitOnly() =
-        Assert.That(requiresStrictCreatedPublication ReferenceType.Commit, Is.True)
-        Assert.That(requiresStrictCreatedPublication ReferenceType.Save, Is.False)
-        Assert.That(requiresStrictCreatedPublication ReferenceType.Checkpoint, Is.False)
-        Assert.That(requiresStrictCreatedPublication ReferenceType.Promotion, Is.False)
-        Assert.That(requiresStrictCreatedPublication ReferenceType.Rebase, Is.False)
-        Assert.That(requiresStrictCreatedPublication ReferenceType.Tag, Is.False)
-        Assert.That(requiresStrictCreatedPublication ReferenceType.External, Is.False)
+    member _.BrokerAcceptanceCapabilityIsReferenceTypeNeutral() =
+        let referenceTypes =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+                ReferenceType.Checkpoint
+                ReferenceType.Save
+                ReferenceType.Tag
+                ReferenceType.External
+                ReferenceType.Rebase
+            ]
+
+        for referenceType in referenceTypes do
+            let metadata = EventMetadata.New $"acceptance-{getDiscriminatedUnionCaseName referenceType}" "test"
+
+            metadata.Properties[
+                ReferenceCreatedRequiresBrokerAcceptanceProperty
+            ] <- "true"
+
+            Assert.That(referenceCreatedRequiresBrokerAcceptance metadata, Is.True, $"Expected {referenceType} to use the same capability.")
+
+            metadata.Properties[
+                ReferenceCreatedRequiresBrokerAcceptanceProperty
+            ] <- "false"
+
+            Assert.That(referenceCreatedRequiresBrokerAcceptance metadata, Is.False, $"Expected {referenceType} to use the same capability.")
+
+    /// Verifies Reference physical deletion performs only lifecycle callbacks for every ReferenceType.
+    [<Test>]
+    member _.ReferencePhysicalDeletionNeverChangesDirectoryVersionManifestRetention() =
+        task {
+            let referenceTypes =
+                [
+                    ReferenceType.Promotion
+                    ReferenceType.Commit
+                    ReferenceType.Checkpoint
+                    ReferenceType.Save
+                    ReferenceType.Tag
+                    ReferenceType.External
+                    ReferenceType.Rebase
+                ]
+
+            for referenceType in referenceTypes do
+                let calls = ResizeArray<string>()
+
+                do!
+                    completeReferencePhysicalDeletion
+                        (fun () ->
+                            calls.Add($"mark:{getDiscriminatedUnionCaseName referenceType}")
+                            Task.CompletedTask)
+                        (fun () ->
+                            calls.Add($"clear:{getDiscriminatedUnionCaseName referenceType}")
+                            Task.CompletedTask)
+
+                Assert.That(
+                    calls,
+                    Is.EqualTo<string array>(
+                        [|
+                            $"mark:{getDiscriminatedUnionCaseName referenceType}"
+                            $"clear:{getDiscriminatedUnionCaseName referenceType}"
+                        |]
+                    )
+                )
+        }

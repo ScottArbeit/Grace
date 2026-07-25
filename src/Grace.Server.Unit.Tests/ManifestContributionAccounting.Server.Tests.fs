@@ -79,7 +79,7 @@ type ManifestContributionAccountingServerTests() =
         }
 
     /// Builds a stale delivery whose DirectoryVersionId differs from the durable Reference actor state.
-    let staleCreatedEvent () =
+    let staleCreatedEvent referenceType =
         {
             Event =
                 ReferenceEventType.Created(
@@ -91,7 +91,7 @@ type ManifestContributionAccountingServerTests() =
                     eventDirectoryVersionId,
                     Sha256Hash "sha-event",
                     Blake3Hash "b3-event",
-                    ReferenceType.Commit,
+                    referenceType,
                     ReferenceText "tracer",
                     []
                 )
@@ -122,6 +122,94 @@ type ManifestContributionAccountingServerTests() =
         Assert.That(document.Keys, Does.Not.Contain("Id"))
         Assert.That(document["id"], Is.EqualTo("relationship-id"))
         Assert.That(document["PartitionKey"], Is.EqualTo("relationship-partition"))
+
+    /// Verifies duplicate subscriber delivery converges through the same exact identities for every ReferenceType.
+    [<Test>]
+    member _.ReferenceCreatedDuplicateConvergenceIsReferenceTypeNeutral() =
+        task {
+            let referenceTypes =
+                [
+                    ReferenceType.Promotion
+                    ReferenceType.Commit
+                    ReferenceType.Checkpoint
+                    ReferenceType.Save
+                    ReferenceType.Tag
+                    ReferenceType.External
+                    ReferenceType.Rebase
+                ]
+
+            for referenceType in referenceTypes do
+                let storedRelationships = HashSet<ExactRelationship>()
+                let mutable lifecycleCount = 0
+                let mutable contributionCount = 0
+
+                let store =
+                    { new IExactRelationshipStore with
+                        member _.EnsurePresentAsync(relationship, _) =
+                            Task.FromResult(
+                                if storedRelationships.Add relationship then
+                                    ExactRelationshipWriteOutcome.Changed
+                                else
+                                    ExactRelationshipWriteOutcome.AlreadyConverged
+                            )
+
+                        member _.EnsureAbsentAsync(relationship, _) =
+                            Task.FromResult(
+                                if storedRelationships.Remove relationship then
+                                    ExactRelationshipWriteOutcome.Changed
+                                else
+                                    ExactRelationshipWriteOutcome.AlreadyConverged
+                            )
+
+                        member _.EnumerateAsync(_, _, _, _) = Task.FromResult { Relationships = storedRelationships |> Seq.toArray; ContinuationToken = None }
+
+                        member _.VerifyAsync(relationship, _) =
+                            Task.FromResult(
+                                if storedRelationships.Contains relationship then
+                                    ExactRelationshipPresence.Present
+                                else
+                                    ExactRelationshipPresence.Absent
+                            )
+                    }
+
+                let dependencies: ManifestContributionAccountingDependencies =
+                    {
+                        GetReference =
+                            fun _ _ _ ->
+                                Task.FromResult
+                                    { ReferenceDto.Default with
+                                        ReferenceId = referenceId
+                                        RepositoryId = repositoryId
+                                        DirectoryId = currentDirectoryVersionId
+                                        ReferenceType = referenceType
+                                        UpdatedAt = Some(getCurrentInstant ())
+                                    }
+                        GetDirectoryVersion = fun _ _ _ -> Task.FromResult(currentDirectoryVersionDto ())
+                        ExactRelationships = store
+                        PrepareReferenceLifecycle =
+                            fun _ _ _ ->
+                                lifecycleCount <- lifecycleCount + 1
+                                Task.CompletedTask
+                        EnsureDirectoryVersionManifest =
+                            fun relationship _ _ cancellationToken ->
+                                ensureDirectoryVersionManifestWith
+                                    (fun exactRelationship cancellationToken -> store.VerifyAsync(exactRelationship, cancellationToken))
+                                    (fun () ->
+                                        contributionCount <- contributionCount + 1
+                                        Task.CompletedTask)
+                                    (fun exactRelationship cancellationToken -> store.EnsurePresentAsync(exactRelationship, cancellationToken))
+                                    (ExactRelationship.DirectoryVersionManifest relationship)
+                                    cancellationToken
+                    }
+
+                let delivery = staleCreatedEvent referenceType
+                do! handleReferenceCreatedWith dependencies CancellationToken.None delivery
+                do! handleReferenceCreatedWith dependencies CancellationToken.None delivery
+
+                Assert.That(lifecycleCount, Is.EqualTo(1), $"Expected {referenceType} lifecycle preparation to converge.")
+                Assert.That(contributionCount, Is.EqualTo(1), $"Expected {referenceType} contribution work to converge.")
+                Assert.That(storedRelationships.Count, Is.EqualTo(2), $"Expected {referenceType} to retain one root and one manifest relationship.")
+        }
 
     /// Verifies stale event fields cannot override fresh Reference and DirectoryVersion actor state.
     [<Test>]
@@ -164,7 +252,7 @@ type ManifestContributionAccountingServerTests() =
                             Task.CompletedTask
                 }
 
-            do! handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ())
+            do! handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Commit)
 
             Assert.That(referenceReads, Is.EqualTo(1))
             Assert.That(directoryReads, Is.EqualTo(2), "The current root is read to discover candidates and reread immediately before the manifest mutation.")
@@ -211,7 +299,7 @@ type ManifestContributionAccountingServerTests() =
                     EnsureDirectoryVersionManifest = fun _ _ _ _ -> Task.CompletedTask
                 }
 
-            let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ())
+            let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Commit)
             let _ = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
 
             Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "lifecycle" |]))

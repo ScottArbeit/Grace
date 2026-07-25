@@ -314,49 +314,6 @@ module Services =
 
     let private serviceBusSender = lazy (serviceBusClient.Value.CreateSender(pubSubSettings.AzureServiceBus.Value.TopicName))
 
-    /// Creates the strict Service Bus envelope for one persisted Reference Created event.
-    let internal createReferenceCreatedServiceBusMessage (referenceEvent: ReferenceEvent) =
-        let referenceId =
-            match referenceEvent.Event with
-            | ReferenceEventType.Created (referenceId, _, _, _, _, _, _, _, _, _, _) -> referenceId
-            | eventType ->
-                invalidArg (nameof referenceEvent) $"Strict Reference publication only accepts Created events, not {getDiscriminatedUnionCaseName eventType}."
-
-        let graceEvent = GraceEvent.ReferenceEvent referenceEvent
-        let payload = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
-        let message = ServiceBusMessage(payload)
-        message.ContentType <- "application/json"
-        message.Subject <- "GraceEvent"
-        message.CorrelationId <- referenceEvent.Metadata.CorrelationId
-        message.MessageId <- $"Reference/{referenceId}/Created"
-        message.ApplicationProperties[ "graceEventType" ] <- getDiscriminatedUnionFullName graceEvent
-
-        for kvp in referenceEvent.Metadata.Properties do
-            message.ApplicationProperties[ kvp.Key ] <- kvp.Value
-
-        message
-
-    /// Publishes one persisted Reference Created event and completes only after the broker accepts the send.
-    let publishReferenceCreatedGraceEventStrict (referenceEvent: ReferenceEvent) =
-        task {
-            match pubSubSettings.System, pubSubSettings.AzureServiceBus with
-            | GracePubSubSystem.AzureServiceBus, Some _ ->
-                let message = createReferenceCreatedServiceBusMessage referenceEvent
-                do! serviceBusSender.Value.SendMessageAsync(message)
-
-                log.LogInformation(
-                    "{CurrentInstant}: Published strict Reference Created event via Azure Service Bus. CorrelationId: {CorrelationId}; MessageId: {MessageId}.",
-                    getCurrentInstantExtended (),
-                    referenceEvent.Metadata.CorrelationId,
-                    message.MessageId
-                )
-            | GracePubSubSystem.AzureServiceBus, None ->
-                invalidOp "Azure Service Bus is selected for strict Reference publication, but its settings are missing."
-            | otherSystem, _ ->
-                invalidOp $"Strict Reference publication requires Azure Service Bus, but Grace pub-sub is {getDiscriminatedUnionCaseName otherSystem}."
-        }
-        :> Task
-
     /// Publishes a GraceEvent to the configured pub-sub system.
     let publishGraceEvent (graceEvent: GraceEvent) (metadata: EventMetadata) =
         task {

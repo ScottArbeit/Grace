@@ -37,45 +37,30 @@ open System.Threading
 /// Groups Orleans actor helpers for branch keys, proxies, state, or workflow transitions.
 module Branch =
 
-    /// Classifies whether a caller-owned Commit identity is new, an exact retry, or conflicting reuse.
-    type internal CommitReferenceDisposition =
-        | NewCommit
+    /// Classifies whether a caller-owned Reference identity is new, an exact retry, or conflicting reuse.
+    type internal ReferenceOperationDisposition =
+        | NewReference
         | MatchingRetry
         | ConflictingReference
 
-    /// Compares a Branch Commit command with the durable Reference stored under its caller-owned identity.
-    let internal classifyCommitReference ownerId organizationId repositoryId branchId command existingReference =
+    /// Compares a Reference Create command with durable state under its caller-owned identity.
+    let internal classifyReferenceOperation command existingReference =
         match command, existingReference with
-        | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText), Some referenceDto ->
-            let referenceCommand =
-                ReferenceCommand.Create(
-                    referenceId,
-                    ownerId,
-                    organizationId,
-                    repositoryId,
-                    branchId,
-                    directoryVersionId,
-                    sha256Hash,
-                    blake3Hash,
-                    ReferenceType.Commit,
-                    referenceText,
-                    List.empty
-                )
-
-            if Reference.createCommandMatchesReference referenceDto referenceCommand then
+        | ReferenceCommand.Create _, Some referenceDto ->
+            if Reference.createCommandMatchesReference referenceDto command then
                 MatchingRetry
             else
                 ConflictingReference
-        | BranchCommand.Commit _, None -> NewCommit
-        | _ -> invalidArg (nameof command) "Commit reference classification requires a Branch Commit command."
+        | ReferenceCommand.Create _, None -> NewReference
+        | _ -> invalidArg (nameof command) "Reference operation classification requires a Reference Create command."
 
-    /// Preserves duplicate-correlation rejection except when a durable exact Commit retry proves idempotency.
+    /// Preserves duplicate-correlation rejection except when a durable exact Reference retry proves idempotency.
     let internal shouldRejectDuplicateCorrelation hasDuplicateCorrelation disposition =
         hasDuplicateCorrelation
         && disposition <> MatchingRetry
 
-    /// Emits a Branch Committed transition only when the caller-owned Reference does not already exist.
-    let internal shouldApplyCommitEvent disposition = disposition = NewCommit
+    /// Emits a Branch Reference transition only when the caller-owned Reference does not already exist.
+    let internal shouldApplyReferenceEvent disposition = disposition = NewReference
 
     /// Reports whether a Branch event owns durable state and publication rather than only updating the in-memory projection.
     let internal shouldPersistAndPublishBranchEvent branchEventType =
@@ -90,31 +75,55 @@ module Branch =
         | Rebased _ -> false
         | _ -> true
 
-    /// Reconciles a successfully republished durable Commit into missing or older Branch projection slots.
-    let internal reconcileCommitProjection (branchDto: BranchDto) (commitReference: ReferenceDto) =
-        if commitReference.ReferenceType
-           <> ReferenceType.Commit then
-            invalidArg (nameof commitReference) "Commit projection recovery requires a Commit Reference."
+    /// Extracts the durable Reference projection carried by one Branch Reference transition.
+    let internal tryGetReferenceFromBranchEvent branchEventType =
+        match branchEventType with
+        | Assigned (referenceDto, _, _, _, _)
+        | Promoted (referenceDto, _, _, _, _)
+        | Committed (referenceDto, _, _, _, _)
+        | Checkpointed (referenceDto, _, _, _, _)
+        | Saved (referenceDto, _, _, _, _)
+        | Tagged (referenceDto, _, _, _, _)
+        | ExternalCreated (referenceDto, _, _, _, _) -> Some referenceDto
+        | _ -> None
 
+    /// Reconciles one successfully republished durable Reference into missing or older Branch projection slots.
+    let internal reconcileReferenceProjection (branchDto: BranchDto) (referenceDto: ReferenceDto) =
         let shouldAdvance (currentReference: ReferenceDto) =
             if currentReference.ReferenceId = ReferenceId.Empty then
                 true
             else
-                match currentReference.UpdatedAt, commitReference.UpdatedAt with
+                match currentReference.UpdatedAt, referenceDto.UpdatedAt with
                 | None, Some _ -> true
-                | Some currentTimestamp, Some commitTimestamp -> commitTimestamp > currentTimestamp
+                | Some currentTimestamp, Some referenceTimestamp -> referenceTimestamp > currentTimestamp
                 | _ -> false
 
-        let advanceLatestCommit = shouldAdvance branchDto.LatestCommit
         let advanceLatestReference = shouldAdvance branchDto.LatestReference
-        let projectionChanged = advanceLatestCommit || advanceLatestReference
+        let mutable recovered = branchDto
+        let mutable typedProjectionChanged = false
 
-        let recovered =
-            { branchDto with
-                LatestCommit = if advanceLatestCommit then commitReference else branchDto.LatestCommit
-                LatestReference = if advanceLatestReference then commitReference else branchDto.LatestReference
+        let updateTypedProjection currentReference update =
+            if shouldAdvance currentReference then
+                recovered <- update recovered referenceDto
+                typedProjectionChanged <- true
+
+        match referenceDto.ReferenceType with
+        | ReferenceType.Promotion ->
+            updateTypedProjection recovered.LatestPromotion (fun branch reference -> { branch with LatestPromotion = reference; BasedOn = reference })
+        | ReferenceType.Commit -> updateTypedProjection recovered.LatestCommit (fun branch reference -> { branch with LatestCommit = reference })
+        | ReferenceType.Checkpoint -> updateTypedProjection recovered.LatestCheckpoint (fun branch reference -> { branch with LatestCheckpoint = reference })
+        | ReferenceType.Save -> updateTypedProjection recovered.LatestSave (fun branch reference -> { branch with LatestSave = reference })
+        | ReferenceType.Tag
+        | ReferenceType.External
+        | ReferenceType.Rebase -> ()
+
+        let projectionChanged = typedProjectionChanged || advanceLatestReference
+
+        recovered <-
+            { recovered with
+                LatestReference = if advanceLatestReference then referenceDto else recovered.LatestReference
                 ShouldRecomputeLatestReferences =
-                    branchDto.ShouldRecomputeLatestReferences
+                    recovered.ShouldRecomputeLatestReferences
                     || projectionChanged
             }
 
@@ -385,14 +394,14 @@ module Branch =
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 /// Checks whether command validation succeeded before emitting the domain event.
-                let isValid (command: BranchCommand) (metadata: EventMetadata) commitDisposition =
+                let isValid (command: BranchCommand) (metadata: EventMetadata) referenceDisposition =
                     task {
                         let hasDuplicateCorrelation =
                             state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
                             && (state.State.Count > 3)
 
                         let rejectDuplicateCorrelation =
-                            match commitDisposition with
+                            match referenceDisposition with
                             | Some disposition -> shouldRejectDuplicateCorrelation hasDuplicateCorrelation disposition
                             | None -> hasDuplicateCorrelation
 
@@ -413,6 +422,7 @@ module Branch =
                 /// Creates a reference DTO for branch promotion, commit, or save-boundary updates.
                 let addReferenceWithId
                     referenceId
+                    requiresBrokerAcceptance
                     ownerId
                     organizationId
                     repositoryId
@@ -444,6 +454,11 @@ module Branch =
 
                         metadata.Properties[ nameof (RepositoryId) ] <- $"{repositoryId}"
                         metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
+
+                        metadata.Properties[
+                            Reference.ReferenceCreatedRequiresBrokerAcceptanceProperty
+                        ] <- string requiresBrokerAcceptance
+
                         return! referenceActor.Handle referenceCommand metadata
                     }
 
@@ -451,6 +466,7 @@ module Branch =
                 let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
                     addReferenceWithId
                         (ReferenceId.NewGuid())
+                        false
                         ownerId
                         organizationId
                         repositoryId
@@ -464,44 +480,48 @@ module Branch =
 
                 let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
 
-                /// Reads the durable Reference before dispatch so Commit retries can avoid a second Branch transition.
-                let getCommitReferenceDisposition command =
+                /// Maps caller-owned Branch operations to the Reference Create command used for uniform retry classification.
+                let callerOwnedReferenceCommand command =
+                    match command with
+                    | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                        Some(
+                            referenceId,
+                            ReferenceCommand.Create(
+                                referenceId,
+                                branchDto.OwnerId,
+                                branchDto.OrganizationId,
+                                branchDto.RepositoryId,
+                                branchDto.BranchId,
+                                directoryVersionId,
+                                sha256Hash,
+                                blake3Hash,
+                                ReferenceType.Commit,
+                                referenceText,
+                                List.empty
+                            )
+                        )
+                    | _ -> None
+
+                /// Reads durable Reference state before dispatch so an exact retry avoids a second Branch transition.
+                let getReferenceOperationDisposition command =
                     task {
-                        match command, branchDto.UpdatedAt with
-                        | BranchCommand.Commit _, None -> return None
-                        | BranchCommand.Commit (referenceId, _, _, _, _), Some _ ->
+                        match callerOwnedReferenceCommand command, branchDto.UpdatedAt with
+                        | None, _
+                        | Some _, None -> return None
+                        | Some (referenceId, referenceCommand), Some _ ->
                             let referenceActor = Reference.CreateActorProxy referenceId branchDto.RepositoryId metadata.CorrelationId
                             let! exists = referenceActor.Exists metadata.CorrelationId
 
                             if exists then
                                 let! referenceDto = referenceActor.Get metadata.CorrelationId
 
-                                return
-                                    Some(
-                                        classifyCommitReference
-                                            branchDto.OwnerId
-                                            branchDto.OrganizationId
-                                            branchDto.RepositoryId
-                                            branchDto.BranchId
-                                            command
-                                            (Some referenceDto)
-                                    )
+                                return Some(classifyReferenceOperation referenceCommand (Some referenceDto))
                             else
-                                return
-                                    Some(
-                                        classifyCommitReference
-                                            branchDto.OwnerId
-                                            branchDto.OrganizationId
-                                            branchDto.RepositoryId
-                                            branchDto.BranchId
-                                            command
-                                            None
-                                    )
-                        | _ -> return None
+                                return Some(classifyReferenceOperation referenceCommand None)
                     }
 
                 /// Runs Branch command decisions, applies emitted events, and persists the result.
-                let processCommand (command: BranchCommand) (metadata: EventMetadata) commitDisposition =
+                let processCommand (command: BranchCommand) (metadata: EventMetadata) referenceDisposition =
                     task {
                         try
                             //logToConsole
@@ -620,6 +640,7 @@ module Branch =
                                         match!
                                             addReferenceWithId
                                                 referenceId
+                                                true
                                                 branchDto.OwnerId
                                                 branchDto.OrganizationId
                                                 branchDto.RepositoryId
@@ -870,12 +891,15 @@ module Branch =
                                     | Undelete -> return Ok Undeleted
                                 }
 
-                            match event, commitDisposition with
-                            | Ok (Committed (referenceDto, _, _, _, _) as event), Some MatchingRetry ->
-                                let recoveredBranchDto, _ = reconcileCommitProjection branchDto referenceDto
-                                branchDto <- recoveredBranchDto
-                                return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
-                            | Ok event, Some disposition when not (shouldApplyCommitEvent disposition) ->
+                            match event, referenceDisposition with
+                            | Ok event, Some MatchingRetry ->
+                                match tryGetReferenceFromBranchEvent event with
+                                | Some referenceDto ->
+                                    let recoveredBranchDto, _ = reconcileReferenceProjection branchDto referenceDto
+                                    branchDto <- recoveredBranchDto
+                                    return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                                | None -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                            | Ok event, Some disposition when not (shouldApplyReferenceEvent disposition) ->
                                 return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, _ -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error, _ -> return Error error
@@ -895,10 +919,10 @@ module Branch =
                     currentCommand <- getDiscriminatedUnionCaseName command
                     this.correlationId <- metadata.CorrelationId
 
-                    let! commitDisposition = getCommitReferenceDisposition command
+                    let! referenceDisposition = getReferenceOperationDisposition command
 
-                    match! isValid command metadata commitDisposition with
-                    | Ok command -> return! processCommand command metadata commitDisposition
+                    match! isValid command metadata referenceDisposition with
+                    | Ok command -> return! processCommand command metadata referenceDisposition
                     | Error error -> return Error error
                 }
 

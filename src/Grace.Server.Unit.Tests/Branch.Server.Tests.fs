@@ -80,9 +80,9 @@ type BranchServerValidationTests() =
 
         Assert.That(Result.isOk presentResult, Is.True)
 
-/// Covers Branch aggregate retry decisions for caller-owned Commit identities.
+/// Covers Branch aggregate retry decisions for caller-owned Reference identities.
 [<Parallelizable(ParallelScope.All)>]
-type BranchActorCommitRetryTests() =
+type BranchActorReferenceRetryTests() =
 
     let ownerId = Guid.Parse("11111111-7291-4000-8000-111111111111")
     let organizationId = Guid.Parse("22222222-7291-4000-8000-222222222222")
@@ -119,19 +119,32 @@ type BranchActorCommitRetryTests() =
     let branchProjection latestReference latestCommit =
         { BranchDto.Default with LatestReference = latestReference; LatestCommit = latestCommit; ShouldRecomputeLatestReferences = false }
 
-    /// Builds the Branch Commit command that owns the stable Reference identity.
-    let commitCommand (text: string) = BranchCommand.Commit(referenceId, directoryVersionId, sha256Hash, blake3Hash, ReferenceText text)
+    /// Builds the Reference Create command used by the Commit witness.
+    let referenceCommand (text: string) =
+        ReferenceCommand.Create(
+            referenceId,
+            ownerId,
+            organizationId,
+            repositoryId,
+            branchId,
+            directoryVersionId,
+            sha256Hash,
+            blake3Hash,
+            ReferenceType.Commit,
+            ReferenceText text,
+            List.empty
+        )
 
     /// Verifies an exact retry with the original correlation repairs an absent projection without a durable Branch transition.
     [<Test>]
     member _.SameCorrelationRetryAfterUnknownOutcomeRecoversProjectionOnly() =
         let durableCommit = persistedCommit ()
-        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some durableCommit)
-        let recovered, changed = reconcileCommitProjection (branchProjection ReferenceDto.Default ReferenceDto.Default) durableCommit
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) (Some durableCommit)
+        let recovered, changed = reconcileReferenceProjection (branchProjection ReferenceDto.Default ReferenceDto.Default) durableCommit
 
-        Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.MatchingRetry))
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
         Assert.That(shouldRejectDuplicateCorrelation true disposition, Is.False)
-        Assert.That(shouldApplyCommitEvent disposition, Is.False)
+        Assert.That(shouldApplyReferenceEvent disposition, Is.False)
         Assert.That(changed, Is.True)
         Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
         Assert.That(recovered.LatestReference, Is.EqualTo(durableCommit))
@@ -142,13 +155,13 @@ type BranchActorCommitRetryTests() =
     [<Test>]
     member _.FreshCorrelationRetryAfterCompletedCommitIsProjectionNoOp() =
         let durableCommit = persistedCommit ()
-        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some durableCommit)
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) (Some durableCommit)
         let current = branchProjection durableCommit durableCommit
-        let recovered, changed = reconcileCommitProjection current durableCommit
+        let recovered, changed = reconcileReferenceProjection current durableCommit
 
-        Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.MatchingRetry))
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
         Assert.That(shouldRejectDuplicateCorrelation false disposition, Is.False)
-        Assert.That(shouldApplyCommitEvent disposition, Is.False)
+        Assert.That(shouldApplyReferenceEvent disposition, Is.False)
         Assert.That(changed, Is.False)
         Assert.That(recovered, Is.EqualTo(current))
 
@@ -157,10 +170,10 @@ type BranchActorCommitRetryTests() =
     member _.FreshCorrelationRetryRecoversStaleProjection() =
         let durableCommit = persistedCommitAt referenceId later
         let staleCommit = persistedCommitAt (Guid.Parse("77777777-7291-4000-8000-777777777777")) earlier
-        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) (Some durableCommit)
-        let recovered, changed = reconcileCommitProjection (branchProjection staleCommit staleCommit) durableCommit
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) (Some durableCommit)
+        let recovered, changed = reconcileReferenceProjection (branchProjection staleCommit staleCommit) durableCommit
 
-        Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.MatchingRetry))
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
         Assert.That(shouldRejectDuplicateCorrelation false disposition, Is.False)
         Assert.That(changed, Is.True)
         Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
@@ -173,7 +186,7 @@ type BranchActorCommitRetryTests() =
         let olderCommit = persistedCommit ()
         let newerCommit = persistedCommitAt (Guid.Parse("77777777-7291-4000-8000-777777777777")) later
         let current = branchProjection newerCommit newerCommit
-        let recovered, changed = reconcileCommitProjection current olderCommit
+        let recovered, changed = reconcileReferenceProjection current olderCommit
 
         Assert.That(changed, Is.False)
         Assert.That(recovered.LatestCommit, Is.EqualTo(newerCommit))
@@ -183,16 +196,73 @@ type BranchActorCommitRetryTests() =
     /// Verifies stable Reference reuse with different Commit data remains rejected.
     [<Test>]
     member _.SameReferenceIdWithDifferentCommitDataIsRejected() =
-        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand "different commit") (Some(persistedCommit ()))
+        let disposition = classifyReferenceOperation (referenceCommand "different commit") (Some(persistedCommit ()))
 
-        Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.ConflictingReference))
-        Assert.That(shouldApplyCommitEvent disposition, Is.False)
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.ConflictingReference))
+        Assert.That(shouldApplyReferenceEvent disposition, Is.False)
 
     /// Verifies duplicate correlation handling remains strict for a new Commit identity.
     [<Test>]
-    member _.NewCommitStillRejectsDuplicateCorrelation() =
-        let disposition = classifyCommitReference ownerId organizationId repositoryId branchId (commitCommand (string referenceText)) None
+    member _.NewReferenceStillRejectsDuplicateCorrelation() =
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) None
 
-        Assert.That(disposition, Is.EqualTo(CommitReferenceDisposition.NewCommit))
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.NewReference))
         Assert.That(shouldRejectDuplicateCorrelation true disposition, Is.True)
-        Assert.That(shouldApplyCommitEvent disposition, Is.True)
+        Assert.That(shouldApplyReferenceEvent disposition, Is.True)
+
+    /// Verifies operation classification never uses ReferenceType as a reliability category.
+    [<Test>]
+    member _.ReferenceOperationClassificationIsTypeNeutral() =
+        let referenceTypes =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+                ReferenceType.Checkpoint
+                ReferenceType.Save
+                ReferenceType.Tag
+                ReferenceType.External
+                ReferenceType.Rebase
+            ]
+
+        for referenceType in referenceTypes do
+            let stored =
+                { ReferenceDto.Default with
+                    ReferenceId = referenceId
+                    OwnerId = ownerId
+                    OrganizationId = organizationId
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    DirectoryId = directoryVersionId
+                    Sha256Hash = sha256Hash
+                    Blake3Hash = blake3Hash
+                    ReferenceType = referenceType
+                    ReferenceText = referenceText
+                    UpdatedAt = Some earlier
+                }
+
+            let command =
+                ReferenceCommand.Create(
+                    referenceId,
+                    ownerId,
+                    organizationId,
+                    repositoryId,
+                    branchId,
+                    directoryVersionId,
+                    sha256Hash,
+                    blake3Hash,
+                    referenceType,
+                    referenceText,
+                    List.empty
+                )
+
+            Assert.That(
+                classifyReferenceOperation command (Some stored),
+                Is.EqualTo(ReferenceOperationDisposition.MatchingRetry),
+                $"Expected {referenceType} to use the same matching-retry rule."
+            )
+
+            Assert.That(
+                classifyReferenceOperation command None,
+                Is.EqualTo(ReferenceOperationDisposition.NewReference),
+                $"Expected {referenceType} to use the same new-operation rule."
+            )

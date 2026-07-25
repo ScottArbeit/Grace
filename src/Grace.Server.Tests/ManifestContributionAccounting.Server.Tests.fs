@@ -217,7 +217,11 @@ type ManifestContributionAccountingAspireTests() =
                     | ValidationResultEventType.Recorded validationResult -> validationResult.ValidationResultId = expectedValidationResultId)
                 |> Seq.toArray
 
-            Assert.That(matchingValidationResultEvents.Length, Is.EqualTo(1), "Duplicate Commit delivery must retain one durable quick-scan result.")
+            Assert.That(
+                matchingValidationResultEvents.Length,
+                Is.EqualTo(1),
+                "Duplicate Reference delivery through the Commit witness must retain one durable quick-scan result."
+            )
 
             let validationResult =
                 matchingValidationResultEvents
