@@ -445,6 +445,22 @@ module BranchServerTestHelpers =
             return! Client.PostAsync(endpoint, createJsonContent parameters)
         }
 
+    /// Builds a Commit request with a caller-owned reference identity for ambiguous BLAKE3 root validation.
+    let commitReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) blake3Hash =
+        task {
+            let parameters = Parameters.Branch.CommitReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
+            parameters.Blake3Hash <- blake3Hash
+            parameters.Message <- "Ambiguous BLAKE3 root locator route proof"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/commit", createJsonContent parameters)
+        }
+
     /// Defines assign reference by BLAKE3 response behavior for the surrounding tests used by the server integration branch scenario.
     let assignReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId blake3Hash =
         task {
@@ -1455,8 +1471,7 @@ type BranchServer() =
 
             do! assertAmbiguousResponse saveResponse
 
-            let! commitResponse =
-                BranchServerTestHelpers.createReferenceByBlake3ResponseAsync "/branch/commit" repositoryId commitBranch (Blake3Hash sharedPrefix)
+            let! commitResponse = BranchServerTestHelpers.commitReferenceByBlake3ResponseAsync repositoryId commitBranch (Blake3Hash sharedPrefix)
 
             do! assertAmbiguousResponse commitResponse
 
