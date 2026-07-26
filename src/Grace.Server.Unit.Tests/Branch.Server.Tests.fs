@@ -450,3 +450,94 @@ type BranchActorReferenceRetryTests() =
             canProjectPromotionReference (Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded) (Some terminalPromotion.ReferenceId) terminalPromotion,
             Is.True
         )
+
+    /// Verifies Branch Create retry comparison remains anchored to immutable durable creation facts.
+    [<Test>]
+    member _.BranchCreateRetryUsesImmutableCreationFacts() =
+        let parentBranchId = Guid.Parse("10101010-7300-4000-8000-101010101010")
+        let basedOn = Guid.Parse("20202020-7300-4000-8000-202020202020")
+        let createReferenceId = Guid.Parse("30303030-7300-4000-8000-303030303030")
+        let branchName = BranchName "immutable-create"
+
+        let permissions =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+            ]
+
+        let created = BranchEventType.Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, permissions)
+
+        let exact =
+            BranchCommand.Create(branchId, branchName, parentBranchId, basedOn, createReferenceId, ownerId, organizationId, repositoryId, List.rev permissions)
+
+        let conflicting =
+            BranchCommand.Create(
+                branchId,
+                branchName,
+                parentBranchId,
+                Guid.Parse("40404040-7300-4000-8000-404040404040"),
+                createReferenceId,
+                ownerId,
+                organizationId,
+                repositoryId,
+                permissions
+            )
+
+        let conflictingPermissions =
+            BranchCommand.Create(
+                branchId,
+                branchName,
+                parentBranchId,
+                basedOn,
+                createReferenceId,
+                ownerId,
+                organizationId,
+                repositoryId,
+                [ ReferenceType.Promotion ]
+            )
+
+        Assert.That(createCommandMatchesCreationEvent created exact, Is.True)
+        Assert.That(createCommandMatchesCreationEvent created conflicting, Is.False)
+        Assert.That(createCommandMatchesCreationEvent created conflictingPermissions, Is.False)
+
+    /// Verifies the newest projectable Promotion or Rebase transition exclusively chooses public BasedOn.
+    [<Test>]
+    member _.NewestBaseChangingTransitionWins() =
+        let durableBase = { persistedCommitAt (Guid.Parse("50505050-7300-4000-8000-505050505050")) earlier with CreatedAt = earlier }
+
+        let olderPromotion =
+            { persistedCommitAt (Guid.Parse("60606060-7300-4000-8000-606060606060")) earlier with ReferenceType = ReferenceType.Promotion; CreatedAt = earlier }
+
+        let rebaseTransition =
+            { persistedCommitAt (Guid.Parse("70707070-7300-4000-8000-707070707070")) later with ReferenceType = ReferenceType.Rebase; CreatedAt = later }
+
+        let rebaseTarget =
+            { persistedCommitAt (Guid.Parse("80808080-7300-4000-8000-808080808080")) earlier with ReferenceType = ReferenceType.Promotion; CreatedAt = earlier }
+
+        let newerPromotion = { olderPromotion with ReferenceId = Guid.Parse("81818181-7300-4000-8000-818181818181"); CreatedAt = later }
+        let olderRebaseTransition = { rebaseTransition with ReferenceId = Guid.Parse("82828282-7300-4000-8000-828282828282"); CreatedAt = earlier }
+        let tiedPromotion = { newerPromotion with ReferenceId = Guid.Parse("83838383-7300-4000-8000-838383838383") }
+
+        Assert.That(selectBasedOnProjection durableBase (Some(rebaseTransition, rebaseTarget)) (Some olderPromotion), Is.EqualTo(rebaseTarget))
+        Assert.That(selectBasedOnProjection durableBase (Some(olderRebaseTransition, rebaseTarget)) (Some newerPromotion), Is.EqualTo(newerPromotion))
+        Assert.That(selectBasedOnProjection durableBase (Some(rebaseTransition, rebaseTarget)) (Some tiedPromotion), Is.EqualTo(tiedPromotion))
+        Assert.That(selectBasedOnProjection durableBase None None, Is.EqualTo(durableBase))
+
+    /// Verifies a just-created durable Promotion remains a recomputation candidate before storage queries catch up.
+    [<Test>]
+    member _.CurrentDurablePromotionBridgesQueryVisibilityLag() =
+        let currentPromotion =
+            { persistedCommitAt (Guid.Parse("90909090-7300-4000-8000-909090909090")) later with ReferenceType = ReferenceType.Promotion; CreatedAt = later }
+
+        let staleQueryCopy =
+            { currentPromotion with
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet(Guid.Parse("91919191-7300-4000-8000-919191919191"))
+                    ]
+            }
+
+        let candidates = orderPromotionCandidates [| staleQueryCopy |] None (Some currentPromotion)
+
+        Assert.That(candidates, Has.Length.EqualTo(1))
+        Assert.That(candidates[0], Is.EqualTo(currentPromotion))

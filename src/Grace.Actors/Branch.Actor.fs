@@ -62,6 +62,30 @@ module Branch =
     /// Emits a Branch Reference transition only when the caller-owned Reference does not already exist.
     let internal shouldApplyReferenceEvent disposition = disposition = NewReference
 
+    /// Compares a Branch Create command with the immutable facts in its durable Created event.
+    let internal createCommandMatchesCreationEvent branchEventType command =
+        match branchEventType, command with
+        | Created (createdBranchId,
+                   createdBranchName,
+                   createdParentBranchId,
+                   createdBasedOn,
+                   createdOwnerId,
+                   createdOrganizationId,
+                   createdRepositoryId,
+                   createdPermissions),
+          BranchCommand.Create (branchId, branchName, parentBranchId, basedOn, _, ownerId, organizationId, repositoryId, initialPermissions) ->
+            let durablePermissions = HashSet<ReferenceType>(createdPermissions)
+
+            createdBranchId = branchId
+            && createdBranchName = branchName
+            && createdParentBranchId = parentBranchId
+            && createdBasedOn = basedOn
+            && createdOwnerId = ownerId
+            && createdOrganizationId = organizationId
+            && createdRepositoryId = repositoryId
+            && durablePermissions.SetEquals(initialPermissions)
+        | _ -> false
+
     /// Reports whether a Branch event owns durable state and publication rather than only updating the in-memory projection.
     let internal shouldPersistAndPublishBranchEvent branchEventType =
         match branchEventType with
@@ -163,6 +187,40 @@ module Branch =
             && promotionSetStatus = Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded
             && expectedTerminalReferenceId = Some referenceDto.ReferenceId
 
+    /// Orders distinct Promotion candidates while allowing direct durable actor state to bridge query visibility lag.
+    let internal orderPromotionCandidates
+        (queriedPromotions: ReferenceDto array)
+        (latestTerminalPromotion: ReferenceDto option)
+        (currentDurablePromotion: ReferenceDto option)
+        =
+        seq {
+            match currentDurablePromotion with
+            | Some referenceDto -> yield referenceDto
+            | None -> ()
+
+            match latestTerminalPromotion with
+            | Some referenceDto -> yield referenceDto
+            | None -> ()
+
+            yield! queriedPromotions
+        }
+        |> Seq.filter (fun referenceDto -> referenceDto.ReferenceId <> ReferenceId.Empty)
+        |> Seq.distinctBy (fun referenceDto -> referenceDto.ReferenceId)
+        |> Seq.sortByDescending (fun referenceDto -> referenceDto.CreatedAt)
+        |> Seq.toArray
+
+    /// Selects BasedOn from the newest projectable Promotion or Rebase transition while leaving typed slots independent.
+    let internal selectBasedOnProjection
+        (durableBase: ReferenceDto)
+        (latestRebase: (ReferenceDto * ReferenceDto) option)
+        (latestProjectablePromotion: ReferenceDto option)
+        =
+        match latestRebase, latestProjectablePromotion with
+        | Some (rebaseTransition, rebaseTarget), Some promotion when rebaseTransition.CreatedAt > promotion.CreatedAt -> rebaseTarget
+        | _, Some promotion -> promotion
+        | Some (_, rebaseTarget), None -> rebaseTarget
+        | None, None -> durableBase
+
     /// Builds the public Branch command result without mutating the aggregate a second time for exact Commit retries.
     let private createBranchCommandReturnValue (branchDto: BranchDto) (branchEvent: BranchEvent) =
         let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
@@ -201,12 +259,22 @@ module Branch =
                 let! promotions = getPromotions branchDto.RepositoryId branchDto.BranchId 500 correlationId
                 let! latestTerminalPromotion = getLatestPromotion branchDto.RepositoryId branchDto.BranchId
 
-                let orderedPromotions =
-                    match latestTerminalPromotion with
-                    | Some referenceDto -> Array.append promotions [| referenceDto |]
-                    | None -> promotions
-                    |> Array.distinctBy (fun referenceDto -> referenceDto.ReferenceId)
-                    |> Array.sortByDescending (fun referenceDto -> referenceDto.CreatedAt)
+                let! currentDurablePromotion =
+                    if branchDto.LatestPromotion.ReferenceId = ReferenceId.Empty then
+                        Task.FromResult<Option<ReferenceDto>> None
+                    else
+                        task {
+                            let referenceActor = Reference.CreateActorProxy branchDto.LatestPromotion.ReferenceId branchDto.RepositoryId correlationId
+
+                            let! referenceDto = referenceActor.Get correlationId
+
+                            if referenceDto.ReferenceId = ReferenceId.Empty then
+                                return None
+                            else
+                                return Some referenceDto
+                        }
+
+                let orderedPromotions = orderPromotionCandidates promotions latestTerminalPromotion currentDurablePromotion
 
                 let mutable projectablePromotion: ReferenceDto option = None
                 let mutable index = 0
@@ -250,6 +318,8 @@ module Branch =
                     |> Seq.fold (fun current branchEvent -> current |> BranchDto.UpdateDto branchEvent) BranchDto.Default
 
                 let mutable newBranchDto = { branchDto with BasedOn = durableBranchDto.BasedOn; LatestPromotion = ReferenceDto.Default }
+
+                let mutable latestRebaseProjection: (ReferenceDto * ReferenceDto) option = None
 
                 // Get the enabled reference types. This allows us to limit the ReferenceTypes we search for.
                 let enabledReferenceTypes = List<ReferenceType>()
@@ -309,30 +379,31 @@ module Branch =
                     | Commit -> newBranchDto <- { newBranchDto with LatestCommit = referenceDto }
                     | Promotion -> ()
                     | Rebase ->
-                        let basedOnLink =
-                            kvp.Value.Links
-                            |> Seq.find (fun link ->
-                                match link with
-                                | ReferenceLinkType.BasedOn _ -> true
-                                | _ -> false)
-
                         let basedOnReferenceId =
-                            match basedOnLink with
-                            | ReferenceLinkType.BasedOn referenceId -> referenceId
-                            | _ -> ReferenceId.Empty
+                            kvp.Value.Links
+                            |> Seq.tryPick (fun link ->
+                                match link with
+                                | ReferenceLinkType.BasedOn referenceId -> Some referenceId
+                                | _ -> None)
 
-                        let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId branchDto.RepositoryId correlationId
-                        let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
-
-                        newBranchDto <- { newBranchDto with BasedOn = basedOnReferenceDto }
+                        match basedOnReferenceId with
+                        | Some referenceId ->
+                            let basedOnReferenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId correlationId
+                            let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
+                            latestRebaseProjection <- Some(referenceDto, basedOnReferenceDto)
+                        | None -> ()
                     | External -> ()
                     | Tag -> ()
 
                 match latestProjectablePromotion with
-                | Some referenceDto -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                | Some referenceDto -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto }
                 | None -> ()
 
-                return { newBranchDto with ShouldRecomputeLatestReferences = false }
+                return
+                    { newBranchDto with
+                        BasedOn = selectBasedOnProjection durableBranchDto.BasedOn latestRebaseProjection latestProjectablePromotion
+                        ShouldRecomputeLatestReferences = false
+                    }
             }
 
         /// Stores the correlation id used by this actor while reporting timings and errors.
@@ -496,17 +567,6 @@ module Branch =
 
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
-                /// Compares the caller's initial Reference permissions with the persisted Branch projection.
-                let initialPermissionsMatch initialPermissions =
-                    let permissions = initialPermissions |> Seq.toArray
-
-                    branchDto.PromotionEnabled = Array.contains ReferenceType.Promotion permissions
-                    && branchDto.CommitEnabled = Array.contains ReferenceType.Commit permissions
-                    && branchDto.CheckpointEnabled = Array.contains ReferenceType.Checkpoint permissions
-                    && branchDto.SaveEnabled = Array.contains ReferenceType.Save permissions
-                    && branchDto.TagEnabled = Array.contains ReferenceType.Tag permissions
-                    && branchDto.ExternalEnabled = Array.contains ReferenceType.External permissions
-
                 /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: BranchCommand) (metadata: EventMetadata) referenceDisposition =
                     task {
@@ -523,17 +583,18 @@ module Branch =
                             return Error(GraceError.Create (getErrorMessage BranchError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | BranchCommand.Create (branchId, branchName, parentBranchId, basedOn, _, ownerId, organizationId, repositoryId, branchPermissions) ->
+                            | BranchCommand.Create (_, branchName, _, _, _, _, _, _, _) ->
+                                let matchesDurableCreation =
+                                    state.State
+                                    |> Seq.tryPick (fun branchEvent ->
+                                        match branchEvent.Event with
+                                        | Created _ -> Some(createCommandMatchesCreationEvent branchEvent.Event command)
+                                        | _ -> None)
+                                    |> Option.defaultValue false
+
                                 match branchDto.UpdatedAt with
                                 | Some _ when
-                                    branchDto.BranchId = branchId
-                                    && branchDto.BranchName = branchName
-                                    && branchDto.ParentBranchId = parentBranchId
-                                    && branchDto.BasedOn.ReferenceId = basedOn
-                                    && branchDto.OwnerId = ownerId
-                                    && branchDto.OrganizationId = organizationId
-                                    && branchDto.RepositoryId = repositoryId
-                                    && initialPermissionsMatch branchPermissions
+                                    matchesDurableCreation
                                     && (referenceDisposition = Some MatchingRetry
                                         || (branchName = InitialBranchName
                                             && referenceDisposition.IsNone))
