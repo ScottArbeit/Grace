@@ -20,16 +20,65 @@ open System.Threading.Tasks
 
 /// Groups Orleans actor helpers for validation result keys, proxies, state, or workflow transitions.
 module ValidationResult =
+    /// Classifies a ValidationResult Record as new, an exact replay, or conflicting identity reuse.
+    type internal ValidationResultRecordDisposition =
+        | DuplicateCorrelationReplay
+        | NewResult
+        | MatchingResult
+        | ConflictingResult
+
     /// Checks whether the request correlation id already appears in persisted events.
     let internal hasDuplicateCorrelationId (events: seq<ValidationResultEvent>) (metadata: EventMetadata) =
         events
         |> Seq.exists (fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
 
+    /// Compares retry-stable ValidationResult data while keeping the first persisted creation time canonical.
+    let internal recordMatchesStoredResult (stored: ValidationResultDto) (incoming: ValidationResultDto) =
+        stored.ValidationResultId = incoming.ValidationResultId
+        && stored.OwnerId = incoming.OwnerId
+        && stored.OrganizationId = incoming.OrganizationId
+        && stored.RepositoryId = incoming.RepositoryId
+        && stored.ValidationSetId = incoming.ValidationSetId
+        && stored.PromotionSetId = incoming.PromotionSetId
+        && stored.PromotionSetStepId = incoming.PromotionSetStepId
+        && stored.StepsComputationAttempt = incoming.StepsComputationAttempt
+        && stored.ValidationName = incoming.ValidationName
+        && stored.ValidationVersion = incoming.ValidationVersion
+        && stored.Output = incoming.Output
+        && stored.OnBehalfOf = incoming.OnBehalfOf
+
+    /// Classifies one serialized Record attempt against the current durable ValidationResult state.
+    let internal classifyRecord (stored: ValidationResultDto) (incoming: ValidationResultDto) =
+        if stored.ValidationResultId = ValidationResultId.Empty then NewResult
+        elif recordMatchesStoredResult stored incoming then MatchingResult
+        else ConflictingResult
+
+    /// Applies actor-wide correlation replay precedence before comparing deterministic ValidationResult data.
+    let internal classifyRecordAttempt
+        (events: seq<ValidationResultEvent>)
+        (stored: ValidationResultDto)
+        (incoming: ValidationResultDto)
+        (metadata: EventMetadata)
+        =
+        if hasDuplicateCorrelationId events metadata then
+            DuplicateCorrelationReplay
+        else
+            classifyRecord stored incoming
+
+    /// Selects the original persisted Record value so projection-added metadata cannot make an exact replay conflict.
+    let internal durableRecordForComparison (events: seq<ValidationResultEvent>) (projected: ValidationResultDto) =
+        events
+        |> Seq.tryPick (fun event ->
+            match event.Event with
+            | ValidationResultEventType.Recorded recorded -> Some recorded)
+        |> Option.defaultValue projected
+
+    /// Reports whether a Record decision should append a durable ValidationResult event.
+    let internal shouldApplyRecord disposition = disposition = NewResult
+
     /// Implements the Orleans grain for validation result actor.
     type ValidationResultActor
-        (
-            [<PersistentState(StateName.ValidationResult, Constants.GraceActorStorage)>] state: IPersistentState<List<ValidationResultEvent>>
-        ) =
+        ([<PersistentState(StateName.ValidationResult, Constants.GraceActorStorage)>] state: IPersistentState<List<ValidationResultEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.ValidationResult
@@ -61,9 +110,7 @@ module ValidationResult =
                     state.State.Add(validationResultEvent)
                     do! state.WriteStateAsync()
 
-                    validationResult <-
-                        validationResult
-                        |> ValidationResultDto.UpdateDto validationResultEvent
+                    validationResult <- validationResult |> ValidationResultDto.UpdateDto validationResultEvent
 
                     let graceEvent = GraceEvent.ValidationResultEvent validationResultEvent
                     do! publishGraceEvent graceEvent validationResultEvent.Metadata
@@ -74,8 +121,7 @@ module ValidationResult =
                             .enhance (nameof ValidationResultId, validationResult.ValidationResultId)
 
                     return Ok graceReturnValue
-                with
-                | ex ->
+                with ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed to apply event for ValidationResultId: {ValidationResultId}.",
@@ -102,8 +148,7 @@ module ValidationResult =
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
-                not
-                <| validationResult.ValidationResultId.Equals(ValidationResultId.Empty)
+                not <| validationResult.ValidationResultId.Equals(ValidationResultId.Empty)
                 |> returnTask
 
             /// Returns the current ValidationResult actor state snapshot.
@@ -120,21 +165,10 @@ module ValidationResult =
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
-                state.State :> IReadOnlyList<ValidationResultEvent>
-                |> returnTask
+                state.State :> IReadOnlyList<ValidationResultEvent> |> returnTask
 
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
-                /// Checks whether command validation succeeded before emitting the domain event.
-                let isValid (validationResultCommand: ValidationResultCommand) (eventMetadata: EventMetadata) =
-                    task {
-                        if hasDuplicateCorrelationId state.State eventMetadata then
-                            return Error(GraceError.Create "Duplicate correlation ID for ValidationResult command." eventMetadata.CorrelationId)
-                        else
-                            match validationResultCommand with
-                            | ValidationResultCommand.Record _ -> return Ok validationResultCommand
-                    }
-
                 /// Runs ValidationResult command decisions, applies emitted events, and persists the result.
                 let processCommand (validationResultCommand: ValidationResultCommand) (eventMetadata: EventMetadata) =
                     task {
@@ -146,11 +180,31 @@ module ValidationResult =
                         return! this.ApplyEvent validationResultEvent
                     }
 
+                /// Returns success for an exact durable replay without appending or publishing another event.
+                let existingResultReturnValue correlationId =
+                    (GraceReturnValue.Create "Validation result command succeeded." correlationId)
+                        .enhance(nameof RepositoryId, validationResult.RepositoryId)
+                        .enhance (nameof ValidationResultId, validationResult.ValidationResultId)
+
                 task {
                     currentCommand <- getDiscriminatedUnionCaseName command
                     this.correlationId <- metadata.CorrelationId
 
-                    match! isValid command metadata with
-                    | Ok validCommand -> return! processCommand validCommand metadata
-                    | Error validationError -> return Error validationError
+                    match command with
+                    | ValidationResultCommand.Record incoming ->
+                        let stored = durableRecordForComparison state.State validationResult
+                        let disposition = classifyRecordAttempt state.State stored incoming metadata
+
+                        match disposition with
+                        | DuplicateCorrelationReplay ->
+                            return Error(GraceError.Create "Duplicate correlation ID for ValidationResult command." metadata.CorrelationId)
+                        | MatchingResult -> return Ok(existingResultReturnValue metadata.CorrelationId)
+                        | ConflictingResult ->
+                            return
+                                Error(
+                                    (GraceError.Create "ValidationResult identity already stores different data." metadata.CorrelationId)
+                                        .enhance(nameof RepositoryId, incoming.RepositoryId)
+                                        .enhance (nameof ValidationResultId, incoming.ValidationResultId)
+                                )
+                        | NewResult -> return! processCommand command metadata
                 }

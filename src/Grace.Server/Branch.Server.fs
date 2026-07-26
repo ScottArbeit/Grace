@@ -742,6 +742,9 @@ module Branch =
             |]
             BranchError.EitherDirectoryVersionIdOrSha256HashRequired
 
+    /// Validates the caller-supplied stable Reference identity required by Commit retries.
+    let validateCommitReferenceId (parameters: CommitReferenceParameters) = Guid.isNotEmpty parameters.ReferenceId BranchError.InvalidReferenceId
+
     /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> BranchParameters>
         (context: HttpContext)
@@ -1075,8 +1078,9 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 /// Implements validations for the server request pipeline.
-                let validations (parameters: CreateReferenceParameters) =
+                let validations (parameters: CommitReferenceParameters) =
                     [|
+                        validateCommitReferenceId parameters
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -1094,10 +1098,11 @@ module Branch =
                     |]
 
                 /// Implements command for the server request pipeline.
-                let command (parameters: CreateReferenceParameters) =
+                let command (parameters: CommitReferenceParameters) =
                     referenceCommandFromRoot
                         context
-                        BranchCommand.Commit
+                        (fun (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                            BranchCommand.Commit(parameters.ReferenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                         graceIds.RepositoryId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash

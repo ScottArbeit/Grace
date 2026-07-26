@@ -1,8 +1,12 @@
 namespace Grace.Server.Tests
 
+open Grace.Actors.Branch
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Validation.Errors
+open Grace.Types.Branch
 open Grace.Types.Common
+open Grace.Types.Reference
+open NodaTime
 open NUnit.Framework
 open System
 
@@ -54,3 +58,211 @@ type BranchServerValidationTests() =
                 .Result
 
         Assert.That(Result.isOk result, Is.True)
+
+    /// Verifies Commit rejects a missing stable Reference identity before command dispatch.
+    [<Test>]
+    member _.``commit validation requires a stable reference id``() =
+        let parameters = CommitReferenceParameters()
+
+        let missingResult =
+            (Grace.Server.Branch.validateCommitReferenceId parameters)
+                .Result
+
+        parameters.ReferenceId <- Guid.NewGuid()
+
+        let presentResult =
+            (Grace.Server.Branch.validateCommitReferenceId parameters)
+                .Result
+
+        match missingResult with
+        | Error error -> Assert.That(error, Is.EqualTo(BranchError.InvalidReferenceId))
+        | Ok _ -> Assert.Fail("Expected an empty Commit ReferenceId to be rejected.")
+
+        Assert.That(Result.isOk presentResult, Is.True)
+
+/// Covers Branch aggregate retry decisions for caller-owned Reference identities.
+[<Parallelizable(ParallelScope.All)>]
+type BranchActorReferenceRetryTests() =
+
+    let ownerId = Guid.Parse("11111111-7291-4000-8000-111111111111")
+    let organizationId = Guid.Parse("22222222-7291-4000-8000-222222222222")
+    let repositoryId = Guid.Parse("33333333-7291-4000-8000-333333333333")
+    let branchId = Guid.Parse("44444444-7291-4000-8000-444444444444")
+    let referenceId = Guid.Parse("55555555-7291-4000-8000-555555555555")
+    let directoryVersionId = Guid.Parse("66666666-7291-4000-8000-666666666666")
+    let sha256Hash = Sha256Hash "commit-sha256"
+    let blake3Hash = Blake3Hash "commit-blake3"
+    let referenceText = ReferenceText "idempotent commit"
+    let earlier = Instant.FromUtc(2026, 7, 24, 12, 0)
+    let later = Instant.FromUtc(2026, 7, 24, 12, 1)
+
+    /// Builds the durable Commit Reference produced before an HTTP outcome becomes unknown.
+    let persistedCommitAt referenceIdentity timestamp =
+        { ReferenceDto.Default with
+            ReferenceId = referenceIdentity
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryId = repositoryId
+            BranchId = branchId
+            DirectoryId = directoryVersionId
+            Sha256Hash = sha256Hash
+            Blake3Hash = blake3Hash
+            ReferenceType = ReferenceType.Commit
+            ReferenceText = referenceText
+            UpdatedAt = Some timestamp
+        }
+
+    /// Builds the durable Commit Reference produced before an HTTP outcome becomes unknown.
+    let persistedCommit () = persistedCommitAt referenceId earlier
+
+    /// Builds a Branch projection with explicit latest Reference slots.
+    let branchProjection latestReference latestCommit =
+        { BranchDto.Default with LatestReference = latestReference; LatestCommit = latestCommit; ShouldRecomputeLatestReferences = false }
+
+    /// Builds the Reference Create command used by the Commit witness.
+    let referenceCommand (text: string) =
+        ReferenceCommand.Create(
+            referenceId,
+            ownerId,
+            organizationId,
+            repositoryId,
+            branchId,
+            directoryVersionId,
+            sha256Hash,
+            blake3Hash,
+            ReferenceType.Commit,
+            ReferenceText text,
+            List.empty
+        )
+
+    /// Verifies an exact retry with the original correlation repairs an absent projection without a durable Branch transition.
+    [<Test>]
+    member _.SameCorrelationRetryAfterUnknownOutcomeRecoversProjectionOnly() =
+        let durableCommit = persistedCommit ()
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) (Some durableCommit)
+        let recovered, changed = reconcileReferenceProjection (branchProjection ReferenceDto.Default ReferenceDto.Default) durableCommit
+
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
+        Assert.That(shouldRejectDuplicateCorrelation true disposition, Is.False)
+        Assert.That(shouldApplyReferenceEvent disposition, Is.False)
+        Assert.That(changed, Is.True)
+        Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
+        Assert.That(recovered.LatestReference, Is.EqualTo(durableCommit))
+        Assert.That(recovered.ShouldRecomputeLatestReferences, Is.True)
+        Assert.That(shouldPersistAndPublishBranchEvent (Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)), Is.False)
+
+    /// Verifies a fresh-correlation retry against a completed projection is a projection no-op.
+    [<Test>]
+    member _.FreshCorrelationRetryAfterCompletedCommitIsProjectionNoOp() =
+        let durableCommit = persistedCommit ()
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) (Some durableCommit)
+        let current = branchProjection durableCommit durableCommit
+        let recovered, changed = reconcileReferenceProjection current durableCommit
+
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
+        Assert.That(shouldRejectDuplicateCorrelation false disposition, Is.False)
+        Assert.That(shouldApplyReferenceEvent disposition, Is.False)
+        Assert.That(changed, Is.False)
+        Assert.That(recovered, Is.EqualTo(current))
+
+    /// Verifies a fresh-correlation retry advances stale projection slots from the newer durable Commit.
+    [<Test>]
+    member _.FreshCorrelationRetryRecoversStaleProjection() =
+        let durableCommit = persistedCommitAt referenceId later
+        let staleCommit = persistedCommitAt (Guid.Parse("77777777-7291-4000-8000-777777777777")) earlier
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) (Some durableCommit)
+        let recovered, changed = reconcileReferenceProjection (branchProjection staleCommit staleCommit) durableCommit
+
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
+        Assert.That(shouldRejectDuplicateCorrelation false disposition, Is.False)
+        Assert.That(changed, Is.True)
+        Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
+        Assert.That(recovered.LatestReference, Is.EqualTo(durableCommit))
+        Assert.That(recovered.ShouldRecomputeLatestReferences, Is.True)
+
+    /// Verifies a late retry cannot replace newer latest Commit or Reference projections.
+    [<Test>]
+    member _.LateOlderRetryPreservesNewerProjection() =
+        let olderCommit = persistedCommit ()
+        let newerCommit = persistedCommitAt (Guid.Parse("77777777-7291-4000-8000-777777777777")) later
+        let current = branchProjection newerCommit newerCommit
+        let recovered, changed = reconcileReferenceProjection current olderCommit
+
+        Assert.That(changed, Is.False)
+        Assert.That(recovered.LatestCommit, Is.EqualTo(newerCommit))
+        Assert.That(recovered.LatestReference, Is.EqualTo(newerCommit))
+        Assert.That(recovered.ShouldRecomputeLatestReferences, Is.False)
+
+    /// Verifies stable Reference reuse with different Commit data remains rejected.
+    [<Test>]
+    member _.SameReferenceIdWithDifferentCommitDataIsRejected() =
+        let disposition = classifyReferenceOperation (referenceCommand "different commit") (Some(persistedCommit ()))
+
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.ConflictingReference))
+        Assert.That(shouldApplyReferenceEvent disposition, Is.False)
+
+    /// Verifies duplicate correlation handling remains strict for a new Commit identity.
+    [<Test>]
+    member _.NewReferenceStillRejectsDuplicateCorrelation() =
+        let disposition = classifyReferenceOperation (referenceCommand (string referenceText)) None
+
+        Assert.That(disposition, Is.EqualTo(ReferenceOperationDisposition.NewReference))
+        Assert.That(shouldRejectDuplicateCorrelation true disposition, Is.True)
+        Assert.That(shouldApplyReferenceEvent disposition, Is.True)
+
+    /// Verifies operation classification never uses ReferenceType as a reliability category.
+    [<Test>]
+    member _.ReferenceOperationClassificationIsTypeNeutral() =
+        let referenceTypes =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+                ReferenceType.Checkpoint
+                ReferenceType.Save
+                ReferenceType.Tag
+                ReferenceType.External
+                ReferenceType.Rebase
+            ]
+
+        for referenceType in referenceTypes do
+            let stored =
+                { ReferenceDto.Default with
+                    ReferenceId = referenceId
+                    OwnerId = ownerId
+                    OrganizationId = organizationId
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    DirectoryId = directoryVersionId
+                    Sha256Hash = sha256Hash
+                    Blake3Hash = blake3Hash
+                    ReferenceType = referenceType
+                    ReferenceText = referenceText
+                    UpdatedAt = Some earlier
+                }
+
+            let command =
+                ReferenceCommand.Create(
+                    referenceId,
+                    ownerId,
+                    organizationId,
+                    repositoryId,
+                    branchId,
+                    directoryVersionId,
+                    sha256Hash,
+                    blake3Hash,
+                    referenceType,
+                    referenceText,
+                    List.empty
+                )
+
+            Assert.That(
+                classifyReferenceOperation command (Some stored),
+                Is.EqualTo(ReferenceOperationDisposition.MatchingRetry),
+                $"Expected {referenceType} to use the same matching-retry rule."
+            )
+
+            Assert.That(
+                classifyReferenceOperation command None,
+                Is.EqualTo(ReferenceOperationDisposition.NewReference),
+                $"Expected {referenceType} to use the same new-operation rule."
+            )

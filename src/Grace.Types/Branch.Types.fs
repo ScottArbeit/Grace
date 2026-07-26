@@ -41,7 +41,12 @@ module Branch =
         | SetName of newName: BranchName
         | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
         | Promote of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Commit of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Commit of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
         | Checkpoint of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
         | Save of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
         | Tag of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText

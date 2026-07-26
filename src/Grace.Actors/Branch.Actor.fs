@@ -37,6 +37,118 @@ open System.Threading
 /// Groups Orleans actor helpers for branch keys, proxies, state, or workflow transitions.
 module Branch =
 
+    /// Classifies whether a caller-owned Reference identity is new, an exact retry, or conflicting reuse.
+    type internal ReferenceOperationDisposition =
+        | NewReference
+        | MatchingRetry
+        | ConflictingReference
+
+    /// Compares a Reference Create command with durable state under its caller-owned identity.
+    let internal classifyReferenceOperation command existingReference =
+        match command, existingReference with
+        | ReferenceCommand.Create _, Some referenceDto ->
+            if Reference.createCommandMatchesReference referenceDto command then
+                MatchingRetry
+            else
+                ConflictingReference
+        | ReferenceCommand.Create _, None -> NewReference
+        | _ -> invalidArg (nameof command) "Reference operation classification requires a Reference Create command."
+
+    /// Preserves duplicate-correlation rejection except when a durable exact Reference retry proves idempotency.
+    let internal shouldRejectDuplicateCorrelation hasDuplicateCorrelation disposition =
+        hasDuplicateCorrelation
+        && disposition <> MatchingRetry
+
+    /// Emits a Branch Reference transition only when the caller-owned Reference does not already exist.
+    let internal shouldApplyReferenceEvent disposition = disposition = NewReference
+
+    /// Reports whether a Branch event owns durable state and publication rather than only updating the in-memory projection.
+    let internal shouldPersistAndPublishBranchEvent branchEventType =
+        match branchEventType with
+        | Assigned _
+        | Promoted _
+        | Committed _
+        | Checkpointed _
+        | Saved _
+        | Tagged _
+        | ExternalCreated _
+        | Rebased _ -> false
+        | _ -> true
+
+    /// Extracts the durable Reference projection carried by one Branch Reference transition.
+    let internal tryGetReferenceFromBranchEvent branchEventType =
+        match branchEventType with
+        | Assigned (referenceDto, _, _, _, _)
+        | Promoted (referenceDto, _, _, _, _)
+        | Committed (referenceDto, _, _, _, _)
+        | Checkpointed (referenceDto, _, _, _, _)
+        | Saved (referenceDto, _, _, _, _)
+        | Tagged (referenceDto, _, _, _, _)
+        | ExternalCreated (referenceDto, _, _, _, _) -> Some referenceDto
+        | _ -> None
+
+    /// Reconciles one successfully republished durable Reference into missing or older Branch projection slots.
+    let internal reconcileReferenceProjection (branchDto: BranchDto) (referenceDto: ReferenceDto) =
+        let shouldAdvance (currentReference: ReferenceDto) =
+            if currentReference.ReferenceId = ReferenceId.Empty then
+                true
+            else
+                match currentReference.UpdatedAt, referenceDto.UpdatedAt with
+                | None, Some _ -> true
+                | Some currentTimestamp, Some referenceTimestamp -> referenceTimestamp > currentTimestamp
+                | _ -> false
+
+        let advanceLatestReference = shouldAdvance branchDto.LatestReference
+        let mutable recovered = branchDto
+        let mutable typedProjectionChanged = false
+
+        let updateTypedProjection currentReference update =
+            if shouldAdvance currentReference then
+                recovered <- update recovered referenceDto
+                typedProjectionChanged <- true
+
+        match referenceDto.ReferenceType with
+        | ReferenceType.Promotion ->
+            updateTypedProjection recovered.LatestPromotion (fun branch reference -> { branch with LatestPromotion = reference; BasedOn = reference })
+        | ReferenceType.Commit -> updateTypedProjection recovered.LatestCommit (fun branch reference -> { branch with LatestCommit = reference })
+        | ReferenceType.Checkpoint -> updateTypedProjection recovered.LatestCheckpoint (fun branch reference -> { branch with LatestCheckpoint = reference })
+        | ReferenceType.Save -> updateTypedProjection recovered.LatestSave (fun branch reference -> { branch with LatestSave = reference })
+        | ReferenceType.Tag
+        | ReferenceType.External
+        | ReferenceType.Rebase -> ()
+
+        let projectionChanged = typedProjectionChanged || advanceLatestReference
+
+        recovered <-
+            { recovered with
+                LatestReference = if advanceLatestReference then referenceDto else recovered.LatestReference
+                ShouldRecomputeLatestReferences =
+                    recovered.ShouldRecomputeLatestReferences
+                    || projectionChanged
+            }
+
+        recovered, projectionChanged
+
+    /// Builds the public Branch command result without mutating the aggregate a second time for exact Commit retries.
+    let private createBranchCommandReturnValue (branchDto: BranchDto) (branchEvent: BranchEvent) =
+        let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
+
+        returnValue
+            .enhance(nameof RepositoryId, branchDto.RepositoryId)
+            .enhance(nameof BranchId, branchDto.BranchId)
+            .enhance(nameof BranchName, branchDto.BranchName)
+            .enhance(nameof ParentBranchId, branchDto.ParentBranchId)
+            .enhance (nameof BranchEventType, getDiscriminatedUnionFullName branchEvent.Event)
+        |> ignore
+
+        if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
+            returnValue.Properties.Add(nameof ReferenceId, Guid.Parse(branchEvent.Metadata.Properties[nameof ReferenceId]))
+
+        if branchEvent.Metadata.Properties.ContainsKey("ChildBranchResults") then
+            returnValue.Properties.Add("ChildBranchResults", branchEvent.Metadata.Properties["ChildBranchResults"])
+
+        returnValue
+
     /// Implements the Orleans grain for branch actor.
     type BranchActor([<PersistentState(StateName.Branch, Constants.GraceActorStorage)>] state: IPersistentState<List<BranchEvent>>) =
         inherit Grain()
@@ -161,8 +273,8 @@ module Branch =
                     branchDto <- branchDto |> BranchDto.UpdateDto branchEvent
                     branchEvent.Metadata.Properties[ nameof RepositoryId ] <- $"{branchDto.RepositoryId}"
 
+                    // Reference creation events update only this activation's projection; the Reference actor owns their durable event and publication.
                     match branchEvent.Event with
-                    // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
                     | Assigned (referenceDto, _, _, _, _)
                     | Promoted (referenceDto, _, _, _, _)
                     | Committed (referenceDto, _, _, _, _)
@@ -171,35 +283,16 @@ module Branch =
                     | Tagged (referenceDto, _, _, _, _)
                     | ExternalCreated (referenceDto, _, _, _, _) -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceDto.ReferenceId}"
                     | Rebased referenceId -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
-                    // Save the rest of the events.
-                    | _ ->
-                        // For all other events, add the event to the branchEvents list, and save it to actor state.
+                    | _ -> ()
+
+                    if shouldPersistAndPublishBranchEvent branchEvent.Event then
                         state.State.Add branchEvent
                         do! state.WriteStateAsync()
 
-                        // Publish the event to the rest of the world.
                         let graceEvent = GraceEvent.BranchEvent branchEvent
                         do! publishGraceEvent graceEvent branchEvent.Metadata
 
-                    let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
-
-                    returnValue
-                        .enhance(nameof RepositoryId, branchDto.RepositoryId)
-                        .enhance(nameof BranchId, branchDto.BranchId)
-                        .enhance(nameof BranchName, branchDto.BranchName)
-                        .enhance(nameof ParentBranchId, branchDto.ParentBranchId)
-                        .enhance (nameof BranchEventType, getDiscriminatedUnionFullName branchEvent.Event)
-                    |> ignore
-
-                    // If the event has a referenceId, add it to the return properties.
-                    if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
-                        returnValue.Properties.Add(nameof ReferenceId, Guid.Parse(branchEvent.Metadata.Properties[nameof ReferenceId]))
-
-                    // If there are child branch results, add them to the return properties.
-                    if branchEvent.Metadata.Properties.ContainsKey("ChildBranchResults") then
-                        returnValue.Properties.Add("ChildBranchResults", branchEvent.Metadata.Properties["ChildBranchResults"])
-
-                    return Ok returnValue
+                    return Ok(createBranchCommandReturnValue branchDto branchEvent)
                 with
                 | ex ->
                     let graceError = GraceError.CreateWithException ex (getErrorMessage BranchError.FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
@@ -301,10 +394,18 @@ module Branch =
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 /// Checks whether command validation succeeded before emitting the domain event.
-                let isValid (command: BranchCommand) (metadata: EventMetadata) =
+                let isValid (command: BranchCommand) (metadata: EventMetadata) referenceDisposition =
                     task {
-                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
-                           && (state.State.Count > 3) then
+                        let hasDuplicateCorrelation =
+                            state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
+                            && (state.State.Count > 3)
+
+                        let rejectDuplicateCorrelation =
+                            match referenceDisposition with
+                            | Some disposition -> shouldRejectDuplicateCorrelation hasDuplicateCorrelation disposition
+                            | None -> hasDuplicateCorrelation
+
+                        if rejectDuplicateCorrelation then
                             return Error(GraceError.Create (getErrorMessage BranchError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
@@ -319,9 +420,21 @@ module Branch =
                     }
 
                 /// Creates a reference DTO for branch promotion, commit, or save-boundary updates.
-                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
+                let addReferenceWithId
+                    referenceId
+                    requiresBrokerAcceptance
+                    ownerId
+                    organizationId
+                    repositoryId
+                    branchId
+                    directoryId
+                    sha256Hash
+                    blake3Hash
+                    referenceText
+                    referenceType
+                    links
+                    =
                     task {
-                        let referenceId: ReferenceId = ReferenceId.NewGuid()
                         let referenceActor = Reference.CreateActorProxy referenceId repositoryId this.correlationId
 
                         let referenceCommand =
@@ -340,13 +453,75 @@ module Branch =
                             )
 
                         metadata.Properties[ nameof (RepositoryId) ] <- $"{repositoryId}"
+                        metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
+
+                        metadata.Properties[
+                            Reference.ReferenceCreatedRequiresBrokerAcceptanceProperty
+                        ] <- string requiresBrokerAcceptance
+
                         return! referenceActor.Handle referenceCommand metadata
                     }
 
+                /// Creates a Reference with a server-generated identity for producer contracts not yet carrying one.
+                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
+                    addReferenceWithId
+                        (ReferenceId.NewGuid())
+                        false
+                        ownerId
+                        organizationId
+                        repositoryId
+                        branchId
+                        directoryId
+                        sha256Hash
+                        blake3Hash
+                        referenceText
+                        referenceType
+                        links
+
                 let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
 
+                /// Maps caller-owned Branch operations to the Reference Create command used for uniform retry classification.
+                let callerOwnedReferenceCommand command =
+                    match command with
+                    | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                        Some(
+                            referenceId,
+                            ReferenceCommand.Create(
+                                referenceId,
+                                branchDto.OwnerId,
+                                branchDto.OrganizationId,
+                                branchDto.RepositoryId,
+                                branchDto.BranchId,
+                                directoryVersionId,
+                                sha256Hash,
+                                blake3Hash,
+                                ReferenceType.Commit,
+                                referenceText,
+                                List.empty
+                            )
+                        )
+                    | _ -> None
+
+                /// Reads durable Reference state before dispatch so an exact retry avoids a second Branch transition.
+                let getReferenceOperationDisposition command =
+                    task {
+                        match callerOwnedReferenceCommand command, branchDto.UpdatedAt with
+                        | None, _
+                        | Some _, None -> return None
+                        | Some (referenceId, referenceCommand), Some _ ->
+                            let referenceActor = Reference.CreateActorProxy referenceId branchDto.RepositoryId metadata.CorrelationId
+                            let! exists = referenceActor.Exists metadata.CorrelationId
+
+                            if exists then
+                                let! referenceDto = referenceActor.Get metadata.CorrelationId
+
+                                return Some(classifyReferenceOperation referenceCommand (Some referenceDto))
+                            else
+                                return Some(classifyReferenceOperation referenceCommand None)
+                    }
+
                 /// Runs Branch command decisions, applies emitted events, and persists the result.
-                let processCommand (command: BranchCommand) (metadata: EventMetadata) =
+                let processCommand (command: BranchCommand) (metadata: EventMetadata) referenceDisposition =
                     task {
                         try
                             //logToConsole
@@ -461,9 +636,21 @@ module Branch =
                                         | Ok returnValue ->
                                             return Ok(Promoted(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Commit (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                    | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
                                         match!
-                                            addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.Commit List.empty
+                                            addReferenceWithId
+                                                referenceId
+                                                true
+                                                branchDto.OwnerId
+                                                branchDto.OrganizationId
+                                                branchDto.RepositoryId
+                                                branchDto.BranchId
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.Commit
+                                                List.empty
                                             with
                                         | Ok returnValue ->
                                             return Ok(Committed(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
@@ -704,9 +891,18 @@ module Branch =
                                     | Undelete -> return Ok Undeleted
                                 }
 
-                            match event with
-                            | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
-                            | Error error -> return Error error
+                            match event, referenceDisposition with
+                            | Ok event, Some MatchingRetry ->
+                                match tryGetReferenceFromBranchEvent event with
+                                | Some referenceDto ->
+                                    let recoveredBranchDto, _ = reconcileReferenceProjection branchDto referenceDto
+                                    branchDto <- recoveredBranchDto
+                                    return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                                | None -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                            | Ok event, Some disposition when not (shouldApplyReferenceEvent disposition) ->
+                                return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                            | Ok event, _ -> return! this.ApplyEvent { Event = event; Metadata = metadata }
+                            | Error error, _ -> return Error error
                         with
                         | ex ->
                             log.LogError(
@@ -723,8 +919,10 @@ module Branch =
                     currentCommand <- getDiscriminatedUnionCaseName command
                     this.correlationId <- metadata.CorrelationId
 
-                    match! isValid command metadata with
-                    | Ok command -> return! processCommand command metadata
+                    let! referenceDisposition = getReferenceOperationDisposition command
+
+                    match! isValid command metadata referenceDisposition with
+                    | Ok command -> return! processCommand command metadata referenceDisposition
                     | Error error -> return Error error
                 }
 

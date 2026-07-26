@@ -60,6 +60,11 @@ module Branch =
         member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
+    /// Parameters for /branch/commit, including the stable Reference identity used for safe retries.
+    type CommitReferenceParameters() =
+        inherit CreateReferenceParameters()
+        member val public ReferenceId: ReferenceId = ReferenceId.Empty with get, set
+
     /// Parameters for the /branch/setName endpoint.
     type SetBranchNameParameters() =
         inherit BranchParameters()
