@@ -81,6 +81,21 @@ module BranchCommandTests =
             CreatedSaveMessage = None
         }
 
+    /// Verifies an accepted-but-response-lost Promote retry reuses one distinct child Rebase identity.
+    [<Test>]
+    let ``promote retry derives the same child rebase identity`` () =
+        let promotionReferenceId = Guid.Parse("11111111-7301-4000-8000-111111111111")
+        let firstAttempt = Branch.buildPromotionRebaseReferenceId promotionReferenceId
+        let responseLostRetry = Branch.buildPromotionRebaseReferenceId promotionReferenceId
+        let otherPromotion = Branch.buildPromotionRebaseReferenceId (Guid.Parse("22222222-7301-4000-8000-222222222222"))
+
+        firstAttempt |> should equal responseLostRetry
+
+        firstAttempt
+        |> should not' (equal promotionReferenceId)
+
+        firstAttempt |> should not' (equal otherPromotion)
+
     /// Verifies status accepts the specific parentless result without weakening unrelated SDK failures.
     [<Test>]
     let ``branch status maps only parentless result to no-parent rendering input`` () =
@@ -325,7 +340,10 @@ module BranchCommandTests =
 
             inspected |> should equal true
             inspectionCount |> should equal 2
-            markerSeenByPostMarkerInspection |> should equal true
+
+            markerSeenByPostMarkerInspection
+            |> should equal true
+
             operationRan |> should equal true
             markerSeenByOperation |> should equal true
 

@@ -67,10 +67,25 @@ module Branch =
         if not (properties.ContainsKey(nameof ReferenceId)) then
             properties[nameof ReferenceId] <- $"{referenceId}"
 
-    /// Reports whether Promotion references can contribute to the public Branch projection.
-    let internal shouldProjectPromotionReferences (branchDto: BranchDto) =
-        branchDto.PromotionEnabled
-        || branchDto.AssignEnabled
+    /// Selects Reference types whose durable history can reconstruct the public Branch projection.
+    let internal projectionReconstructionReferenceTypes (branchDto: BranchDto) =
+        let referenceTypes = List<ReferenceType>()
+
+        // A later permission snapshot cannot erase an ordinary Promotion that previously changed the branch base.
+        referenceTypes.Add(ReferenceType.Promotion)
+
+        if branchDto.CommitEnabled then referenceTypes.Add(ReferenceType.Commit)
+
+        if branchDto.CheckpointEnabled then referenceTypes.Add(ReferenceType.Checkpoint)
+
+        if branchDto.SaveEnabled then referenceTypes.Add(ReferenceType.Save)
+        if branchDto.TagEnabled then referenceTypes.Add(ReferenceType.Tag)
+
+        if branchDto.ExternalEnabled then referenceTypes.Add(ReferenceType.External)
+
+        if branchDto.AutoRebaseEnabled then referenceTypes.Add(ReferenceType.Rebase)
+
+        referenceTypes.ToArray()
 
     /// Compares a Branch Create command with the immutable facts in its durable Created event.
     let internal createCommandMatchesCreationEvent branchEventType command =
@@ -331,36 +346,12 @@ module Branch =
 
                 let mutable latestRebaseProjection: (ReferenceDto * ReferenceDto) option = None
 
-                // Get the enabled reference types. This allows us to limit the ReferenceTypes we search for.
-                let enabledReferenceTypes = List<ReferenceType>()
-
-                if shouldProjectPromotionReferences branchDto then
-                    enabledReferenceTypes.Add(ReferenceType.Promotion)
-
-                if branchDto.CommitEnabled then enabledReferenceTypes.Add(ReferenceType.Commit)
-
-                if branchDto.CheckpointEnabled then
-                    enabledReferenceTypes.Add(ReferenceType.Checkpoint)
-
-                if branchDto.SaveEnabled then enabledReferenceTypes.Add(ReferenceType.Save)
-                if branchDto.TagEnabled then enabledReferenceTypes.Add(ReferenceType.Tag)
-
-                if branchDto.ExternalEnabled then
-                    enabledReferenceTypes.Add(ReferenceType.External)
-
-                if branchDto.AutoRebaseEnabled then
-                    enabledReferenceTypes.Add(ReferenceType.Rebase)
-
-                let referenceTypes = enabledReferenceTypes.ToArray()
+                let referenceTypes = projectionReconstructionReferenceTypes branchDto
 
                 // Get the latest references.
                 let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.RepositoryId branchDto.BranchId
 
-                let! latestProjectablePromotion =
-                    if shouldProjectPromotionReferences branchDto then
-                        getLatestProjectablePromotion branchDto correlationId
-                    else
-                        Task.FromResult<Option<ReferenceDto>> None
+                let! latestProjectablePromotion = getLatestProjectablePromotion branchDto correlationId
 
                 // Get the latest reference of any type.
                 let latestReference =

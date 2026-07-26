@@ -50,17 +50,26 @@ module Repository =
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 
-    /// Reports whether a Repository Create command exactly matches the durable Repository identity and settings.
-    let internal createCommandMatchesRepository (repositoryDto: RepositoryDto) command =
-        match command with
-        | RepositoryCommand.Create (repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
-            repositoryDto.UpdatedAt.IsSome
-            && repositoryDto.RepositoryName = repositoryName
-            && repositoryDto.RepositoryId = repositoryId
-            && repositoryDto.OwnerId = ownerId
-            && repositoryDto.OrganizationId = organizationId
-            && repositoryDto.ObjectStorageProvider = objectStorageProvider
+    /// Compares a Repository Create command with the immutable facts in its durable Created event.
+    let internal createCommandMatchesCreationEvent repositoryEventType command =
+        match repositoryEventType, command with
+        | Created (createdRepositoryName, createdRepositoryId, createdOwnerId, createdOrganizationId, createdObjectStorageProvider),
+          RepositoryCommand.Create (repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
+            createdRepositoryName = repositoryName
+            && createdRepositoryId = repositoryId
+            && createdOwnerId = ownerId
+            && createdOrganizationId = organizationId
+            && createdObjectStorageProvider = objectStorageProvider
         | _ -> false
+
+    /// Classifies Repository Create replay from the first immutable Created event despite later mutable events.
+    let internal createCommandMatchesCreationHistory repositoryEventTypes command =
+        repositoryEventTypes
+        |> Seq.tryPick (fun repositoryEventType ->
+            match repositoryEventType with
+            | Created _ -> Some repositoryEventType
+            | _ -> None)
+        |> Option.exists (fun createdEvent -> createCommandMatchesCreationEvent createdEvent command)
 
     /// Reports whether a persisted deterministic bootstrap directory matches the Repository workflow's immutable empty-root contract.
     let internal initialDirectoryMatches (expected: DirectoryVersion) (persisted: DirectoryVersion) =
@@ -84,6 +93,13 @@ module Repository =
         let log = loggerFactory.CreateLogger("Repository.Actor")
 
         let mutable repositoryDto = RepositoryDto.Default
+
+        /// Reports whether a command exactly replays the immutable persisted Repository creation facts.
+        let createCommandMatchesPersistedCreation command =
+            state.State
+            |> Seq.map (fun repositoryEvent -> repositoryEvent.Event)
+            |> fun repositoryEventTypes -> createCommandMatchesCreationHistory repositoryEventTypes command
+
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -109,9 +125,9 @@ module Repository =
                     let matchingCreatedRetry =
                         match repositoryEvent.Event with
                         | Created (repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
-                            createCommandMatchesRepository
-                                repositoryDto
-                                (RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider))
+                            createCommandMatchesPersistedCreation (
+                                RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider)
+                            )
                         | _ -> false
 
                     if not matchingCreatedRetry then
@@ -537,7 +553,7 @@ module Repository =
                 /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid command (metadata: EventMetadata) =
                     task {
-                        let matchingCreateRetry = createCommandMatchesRepository repositoryDto command
+                        let matchingCreateRetry = createCommandMatchesPersistedCreation command
 
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
                            && not matchingCreateRetry then

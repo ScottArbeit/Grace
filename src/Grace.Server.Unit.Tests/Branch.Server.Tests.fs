@@ -124,31 +124,32 @@ type ReferenceProducerIdentityTests() =
         Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "rebase-reference" repositoryId, Is.Not.EqualTo(branchId))
         Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "directory-version" repositoryId, Is.Not.EqualTo(branchId))
 
-    /// Verifies repository Create replay accepts only an exact durable request.
+    /// Verifies Repository Create replay uses immutable creation facts after mutable Repository settings change.
     [<Test>]
-    member _.RepositoryCreateRetryRequiresExactDurableIdentityAndSettings() =
+    member _.RepositoryCreateRetryUsesImmutableCreationFacts() =
         let repositoryId = Guid.Parse("22222222-7300-4000-8000-222222222222")
         let ownerId = Guid.Parse("33333333-7300-4000-8000-333333333333")
         let organizationId = Guid.Parse("44444444-7300-4000-8000-444444444444")
         let repositoryName = RepositoryName "stable-reference-retry"
         let provider = ObjectStorageProvider.AzureBlobStorage
 
-        let repositoryDto =
-            { RepositoryDto.Default with
-                RepositoryId = repositoryId
-                OwnerId = ownerId
-                OrganizationId = organizationId
-                RepositoryName = repositoryName
-                ObjectStorageProvider = provider
-                UpdatedAt = Some(Instant.FromUtc(2026, 7, 26, 12, 0))
-            }
+        let created = RepositoryEventType.Created(repositoryName, repositoryId, ownerId, organizationId, provider)
+
+        let historyAfterMutation =
+            [
+                created
+                RepositoryEventType.NameSet(RepositoryName "renamed-after-create")
+                RepositoryEventType.ObjectStorageProviderSet ObjectStorageProvider.AWSS3
+            ]
 
         let exact = RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, provider)
-        let conflicting = RepositoryCommand.Create(RepositoryName "different", repositoryId, ownerId, organizationId, provider)
+        let renamed = RepositoryCommand.Create(RepositoryName "renamed-before-retry", repositoryId, ownerId, organizationId, provider)
+        let changedProvider = RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, ObjectStorageProvider.AWSS3)
 
-        Assert.That(Grace.Actors.Repository.createCommandMatchesRepository repositoryDto exact, Is.True)
-        Assert.That(Grace.Actors.Repository.createCommandMatchesRepository repositoryDto conflicting, Is.False)
-        Assert.That(Grace.Actors.Repository.createCommandMatchesRepository RepositoryDto.Default exact, Is.False)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationEvent created exact, Is.True)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationHistory historyAfterMutation exact, Is.True)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationHistory historyAfterMutation renamed, Is.False)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationHistory historyAfterMutation changedProvider, Is.False)
 
     /// Verifies Repository bootstrap accepts a persisted exact empty root while rejecting conflicting deterministic reuse.
     [<Test>]
@@ -390,27 +391,61 @@ type BranchActorReferenceRetryTests() =
 
         Assert.That(initiallyEmptyProperties[nameof ReferenceId], Is.EqualTo($"{basedOnReferenceId}"))
 
-    /// Verifies Assign-only branches still recompute Promotion projections while branches with neither capability do not.
+    /// Verifies historical Promotions remain reconstruction inputs after Assign and Promotion are both disabled.
     [<Test>]
-    member _.AssignCapabilityIncludesPromotionProjection() =
+    member _.DisabledPromotionPermissionsStillReconstructHistoricalPromotion() =
         let assignOnly = { BranchDto.Default with AssignEnabled = true }
         let promotionOnly = { BranchDto.Default with PromotionEnabled = true }
         let both = { assignOnly with PromotionEnabled = true }
+        let bothDisabled = BranchDto.Default
 
-        Assert.That(shouldProjectPromotionReferences assignOnly, Is.True)
-        Assert.That(shouldProjectPromotionReferences promotionOnly, Is.True)
-        Assert.That(shouldProjectPromotionReferences both, Is.True)
-        Assert.That(shouldProjectPromotionReferences BranchDto.Default, Is.False)
+        for branch in
+            [
+                assignOnly
+                promotionOnly
+                both
+                bothDisabled
+            ] do
+            Assert.That(
+                projectionReconstructionReferenceTypes branch,
+                Does.Contain(ReferenceType.Promotion),
+                "Durable ordinary Promotions must remain visible to activation reconstruction after permissions change."
+            )
 
     /// Verifies an exact Rebase retry repairs both latest Reference and BasedOn projections.
     [<Test>]
     member _.ExactRebaseRetryRecoversProjectionWithoutReplacingANewerBase() =
-        let rebaseReference = { persistedCommitAt referenceId earlier with ReferenceType = ReferenceType.Rebase }
-
         let basedOnReference = { persistedCommitAt (Guid.Parse("88888888-7291-4000-8000-888888888888")) earlier with ReferenceType = ReferenceType.Promotion }
 
+        let rebaseReference =
+            { persistedCommitAt referenceId earlier with
+                ReferenceType = ReferenceType.Rebase
+                Links =
+                    [
+                        ReferenceLinkType.BasedOn basedOnReference.ReferenceId
+                    ]
+            }
+
+        let retryCommand =
+            ReferenceCommand.Create(
+                rebaseReference.ReferenceId,
+                rebaseReference.OwnerId,
+                rebaseReference.OrganizationId,
+                rebaseReference.RepositoryId,
+                rebaseReference.BranchId,
+                rebaseReference.DirectoryId,
+                rebaseReference.Sha256Hash,
+                rebaseReference.Blake3Hash,
+                ReferenceType.Rebase,
+                rebaseReference.ReferenceText,
+                rebaseReference.Links
+            )
+
+        let retryDisposition = classifyReferenceOperation retryCommand (Some rebaseReference)
         let recovered, changed = reconcileRebaseProjection (branchProjection ReferenceDto.Default ReferenceDto.Default) rebaseReference basedOnReference
 
+        Assert.That(retryDisposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
+        Assert.That(shouldApplyReferenceEvent retryDisposition, Is.False, "An accepted-but-response-lost retry must not add another durable Rebase transition.")
         Assert.That(changed, Is.True)
         Assert.That(recovered.LatestReference, Is.EqualTo(rebaseReference))
         Assert.That(recovered.BasedOn, Is.EqualTo(basedOnReference))

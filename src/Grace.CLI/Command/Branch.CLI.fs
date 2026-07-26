@@ -48,6 +48,15 @@ open System.CommandLine.Completions
 /// Groups the branch command parser, handlers, and output helpers.
 module Branch =
 
+    /// Derives the retry-stable child Rebase identity owned by one caller-selected Promotion identity.
+    let internal buildPromotionRebaseReferenceId (promotionReferenceId: ReferenceId) =
+        let seed = $"grace.branch.promote-rebase-reference.v1|{promotionReferenceId:N}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed))
+        let guidBytes = hash[0..15]
+        guidBytes[6] <- (guidBytes[6] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
+        Guid(guidBytes)
+
     /// Executes the common parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type CommonParameters() =
         inherit ParameterBase()
@@ -1631,7 +1640,7 @@ module Branch =
                                                                         OwnerName = graceIds.OwnerName,
                                                                         OrganizationId = graceIds.OrganizationIdString,
                                                                         OrganizationName = graceIds.OrganizationName,
-                                                                        ReferenceId = ReferenceId.NewGuid(),
+                                                                        ReferenceId = buildPromotionRebaseReferenceId newPromotionReferenceId,
                                                                         BasedOn = Guid.Parse(promotionReferenceId)
                                                                     )
 
