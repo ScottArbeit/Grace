@@ -139,7 +139,7 @@ module ManifestContributionAccounting =
             GetReference: RepositoryId -> ReferenceId -> CorrelationId -> Task<ReferenceDto>
             GetDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersionDto>
             ExactRelationships: IExactRelationshipStore
-            PrepareReferenceLifecycle: ReferenceDto -> EventMetadata -> CancellationToken -> Task
+            EnsureAutomaticPhysicalDeletionReminder: RepositoryId -> ReferenceId -> CorrelationId -> CancellationToken -> Task
             EnsureDirectoryVersionManifest: DirectoryVersionManifestRelationship -> FileManifest -> EventMetadata -> CancellationToken -> Task
         }
 
@@ -193,7 +193,13 @@ module ManifestContributionAccounting =
                     match! dependencies.ExactRelationships.VerifyAsync(referenceRoot, cancellationToken) with
                     | ExactRelationshipPresence.Present -> ()
                     | ExactRelationshipPresence.Absent ->
-                        do! dependencies.PrepareReferenceLifecycle currentReference referenceEvent.Metadata cancellationToken
+                        do!
+                            dependencies.EnsureAutomaticPhysicalDeletionReminder
+                                currentReference.RepositoryId
+                                currentReference.ReferenceId
+                                correlationId
+                                cancellationToken
+
                         let! _ = dependencies.ExactRelationships.EnsurePresentAsync(referenceRoot, cancellationToken)
                         ()
 
@@ -310,46 +316,6 @@ module ManifestContributionAccounting =
             cancellationToken
         :> Task
 
-    /// Schedules existing Save and Checkpoint expiry before the subscriber records the Reference-root relationship.
-    let private scheduleReferenceLifecycle (referenceDto: ReferenceDto) (metadata: EventMetadata) (cancellationToken: CancellationToken) =
-        task {
-            cancellationToken.ThrowIfCancellationRequested()
-
-            match referenceDto.ReferenceType with
-            | ReferenceType.Save
-            | ReferenceType.Checkpoint ->
-                let repositoryActor = Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId metadata.CorrelationId
-
-                let! repositoryDto = repositoryActor.Get metadata.CorrelationId
-
-                let days, label =
-                    match referenceDto.ReferenceType with
-                    | ReferenceType.Save -> repositoryDto.SaveDays, "Save"
-                    | _ -> repositoryDto.CheckpointDays, "Checkpoint"
-
-                let reminderState: Reference.PhysicalDeletionReminderState =
-                    {
-                        RepositoryId = referenceDto.RepositoryId
-                        BranchId = referenceDto.BranchId
-                        DirectoryVersionId = referenceDto.DirectoryId
-                        Sha256Hash = referenceDto.Sha256Hash
-                        Blake3Hash = referenceDto.Blake3Hash
-                        DeleteReason = $"{label}: automatic deletion after {days} days"
-                        CorrelationId = metadata.CorrelationId
-                    }
-
-                let referenceActor = Reference.CreateActorProxy referenceDto.ReferenceId referenceDto.RepositoryId metadata.CorrelationId
-
-                do!
-                    referenceActor.ScheduleReminderAsync
-                        ReminderTypes.PhysicalDeletion
-                        (Duration.FromDays(float days))
-                        (ReminderState.ReferencePhysicalDeletion reminderState)
-                        metadata.CorrelationId
-            | _ -> ()
-        }
-        :> Task
-
     /// Handles Reference events on the existing subscriber without adding a second queue or dispatcher.
     let handleReferenceEvent referenceEvent =
         let store = CosmosExactRelationshipStore(cosmosContainer) :> IExactRelationshipStore
@@ -365,7 +331,11 @@ module ManifestContributionAccounting =
                         let actor = DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
                         actor.Get correlationId
                 ExactRelationships = store
-                PrepareReferenceLifecycle = scheduleReferenceLifecycle
+                EnsureAutomaticPhysicalDeletionReminder =
+                    fun repositoryId referenceId correlationId cancellationToken ->
+                        cancellationToken.ThrowIfCancellationRequested()
+                        let actor = Reference.CreateActorProxy referenceId repositoryId correlationId
+                        actor.EnsureAutomaticPhysicalDeletionReminderAsync correlationId
                 EnsureDirectoryVersionManifest =
                     fun relationship manifest metadata cancellationToken ->
                         ensureDirectoryVersionManifest store relationship manifest metadata cancellationToken

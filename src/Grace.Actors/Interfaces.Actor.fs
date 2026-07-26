@@ -337,6 +337,9 @@ module Interfaces =
         /// Returns the ReferenceType for this reference.
         abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
 
+        /// Converges the existing automatic physical-deletion reminder for this Reference when its type is eligible.
+        abstract member EnsureAutomaticPhysicalDeletionReminderAsync: correlationId: CorrelationId -> Task
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ReferenceDto>>
 
@@ -350,6 +353,9 @@ module Interfaces =
 
         /// Creates a new reminder in the database.
         abstract member Create: reminder: ReminderDto -> correlationId: CorrelationId -> Task
+
+        /// Persists the requested reminder only when this stable Reminder actor has no durable record.
+        abstract member GetOrAdd: reminder: ReminderDto -> correlationId: CorrelationId -> Task<ReminderDto>
 
         /// Deletes the reminder from the database.
         abstract member Delete: correlationId: CorrelationId -> Task

@@ -9,6 +9,7 @@ open Grace.Types.Common
 open Grace.Types.DirectoryVersion
 open Grace.Types.ManifestContributionAccounting
 open Grace.Types.Reference
+open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -186,8 +187,8 @@ type ManifestContributionAccountingServerTests() =
                                     }
                         GetDirectoryVersion = fun _ _ _ -> Task.FromResult(currentDirectoryVersionDto ())
                         ExactRelationships = store
-                        PrepareReferenceLifecycle =
-                            fun _ _ _ ->
+                        EnsureAutomaticPhysicalDeletionReminder =
+                            fun _ _ _ _ ->
                                 lifecycleCount <- lifecycleCount + 1
                                 Task.CompletedTask
                         EnsureDirectoryVersionManifest =
@@ -241,8 +242,8 @@ type ManifestContributionAccountingServerTests() =
                             directoryReads <- directoryReads + 1
                             Task.FromResult(currentDirectoryVersionDto ())
                     ExactRelationships = recordingStore exactWrites effectOrder
-                    PrepareReferenceLifecycle =
-                        fun _ _ _ ->
+                    EnsureAutomaticPhysicalDeletionReminder =
+                        fun _ _ _ _ ->
                             effectOrder.Add("lifecycle")
                             Task.CompletedTask
                     EnsureDirectoryVersionManifest =
@@ -292,8 +293,8 @@ type ManifestContributionAccountingServerTests() =
                                 }
                     GetDirectoryVersion = fun _ _ _ -> Task.FromResult(currentDirectoryVersionDto ())
                     ExactRelationships = recordingStore exactWrites effectOrder
-                    PrepareReferenceLifecycle =
-                        fun _ _ _ ->
+                    EnsureAutomaticPhysicalDeletionReminder =
+                        fun _ _ _ _ ->
                             effectOrder.Add("lifecycle")
                             Task.FromException(InvalidOperationException("reminder scheduling failed"))
                     EnsureDirectoryVersionManifest = fun _ _ _ _ -> Task.CompletedTask
@@ -304,6 +305,133 @@ type ManifestContributionAccountingServerTests() =
 
             Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "lifecycle" |]))
             Assert.That(exactWrites, Is.Empty)
+        }
+
+    /// Verifies a conflicting stable reminder target fails delivery before the exact Reference root is recorded.
+    [<Test>]
+    member _.ReferenceLifecycleConflictPreventsExactRootWrite() =
+        task {
+            let exactWrites = ResizeArray<ExactRelationship>()
+            let effectOrder = ResizeArray<string>()
+
+            let dependencies: ManifestContributionAccountingDependencies =
+                {
+                    GetReference =
+                        fun _ _ _ ->
+                            Task.FromResult
+                                { ReferenceDto.Default with
+                                    ReferenceId = referenceId
+                                    RepositoryId = repositoryId
+                                    DirectoryId = currentDirectoryVersionId
+                                    ReferenceType = ReferenceType.Checkpoint
+                                    UpdatedAt = Some(getCurrentInstant ())
+                                }
+                    GetDirectoryVersion = fun _ _ _ -> Task.FromResult(currentDirectoryVersionDto ())
+                    ExactRelationships = recordingStore exactWrites effectOrder
+                    EnsureAutomaticPhysicalDeletionReminder =
+                        fun _ _ _ _ ->
+                            effectOrder.Add("lifecycle-conflict")
+                            Task.FromException(InvalidOperationException("stable reminder targets different Reference data"))
+                    EnsureDirectoryVersionManifest = fun _ _ _ _ -> Task.CompletedTask
+                }
+
+            let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Checkpoint)
+            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
+
+            Assert.That(error.Message, Does.Contain("different Reference data"))
+            Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "lifecycle-conflict" |]))
+            Assert.That(exactWrites, Is.Empty)
+        }
+
+    /// Verifies response loss after stable lifecycle persistence retries once and records one Reference root.
+    [<Test>]
+    member _.ReferenceLifecycleResponseLossPreservesFirstScheduleAndWritesOneRootOnRetry() =
+        task {
+            let storedRelationships = HashSet<ExactRelationship>()
+            let mutable lifecycleAttempts = 0
+            let mutable durableReminder: struct (Guid * Instant * string) option = None
+            let firstSchedule = Instant.FromUtc(2026, 8, 1, 8, 0)
+            let retrySchedule = Instant.FromUtc(2026, 8, 2, 8, 0)
+
+            let store =
+                { new IExactRelationshipStore with
+                    member _.EnsurePresentAsync(relationship, _) =
+                        Task.FromResult(
+                            if storedRelationships.Add relationship then
+                                ExactRelationshipWriteOutcome.Changed
+                            else
+                                ExactRelationshipWriteOutcome.AlreadyConverged
+                        )
+
+                    member _.EnsureAbsentAsync(_, _) = Task.FromResult ExactRelationshipWriteOutcome.AlreadyConverged
+                    member _.EnumerateAsync(_, _, _, _) = Task.FromResult { Relationships = storedRelationships |> Seq.toArray; ContinuationToken = None }
+
+                    member _.VerifyAsync(relationship, _) =
+                        Task.FromResult(
+                            if storedRelationships.Contains relationship then
+                                ExactRelationshipPresence.Present
+                            else
+                                ExactRelationshipPresence.Absent
+                        )
+                }
+
+            let dependencies: ManifestContributionAccountingDependencies =
+                {
+                    GetReference =
+                        fun _ _ _ ->
+                            Task.FromResult
+                                { ReferenceDto.Default with
+                                    ReferenceId = referenceId
+                                    RepositoryId = repositoryId
+                                    DirectoryId = currentDirectoryVersionId
+                                    ReferenceType = ReferenceType.Save
+                                    UpdatedAt = Some(getCurrentInstant ())
+                                }
+                    GetDirectoryVersion = fun _ _ _ -> Task.FromResult { currentDirectoryVersionDto () with DirectoryVersion = DirectoryVersion.Default }
+                    ExactRelationships = store
+                    EnsureAutomaticPhysicalDeletionReminder =
+                        fun currentRepositoryId currentReferenceId correlationId _ ->
+                            lifecycleAttempts <- lifecycleAttempts + 1
+                            let reminderId = Grace.Actors.Reference.automaticPhysicalDeletionReminderId currentRepositoryId currentReferenceId
+                            let schedule = if lifecycleAttempts = 1 then firstSchedule else retrySchedule
+
+                            match durableReminder with
+                            | None -> durableReminder <- Some(struct (reminderId, schedule, correlationId))
+                            | Some _ -> ()
+
+                            if lifecycleAttempts = 1 then
+                                Task.FromException(TimeoutException("reminder response lost after persistence"))
+                            else
+                                Task.CompletedTask
+                    EnsureDirectoryVersionManifest = fun _ _ _ _ -> Task.CompletedTask
+                }
+
+            let delivery = staleCreatedEvent ReferenceType.Save
+            let retryDelivery = { delivery with Metadata = EventMetadata.New "mca-tracer-retry" "unit-test" }
+
+            let first = handleReferenceCreatedWith dependencies CancellationToken.None delivery
+            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first))
+            do! handleReferenceCreatedWith dependencies CancellationToken.None retryDelivery
+
+            let expectedReminderId = Grace.Actors.Reference.automaticPhysicalDeletionReminderId repositoryId referenceId
+
+            match durableReminder with
+            | Some (struct (reminderId, schedule, correlationId)) ->
+                Assert.That(reminderId, Is.EqualTo(expectedReminderId))
+                Assert.That(schedule, Is.EqualTo(firstSchedule))
+                Assert.That(correlationId, Is.EqualTo(delivery.Metadata.CorrelationId))
+            | None -> Assert.Fail("Expected one durable lifecycle reminder.")
+
+            Assert.That(lifecycleAttempts, Is.EqualTo(2))
+
+            let roots =
+                storedRelationships
+                |> Seq.choose (function
+                    | ExactRelationship.ReferenceRoot root -> Some root
+                    | _ -> None)
+                |> Seq.toArray
+
+            Assert.That(roots.Length, Is.EqualTo(1))
         }
 
     /// Verifies an already-present exact item prevents duplicate counter or ContentBlock contribution work.

@@ -7,6 +7,8 @@ open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Events
 open Grace.Types.Reference
+open Grace.Types.Reminder
+open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -29,6 +31,32 @@ type ReferenceActorHashValidationTests() =
     let branchId = Guid.Parse("55555555-bbbb-4444-8888-555555555555")
     let referenceId = Guid.Parse("66666666-bbbb-4444-8888-666666666666")
     let referenceText = ReferenceText "matching replay"
+
+    /// Builds one automatic physical-deletion reminder with stable Reference target facts.
+    let automaticPhysicalDeletionReminder reminderId correlationId reminderTime deleteReason =
+        { ReminderDto.Default with
+            ReminderId = reminderId
+            ActorName = "ReferenceActor"
+            ActorId = $"referenceactor/{referenceId:N}"
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryId = repositoryId
+            ReminderType = ReminderTypes.PhysicalDeletion
+            CreatedAt = Instant.FromUtc(2026, 7, 26, 8, 0)
+            ReminderTime = reminderTime
+            CorrelationId = correlationId
+            State =
+                ReminderState.ReferencePhysicalDeletion
+                    {
+                        RepositoryId = repositoryId
+                        BranchId = branchId
+                        DirectoryVersionId = directoryVersionId
+                        Sha256Hash = sha256Hash
+                        Blake3Hash = blake3Hash
+                        DeleteReason = deleteReason
+                        CorrelationId = correlationId
+                    }
+        }
 
     /// Builds directory Version With Hashes test data for the server unit reference Actor scenarios in this file.
     let directoryVersionWithHashes sha blake3 =
@@ -354,6 +382,63 @@ type ReferenceActorHashValidationTests() =
             | GraceEvent.ReferenceEvent bodyEvent ->
                 Assert.That(bodyEvent.Event, Is.EqualTo(referenceEvent.Event), $"Expected {referenceType} to round-trip in the GraceEvent body.")
             | _ -> Assert.Fail("Expected a ReferenceEvent GraceEvent body.")
+
+    /// Verifies automatic expiry identity depends only on Repository and Reference identity with pinned UUID bits.
+    [<Test>]
+    member _.AutomaticPhysicalDeletionReminderIdentityIsDeterministicAndScoped() =
+        let same = automaticPhysicalDeletionReminderId repositoryId referenceId
+        let sameAgain = automaticPhysicalDeletionReminderId repositoryId referenceId
+        let otherRepository = automaticPhysicalDeletionReminderId (Guid.Parse("77777777-bbbb-4444-8888-777777777777")) referenceId
+        let otherReference = automaticPhysicalDeletionReminderId repositoryId (Guid.Parse("88888888-bbbb-4444-8888-888888888888"))
+        let formatted = same.ToString("D")
+
+        Assert.That(sameAgain, Is.EqualTo(same))
+        Assert.That(otherRepository, Is.Not.EqualTo(same))
+        Assert.That(otherReference, Is.Not.EqualTo(same))
+        Assert.That(same, Is.EqualTo(Guid.Parse("e8642c90-5cdc-5d8d-bf9d-c387e87ffaea")))
+        Assert.That(formatted.Substring(14, 1), Is.EqualTo("5"))
+        Assert.That("89ab", Does.Contain(formatted.Substring(19, 1)))
+
+    /// Verifies retry validation ignores first-write metadata while rejecting changed stable Reference target facts.
+    [<Test>]
+    member _.AutomaticPhysicalDeletionReminderMatchUsesOnlyStableTargetFacts() =
+        let reminderId = automaticPhysicalDeletionReminderId repositoryId referenceId
+
+        let requested = automaticPhysicalDeletionReminder reminderId "corr-first" (Instant.FromUtc(2026, 8, 1, 8, 0)) "Save: automatic deletion after 7 days"
+
+        let existing =
+            { automaticPhysicalDeletionReminder reminderId "corr-existing" (Instant.FromUtc(2026, 8, 2, 8, 0)) "first durable delete reason" with
+                CreatedAt = Instant.FromUtc(2026, 7, 27, 8, 0)
+            }
+
+        Assert.That(automaticPhysicalDeletionReminderMatches requested existing, Is.True)
+
+        let existingState =
+            match existing.State with
+            | ReminderState.ReferencePhysicalDeletion state -> state
+            | _ -> failwith "Expected Reference physical-deletion state."
+
+        let conflicts =
+            [
+                "ReminderId", { existing with ReminderId = Guid.NewGuid() }
+                "ActorName", { existing with ActorName = "BranchActor" }
+                "ActorId", { existing with ActorId = "referenceactor/00000000000000000000000000000000" }
+                "OwnerId", { existing with OwnerId = Guid.NewGuid() }
+                "OrganizationId", { existing with OrganizationId = Guid.NewGuid() }
+                "RepositoryId", { existing with RepositoryId = Guid.NewGuid() }
+                "ReminderType", { existing with ReminderType = ReminderTypes.Maintenance }
+                "StateCase", { existing with State = ReminderState.EmptyReminderState }
+                "StateRepositoryId", { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with RepositoryId = Guid.NewGuid() } }
+                "BranchId", { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with BranchId = Guid.NewGuid() } }
+                "DirectoryVersionId",
+                { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with DirectoryVersionId = Guid.NewGuid() } }
+                "Sha256Hash", { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with Sha256Hash = Sha256Hash "conflicting-sha" } }
+                "Blake3Hash",
+                { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with Blake3Hash = Blake3Hash "conflicting-blake3" } }
+            ]
+
+        for name, conflicting in conflicts do
+            Assert.That(automaticPhysicalDeletionReminderMatches requested conflicting, Is.False, $"Expected {name} conflict to fail closed.")
 
     /// Verifies broker-acceptance staging depends on stable identity capability rather than ReferenceType.
     [<Test>]

@@ -27,6 +27,8 @@ open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Globalization
+open System.Security.Cryptography
+open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 
@@ -359,6 +361,33 @@ module Reference =
             && (referenceDto.Links |> Seq.toArray) = (links |> Seq.toArray)
         | _ -> false
 
+    /// Derives the versioned stable reminder identity for one Reference's automatic physical deletion.
+    let internal automaticPhysicalDeletionReminderId (repositoryId: RepositoryId) (referenceId: ReferenceId) =
+        let seed = $"grace.reference-automatic-physical-deletion.v1|{repositoryId:N}|{referenceId:N}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed))
+        let guidBytes = hash[0..15]
+        guidBytes[7] <- (guidBytes[7] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
+        ReminderId(guidBytes)
+
+    /// Compares only stable Reference target facts while allowing the first durable reminder metadata to remain unchanged.
+    let internal automaticPhysicalDeletionReminderMatches (requested: ReminderDto) (existing: ReminderDto) =
+        requested.ReminderId = existing.ReminderId
+        && requested.ActorName = existing.ActorName
+        && requested.ActorId = existing.ActorId
+        && requested.OwnerId = existing.OwnerId
+        && requested.OrganizationId = existing.OrganizationId
+        && requested.RepositoryId = existing.RepositoryId
+        && requested.ReminderType = existing.ReminderType
+        && match requested.State, existing.State with
+           | ReminderState.ReferencePhysicalDeletion requestedState, ReminderState.ReferencePhysicalDeletion existingState ->
+               requestedState.RepositoryId = existingState.RepositoryId
+               && requestedState.BranchId = existingState.BranchId
+               && requestedState.DirectoryVersionId = existingState.DirectoryVersionId
+               && requestedState.Sha256Hash = existingState.Sha256Hash
+               && requestedState.Blake3Hash = existingState.Blake3Hash
+           | _ -> false
+
     /// Attempts to create manifest contribution start and returns no value when the required invariant is not met.
     let tryCreateManifestContributionStart plan intent =
         match intent with
@@ -682,6 +711,59 @@ module Reference =
             member this.GetReferenceType correlationId =
                 this.correlationId <- correlationId
                 referenceDto.ReferenceType |> returnTask
+
+            /// Converges the existing Save or Checkpoint automatic-expiry reminder through its stable Reminder actor.
+            member this.EnsureAutomaticPhysicalDeletionReminderAsync correlationId =
+                task {
+                    this.correlationId <- correlationId
+
+                    match referenceDto.ReferenceType with
+                    | ReferenceType.Save
+                    | ReferenceType.Checkpoint ->
+                        let repositoryActor = Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId correlationId
+
+                        let! repositoryDto = repositoryActor.Get correlationId
+
+                        let days, label =
+                            match referenceDto.ReferenceType with
+                            | ReferenceType.Save -> repositoryDto.SaveDays, "Save"
+                            | _ -> repositoryDto.CheckpointDays, "Checkpoint"
+
+                        let reminderState: PhysicalDeletionReminderState =
+                            {
+                                RepositoryId = referenceDto.RepositoryId
+                                BranchId = referenceDto.BranchId
+                                DirectoryVersionId = referenceDto.DirectoryId
+                                Sha256Hash = referenceDto.Sha256Hash
+                                Blake3Hash = referenceDto.Blake3Hash
+                                DeleteReason = $"{label}: automatic deletion after {days} days"
+                                CorrelationId = correlationId
+                            }
+
+                        let reminderId = automaticPhysicalDeletionReminderId referenceDto.RepositoryId referenceDto.ReferenceId
+
+                        let requestedReminder =
+                            ReminderDto.CreateWithId
+                                reminderId
+                                actorName
+                                $"{this.IdentityString}"
+                                referenceDto.OwnerId
+                                referenceDto.OrganizationId
+                                referenceDto.RepositoryId
+                                ReminderTypes.PhysicalDeletion
+                                (getFutureInstant (Duration.FromDays(float days)))
+                                (ReminderState.ReferencePhysicalDeletion reminderState)
+                                correlationId
+
+                        let reminderActor = Reminder.CreateActorProxy reminderId correlationId
+                        let! existingReminder = reminderActor.GetOrAdd requestedReminder correlationId
+
+                        if not (automaticPhysicalDeletionReminderMatches requestedReminder existingReminder) then
+                            invalidOp
+                                $"Automatic physical-deletion reminder {reminderId} targets different stable Reference data for Reference {referenceDto.ReferenceId}."
+                    | _ -> ()
+                }
+                :> Task
 
             /// Reports whether this Reference actor state is marked logically deleted.
             member this.IsDeleted correlationId =
