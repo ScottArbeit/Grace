@@ -14,116 +14,116 @@
 
 import { mapValues } from '../runtime';
 /**
- * Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
+ * Parameters for the /branch/assign endpoint.
  * @export
- * @interface CreateReferenceParameters
+ * @interface AssignParameters
  */
-export interface CreateReferenceParameters {
+export interface AssignParameters {
     /**
      * Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     correlationId?: string;
     /**
      * The entity on whose behalf the action is being performed.
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     principal?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     ownerId?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     ownerName?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     organizationId?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     organizationName?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     repositoryId?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     repositoryName?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     branchId?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     branchName?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     referenceId: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     directoryVersionId?: string;
     /**
      * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     sha256Hash?: string;
     /**
      * Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     blake3Hash?: string;
     /**
      * 
      * @type {string}
-     * @memberof CreateReferenceParameters
+     * @memberof AssignParameters
      */
     message?: string;
 }
 
 /**
- * Check if a given object implements the CreateReferenceParameters interface.
+ * Check if a given object implements the AssignParameters interface.
  */
-export function instanceOfCreateReferenceParameters(value: object): value is CreateReferenceParameters {
+export function instanceOfAssignParameters(value: object): value is AssignParameters {
     if (!('referenceId' in value) || value['referenceId'] === undefined) return false;
     return true;
 }
 
-export function CreateReferenceParametersFromJSON(json: any): CreateReferenceParameters {
-    return CreateReferenceParametersFromJSONTyped(json, false);
+export function AssignParametersFromJSON(json: any): AssignParameters {
+    return AssignParametersFromJSONTyped(json, false);
 }
 
-export function CreateReferenceParametersFromJSONTyped(json: any, ignoreDiscriminator: boolean): CreateReferenceParameters {
+export function AssignParametersFromJSONTyped(json: any, ignoreDiscriminator: boolean): AssignParameters {
     if (json == null) {
         return json;
     }
@@ -147,11 +147,11 @@ export function CreateReferenceParametersFromJSONTyped(json: any, ignoreDiscrimi
     };
 }
 
-export function CreateReferenceParametersToJSON(json: any): CreateReferenceParameters {
-    return CreateReferenceParametersToJSONTyped(json, false);
+export function AssignParametersToJSON(json: any): AssignParameters {
+    return AssignParametersToJSONTyped(json, false);
 }
 
-export function CreateReferenceParametersToJSONTyped(value?: CreateReferenceParameters | null, ignoreDiscriminator: boolean = false): any {
+export function AssignParametersToJSONTyped(value?: AssignParameters | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }

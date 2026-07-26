@@ -46,10 +46,12 @@ class TestRebaseParameters(unittest.TestCase):
                 repository_name = '',
                 branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d',
                 branch_name = 'MyBranch',
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 based_on = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a'
             )
         else:
             return RebaseParameters(
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
         )
         """
 

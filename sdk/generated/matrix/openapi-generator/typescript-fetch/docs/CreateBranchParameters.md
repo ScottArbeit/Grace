@@ -19,6 +19,7 @@ Name | Type
 `branchName` | string
 `parentBranchId` | string
 `parentBranchName` | string
+`referenceId` | string
 `initialPermissions` | [Array&lt;ReferenceType&gt;](ReferenceType.md)
 
 ## Example
@@ -40,6 +41,7 @@ const example = {
   "branchName": MyBranch,
   "parentBranchId": de7bf47d-23ae-4599-af68-68a317ea390d,
   "parentBranchName": MyBranch,
+  "referenceId": c8f9bac8-d489-46c7-917f-b36b7d9efa9a,
   "initialPermissions": null,
 } satisfies CreateBranchParameters
 

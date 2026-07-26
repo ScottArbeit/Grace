@@ -31,6 +31,7 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Globalization
 open System.Linq
+open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Threading.Tasks
@@ -39,6 +40,40 @@ open Grace.Shared.Services
 
 /// Groups Orleans actor helpers for repository keys, proxies, state, or workflow transitions.
 module Repository =
+
+    /// Derives a versioned deterministic actor identity from existing durable Repository workflow identity.
+    let internal buildInitialWorkflowId role (repositoryId: RepositoryId) =
+        let seed = $"grace.repository.initial-{role}.v1|{repositoryId:N}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed))
+        let guidBytes = hash[0..15]
+        guidBytes[6] <- (guidBytes[6] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
+        Guid(guidBytes)
+
+    /// Reports whether a Repository Create command exactly matches the durable Repository identity and settings.
+    let internal createCommandMatchesRepository (repositoryDto: RepositoryDto) command =
+        match command with
+        | RepositoryCommand.Create (repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
+            repositoryDto.UpdatedAt.IsSome
+            && repositoryDto.RepositoryName = repositoryName
+            && repositoryDto.RepositoryId = repositoryId
+            && repositoryDto.OwnerId = ownerId
+            && repositoryDto.OrganizationId = organizationId
+            && repositoryDto.ObjectStorageProvider = objectStorageProvider
+        | _ -> false
+
+    /// Reports whether a persisted deterministic bootstrap directory matches the Repository workflow's immutable empty-root contract.
+    let internal initialDirectoryMatches (expected: DirectoryVersion) (persisted: DirectoryVersion) =
+        persisted.DirectoryVersionId = expected.DirectoryVersionId
+        && persisted.OwnerId = expected.OwnerId
+        && persisted.OrganizationId = expected.OrganizationId
+        && persisted.RepositoryId = expected.RepositoryId
+        && persisted.RelativePath = expected.RelativePath
+        && persisted.Sha256Hash = expected.Sha256Hash
+        && persisted.Blake3Hash = expected.Blake3Hash
+        && persisted.Directories.SequenceEqual(expected.Directories)
+        && persisted.Files.SequenceEqual(expected.Files)
+        && persisted.Size = expected.Size
 
     /// Implements the Orleans grain for repository actor.
     type RepositoryActor([<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>) =
@@ -71,14 +106,23 @@ module Repository =
         member private this.ApplyEvent repositoryEvent =
             task {
                 try
-                    // Add the new event to the list of events, and write the state to storage.
-                    state.State.Add repositoryEvent
-                    do! state.WriteStateAsync()
+                    let matchingCreatedRetry =
+                        match repositoryEvent.Event with
+                        | Created (repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
+                            createCommandMatchesRepository
+                                repositoryDto
+                                (RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider))
+                        | _ -> false
 
-                    // Update the repositoryDto with the new event.
-                    repositoryDto <-
-                        repositoryDto
-                        |> RepositoryDto.UpdateDto repositoryEvent
+                    if not matchingCreatedRetry then
+                        // Add the new event to the list of events, and write the state to storage.
+                        state.State.Add repositoryEvent
+                        do! state.WriteStateAsync()
+
+                        // Update the repositoryDto with the new event.
+                        repositoryDto <-
+                            repositoryDto
+                            |> RepositoryDto.UpdateDto repositoryEvent
 
                     /// Concatenates repository errors into a single GraceError instance.
                     let processGraceError (repositoryError: RepositoryError) repositoryEvent previousGraceError =
@@ -95,7 +139,8 @@ module Repository =
                             match repositoryEvent.Event with
                             | Created (name, repositoryId, ownerId, organizationId, objectStorageProvider) ->
                                 // Create the default branch.
-                                let branchId = (Guid.NewGuid())
+                                let branchId = buildInitialWorkflowId "branch" repositoryId
+                                let initialPromotionReferenceId = buildInitialWorkflowId "promotion-reference" repositoryId
                                 let branchActor = Branch.CreateActorProxy branchId repositoryDto.RepositoryId this.correlationId
 
                                 // Only allow promotions and tags on the initial branch.
@@ -112,6 +157,7 @@ module Repository =
                                         InitialBranchName,
                                         DefaultParentBranchId,
                                         ReferenceId.Empty,
+                                        buildInitialWorkflowId "rebase-reference" repositoryId,
                                         ownerId,
                                         organizationId,
                                         repositoryId,
@@ -122,7 +168,7 @@ module Repository =
                                 | Ok branchGraceReturn ->
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the new branch."
                                     // Create an empty directory version, and use that for the initial promotion
-                                    let emptyDirectoryId = DirectoryVersionId.NewGuid()
+                                    let emptyDirectoryId = buildInitialWorkflowId "directory-version" repositoryId
 
                                     let emptyDirectoryEntries = Array.Empty<DirectoryVersionPreimageEntry>()
                                     let emptySha256Hash = computeSha256ForDirectoryEntries RootDirectoryPath emptyDirectoryEntries
@@ -145,15 +191,37 @@ module Repository =
                                             0L
 
                                     let! directoryResult =
-                                        directoryVersionActorProxy.Handle
-                                            (DirectoryVersionCommand.Create(emptyDirectoryVersion, repositoryDto))
-                                            repositoryEvent.Metadata
+                                        task {
+                                            let! directoryExists = directoryVersionActorProxy.Exists repositoryEvent.Metadata.CorrelationId
+
+                                            if directoryExists then
+                                                let! persistedDirectory = directoryVersionActorProxy.Get repositoryEvent.Metadata.CorrelationId
+
+                                                if initialDirectoryMatches emptyDirectoryVersion persistedDirectory.DirectoryVersion then
+                                                    return Ok()
+                                                else
+                                                    return
+                                                        Error(
+                                                            GraceError.Create
+                                                                "The deterministic initial DirectoryVersion identity already contains conflicting data."
+                                                                repositoryEvent.Metadata.CorrelationId
+                                                        )
+                                            else
+                                                match!
+                                                    directoryVersionActorProxy.Handle
+                                                        (DirectoryVersionCommand.Create(emptyDirectoryVersion, repositoryDto))
+                                                        repositoryEvent.Metadata
+                                                    with
+                                                | Ok _ -> return Ok()
+                                                | Error graceError -> return Error graceError
+                                        }
 
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the empty directory version."
 
                                     let! promotionResult =
                                         branchActor.Handle
                                             (BranchCommand.Promote(
+                                                initialPromotionReferenceId,
                                                 emptyDirectoryId,
                                                 emptySha256Hash,
                                                 emptyBlake3Hash,
@@ -164,7 +232,7 @@ module Repository =
                                     logToConsole $"In Repository.Actor.handleEvent: After trying to create the first promotion."
 
                                     match directoryResult, promotionResult with
-                                    | (Ok directoryVersionGraceReturnValue, Ok promotionGraceReturnValue) ->
+                                    | (Ok (), Ok promotionGraceReturnValue) ->
                                         logToConsole $"In Repository.Actor.handleEvent: Successfully created the initial promotion."
 
                                         //logToConsole $"promotionGraceReturnValue.Properties:"
@@ -469,12 +537,16 @@ module Repository =
                 /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid command (metadata: EventMetadata) =
                     task {
-                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
+                        let matchingCreateRetry = createCommandMatchesRepository repositoryDto command
+
+                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
+                           && not matchingCreateRetry then
                             return Error(GraceError.Create (getErrorMessage RepositoryError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | RepositoryCommand.Create (_, _, _, _, _) ->
                                 match repositoryDto.UpdatedAt with
+                                | Some _ when matchingCreateRetry -> return Ok command
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->

@@ -1,6 +1,6 @@
 # CreateReferenceParameters
 
-Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
 
 ## Properties
 
@@ -16,6 +16,7 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
+**reference_id** | **UUID** |  | 
 **directory_version_id** | **UUID** |  | [optional] 
 **sha256_hash** | **str** | Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional] 
 **blake3_hash** | **str** | Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix. | [optional] 

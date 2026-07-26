@@ -559,6 +559,16 @@ module Branch =
     /// Reads blake3 hash prefix from ParseResult, local configuration, or Grace ids.
     let private getBlake3HashPrefix (parseResult: ParseResult) = HashOptions.getBlake3HashPrefix parseResult
 
+    /// Reads an explicit retry identity or allocates one stable ReferenceId for this CLI invocation.
+    let internal getOrCreateReferenceId (parseResult: ParseResult) =
+        let optionResult = parseResult.GetResult(Options.referenceId)
+
+        if isNull optionResult then
+            ReferenceId.NewGuid()
+        else
+            let referenceId = parseResult.GetValue(Options.referenceId)
+            if referenceId = ReferenceId.Empty then ReferenceId.NewGuid() else referenceId
+
     // Create subcommand.
     /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
@@ -674,6 +684,7 @@ module Branch =
                                 BranchName = graceIds.BranchName,
                                 ParentBranchId = parentBranchIdString,
                                 ParentBranchName = parentBranchName,
+                                ReferenceId = getOrCreateReferenceId parseResult,
                                 InitialPermissions = initialPermissions,
                                 CorrelationId = graceIds.CorrelationId
                             )
@@ -1073,6 +1084,7 @@ module Branch =
                     RepositoryName = graceIds.RepositoryName,
                     BranchId = graceIds.BranchIdString,
                     BranchName = graceIds.BranchName,
+                    ReferenceId = getOrCreateReferenceId parseResult,
                     DirectoryVersionId = directoryVersionId,
                     Sha256Hash = sha256Hash,
                     Blake3Hash = blake3Hash,
@@ -1188,6 +1200,7 @@ module Branch =
 
                 let validateIncomingParameters = parseResult |> CommonValidations
                 let referenceMessage = validateAndCleanMessage message (getCorrelationId parseResult)
+                let referenceId = getOrCreateReferenceId parseResult
 
                 match (validateIncomingParameters, referenceMessage) with
                 | Ok _, Ok referenceMessage ->
@@ -1362,6 +1375,7 @@ module Branch =
                                                 OrganizationName = graceIds.OrganizationName,
                                                 RepositoryId = graceIds.RepositoryIdString,
                                                 RepositoryName = graceIds.RepositoryName,
+                                                ReferenceId = referenceId,
                                                 DirectoryVersionId = rootDirectoryId,
                                                 Sha256Hash = rootDirectorySha256Hash,
                                                 Blake3Hash = rootDirectoryBlake3Hash,
@@ -1449,6 +1463,7 @@ module Branch =
                                 OrganizationName = graceIds.OrganizationName,
                                 RepositoryId = graceIds.RepositoryIdString,
                                 RepositoryName = graceIds.RepositoryName,
+                                ReferenceId = referenceId,
                                 DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                 Blake3Hash = rootDirectoryVersion.Blake3Hash,
@@ -1472,6 +1487,7 @@ module Branch =
 
                 let validateIncomingParameters = parseResult |> CommonValidations
                 let sanitizedMessage = message.Trim()
+                let newPromotionReferenceId = getOrCreateReferenceId parseResult
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1586,6 +1602,7 @@ module Branch =
                                                                     OrganizationName = graceIds.OrganizationName,
                                                                     RepositoryId = graceIds.RepositoryIdString,
                                                                     RepositoryName = graceIds.RepositoryName,
+                                                                    ReferenceId = newPromotionReferenceId,
                                                                     DirectoryVersionId = latestPromotableReference.DirectoryId,
                                                                     Sha256Hash = latestPromotableReference.Sha256Hash,
                                                                     Blake3Hash = latestPromotableReference.Blake3Hash,
@@ -1614,6 +1631,7 @@ module Branch =
                                                                         OwnerName = graceIds.OwnerName,
                                                                         OrganizationId = graceIds.OrganizationIdString,
                                                                         OrganizationName = graceIds.OrganizationName,
+                                                                        ReferenceId = ReferenceId.NewGuid(),
                                                                         BasedOn = Guid.Parse(promotionReferenceId)
                                                                     )
 
@@ -4045,7 +4063,7 @@ module Branch =
             }
 
     /// Routes the rebase command from parsed options through validation, the SDK call, and result rendering.
-    let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) =
+    let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) (referenceId: ReferenceId) =
         task {
             // --------------------------------------------------------------------------------------------------------------------------------------
             // Algorithm:
@@ -4395,6 +4413,7 @@ module Branch =
                                                 OrganizationId = graceIds.OrganizationIdString,
                                                 RepositoryId = graceIds.RepositoryIdString,
                                                 BranchId = graceIds.BranchIdString,
+                                                ReferenceId = ReferenceId.NewGuid(),
                                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                                 Blake3Hash = rootDirectoryVersion.Blake3Hash,
                                                 DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
@@ -4411,6 +4430,7 @@ module Branch =
                                                     OrganizationId = graceIds.OrganizationIdString,
                                                     RepositoryId = graceIds.RepositoryIdString,
                                                     BranchId = graceIds.BranchIdString,
+                                                    ReferenceId = referenceId,
                                                     BasedOn = parentLatestPromotion.ReferenceId
                                                 )
 
@@ -4463,7 +4483,7 @@ module Branch =
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let! graceStatus = readGraceStatusFile ()
 
-                    let! result = rebaseHandler graceIds graceStatus
+                    let! result = rebaseHandler graceIds graceStatus (getOrCreateReferenceId parseResult)
                     return result
                 finally
                     if File.Exists(updateInProgressFileName ()) then
@@ -4970,6 +4990,7 @@ module Branch =
             |> addOption Options.organizationId
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
+            |> addOption Options.referenceId
             |> addOption Options.initialPermissions
             |> addOption Options.doNotSwitch
 
@@ -5007,6 +5028,7 @@ module Branch =
             new Command("promote", Description = "Promotes a commit into the parent branch.")
             |> addOption Options.message
             |> addOption Options.individual
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         promoteCommand.Action <- new Promote()
@@ -5015,6 +5037,7 @@ module Branch =
         let commitCommand =
             new Command("commit", Description = "Create a commit.")
             |> addOption Options.messageRequired
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         commitCommand.Action <- new Commit()
@@ -5023,6 +5046,7 @@ module Branch =
         let checkpointCommand =
             new Command("checkpoint", Description = "Create a checkpoint.")
             |> addOption Options.message
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         checkpointCommand.Action <- new Checkpoint()
@@ -5031,6 +5055,7 @@ module Branch =
         let saveCommand =
             new Command("save", Description = "Create a save.")
             |> addOption Options.message
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         saveCommand.Action <- new Save()
@@ -5039,6 +5064,7 @@ module Branch =
         let tagCommand =
             new Command("tag", Description = "Create a tag.")
             |> addOption Options.messageRequired
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         tagCommand.Action <- new Tag()
@@ -5047,6 +5073,7 @@ module Branch =
         let createExternalCommand =
             new Command("create-external", Description = "Create an external reference.")
             |> addOption Options.messageRequired
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         createExternalCommand.Action <- new CreateExternal()
@@ -5054,6 +5081,7 @@ module Branch =
 
         let rebaseCommand =
             new Command("rebase", Description = "Rebase this branch on a promotion from the parent branch.")
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         rebaseCommand.Action <- new Rebase()
@@ -5297,6 +5325,7 @@ module Branch =
             |> addOption Options.sha256Hash
             |> addOption Options.blake3Hash
             |> addOption Options.message
+            |> addOption Options.referenceId
             |> addCommonOptions
 
         assignCommand.Action <- new Assign()

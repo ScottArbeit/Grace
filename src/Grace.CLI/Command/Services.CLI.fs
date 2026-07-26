@@ -3346,6 +3346,7 @@ module Services =
                     RepositoryId = $"{Current().RepositoryId}",
                     BranchId = $"{Current().BranchId}",
                     CorrelationId = correlationId,
+                    ReferenceId = ReferenceId.NewGuid(),
                     DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                     Sha256Hash = rootDirectoryVersion.Sha256Hash,
                     Message = message

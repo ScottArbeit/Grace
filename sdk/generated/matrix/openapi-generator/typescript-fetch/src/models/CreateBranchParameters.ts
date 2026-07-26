@@ -101,6 +101,12 @@ export interface CreateBranchParameters {
     parentBranchName?: string;
     /**
      * 
+     * @type {string}
+     * @memberof CreateBranchParameters
+     */
+    referenceId: string;
+    /**
+     * 
      * @type {Array<ReferenceType>}
      * @memberof CreateBranchParameters
      */
@@ -111,6 +117,7 @@ export interface CreateBranchParameters {
  * Check if a given object implements the CreateBranchParameters interface.
  */
 export function instanceOfCreateBranchParameters(value: object): value is CreateBranchParameters {
+    if (!('referenceId' in value) || value['referenceId'] === undefined) return false;
     return true;
 }
 
@@ -136,6 +143,7 @@ export function CreateBranchParametersFromJSONTyped(json: any, ignoreDiscriminat
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
         'parentBranchId': json['ParentBranchId'] == null ? undefined : json['ParentBranchId'],
         'parentBranchName': json['ParentBranchName'] == null ? undefined : json['ParentBranchName'],
+        'referenceId': json['ReferenceId'],
         'initialPermissions': json['InitialPermissions'] == null ? undefined : ((json['InitialPermissions'] as Array<any>).map(ReferenceTypeFromJSON)),
     };
 }
@@ -163,6 +171,7 @@ export function CreateBranchParametersToJSONTyped(value?: CreateBranchParameters
         'BranchName': value['branchName'],
         'ParentBranchId': value['parentBranchId'],
         'ParentBranchName': value['parentBranchName'],
+        'ReferenceId': value['referenceId'],
         'InitialPermissions': value['initialPermissions'] == null ? undefined : ((value['initialPermissions'] as Array<any>).map(ReferenceTypeToJSON)),
     };
 }

@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.create_reference_parameters import CreateReferenceParameters
+from grace_generated_openapi_probe.models.assign_parameters import AssignParameters
 
-class TestCreateReferenceParameters(unittest.TestCase):
-    """CreateReferenceParameters unit test stubs"""
+class TestAssignParameters(unittest.TestCase):
+    """AssignParameters unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,16 +26,16 @@ class TestCreateReferenceParameters(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> CreateReferenceParameters:
-        """Test CreateReferenceParameters
+    def make_instance(self, include_optional) -> AssignParameters:
+        """Test AssignParameters
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `CreateReferenceParameters`
+        # uncomment below to create an instance of `AssignParameters`
         """
-        model = CreateReferenceParameters()
+        model = AssignParameters()
         if include_optional:
-            return CreateReferenceParameters(
+            return AssignParameters(
                 correlation_id = '',
                 principal = '',
                 owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f',
@@ -50,16 +50,16 @@ class TestCreateReferenceParameters(unittest.TestCase):
                 directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
                 sha256_hash = '805331a98813',
                 blake3_hash = '9a35d91b2f63',
-                message = 'Capture release candidate.'
+                message = 'Assign release candidate.'
             )
         else:
-            return CreateReferenceParameters(
+            return AssignParameters(
                 reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
         )
         """
 
-    def testCreateReferenceParameters(self):
-        """Test CreateReferenceParameters"""
+    def testAssignParameters(self):
+        """Test AssignParameters"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

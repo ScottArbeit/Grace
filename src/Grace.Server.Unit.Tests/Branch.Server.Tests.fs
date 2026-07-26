@@ -2,10 +2,12 @@ namespace Grace.Server.Tests
 
 open Grace.Actors.Branch
 open Grace.Shared.Parameters.Branch
+open Grace.Shared.Constants
 open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.Reference
+open Grace.Types.Repository
 open NodaTime
 open NUnit.Framework
 open System
@@ -79,6 +81,109 @@ type BranchServerValidationTests() =
         | Ok _ -> Assert.Fail("Expected an empty Commit ReferenceId to be rejected.")
 
         Assert.That(Result.isOk presentResult, Is.True)
+
+    /// Verifies every public Reference producer uses the same missing-identity validation result.
+    [<Test>]
+    member _.``all reference producer parameters require a stable reference id``() =
+        let parameterIdentities =
+            [|
+                CreateBranchParameters().ReferenceId
+                AssignParameters().ReferenceId
+                RebaseParameters().ReferenceId
+                CreateReferenceParameters().ReferenceId
+                CommitReferenceParameters().ReferenceId
+            |]
+
+        for parameterIdentity in parameterIdentities do
+            match (Grace.Server.Branch.validateReferenceId parameterIdentity)
+                .Result
+                with
+            | Error error -> Assert.That(error, Is.EqualTo(BranchError.InvalidReferenceId))
+            | Ok _ -> Assert.Fail("Expected an empty ReferenceId to be rejected for every producer parameter family.")
+
+        Assert.That(
+            (Grace.Server.Branch.validateReferenceId (Guid.NewGuid()))
+                .Result
+            |> Result.isOk,
+            Is.True
+        )
+
+/// Covers deterministic identities used by durable orchestration producers.
+[<Parallelizable(ParallelScope.All)>]
+type ReferenceProducerIdentityTests() =
+
+    /// Verifies repository initialization derives stable, role-separated child identities.
+    [<Test>]
+    member _.RepositoryInitialWorkflowIdentitiesAreStableAndRoleSeparated() =
+        let repositoryId = Guid.Parse("11111111-7300-4000-8000-111111111111")
+        let branchId = Grace.Actors.Repository.buildInitialWorkflowId "branch" repositoryId
+
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "branch" repositoryId, Is.EqualTo(branchId))
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "promotion-reference" repositoryId, Is.Not.EqualTo(branchId))
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "rebase-reference" repositoryId, Is.Not.EqualTo(branchId))
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "directory-version" repositoryId, Is.Not.EqualTo(branchId))
+
+    /// Verifies repository Create replay accepts only an exact durable request.
+    [<Test>]
+    member _.RepositoryCreateRetryRequiresExactDurableIdentityAndSettings() =
+        let repositoryId = Guid.Parse("22222222-7300-4000-8000-222222222222")
+        let ownerId = Guid.Parse("33333333-7300-4000-8000-333333333333")
+        let organizationId = Guid.Parse("44444444-7300-4000-8000-444444444444")
+        let repositoryName = RepositoryName "stable-reference-retry"
+        let provider = ObjectStorageProvider.AzureBlobStorage
+
+        let repositoryDto =
+            { RepositoryDto.Default with
+                RepositoryId = repositoryId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryName = repositoryName
+                ObjectStorageProvider = provider
+                UpdatedAt = Some(Instant.FromUtc(2026, 7, 26, 12, 0))
+            }
+
+        let exact = RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, provider)
+        let conflicting = RepositoryCommand.Create(RepositoryName "different", repositoryId, ownerId, organizationId, provider)
+
+        Assert.That(Grace.Actors.Repository.createCommandMatchesRepository repositoryDto exact, Is.True)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesRepository repositoryDto conflicting, Is.False)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesRepository RepositoryDto.Default exact, Is.False)
+
+    /// Verifies Repository bootstrap accepts a persisted exact empty root while rejecting conflicting deterministic reuse.
+    [<Test>]
+    member _.RepositoryInitialDirectoryRetryRequiresExactImmutableData() =
+        let directoryId = Guid.Parse("55555555-7300-4000-8000-555555555555")
+
+        let expected =
+            Grace.Types.Common.DirectoryVersion.CreateWithHashes
+                directoryId
+                (Guid.Parse("66666666-7300-4000-8000-666666666666"))
+                (Guid.Parse("77777777-7300-4000-8000-777777777777"))
+                (Guid.Parse("88888888-7300-4000-8000-888888888888"))
+                RootDirectoryPath
+                (Sha256Hash "empty-sha")
+                (Blake3Hash "empty-blake3")
+                (Collections.Generic.List<DirectoryVersionId>())
+                (Collections.Generic.List<FileVersion>())
+                0L
+
+        let persisted =
+            Grace.Types.Common.DirectoryVersion.CreateWithHashes
+                expected.DirectoryVersionId
+                expected.OwnerId
+                expected.OrganizationId
+                expected.RepositoryId
+                expected.RelativePath
+                expected.Sha256Hash
+                expected.Blake3Hash
+                (Collections.Generic.List<DirectoryVersionId>())
+                (Collections.Generic.List<FileVersion>())
+                expected.Size
+
+        Assert.That(Grace.Actors.Repository.initialDirectoryMatches expected persisted, Is.True)
+
+        persisted.Blake3Hash <- Blake3Hash "conflicting"
+        Assert.That(Grace.Actors.Repository.initialDirectoryMatches expected persisted, Is.False)
 
 /// Covers Branch aggregate retry decisions for caller-owned Reference identities.
 [<Parallelizable(ParallelScope.All)>]
@@ -266,3 +371,23 @@ type BranchActorReferenceRetryTests() =
                 Is.EqualTo(ReferenceOperationDisposition.NewReference),
                 $"Expected {referenceType} to use the same new-operation rule."
             )
+
+    /// Verifies an exact Rebase retry repairs both latest Reference and BasedOn projections.
+    [<Test>]
+    member _.ExactRebaseRetryRecoversProjectionWithoutReplacingANewerBase() =
+        let rebaseReference = { persistedCommitAt referenceId earlier with ReferenceType = ReferenceType.Rebase }
+
+        let basedOnReference = { persistedCommitAt (Guid.Parse("88888888-7291-4000-8000-888888888888")) earlier with ReferenceType = ReferenceType.Promotion }
+
+        let recovered, changed = reconcileRebaseProjection (branchProjection ReferenceDto.Default ReferenceDto.Default) rebaseReference basedOnReference
+
+        Assert.That(changed, Is.True)
+        Assert.That(recovered.LatestReference, Is.EqualTo(rebaseReference))
+        Assert.That(recovered.BasedOn, Is.EqualTo(basedOnReference))
+
+        let newerReference = persistedCommitAt (Guid.Parse("99999999-7291-4000-8000-999999999999")) later
+        let current = { branchProjection newerReference ReferenceDto.Default with BasedOn = newerReference }
+        let lateRecovery, lateChanged = reconcileRebaseProjection current rebaseReference basedOnReference
+
+        Assert.That(lateChanged, Is.False)
+        Assert.That(lateRecovery.BasedOn, Is.EqualTo(newerReference))

@@ -36,13 +36,15 @@ pub struct RebaseParameters {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
     #[serde(rename = "BasedOn", skip_serializing_if = "Option::is_none")]
     pub based_on: Option<uuid::Uuid>,
 }
 
 impl RebaseParameters {
     /// Parameters for the /branch/rebase endpoint.
-    pub fn new() -> RebaseParameters {
+    pub fn new(reference_id: uuid::Uuid) -> RebaseParameters {
         RebaseParameters {
             correlation_id: None,
             principal: None,
@@ -54,6 +56,7 @@ impl RebaseParameters {
             repository_name: None,
             branch_id: None,
             branch_name: None,
+            reference_id,
             based_on: None,
         }
     }

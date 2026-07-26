@@ -97,6 +97,8 @@ paths:
     $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1delivery~1show'
   /branch/create:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1create'
+  /branch/assign:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1assign'
   /branch/rebase:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1rebase'
   /branch/promote:
@@ -109,6 +111,8 @@ paths:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1save'
   /branch/tag:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1tag'
+  /branch/createExternal:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1createExternal'
   /branch/enablePromotion:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enablePromotion'
   /branch/enableCommit:
@@ -341,6 +345,8 @@ components:
       $ref: 'Branch.Components.OpenAPI.yaml#/BranchHashQueryParameters'
     CreateBranchParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/CreateBranchParameters'
+    AssignParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/AssignParameters'
     RebaseParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/RebaseParameters'
     CreateReferenceParameters:

@@ -361,6 +361,17 @@ type PromotionSetCommandValidationTests() =
             Is.Not.EqualTo(PromotionSet.buildGeneratedApprovalRequestId currentRequest)
         )
 
+    /// Verifies promotion retries derive the same Reference identity from durable PromotionSet step identity.
+    [<Test>]
+    member _.PromotionReferenceIdentityIsStableAndStepScoped() =
+        let promotionSetId = Guid.Parse("11111111-7300-4000-8000-111111111111")
+        let stepId = Guid.Parse("22222222-7300-4000-8000-222222222222")
+        let nextStepId = Guid.Parse("33333333-7300-4000-8000-333333333333")
+        let referenceId = PromotionSet.buildPromotionReferenceId promotionSetId stepId
+
+        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId stepId, Is.EqualTo(referenceId))
+        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId nextStepId, Is.Not.EqualTo(referenceId))
+
     /// Verifies that update Input Promotions Rejected After Success.
     [<Test>]
     member _.UpdateInputPromotionsRejectedAfterSuccess() =
