@@ -60,9 +60,7 @@ module private ValidationResultIntegrationHelpers =
     let parseRecordedValidationResult (body: string) =
         use document = JsonDocument.Parse(body)
 
-        let envelopeReturnValue =
-            document.RootElement
-            |> tryGetProperty "ReturnValue"
+        let envelopeReturnValue = document.RootElement |> tryGetProperty "ReturnValue"
 
         let returnValue =
             if envelopeReturnValue.ValueKind = JsonValueKind.Object then
@@ -75,9 +73,7 @@ module private ValidationResultIntegrationHelpers =
 
         let output = returnValue |> tryGetProperty "Output"
 
-        let properties =
-            document.RootElement
-            |> tryGetProperty "Properties"
+        let properties = document.RootElement |> tryGetProperty "Properties"
 
         { OutputKind = output.ValueKind; PropertiesRaw = properties.GetRawText() }
 
@@ -124,10 +120,7 @@ type ValidationResultRouteIntegrationTests() =
                     promotionSetId
                     promotionSetStepId
                     1
-                    [|
-                        firstArtifactId.ToString()
-                        secondArtifactId.ToString()
-                    |]
+                    [| firstArtifactId.ToString(); secondArtifactId.ToString() |]
 
             let! recorded = ValidationResultIntegrationHelpers.recordBodyAsync correlationId parameters
             let parsed = ValidationResultIntegrationHelpers.parseRecordedValidationResult recorded
@@ -156,4 +149,12 @@ type ValidationResultRouteIntegrationTests() =
             Assert.That(parsedReplay.PropertiesRaw, Does.Contain(validationResultId))
             Assert.That(parsedReplay.PropertiesRaw, Does.Contain(firstArtifactId.ToString()))
             Assert.That(parsedReplay.PropertiesRaw, Does.Contain(secondArtifactId.ToString()))
+
+            parameters.ValidationVersion <- "conflicting-version"
+
+            do!
+                ValidationResultIntegrationHelpers.recordBadRequestContainsAsync
+                    (generateCorrelationId ())
+                    parameters
+                    "ValidationResult identity already stores different data."
         }

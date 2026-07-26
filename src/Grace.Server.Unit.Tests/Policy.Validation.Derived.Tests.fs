@@ -66,6 +66,30 @@ type PolicyValidationDerivedTests() =
         Assert.That(duplicate, Is.True)
         Assert.That(different, Is.False)
 
+    /// Verifies correlation replay rejection takes precedence over matching or conflicting deterministic identity data.
+    [<Test>]
+    member _.ValidationResultRecordAttemptClassifiesCorrelationReplayBeforeIdentityData() =
+        let incoming = DerivedComputation.buildQuickScanValidationResult (commitCreatedEvent ())
+
+        let recordedEvent = { Event = ValidationResultEventType.Recorded incoming; Metadata = metadata "persisted-correlation" createdAt }
+
+        let stored = durableRecordForComparison [ recordedEvent ] ValidationResultDto.Default
+        let retry = { incoming with CreatedAt = createdAt + Duration.FromSeconds(1L) }
+        let conflicting = { retry with ValidationVersion = "conflicting-version" }
+
+        let duplicateMatching = classifyRecordAttempt [ recordedEvent ] stored retry (metadata "persisted-correlation" createdAt)
+
+        let duplicateConflicting = classifyRecordAttempt [ recordedEvent ] stored conflicting (metadata "persisted-correlation" createdAt)
+
+        let freshMatching = classifyRecordAttempt [ recordedEvent ] stored retry (metadata "fresh-matching-correlation" createdAt)
+
+        let freshConflicting = classifyRecordAttempt [ recordedEvent ] stored conflicting (metadata "fresh-conflicting-correlation" createdAt)
+
+        Assert.That(duplicateMatching, Is.EqualTo(ValidationResultRecordDisposition.DuplicateCorrelationReplay))
+        Assert.That(duplicateConflicting, Is.EqualTo(ValidationResultRecordDisposition.DuplicateCorrelationReplay))
+        Assert.That(freshMatching, Is.EqualTo(ValidationResultRecordDisposition.MatchingResult))
+        Assert.That(freshConflicting, Is.EqualTo(ValidationResultRecordDisposition.ConflictingResult))
+
     /// Verifies that derived Computation Quick Scan Predicate Matches Reference Types.
     [<Test>]
     member _.DerivedComputationQuickScanPredicateMatchesReferenceTypes() =

@@ -22,6 +22,7 @@ open System.Threading.Tasks
 module ValidationResult =
     /// Classifies a ValidationResult Record as new, an exact replay, or conflicting identity reuse.
     type internal ValidationResultRecordDisposition =
+        | DuplicateCorrelationReplay
         | NewResult
         | MatchingResult
         | ConflictingResult
@@ -31,7 +32,7 @@ module ValidationResult =
         events
         |> Seq.exists (fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
 
-    /// Compares the immutable durable ValidationResult value while ignoring actor-maintained update metadata.
+    /// Compares retry-stable ValidationResult data while keeping the first persisted creation time canonical.
     let internal recordMatchesStoredResult (stored: ValidationResultDto) (incoming: ValidationResultDto) =
         stored.ValidationResultId = incoming.ValidationResultId
         && stored.OwnerId = incoming.OwnerId
@@ -45,13 +46,24 @@ module ValidationResult =
         && stored.ValidationVersion = incoming.ValidationVersion
         && stored.Output = incoming.Output
         && stored.OnBehalfOf = incoming.OnBehalfOf
-        && stored.CreatedAt = incoming.CreatedAt
 
     /// Classifies one serialized Record attempt against the current durable ValidationResult state.
     let internal classifyRecord (stored: ValidationResultDto) (incoming: ValidationResultDto) =
         if stored.ValidationResultId = ValidationResultId.Empty then NewResult
         elif recordMatchesStoredResult stored incoming then MatchingResult
         else ConflictingResult
+
+    /// Applies actor-wide correlation replay precedence before comparing deterministic ValidationResult data.
+    let internal classifyRecordAttempt
+        (events: seq<ValidationResultEvent>)
+        (stored: ValidationResultDto)
+        (incoming: ValidationResultDto)
+        (metadata: EventMetadata)
+        =
+        if hasDuplicateCorrelationId events metadata then
+            DuplicateCorrelationReplay
+        else
+            classifyRecord stored incoming
 
     /// Selects the original persisted Record value so projection-added metadata cannot make an exact replay conflict.
     let internal durableRecordForComparison (events: seq<ValidationResultEvent>) (projected: ValidationResultDto) =
@@ -181,9 +193,11 @@ module ValidationResult =
                     match command with
                     | ValidationResultCommand.Record incoming ->
                         let stored = durableRecordForComparison state.State validationResult
-                        let disposition = classifyRecord stored incoming
+                        let disposition = classifyRecordAttempt state.State stored incoming metadata
 
                         match disposition with
+                        | DuplicateCorrelationReplay ->
+                            return Error(GraceError.Create "Duplicate correlation ID for ValidationResult command." metadata.CorrelationId)
                         | MatchingResult -> return Ok(existingResultReturnValue metadata.CorrelationId)
                         | ConflictingResult ->
                             return
@@ -192,7 +206,5 @@ module ValidationResult =
                                         .enhance(nameof RepositoryId, incoming.RepositoryId)
                                         .enhance (nameof ValidationResultId, incoming.ValidationResultId)
                                 )
-                        | NewResult when hasDuplicateCorrelationId state.State metadata ->
-                            return Error(GraceError.Create "Duplicate correlation ID for ValidationResult command." metadata.CorrelationId)
                         | NewResult -> return! processCommand command metadata
                 }
