@@ -62,6 +62,16 @@ module Branch =
     /// Emits a Branch Reference transition only when the caller-owned Reference does not already exist.
     let internal shouldApplyReferenceEvent disposition = disposition = NewReference
 
+    /// Keeps caller-owned operation identity when a projection event carries a different Reference id.
+    let internal applyReferenceIdMetadata (properties: IDictionary<string, string>) referenceId =
+        if not (properties.ContainsKey(nameof ReferenceId)) then
+            properties[nameof ReferenceId] <- $"{referenceId}"
+
+    /// Reports whether Promotion references can contribute to the public Branch projection.
+    let internal shouldProjectPromotionReferences (branchDto: BranchDto) =
+        branchDto.PromotionEnabled
+        || branchDto.AssignEnabled
+
     /// Compares a Branch Create command with the immutable facts in its durable Created event.
     let internal createCommandMatchesCreationEvent branchEventType command =
         match branchEventType, command with
@@ -324,7 +334,7 @@ module Branch =
                 // Get the enabled reference types. This allows us to limit the ReferenceTypes we search for.
                 let enabledReferenceTypes = List<ReferenceType>()
 
-                if branchDto.PromotionEnabled then
+                if shouldProjectPromotionReferences branchDto then
                     enabledReferenceTypes.Add(ReferenceType.Promotion)
 
                 if branchDto.CommitEnabled then enabledReferenceTypes.Add(ReferenceType.Commit)
@@ -347,7 +357,7 @@ module Branch =
                 let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.RepositoryId branchDto.BranchId
 
                 let! latestProjectablePromotion =
-                    if branchDto.PromotionEnabled then
+                    if shouldProjectPromotionReferences branchDto then
                         getLatestProjectablePromotion branchDto correlationId
                     else
                         Task.FromResult<Option<ReferenceDto>> None
@@ -456,7 +466,7 @@ module Branch =
                     | Saved (referenceDto, _, _, _, _)
                     | Tagged (referenceDto, _, _, _, _)
                     | ExternalCreated (referenceDto, _, _, _, _) -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceDto.ReferenceId}"
-                    | Rebased referenceId -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
+                    | Rebased referenceId -> applyReferenceIdMetadata branchEvent.Metadata.Properties referenceId
                     | _ -> ()
 
                     if shouldPersistAndPublishBranchEvent branchEvent.Event then

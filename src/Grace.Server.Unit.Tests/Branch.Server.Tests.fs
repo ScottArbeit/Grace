@@ -11,6 +11,7 @@ open Grace.Types.Repository
 open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Generic
 
 /// Covers branch Server Validation behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
@@ -371,6 +372,35 @@ type BranchActorReferenceRetryTests() =
                 Is.EqualTo(ReferenceOperationDisposition.NewReference),
                 $"Expected {referenceType} to use the same new-operation rule."
             )
+
+    /// Verifies a Rebase projection event cannot replace the caller-owned operation Reference identity in response metadata.
+    [<Test>]
+    member _.RebaseResponseMetadataPreservesOperationReferenceId() =
+        let operationReferenceId = Guid.Parse("77777777-7300-4000-8000-777777777777")
+        let basedOnReferenceId = Guid.Parse("88888888-7300-4000-8000-888888888888")
+        let properties = Dictionary<string, string>()
+        properties[nameof ReferenceId] <- $"{operationReferenceId}"
+
+        applyReferenceIdMetadata properties basedOnReferenceId
+
+        Assert.That(properties[nameof ReferenceId], Is.EqualTo($"{operationReferenceId}"))
+
+        let initiallyEmptyProperties = Dictionary<string, string>()
+        applyReferenceIdMetadata initiallyEmptyProperties basedOnReferenceId
+
+        Assert.That(initiallyEmptyProperties[nameof ReferenceId], Is.EqualTo($"{basedOnReferenceId}"))
+
+    /// Verifies Assign-only branches still recompute Promotion projections while branches with neither capability do not.
+    [<Test>]
+    member _.AssignCapabilityIncludesPromotionProjection() =
+        let assignOnly = { BranchDto.Default with AssignEnabled = true }
+        let promotionOnly = { BranchDto.Default with PromotionEnabled = true }
+        let both = { assignOnly with PromotionEnabled = true }
+
+        Assert.That(shouldProjectPromotionReferences assignOnly, Is.True)
+        Assert.That(shouldProjectPromotionReferences promotionOnly, Is.True)
+        Assert.That(shouldProjectPromotionReferences both, Is.True)
+        Assert.That(shouldProjectPromotionReferences BranchDto.Default, Is.False)
 
     /// Verifies an exact Rebase retry repairs both latest Reference and BasedOn projections.
     [<Test>]
