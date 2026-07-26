@@ -153,12 +153,15 @@ module PromotionSet =
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 
-    /// Derives one stable promotion Reference identity from durable PromotionSet and step identity.
-    let internal buildPromotionReferenceId (promotionSetId: PromotionSetId) (stepId: PromotionSetStepId) =
+    /// Derives one stable promotion Reference identity from every varying immutable input owned by a PromotionSet step.
+    let internal buildPromotionReferenceId (promotionSetId: PromotionSetId) (step: PromotionSetStep) (isTerminal: bool) =
         [|
-            "grace.promotion-set.reference.v1"
+            "grace.promotion-set.reference.v2"
             canonicalGuid promotionSetId
-            canonicalGuid stepId
+            canonicalGuid step.StepId
+            canonicalGuid step.AppliedDirectoryVersionId
+            step.Order.ToString(CultureInfo.InvariantCulture)
+            isTerminal.ToString().ToLowerInvariant()
         |]
         |> Array.map canonicalSegment
         |> String.concat "|"
@@ -1834,7 +1837,7 @@ module PromotionSet =
                                 .enhance (nameof DirectoryVersionId, step.AppliedDirectoryVersionId)
                         )
                 else
-                    let referenceId = buildPromotionReferenceId promotionSetDto.PromotionSetId step.StepId
+                    let referenceId = buildPromotionReferenceId promotionSetDto.PromotionSetId step isTerminal
                     let links = ResizeArray<ReferenceLinkType>()
                     links.Add(ReferenceLinkType.IncludedInPromotionSet promotionSetDto.PromotionSetId)
 
@@ -2210,6 +2213,8 @@ module PromotionSet =
                                 match! this.ApplyEvent { Event = PromotionSetEventType.Applied terminalReferenceId; Metadata = metadata } with
                                 | Error graceError -> return Error graceError
                                 | Ok graceReturnValue ->
+                                    do! branchActorProxy.MarkForRecompute metadata.CorrelationId
+
                                     let queueActorProxy =
                                         PromotionQueue.CreateActorProxy promotionSetDto.TargetBranchId promotionSetDto.RepositoryId this.correlationId
 

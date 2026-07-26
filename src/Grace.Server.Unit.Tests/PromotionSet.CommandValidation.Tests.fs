@@ -361,16 +361,43 @@ type PromotionSetCommandValidationTests() =
             Is.Not.EqualTo(PromotionSet.buildGeneratedApprovalRequestId currentRequest)
         )
 
-    /// Verifies promotion retries derive the same Reference identity from durable PromotionSet step identity.
+    /// Verifies promotion retries reuse identity only while every varying immutable Reference input remains exact.
     [<Test>]
-    member _.PromotionReferenceIdentityIsStableAndStepScoped() =
+    member _.PromotionReferenceIdentityIsStableAndImmutableInputScoped() =
         let promotionSetId = Guid.Parse("11111111-7300-4000-8000-111111111111")
         let stepId = Guid.Parse("22222222-7300-4000-8000-222222222222")
-        let nextStepId = Guid.Parse("33333333-7300-4000-8000-333333333333")
-        let referenceId = PromotionSet.buildPromotionReferenceId promotionSetId stepId
+        let appliedDirectoryVersionId = Guid.Parse("33333333-7300-4000-8000-333333333333")
 
-        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId stepId, Is.EqualTo(referenceId))
-        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId nextStepId, Is.Not.EqualTo(referenceId))
+        let step: PromotionSetStep =
+            {
+                StepId = stepId
+                Order = 1
+                OriginalPromotion =
+                    {
+                        BranchId = Guid.Parse("44444444-7300-4000-8000-444444444444")
+                        ReferenceId = Guid.Parse("55555555-7300-4000-8000-555555555555")
+                        DirectoryVersionId = Guid.Parse("66666666-7300-4000-8000-666666666666")
+                    }
+                OriginalBasePromotionReferenceId = Guid.Parse("77777777-7300-4000-8000-777777777777")
+                OriginalBaseDirectoryVersionId = Guid.Parse("88888888-7300-4000-8000-888888888888")
+                ComputedAgainstBaseDirectoryVersionId = Guid.Parse("99999999-7300-4000-8000-999999999999")
+                AppliedDirectoryVersionId = appliedDirectoryVersionId
+                ConflictSummaryArtifactId = Option.None
+                ConflictStatus = StepConflictStatus.NoConflicts
+            }
+
+        let referenceId = PromotionSet.buildPromotionReferenceId promotionSetId step false
+
+        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId step false, Is.EqualTo(referenceId))
+
+        Assert.That(
+            PromotionSet.buildPromotionReferenceId promotionSetId { step with AppliedDirectoryVersionId = Guid.NewGuid() } false,
+            Is.Not.EqualTo(referenceId)
+        )
+
+        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId { step with Order = 2 } false, Is.Not.EqualTo(referenceId))
+        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId { step with StepId = Guid.NewGuid() } false, Is.Not.EqualTo(referenceId))
+        Assert.That(PromotionSet.buildPromotionReferenceId promotionSetId step true, Is.Not.EqualTo(referenceId))
 
     /// Verifies that update Input Promotions Rejected After Success.
     [<Test>]

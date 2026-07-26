@@ -391,3 +391,62 @@ type BranchActorReferenceRetryTests() =
 
         Assert.That(lateChanged, Is.False)
         Assert.That(lateRecovery.BasedOn, Is.EqualTo(newerReference))
+
+    /// Verifies failed and nonterminal PromotionSet References cannot affect the public Branch projection.
+    [<Test>]
+    member _.PromotionSetProjectionRequiresSucceededTerminalOutput() =
+        let promotionSetId = Guid.Parse("aaaaaaa1-7300-4000-8000-aaaaaaaaaaa1")
+
+        let ordinaryPromotion = { persistedCommitAt (Guid.Parse("bbbbbbb1-7300-4000-8000-bbbbbbbbbbb1")) earlier with ReferenceType = ReferenceType.Promotion }
+
+        let nonterminalPromotion =
+            { ordinaryPromotion with
+                ReferenceId = Guid.Parse("ccccccc1-7300-4000-8000-ccccccccccc1")
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                    ]
+            }
+
+        let terminalPromotion =
+            { nonterminalPromotion with
+                ReferenceId = Guid.Parse("ddddddd1-7300-4000-8000-ddddddddddd1")
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                        ReferenceLinkType.PromotionSetTerminal promotionSetId
+                    ]
+            }
+
+        Assert.That(canProjectPromotionReference Option.None Option.None ordinaryPromotion, Is.True)
+
+        Assert.That(
+            canProjectPromotionReference
+                (Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded)
+                (Some nonterminalPromotion.ReferenceId)
+                nonterminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference (Some Grace.Types.PromotionSet.PromotionSetStatus.Failed) (Some terminalPromotion.ReferenceId) terminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference (Some Grace.Types.PromotionSet.PromotionSetStatus.Running) (Some terminalPromotion.ReferenceId) terminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference
+                (Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded)
+                (Some(Guid.Parse("eeeeeee1-7300-4000-8000-eeeeeeeeeee1")))
+                terminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference (Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded) (Some terminalPromotion.ReferenceId) terminalPromotion,
+            Is.True
+        )

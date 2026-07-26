@@ -138,6 +138,31 @@ module Branch =
         else
             recovered, false
 
+    /// Returns the PromotionSet that owns a generated promotion Reference, if one is linked.
+    let internal tryGetPromotionSetId (referenceDto: ReferenceDto) =
+        referenceDto.Links
+        |> Seq.tryPick (fun link ->
+            match link with
+            | ReferenceLinkType.IncludedInPromotionSet promotionSetId -> Some promotionSetId
+            | _ -> None)
+
+    /// Reports whether a PromotionSet Reference carries the matching terminal link required for public projection.
+    let internal isPromotionSetTerminalReference promotionSetId (referenceDto: ReferenceDto) =
+        referenceDto.Links
+        |> Seq.exists (fun link ->
+            match link with
+            | ReferenceLinkType.PromotionSetTerminal terminalPromotionSetId -> terminalPromotionSetId = promotionSetId
+            | _ -> false)
+
+    /// Allows ordinary promotions or the current terminal output from a durably successful PromotionSet into Branch projections.
+    let internal canProjectPromotionReference promotionSetStatus expectedTerminalReferenceId (referenceDto: ReferenceDto) =
+        match tryGetPromotionSetId referenceDto with
+        | None -> true
+        | Some promotionSetId ->
+            isPromotionSetTerminalReference promotionSetId referenceDto
+            && promotionSetStatus = Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded
+            && expectedTerminalReferenceId = Some referenceDto.ReferenceId
+
     /// Builds the public Branch command result without mutating the aggregate a second time for exact Commit retries.
     let private createBranchCommandReturnValue (branchDto: BranchDto) (branchEvent: BranchEvent) =
         let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
@@ -170,10 +195,61 @@ module Branch =
 
         let mutable currentCommand = String.Empty
 
+        /// Finds the newest promotion that can truthfully advance the public Branch projection.
+        let getLatestProjectablePromotion (branchDto: BranchDto) correlationId =
+            task {
+                let! promotions = getPromotions branchDto.RepositoryId branchDto.BranchId 500 correlationId
+                let! latestTerminalPromotion = getLatestPromotion branchDto.RepositoryId branchDto.BranchId
+
+                let orderedPromotions =
+                    match latestTerminalPromotion with
+                    | Some referenceDto -> Array.append promotions [| referenceDto |]
+                    | None -> promotions
+                    |> Array.distinctBy (fun referenceDto -> referenceDto.ReferenceId)
+                    |> Array.sortByDescending (fun referenceDto -> referenceDto.CreatedAt)
+
+                let mutable projectablePromotion: ReferenceDto option = None
+                let mutable index = 0
+
+                while index < orderedPromotions.Length
+                      && projectablePromotion.IsNone do
+                    let referenceDto = orderedPromotions[index]
+
+                    if referenceDto.DeletedAt.IsNone then
+                        match tryGetPromotionSetId referenceDto with
+                        | None -> projectablePromotion <- Some referenceDto
+                        | Some promotionSetId when isPromotionSetTerminalReference promotionSetId referenceDto ->
+                            let promotionSetActorProxy =
+                                Grace.Actors.Extensions.ActorProxy.PromotionSet.CreateActorProxy promotionSetId branchDto.RepositoryId correlationId
+
+                            let! promotionSetDto = promotionSetActorProxy.Get correlationId
+                            let! promotionSetEvents = promotionSetActorProxy.GetEvents correlationId
+
+                            let expectedTerminalReferenceId =
+                                promotionSetEvents
+                                |> Seq.rev
+                                |> Seq.tryPick (fun promotionSetEvent ->
+                                    match promotionSetEvent.Event with
+                                    | Grace.Types.PromotionSet.PromotionSetEventType.Applied terminalReferenceId -> Some terminalReferenceId
+                                    | _ -> None)
+
+                            if canProjectPromotionReference (Some promotionSetDto.Status) expectedTerminalReferenceId referenceDto then
+                                projectablePromotion <- Some referenceDto
+                        | Some _ -> ()
+
+                    index <- index + 1
+
+                return projectablePromotion
+            }
+
         /// Updates the branchDto with the latest reference of each type from the branch.
         let updateLatestReferences (branchDto: BranchDto) correlationId =
             task {
-                let mutable newBranchDto = branchDto
+                let durableBranchDto =
+                    state.State
+                    |> Seq.fold (fun current branchEvent -> current |> BranchDto.UpdateDto branchEvent) BranchDto.Default
+
+                let mutable newBranchDto = { branchDto with BasedOn = durableBranchDto.BasedOn; LatestPromotion = ReferenceDto.Default }
 
                 // Get the enabled reference types. This allows us to limit the ReferenceTypes we search for.
                 let enabledReferenceTypes = List<ReferenceType>()
@@ -200,12 +276,26 @@ module Branch =
                 // Get the latest references.
                 let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.RepositoryId branchDto.BranchId
 
+                let! latestProjectablePromotion =
+                    if branchDto.PromotionEnabled then
+                        getLatestProjectablePromotion branchDto correlationId
+                    else
+                        Task.FromResult<Option<ReferenceDto>> None
+
                 // Get the latest reference of any type.
                 let latestReference =
                     latestReferences
                         .Values
+                        .Where(fun referenceDto ->
+                            referenceDto.ReferenceType
+                            <> ReferenceType.Promotion)
+                        .Concat(
+                            match latestProjectablePromotion with
+                            | Some referenceDto -> [| referenceDto |]
+                            | None -> Array.Empty<ReferenceDto>()
+                        )
                         .OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt)
-                        .FirstOrDefault(branchDto.BasedOn)
+                        .FirstOrDefault(durableBranchDto.BasedOn)
 
                 newBranchDto <- { newBranchDto with LatestReference = latestReference }
 
@@ -217,7 +307,7 @@ module Branch =
                     | Save -> newBranchDto <- { newBranchDto with LatestSave = referenceDto }
                     | Checkpoint -> newBranchDto <- { newBranchDto with LatestCheckpoint = referenceDto }
                     | Commit -> newBranchDto <- { newBranchDto with LatestCommit = referenceDto }
-                    | Promotion -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                    | Promotion -> ()
                     | Rebase ->
                         let basedOnLink =
                             kvp.Value.Links
@@ -237,6 +327,10 @@ module Branch =
                         newBranchDto <- { newBranchDto with BasedOn = basedOnReferenceDto }
                     | External -> ()
                     | Tag -> ()
+
+                match latestProjectablePromotion with
+                | Some referenceDto -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                | None -> ()
 
                 return { newBranchDto with ShouldRecomputeLatestReferences = false }
             }
