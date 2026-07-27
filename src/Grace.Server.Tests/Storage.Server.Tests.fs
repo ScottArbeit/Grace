@@ -7,6 +7,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.ManifestContributionAccounting
 open Grace.Types.UploadSession
 open Grace.Types.Common
 open NUnit.Framework
@@ -1697,6 +1698,7 @@ type StorageManifestUploadSessionRoutes() =
     [<Test>]
     member _.RepositoriesInSameStoragePoolReuseDurableContentBlockPlacementAcrossManifests() =
         task {
+            let! state = AspireTestHost.startAsync testUserId
             let firstRepositoryId = repositoryIds[0]
             let secondRepositoryId = repositoryIds[1]
             let firstCorrelationId = generateCorrelationId ()
@@ -1753,6 +1755,30 @@ type StorageManifestUploadSessionRoutes() =
 
             Assert.That(firstFinalize.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some firstManifest.ManifestAddress))
             Assert.That(firstFinalize.ReturnValue.Session.StoragePoolId, Is.EqualTo(sharedStoragePoolId))
+
+            let firstManifestFileVersion = manifestBackedFileVersion (RelativePath firstScope) payload firstManifest
+            let firstRoot = BranchServerTestHelpers.createRootDirectoryVersion firstRepositoryId firstManifestFileVersion
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync firstRepositoryId [ firstRoot ]
+
+            let! firstParentBranch = BranchServerTestHelpers.getBranchAsync firstRepositoryId repositoryDefaultBranchIds[0]
+            let! firstBranch = BranchServerTestHelpers.createBranchAsync firstRepositoryId firstParentBranch $"CrossRepositoryReuse{Guid.NewGuid():N}"
+
+            let! firstSaveResponse =
+                BranchServerTestHelpers.saveReferenceResponseAsync firstRepositoryId firstBranch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
+
+            let! firstSaveBody = firstSaveResponse.Content.ReadAsStringAsync()
+            Assert.That(firstSaveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstSaveBody)
+
+            do!
+                AspireTestHost.waitForExactRelationshipAsync
+                    state
+                    (ExactRelationship.DirectoryVersionManifest
+                        {
+                            RepositoryId = Guid.Parse firstRepositoryId
+                            StoragePoolId = firstManifest.StoragePoolId
+                            ManifestAddress = firstManifest.ManifestAddress
+                            DirectoryVersionId = firstRoot.DirectoryVersionId
+                        })
 
             let! discovery = discoverContentBlocks secondRepositoryId block
             let candidates = discovery.ReturnValue.CandidateContentBlocks
@@ -1914,6 +1940,7 @@ type StorageManifestUploadSessionRoutes() =
     [<Test>]
     member _.LargeBinarySaveLifecycleRequiresFinalizedManifestAndDownloadsAfterRouteChange() =
         task {
+            let! state = AspireTestHost.startAsync testUserId
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
             let correlationId = generateCorrelationId ()
@@ -2032,6 +2059,17 @@ type StorageManifestUploadSessionRoutes() =
             let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch root.DirectoryVersionId root.Sha256Hash
             let! saveBody = saveResponse.Content.ReadAsStringAsync()
             Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
+
+            do!
+                AspireTestHost.waitForExactRelationshipAsync
+                    state
+                    (ExactRelationship.DirectoryVersionManifest
+                        {
+                            RepositoryId = Guid.Parse repositoryId
+                            StoragePoolId = manifest.StoragePoolId
+                            ManifestAddress = manifest.ManifestAddress
+                            DirectoryVersionId = root.DirectoryVersionId
+                        })
 
             let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
             Assert.That(savedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))

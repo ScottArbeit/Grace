@@ -22,6 +22,7 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open Grace.Types
+open Grace.Types.ManifestContributionAccounting
 open Grace.Shared.Utilities
 
 /// Captures test host state values used by the test suite.
@@ -1752,4 +1753,35 @@ module AspireTestHost =
                 |> String.concat Environment.NewLine
 
             return $"Active:{Environment.NewLine}{describe active}{Environment.NewLine}DeadLetter:{Environment.NewLine}{describe deadLetter}"
+        }
+
+    /// Waits until manifest contribution accounting records one canonical exact relationship.
+    let waitForExactRelationshipAsync (state: TestHostState) relationship =
+        task {
+            let key =
+                match ExactRelationshipKey.create relationship with
+                | Ok key -> key
+                | Error error -> failwith error
+
+            use client = createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
+            let mutable found = false
+
+            while not found && DateTime.UtcNow < timeoutAt do
+                try
+                    let! _ = container.ReadItemAsync<JsonElement>(key.ItemId, PartitionKey key.PartitionKey, cancellationToken = CancellationToken.None)
+
+                    found <- true
+                with
+                | :? CosmosException as ex when ex.StatusCode = System.Net.HttpStatusCode.NotFound -> do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
+
+            if not found then
+                let! logs = getGraceServerLogsAsync state
+                let! fileLog = getGraceServerFileLogAsync state
+                let! subscription = describeGraceServerSubscriptionAsync state
+
+                Assert.Fail(
+                    $"Timed out waiting for exact relationship {key.PartitionKey}/{key.ItemId}.{Environment.NewLine}Grace.Server logs:{Environment.NewLine}{logs}{Environment.NewLine}Grace.Server file log:{Environment.NewLine}{fileLog}{Environment.NewLine}{subscription}"
+                )
         }

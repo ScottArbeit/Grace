@@ -17,7 +17,6 @@ open System
 open System.Collections.Generic
 open System.Net
 open System.Text.Json
-open System.Threading
 open System.Threading.Tasks
 
 /// Provides typed access to raw actor persistence for the focused Aspire tracer.
@@ -88,37 +87,6 @@ module private ManifestContributionAccountingAspireTestHelpers =
 /// Proves the public Commit tracer across the real Aspire Service Bus and Cosmos resources.
 [<NonParallelizable>]
 type ManifestContributionAccountingAspireTests() =
-
-    /// Waits for one canonical exact relationship item in the Aspire Cosmos container.
-    let waitForExactRelationshipAsync (state: TestHostState) relationship =
-        task {
-            let key =
-                match ExactRelationshipKey.create relationship with
-                | Ok key -> key
-                | Error error -> failwith error
-
-            use client = AspireTestHost.createCosmosClient state
-            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
-            let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
-            let mutable found = false
-
-            while not found && DateTime.UtcNow < timeoutAt do
-                try
-                    let! _ = container.ReadItemAsync<JsonElement>(key.ItemId, PartitionKey key.PartitionKey, cancellationToken = CancellationToken.None)
-
-                    found <- true
-                with
-                | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
-
-            if not found then
-                let! logs = AspireTestHost.getGraceServerLogsAsync state
-                let! fileLog = AspireTestHost.getGraceServerFileLogAsync state
-                let! subscription = AspireTestHost.describeGraceServerSubscriptionAsync state
-
-                Assert.Fail(
-                    $"Timed out waiting for exact relationship {key.PartitionKey}/{key.ItemId}.{Environment.NewLine}Grace.Server logs:{Environment.NewLine}{logs}{Environment.NewLine}Grace.Server file log:{Environment.NewLine}{fileLog}{Environment.NewLine}{subscription}"
-                )
-        }
 
     /// Verifies Commit returns after durable save plus broker acceptance while the existing subscriber converges retained content.
     [<Test>]
@@ -207,13 +175,13 @@ type ManifestContributionAccountingAspireTests() =
                     Constants.DefaultTimestamp
 
             do!
-                waitForExactRelationshipAsync
+                AspireTestHost.waitForExactRelationshipAsync
                     state
                     (ExactRelationship.ReferenceRoot
                         { RepositoryId = Guid.Parse repositoryId; RootDirectoryVersionId = root.DirectoryVersionId; ReferenceId = referenceId })
 
             do!
-                waitForExactRelationshipAsync
+                AspireTestHost.waitForExactRelationshipAsync
                     state
                     (ExactRelationship.DirectoryVersionManifest
                         {
