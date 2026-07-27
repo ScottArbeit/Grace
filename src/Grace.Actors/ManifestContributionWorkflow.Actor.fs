@@ -32,12 +32,12 @@ module ManifestContributionWorkflow =
     /// Extracts the client operation id that lets command retries match previously emitted events.
     let operationId command =
         match command with
-        | ManifestContributionWorkflowCommand.Start (operationId, _, _, _, _, _) -> operationId
+        | ManifestContributionWorkflowCommand.Start (operationId, _, _, _, _, _, _) -> operationId
         | ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, _, _, _, _) -> operationId
         | ManifestContributionWorkflowCommand.RecordRangeFailed (operationId, _, _, _, _, _) -> operationId
 
     /// Coordinates start command payload logic for the ManifestContributionWorkflow actor.
-    let private startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges =
+    let private startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision =
         {
             OperationId = operationId
             RepositoryId = repositoryId
@@ -45,6 +45,7 @@ module ManifestContributionWorkflow =
             ManifestAddress = manifestAddress
             Direction = direction
             Ranges = ranges
+            CounterRevision = counterRevision
         }
 
     /// Coordinates progress command payload logic for the ManifestContributionWorkflow actor.
@@ -88,13 +89,14 @@ module ManifestContributionWorkflow =
         && existing.ManifestAddress = candidate.ManifestAddress
         && existing.Direction = candidate.Direction
         && rangesEqual existing.Ranges candidate.Ranges
+        && existing.CounterRevision = candidate.CounterRevision
 
     /// Coordinates event matches command logic for the ManifestContributionWorkflow actor.
     let private eventMatchesCommand workflowEvent command =
         match workflowEvent.Event, command with
         | ManifestContributionWorkflowEventType.WorkflowStarted existing,
-          ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
-            startMatches existing (startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges)
+          ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, counterRevision) ->
+            startMatches existing (startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision)
         | ManifestContributionWorkflowEventType.RangeSucceeded existing,
           ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, repositoryId, storagePoolId, manifestAddress, range) ->
             existing = progressCommandPayload operationId repositoryId storagePoolId manifestAddress range
@@ -113,7 +115,7 @@ module ManifestContributionWorkflow =
         let commandOperationId = operationId command
 
         match command with
-        | ManifestContributionWorkflowCommand.Start (_, repositoryId, storagePoolId, manifestAddress, direction, ranges) when
+        | ManifestContributionWorkflowCommand.Start (_, repositoryId, storagePoolId, manifestAddress, direction, ranges, counterRevision) when
             workflow.StartOperationId = Some commandOperationId
             ->
             Some(
@@ -122,10 +124,13 @@ module ManifestContributionWorkflow =
                 && workflow.ManifestAddress = manifestAddress
                 && workflow.Direction = direction
                 && rangesEqual workflow.Ranges ranges
+                && workflow.CounterRevision = counterRevision
             )
         | ManifestContributionWorkflowCommand.RecordRangeSucceeded (_, repositoryId, storagePoolId, manifestAddress, range) ->
-            match workflow.CompletedRanges.TryGetValue range with
-            | true, completedOperationId when completedOperationId = commandOperationId ->
+            match workflow.CompletedRanges
+                  |> Array.tryFind (fun completed -> completed.Range = range)
+                with
+            | Some completed when completed.OperationId = commandOperationId ->
                 Some(
                     workflow.RepositoryId = repositoryId
                     && workflow.StoragePoolId = storagePoolId
@@ -134,8 +139,10 @@ module ManifestContributionWorkflow =
             | _ when workflow.LastOperationId = Some commandOperationId -> Some false
             | _ -> None
         | ManifestContributionWorkflowCommand.RecordRangeFailed (_, repositoryId, storagePoolId, manifestAddress, range, message) ->
-            match workflow.FailedRanges.TryGetValue range with
-            | true, failure when failure.OperationId = commandOperationId ->
+            match workflow.FailedRanges
+                  |> Array.tryFind (fun failure -> failure.Range = range)
+                with
+            | Some failure when failure.OperationId = commandOperationId ->
                 Some(
                     workflow.RepositoryId = repositoryId
                     && workflow.StoragePoolId = storagePoolId
@@ -154,7 +161,10 @@ module ManifestContributionWorkflow =
     /// Coordinates pending ranges logic for the ManifestContributionWorkflow actor.
     let pendingRanges (workflow: ManifestContributionWorkflowDto) =
         workflow.Ranges
-        |> Array.filter (fun range -> not (workflow.CompletedRanges.ContainsKey range))
+        |> Array.filter (fun range ->
+            workflow.CompletedRanges
+            |> Array.exists (fun completed -> completed.Range = range)
+            |> not)
 
     /// Checks whether blocks unsafe deletion is true for the ManifestContributionWorkflow actor state.
     let blocksUnsafeDeletion (workflow: ManifestContributionWorkflowDto) range =
@@ -250,6 +260,8 @@ module ManifestContributionWorkflow =
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the initialized workflow.")
         elif workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow has already been started.")
+        elif start.CounterRevision <= 0L then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow counter revision must be greater than zero.")
         elif Array.isEmpty start.Ranges then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires at least one range.")
         elif hasDuplicateRanges start.Ranges then
@@ -307,14 +319,20 @@ module ManifestContributionWorkflow =
                 | Some _ -> okDecision workflow operationId [] [] true "Manifest contribution workflow command replayed."
                 | None ->
                     match command with
-                    | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
-                        let start = startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges
+                    | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, counterRevision) ->
+                        let start = startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision
 
-                        match validateStart expectedPrimaryKey workflow start metadata with
-                        | Some error -> Error error
-                        | None ->
-                            let workflowEvent = { Event = ManifestContributionWorkflowEventType.WorkflowStarted start; Metadata = metadata }
-                            okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow started."
+                        if counterRevision < workflow.CounterRevision then
+                            okDecision workflow operationId [] [] true "Manifest contribution workflow start was superseded."
+                        elif counterRevision = workflow.CounterRevision
+                             && workflow.StartOperationId.IsSome then
+                            Error(graceError metadata.CorrelationId "ManifestContributionWorkflow counter revision was already used by a different operation.")
+                        else
+                            match validateStart expectedPrimaryKey workflow start metadata with
+                            | Some error -> Error error
+                            | None ->
+                                let workflowEvent = { Event = ManifestContributionWorkflowEventType.WorkflowStarted start; Metadata = metadata }
+                                okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow started."
                     | ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, repositoryId, storagePoolId, manifestAddress, range) ->
                         let progress = progressCommandPayload operationId repositoryId storagePoolId manifestAddress range
 
@@ -326,7 +344,8 @@ module ManifestContributionWorkflow =
                                 Error(graceError metadata.CorrelationId "ManifestContributionWorkflow must be started before recording range progress.")
                             elif not (isKnownRange workflow progress.Range) then
                                 Error(graceError metadata.CorrelationId "ManifestContributionWorkflow range is not part of this workflow.")
-                            elif workflow.CompletedRanges.ContainsKey progress.Range then
+                            elif workflow.CompletedRanges
+                                 |> Array.exists (fun completed -> completed.Range = progress.Range) then
                                 okDecision workflow operationId [] [] true "Manifest contribution workflow range was already completed."
                             else
                                 let workflowEvent = { Event = ManifestContributionWorkflowEventType.RangeSucceeded progress; Metadata = metadata }
@@ -348,7 +367,8 @@ module ManifestContributionWorkflow =
                                 Error(graceError metadata.CorrelationId "ManifestContributionWorkflow must be started before recording range progress.")
                             elif not (isKnownRange workflow failure.Range) then
                                 Error(graceError metadata.CorrelationId "ManifestContributionWorkflow range is not part of this workflow.")
-                            elif workflow.CompletedRanges.ContainsKey failure.Range then
+                            elif workflow.CompletedRanges
+                                 |> Array.exists (fun completed -> completed.Range = failure.Range) then
                                 okDecision workflow operationId [] [] true "Manifest contribution workflow range was already completed."
                             else
                                 let workflowEvent = { Event = ManifestContributionWorkflowEventType.RangeFailed failure; Metadata = metadata }
@@ -457,7 +477,9 @@ module ManifestContributionWorkflow =
                 while rangeIndex < ranges.Length && error.IsNone do
                     let range = ranges[rangeIndex]
 
-                    if not (workflow.CompletedRanges.ContainsKey range) then
+                    if workflow.CompletedRanges
+                       |> Array.exists (fun completed -> completed.Range = range)
+                       |> not then
                         match! this.ApplyRange(startOperationId, rangeIndex, range, metadata) with
                         | Ok _ -> ()
                         | Error rangeError ->
@@ -527,18 +549,27 @@ module ManifestContributionWorkflow =
                 |> returnTask
 
             /// Coordinates start logic for the ManifestContributionWorkflow actor.
-            member this.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata =
+            member this.Start operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision metadata =
                 task {
                     match! (this :> IManifestContributionWorkflowActor)
                                .Handle
-                               (ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges))
+                               (ManifestContributionWorkflowCommand.Start(
+                                   operationId,
+                                   repositoryId,
+                                   storagePoolId,
+                                   manifestAddress,
+                                   direction,
+                                   ranges,
+                                   counterRevision
+                               ))
                                metadata
                         with
                     | Error error -> return Error error
-                    | Ok startResult ->
+                    | Ok startResult when startResult.ReturnValue.Workflow.StartOperationId = Some operationId ->
                         match! this.ApplyPendingRanges(operationId, metadata) with
                         | Error error -> return Error error
                         | Ok _ -> return Ok startResult
+                    | Ok startResult -> return Ok startResult
                 }
 
             /// Routes a public actor command to the domain operation that validates and persists it.

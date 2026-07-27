@@ -17,11 +17,21 @@ type RepositoryCounterRecentResultTests() =
     [<Test>]
     member _.RecentResultExpiryIsExactlyTenMinutes() = Assert.That(expiry, Is.EqualTo(TimeSpan.FromMinutes 10.0))
 
+    /// Verifies the one-time Redis handshake remains bounded but is not limited to a command-sized CI window.
+    [<Test>]
+    member _.InitialRedisConnectionAllowsBoundedContainerHandshake() = Assert.That(connectionTimeout, Is.EqualTo(TimeSpan.FromSeconds 10.0))
+
     /// Verifies cached changes round-trip without inventing a zero for missing or malformed values.
     [<Test>]
     member _.RecentResultRoundTripsAndMalformedValueIsMiss() =
         let change =
-            { OperationId = "directory-version:1:add"; Operation = RepositoryContentCounterChangeOperation.Added; PreviousCount = 0L; CurrentCount = 1L }
+            {
+                OperationId = "directory-version:1:add"
+                Operation = RepositoryContentCounterChangeOperation.Added
+                PreviousCount = 0L
+                CurrentCount = 1L
+                Revision = 1L
+            }
 
         Assert.That(tryDeserialize (serialize change), Is.EqualTo(Some change))
         Assert.That(tryDeserialize "not-a-result", Is.EqualTo(None))
@@ -70,6 +80,7 @@ type RepositoryCounterRecentResultTests() =
                     Operation = RepositoryContentCounterChangeOperation.Removed
                     PreviousCount = 1L
                     CurrentCount = 0L
+                    Revision = 2L
                 }
 
             let! confirmed =

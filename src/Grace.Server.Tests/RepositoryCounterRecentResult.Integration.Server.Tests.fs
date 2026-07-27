@@ -29,7 +29,8 @@ type RepositoryCounterRecentResultIntegrationTests() =
             let manifestAddress = ManifestAddress(String.replicate 64 "a")
             let operationId = RepositoryContentCounterOperationId $"redis-witness:{Guid.NewGuid():N}"
 
-            let change = { OperationId = operationId; Operation = RepositoryContentCounterChangeOperation.Added; PreviousCount = 0L; CurrentCount = 1L }
+            let change =
+                { OperationId = operationId; Operation = RepositoryContentCounterChangeOperation.Added; PreviousCount = 0L; CurrentCount = 1L; Revision = 1L }
 
             let recentResult = RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult("127.0.0.1", 6379) :> IRepositoryCounterRecentResult
 

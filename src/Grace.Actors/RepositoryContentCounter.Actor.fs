@@ -79,11 +79,11 @@ module RepositoryContentCounter =
         match change.Operation, change.PreviousCount, change.CurrentCount with
         | RepositoryContentCounterChangeOperation.Added, 0L, 1L ->
             [
-                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
+                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress, change.Revision)
             ]
         | RepositoryContentCounterChangeOperation.Removed, 1L, 0L ->
             [
-                RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
+                RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress, change.Revision)
             ]
         | _ -> []
 
@@ -185,7 +185,12 @@ module RepositoryContentCounter =
                     let intents =
                         if counter.ReferenceCount = 0L then
                             [
-                                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
+                                RepositoryContentCounterIntent.IncrementManifestReferenceCount(
+                                    repositoryId,
+                                    storagePoolId,
+                                    manifestAddress,
+                                    counter.Revision + 1L
+                                )
                             ]
                         else
                             []
@@ -200,7 +205,12 @@ module RepositoryContentCounter =
                         let intents =
                             if counter.ReferenceCount = 1L then
                                 [
-                                    RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
+                                    RepositoryContentCounterIntent.DecrementManifestReferenceCount(
+                                        repositoryId,
+                                        storagePoolId,
+                                        manifestAddress,
+                                        counter.Revision + 1L
+                                    )
                                 ]
                             else
                                 []

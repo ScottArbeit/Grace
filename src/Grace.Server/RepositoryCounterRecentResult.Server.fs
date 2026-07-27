@@ -20,6 +20,9 @@ module RepositoryCounterRecentResult =
     /// Bounds individual Redis connection and command waits without adding an outer retry policy.
     let private commandTimeout = TimeSpan.FromSeconds 2.0
 
+    /// Gives the lazy first connection enough bounded time for a healthy CI container to finish its handshake.
+    let connectionTimeout = TimeSpan.FromSeconds 10.0
+
     /// Creates the opaque direct-lookup key for one repository-manifest operation.
     let key repositoryId storagePoolId manifestAddress operationId =
         let identity = $"{repositoryId:N}|{storagePoolId}|{manifestAddress}|{operationId}"
@@ -34,7 +37,7 @@ module RepositoryCounterRecentResult =
             | RepositoryContentCounterChangeOperation.Removed -> "remove"
 
         let encodedOperationId = Convert.ToBase64String(Encoding.UTF8.GetBytes(string change.OperationId))
-        String.Join("|", encodedOperationId, operation, change.PreviousCount, change.CurrentCount)
+        String.Join("|", encodedOperationId, operation, change.PreviousCount, change.CurrentCount, change.Revision)
 
     /// Parses a bounded recent result and rejects malformed or inconsistent cache data as a miss.
     let tryDeserialize value =
@@ -42,7 +45,7 @@ module RepositoryCounterRecentResult =
             None
         else
             match value.Split('|') with
-            | [| operationId; operation; previousCount; currentCount |] ->
+            | [| operationId; operation; previousCount; currentCount; revision |] ->
                 try
                     let operationId =
                         Convert.FromBase64String operationId
@@ -57,10 +60,22 @@ module RepositoryCounterRecentResult =
 
                     match operation,
                           Int64.TryParse(previousCount, NumberStyles.None, CultureInfo.InvariantCulture),
-                          Int64.TryParse(currentCount, NumberStyles.None, CultureInfo.InvariantCulture)
+                          Int64.TryParse(currentCount, NumberStyles.None, CultureInfo.InvariantCulture),
+                          Int64.TryParse(revision, NumberStyles.None, CultureInfo.InvariantCulture)
                         with
-                    | Some operation, (true, previousCount), (true, currentCount) when previousCount >= 0L && currentCount >= 0L ->
-                        Some { OperationId = operationId; Operation = operation; PreviousCount = previousCount; CurrentCount = currentCount }
+                    | Some operation, (true, previousCount), (true, currentCount), (true, revision) when
+                        previousCount >= 0L
+                        && currentCount >= 0L
+                        && revision > 0L
+                        ->
+                        Some
+                            {
+                                OperationId = operationId
+                                Operation = operation
+                                PreviousCount = previousCount
+                                CurrentCount = currentCount
+                                Revision = revision
+                            }
                     | _ -> None
                 with
                 | :? FormatException
@@ -80,7 +95,7 @@ module RepositoryCounterRecentResult =
         let configuration =
             ConfigurationOptions(
                 AbortOnConnectFail = false,
-                ConnectTimeout = int commandTimeout.TotalMilliseconds,
+                ConnectTimeout = int connectionTimeout.TotalMilliseconds,
                 SyncTimeout = int commandTimeout.TotalMilliseconds,
                 AsyncTimeout = int commandTimeout.TotalMilliseconds
             )
@@ -91,7 +106,7 @@ module RepositoryCounterRecentResult =
 
         let database (cancellationToken: CancellationToken) : Task<IDatabase> =
             task {
-                let! multiplexer = connection.Value.WaitAsync(commandTimeout, cancellationToken)
+                let! multiplexer = connection.Value.WaitAsync(connectionTimeout, cancellationToken)
                 return multiplexer.GetDatabase()
             }
 

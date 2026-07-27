@@ -282,25 +282,19 @@ module ManifestContributionAccounting =
 
                 match Reference.tryCreateManifestContributionStartForCounterDecision plan counterReturnValue.ReturnValue counterEvents with
                 | None -> ()
-                | Some _ ->
+                | Some startCommand ->
                     let workflowActor =
                         grainFactory.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
                             ManifestContributionWorkflow.primaryKey relationship.RepositoryId relationship.StoragePoolId relationship.ManifestAddress,
                             metadata.CorrelationId
                         )
 
-                    match!
-                        workflowActor.Start
-                            (directoryVersionManifestWorkflowOperationId relationship)
-                            relationship.RepositoryId
-                            relationship.StoragePoolId
-                            relationship.ManifestAddress
-                            ManifestContributionDirection.Increment
-                            plan.WorkflowRanges
-                            metadata
-                        with
-                    | Ok _ -> ()
-                    | Error graceError -> invalidOp graceError.Error
+                    match startCommand with
+                    | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, counterRevision) ->
+                        match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision metadata with
+                        | Ok _ -> ()
+                        | Error graceError -> invalidOp graceError.Error
+                    | _ -> invalidOp "Manifest contribution accounting expected a workflow start command."
         }
         :> Task
 

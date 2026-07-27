@@ -6,6 +6,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Text.Json
 
 module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
 
@@ -35,11 +36,15 @@ type ManifestContributionWorkflowActorTests() =
 
     /// Builds start With Ranges test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let startWithRanges direction ranges =
-        ManifestContributionWorkflowCommand.Start("workflow-start", repositoryId, storagePoolId, manifestAddress, direction, ranges)
+        ManifestContributionWorkflowCommand.Start("workflow-start", repositoryId, storagePoolId, manifestAddress, direction, ranges, 1L)
 
     /// Builds start With Operation test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let startWithOperation operationId direction ranges =
-        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges)
+        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, 1L)
+
+    /// Builds a start command carrying the counter revision that orders contribution cycles.
+    let startWithOperationAtRevision operationId direction ranges counterRevision =
+        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, counterRevision)
 
     let start direction = startWithRanges direction [| range0; range1 |]
 
@@ -98,7 +103,7 @@ type ManifestContributionWorkflowActorTests() =
                 (started.Events
                  @ firstRange.Events @ secondRange.Events)
                 secondRange.Workflow
-                (startWithOperation "bounded-next-cycle" ManifestContributionDirection.Decrement [| range0 |])
+                (startWithOperationAtRevision "bounded-next-cycle" ManifestContributionDirection.Decrement [| range0 |] 2L)
                 (metadata "corr-bounded-next-cycle")
             |> expectOk
 
@@ -136,6 +141,31 @@ type ManifestContributionWorkflowActorTests() =
         Assert.That(replayedRange.WasIdempotentReplay, Is.True)
         Assert.That(replayedRange.Events, Is.Empty)
         Assert.That(replayedRange.Intents, Is.Empty)
+
+    /// Verifies bounded workflow progress uses a Cosmos-compatible JSON array shape.
+    [<Test>]
+    member _.BoundedProgressSerializesWithoutDictionaryKeys() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-json-start")
+            |> expectOk
+
+        let progressed =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow (succeeded "json-range" range0) (metadata "corr-json-range")
+            |> expectOk
+
+        let json = JsonSerializer.Serialize(progressed.Workflow, Grace.Shared.Constants.JsonSerializerOptions)
+        use document = JsonDocument.Parse json
+        let completedRanges = document.RootElement.GetProperty("CompletedRanges")
+        let failedRanges = document.RootElement.GetProperty("FailedRanges")
+
+        Assert.That(completedRanges.ValueKind, Is.EqualTo(JsonValueKind.Array))
+        Assert.That(completedRanges.GetArrayLength(), Is.EqualTo(1))
+        Assert.That(completedRanges[0].GetProperty("Range").ValueKind, Is.EqualTo(JsonValueKind.Object))
+        Assert.That(failedRanges.ValueKind, Is.EqualTo(JsonValueKind.Array))
 
     /// Verifies bounded failed-range progress retains enough identity for snapshot-only retries.
     [<Test>]
@@ -238,7 +268,13 @@ type ManifestContributionWorkflowActorTests() =
 
         Assert.That(replay.WasIdempotentReplay, Is.True)
         Assert.That(replay.Events, Is.Empty)
-        Assert.That(replay.Workflow.CompletedRanges.ContainsKey(range0), Is.True)
+
+        Assert.That(
+            replay.Workflow.CompletedRanges
+            |> Array.exists (fun completed -> completed.Range = range0),
+            Is.True
+        )
+
         let pending = ManifestContributionWorkflowActor.pendingRanges replay.Workflow
         Assert.That(pending, Has.Length.EqualTo(1))
         Assert.That(pending[0], Is.EqualTo(range1))
@@ -304,7 +340,7 @@ type ManifestContributionWorkflowActorTests() =
             ManifestContributionWorkflowActor.decideCommand
                 completedEvents
                 range1Done.Workflow
-                (startWithOperation "workflow-restart" ManifestContributionDirection.Decrement [| range0 |])
+                (startWithOperationAtRevision "workflow-restart" ManifestContributionDirection.Decrement [| range0 |] 2L)
                 (metadata "corr-restart")
             |> expectOk
 
@@ -313,6 +349,73 @@ type ManifestContributionWorkflowActorTests() =
         let restartedPending = ManifestContributionWorkflowActor.pendingRanges restarted.Workflow
         Assert.That(restartedPending.Length, Is.EqualTo(1))
         Assert.That(restartedPending[0], Is.EqualTo(range0))
+
+    /// Verifies that a superseded completed start cannot reopen an older contribution cycle.
+    [<Test>]
+    member _.SupersededCompletedStartDoesNotReapplyContentBlockDelta() =
+        let olderStart = startWithOperationAtRevision "workflow-older" ManifestContributionDirection.Increment [| range0 |] 1L
+
+        let olderStarted =
+            ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default olderStart (metadata "corr-older-start")
+            |> expectOk
+
+        let olderCompleted =
+            ManifestContributionWorkflowActor.decideCommand [] olderStarted.Workflow (succeeded "workflow-older-range" range0) (metadata "corr-older-range")
+            |> expectOk
+
+        Assert.That(olderCompleted.Intents.Length, Is.EqualTo(1))
+
+        let newerStart = startWithOperationAtRevision "workflow-newer" ManifestContributionDirection.Decrement [| range0 |] 2L
+
+        let newerStarted =
+            ManifestContributionWorkflowActor.decideCommand [] olderCompleted.Workflow newerStart (metadata "corr-newer-start")
+            |> expectOk
+
+        let newerCompleted =
+            ManifestContributionWorkflowActor.decideCommand [] newerStarted.Workflow (succeeded "workflow-newer-range" range0) (metadata "corr-newer-range")
+            |> expectOk
+
+        Assert.That(newerCompleted.Intents.Length, Is.EqualTo(1))
+
+        let supersededReplay =
+            ManifestContributionWorkflowActor.decideCommand [] newerCompleted.Workflow olderStart (metadata "corr-older-replay")
+            |> expectOk
+
+        Assert.That(supersededReplay.WasIdempotentReplay, Is.True)
+        Assert.That(supersededReplay.Events, Is.Empty)
+        Assert.That(supersededReplay.Intents, Is.Empty)
+        Assert.That(supersededReplay.Workflow.StartOperationId, Is.EqualTo(newerCompleted.Workflow.StartOperationId))
+        Assert.That(supersededReplay.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+
+    /// Verifies that one counter revision cannot identify two different contribution operations.
+    [<Test>]
+    member _.SameCounterRevisionWithDifferentOperationRejects() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (startWithOperationAtRevision "workflow-revision-owner" ManifestContributionDirection.Increment [| range0 |] 7L)
+                (metadata "corr-revision-owner")
+            |> expectOk
+
+        let completed =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                started.Workflow
+                (succeeded "workflow-revision-owner-range" range0)
+                (metadata "corr-revision-owner-range")
+            |> expectOk
+
+        let conflicting =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                completed.Workflow
+                (startWithOperationAtRevision "workflow-revision-conflict" ManifestContributionDirection.Decrement [| range0 |] 7L)
+                (metadata "corr-revision-conflict")
+
+        match conflicting with
+        | Ok _ -> Assert.Fail("Expected a different operation at the current counter revision to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow counter revision was already used by a different operation."))
 
     /// Verifies that range Progress Rejects When Actor Key Does Not Match Workflow Target.
     [<Test>]
@@ -383,7 +486,8 @@ type ManifestContributionWorkflowActorTests() =
                 otherStoragePoolId,
                 manifestAddress,
                 ManifestContributionDirection.Increment,
-                [| archiveRange |]
+                [| archiveRange |],
+                1L
             )
 
         let result =
@@ -456,7 +560,12 @@ type ManifestContributionWorkflowActorTests() =
         let pendingAfterFailure = ManifestContributionWorkflowActor.pendingRanges afterFailure
         Assert.That(pendingAfterFailure.Length, Is.EqualTo(1))
         Assert.That(pendingAfterFailure[0], Is.EqualTo(range1))
-        Assert.That(afterFailure.FailedRanges.ContainsKey(range1), Is.True)
+
+        Assert.That(
+            afterFailure.FailedRanges
+            |> Array.exists (fun failure -> failure.Range = range1),
+            Is.True
+        )
 
         let retrySucceeded =
             ManifestContributionWorkflowActor.decideCommand

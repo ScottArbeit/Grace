@@ -800,6 +800,7 @@ module Interfaces =
             manifestAddress: ManifestAddress ->
             direction: ManifestContributionDirection ->
             ranges: ManifestContributionWorkflowRange array ->
+            counterRevision: int64 ->
             eventMetadata: EventMetadata ->
                 Task<GraceResult<ManifestContributionWorkflowDecision>>
 

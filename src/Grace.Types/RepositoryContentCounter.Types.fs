@@ -36,6 +36,7 @@ module RepositoryContentCounter =
             Operation: RepositoryContentCounterChangeOperation
             PreviousCount: ReferenceCount
             CurrentCount: ReferenceCount
+            Revision: int64
         }
 
     /// Represents repository content counter command.
@@ -71,8 +72,16 @@ module RepositoryContentCounter =
     /// Represents repository content counter intent.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterIntent =
-        | IncrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
-        | DecrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
+        | IncrementManifestReferenceCount of
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress *
+            counterRevision: int64
+        | DecrementManifestReferenceCount of
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress *
+            counterRevision: int64
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterIntent>()
@@ -151,6 +160,7 @@ module RepositoryContentCounter =
                                 Operation = RepositoryContentCounterChangeOperation.Added
                                 PreviousCount = current.Count
                                 CurrentCount = nextCount
+                                Revision = current.Revision + 1L
                             }
                 }
             | RepositoryContentCounterEventType.ReferenceRemoved operationId ->
@@ -166,6 +176,7 @@ module RepositoryContentCounter =
                                 Operation = RepositoryContentCounterChangeOperation.Removed
                                 PreviousCount = current.Count
                                 CurrentCount = nextReferenceCount
+                                Revision = current.Revision + 1L
                             }
                 }
 

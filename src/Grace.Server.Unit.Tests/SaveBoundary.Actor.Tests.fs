@@ -646,7 +646,7 @@ type SaveBoundaryActorTests() =
 
             Assert.That(
                 decision.Intents[0],
-                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L))
             )
         | Error error -> Assert.Fail($"Expected repository content counter increment to succeed, got {error.Error}.")
 
@@ -684,7 +684,7 @@ type SaveBoundaryActorTests() =
         Assert.That(replayDecision.Intents, Has.Length.EqualTo(1))
 
         match replayDecision.Intents[0] with
-        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (_, _, replayManifestAddress) ->
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (_, _, replayManifestAddress, _) ->
             Assert.That(replayManifestAddress, Is.EqualTo(manifest.ManifestAddress))
         | intent -> Assert.Fail($"Expected increment workflow intent on replay, got {intent}.")
 
@@ -708,7 +708,7 @@ type SaveBoundaryActorTests() =
             ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-fanout"
             |> expectPlan
 
-        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L)
 
         match ReferenceActor.tryCreateManifestContributionStart plan intent with
         | Some startCommand ->
@@ -879,7 +879,7 @@ type SaveBoundaryActorTests() =
             Is.True
         )
 
-        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L)
 
         match ReferenceActor.tryCreateManifestContributionStart plan intent with
         | Some startCommand ->
@@ -912,7 +912,7 @@ type SaveBoundaryActorTests() =
                     )
             }
 
-        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L)
 
         match ReferenceActor.tryCreateManifestContributionStart decrementPlan intent with
         | Some startCommand ->
@@ -940,7 +940,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     savePlan
-                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L))
                 with
             | Some command -> command
             | None ->
@@ -970,7 +970,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     decrementPlan
-                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 2L))
                 with
             | Some command -> command
             | None ->
@@ -1039,7 +1039,7 @@ type SaveBoundaryActorTests() =
             Assert.That(decision.Intents, Has.Length.EqualTo(1))
 
             match decision.Intents[0] with
-            | RepositoryContentCounterIntent.DecrementManifestReferenceCount (_, _, replayManifestAddress) ->
+            | RepositoryContentCounterIntent.DecrementManifestReferenceCount (_, _, replayManifestAddress, _) ->
                 Assert.That(replayManifestAddress, Is.EqualTo(manifest.ManifestAddress))
             | intent -> Assert.Fail($"Expected decrement workflow intent on replay, got {intent}.")
 
@@ -1083,7 +1083,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     decrementPlan
-                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L))
                 with
             | Some command -> command
             | None ->

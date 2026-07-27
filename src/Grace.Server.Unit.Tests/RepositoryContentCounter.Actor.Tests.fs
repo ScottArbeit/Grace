@@ -90,7 +90,7 @@ type RepositoryContentCounterActorTests() =
 
             Assert.That(
                 decision.Intents[0],
-                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress))
+                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress, 1L))
             )
 
             let dto = applyAll decision.Events RepositoryContentCounterDto.Default
@@ -152,7 +152,7 @@ type RepositoryContentCounterActorTests() =
 
             Assert.That(
                 decision.Intents[0],
-                Is.EqualTo(RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress))
+                Is.EqualTo(RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress, 4L))
             )
         | Error error -> Assert.Fail($"Expected final remove to succeed, got {error.Error}.")
 
