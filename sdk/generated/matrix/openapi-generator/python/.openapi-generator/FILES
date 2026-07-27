@@ -23,6 +23,7 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/AssignParameters.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
 docs/BranchAnnotationReturnValue.md
@@ -272,6 +273,7 @@ grace_generated_openapi_probe/models/approval_request_status.py
 grace_generated_openapi_probe/models/approval_scope.py
 grace_generated_openapi_probe/models/approval_timeout_action.py
 grace_generated_openapi_probe/models/approve_approval_request_parameters.py
+grace_generated_openapi_probe/models/assign_parameters.py
 grace_generated_openapi_probe/models/block_upload_intent.py
 grace_generated_openapi_probe/models/branch_annotation_api_dto.py
 grace_generated_openapi_probe/models/branch_annotation_return_value.py
@@ -505,6 +507,7 @@ test/test_approval_scope.py
 test/test_approval_timeout_action.py
 test/test_approvals_api.py
 test/test_approve_approval_request_parameters.py
+test/test_assign_parameters.py
 test/test_block_upload_intent.py
 test/test_branch_annotation_api_dto.py
 test/test_branch_annotation_return_value.py

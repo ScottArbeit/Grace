@@ -14,6 +14,7 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **branch_name** | Option<**String**> |  | [optional]
+**reference_id** | **uuid::Uuid** |  | 
 **based_on** | Option<**uuid::Uuid**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

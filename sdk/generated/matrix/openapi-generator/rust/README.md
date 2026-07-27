@@ -52,9 +52,11 @@ Class | Method | HTTP request | Description
 *ApprovalsApi* | [**show_approval_request**](docs/ApprovalsApi.md#show_approval_request) | **POST** /approval/request/show | Show a workflow-generated approval request.
 *ApprovalsApi* | [**update_approval_policy**](docs/ApprovalsApi.md#update_approval_policy) | **POST** /approval/policy/update | Update an approval policy.
 *BranchesApi* | [**annotate_branch**](docs/BranchesApi.md#annotate_branch) | **POST** /branch/annotate | Annotate a branch reference.
+*BranchesApi* | [**assign_branch**](docs/BranchesApi.md#assign_branch) | **POST** /branch/assign | Assign a promotion to a branch.
 *BranchesApi* | [**checkpoint_branch**](docs/BranchesApi.md#checkpoint_branch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 *BranchesApi* | [**commit_branch**](docs/BranchesApi.md#commit_branch) | **POST** /branch/commit | Commit the current branch content.
 *BranchesApi* | [**create_branch**](docs/BranchesApi.md#create_branch) | **POST** /branch/create | Create a branch.
+*BranchesApi* | [**create_external_branch_reference**](docs/BranchesApi.md#create_external_branch_reference) | **POST** /branch/createExternal | Create an external Reference.
 *BranchesApi* | [**delete_branch**](docs/BranchesApi.md#delete_branch) | **POST** /branch/delete | Delete a branch.
 *BranchesApi* | [**enable_branch_checkpoint**](docs/BranchesApi.md#enable_branch_checkpoint) | **POST** /branch/enableCheckpoint | Enable or disable checkpoint references.
 *BranchesApi* | [**enable_branch_commit**](docs/BranchesApi.md#enable_branch_commit) | **POST** /branch/enableCommit | Enable or disable commit references.
@@ -165,6 +167,7 @@ Class | Method | HTTP request | Description
  - [ApprovalScope](docs/ApprovalScope.md)
  - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
  - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
+ - [AssignParameters](docs/AssignParameters.md)
  - [BlockUploadIntent](docs/BlockUploadIntent.md)
  - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
  - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)

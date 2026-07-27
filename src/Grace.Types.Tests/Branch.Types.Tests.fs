@@ -1,6 +1,7 @@
 namespace Grace.Types.Tests
 
 open Grace.Shared
+open Grace.Shared.Parameters.Branch
 open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.Reference
@@ -8,6 +9,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Text.Json
 
 /// Contains tests covering branch dto hash behavior.
 [<Parallelizable(ParallelScope.All)>]
@@ -198,37 +200,57 @@ type BranchDtoHashTests() =
 
     /// Verifies that reference producing commands carry both root hashes.
     [<Test>]
-    member _.ReferenceProducingCommandsCarryBothRootHashes() =
+    member _.ReferenceProducingCommandsCarryStableIdentityAndBothRootHashes() =
         let commands =
             [
-                BranchCommand.Assign(directoryVersionId, sha256Hash, blake3Hash, referenceText)
-                BranchCommand.Promote(directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                BranchCommand.Assign(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                BranchCommand.Promote(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
                 BranchCommand.Commit(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
-                BranchCommand.Checkpoint(directoryVersionId, sha256Hash, blake3Hash, referenceText)
-                BranchCommand.Save(directoryVersionId, sha256Hash, blake3Hash, referenceText)
-                BranchCommand.Tag(directoryVersionId, sha256Hash, blake3Hash, referenceText)
-                BranchCommand.CreateExternal(directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                BranchCommand.Checkpoint(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                BranchCommand.Save(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                BranchCommand.Tag(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                BranchCommand.CreateExternal(referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
             ]
 
         for command in commands do
             match command with
-            | BranchCommand.Commit (commandReferenceId, directoryId, sha, blake3, text) ->
+            | BranchCommand.Assign (commandReferenceId, directoryId, sha, blake3, text)
+            | BranchCommand.Promote (commandReferenceId, directoryId, sha, blake3, text)
+            | BranchCommand.Commit (commandReferenceId, directoryId, sha, blake3, text)
+            | BranchCommand.Checkpoint (commandReferenceId, directoryId, sha, blake3, text)
+            | BranchCommand.Save (commandReferenceId, directoryId, sha, blake3, text)
+            | BranchCommand.Tag (commandReferenceId, directoryId, sha, blake3, text)
+            | BranchCommand.CreateExternal (commandReferenceId, directoryId, sha, blake3, text) ->
                 Assert.That(commandReferenceId, Is.EqualTo(referenceId))
                 Assert.That(directoryId, Is.EqualTo(directoryVersionId))
                 Assert.That(sha, Is.EqualTo(sha256Hash))
                 Assert.That(blake3, Is.EqualTo(blake3Hash))
                 Assert.That(text, Is.EqualTo(referenceText))
-            | BranchCommand.Assign (directoryId, sha, blake3, text)
-            | BranchCommand.Promote (directoryId, sha, blake3, text)
-            | BranchCommand.Checkpoint (directoryId, sha, blake3, text)
-            | BranchCommand.Save (directoryId, sha, blake3, text)
-            | BranchCommand.Tag (directoryId, sha, blake3, text)
-            | BranchCommand.CreateExternal (directoryId, sha, blake3, text) ->
-                Assert.That(directoryId, Is.EqualTo(directoryVersionId))
-                Assert.That(sha, Is.EqualTo(sha256Hash))
-                Assert.That(blake3, Is.EqualTo(blake3Hash))
-                Assert.That(text, Is.EqualTo(referenceText))
             | _ -> Assert.Fail($"Unexpected command case: {command}")
+
+    /// Verifies stable Reference identity is present on the serialized public request wire shapes.
+    [<Test>]
+    member _.ReferenceProducerParametersSerializeStableIdentityOnThePublicWire() =
+        let producerParameters: obj array =
+            [|
+                CreateBranchParameters(ReferenceId = referenceId)
+                AssignParameters(ReferenceId = referenceId)
+                RebaseParameters(ReferenceId = referenceId, BasedOn = Guid.NewGuid())
+                CreateReferenceParameters(ReferenceId = referenceId)
+                CommitReferenceParameters(ReferenceId = referenceId)
+            |]
+
+        for parameters in producerParameters do
+            use json = JsonDocument.Parse(Utilities.serialize parameters)
+            let mutable serializedReferenceId = Unchecked.defaultof<JsonElement>
+
+            Assert.That(
+                json.RootElement.TryGetProperty(nameof ReferenceId, &serializedReferenceId),
+                Is.True,
+                $"Expected {parameters.GetType().Name} to expose ReferenceId on its serialized request shape."
+            )
+
+            Assert.That(serializedReferenceId.GetGuid(), Is.EqualTo(referenceId))
 
     /// Verifies that reference producing events carry both root hashes.
     [<Test>]

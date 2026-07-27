@@ -93,8 +93,6 @@
       "reason": "Additional branch and repository management routes are implemented server operations but are not part of the current public OpenAPI surface.",
       "traceIds": [ "B-020", "B-024", "drift-003" ],
       "routes": [
-        { "method": "POST", "path": "/branch/assign" },
-        { "method": "POST", "path": "/branch/createExternal" },
         { "method": "POST", "path": "/branch/enableAssign" },
         { "method": "POST", "path": "/branch/enableAutoRebase" },
         { "method": "POST", "path": "/branch/enableExternal" },

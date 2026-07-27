@@ -21,6 +21,7 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/AssignParameters.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
 docs/BranchAnnotationReturnValue.md
@@ -265,6 +266,7 @@ src/models/ApprovalRequestStatus.ts
 src/models/ApprovalScope.ts
 src/models/ApprovalTimeoutAction.ts
 src/models/ApproveApprovalRequestParameters.ts
+src/models/AssignParameters.ts
 src/models/BlockUploadIntent.ts
 src/models/BranchAnnotationApiDto.ts
 src/models/BranchAnnotationReturnValue.ts

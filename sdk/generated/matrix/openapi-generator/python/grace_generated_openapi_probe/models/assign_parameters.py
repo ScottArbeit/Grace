@@ -18,16 +18,17 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class RebaseParameters(BaseModel):
+class AssignParameters(BaseModel):
     """
-    Parameters for the /branch/rebase endpoint.
+    Parameters for the /branch/assign endpoint.
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
@@ -40,8 +41,37 @@ class RebaseParameters(BaseModel):
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
     reference_id: UUID = Field(alias="ReferenceId")
-    based_on: Optional[UUID] = Field(default=None, alias="BasedOn")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ReferenceId", "BasedOn"]
+    directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.", alias="Sha256Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.", alias="Blake3Hash")
+    message: Optional[StrictStr] = Field(default=None, alias="Message")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ReferenceId", "DirectoryVersionId", "Sha256Hash", "Blake3Hash", "Message"]
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[A-Fa-f0-9]{2,64}$/")
+        return value
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[A-Fa-f0-9]{2,64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -61,7 +91,7 @@ class RebaseParameters(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of RebaseParameters from a JSON string"""
+        """Create an instance of AssignParameters from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -86,7 +116,7 @@ class RebaseParameters(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of RebaseParameters from a dict"""
+        """Create an instance of AssignParameters from a dict"""
         if obj is None:
             return None
 
@@ -105,7 +135,10 @@ class RebaseParameters(BaseModel):
             "BranchId": obj.get("BranchId"),
             "BranchName": obj.get("BranchName"),
             "ReferenceId": obj.get("ReferenceId"),
-            "BasedOn": obj.get("BasedOn")
+            "DirectoryVersionId": obj.get("DirectoryVersionId"),
+            "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
+            "Message": obj.get("Message")
         })
         return _obj
 

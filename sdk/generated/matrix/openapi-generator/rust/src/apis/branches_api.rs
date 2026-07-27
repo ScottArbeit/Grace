@@ -24,6 +24,15 @@ pub enum AnnotateBranchError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`assign_branch`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AssignBranchError {
+    Status400(models::GraceError),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`checkpoint_branch`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -46,6 +55,15 @@ pub enum CommitBranchError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CreateBranchError {
+    Status400(models::GraceError),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`create_external_branch_reference`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CreateExternalBranchReferenceError {
     Status400(models::GraceError),
     Status500(models::GraceError),
     UnknownValue(serde_json::Value),
@@ -264,6 +282,47 @@ pub async fn annotate_branch(configuration: &configuration::Configuration, annot
     }
 }
 
+/// Creates a promotion reference with caller-owned retry identity and assigns it to the specified branch.
+pub async fn assign_branch(configuration: &configuration::Configuration, assign_parameters: models::AssignParameters) -> Result<models::BranchCommandReturnValue, Error<AssignBranchError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_assign_parameters = assign_parameters;
+
+    let uri_str = format!("{}/branch/assign", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_assign_parameters);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::BranchCommandReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::BranchCommandReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<AssignBranchError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
 /// Creates a checkpoint reference pointing to the current root directory version in the branch.
 pub async fn checkpoint_branch(configuration: &configuration::Configuration, create_reference_parameters: models::CreateReferenceParameters) -> Result<models::BranchCommandReturnValue, Error<CheckpointBranchError>> {
     // add a prefix to parameters to efficiently prevent name collisions
@@ -383,6 +442,47 @@ pub async fn create_branch(configuration: &configuration::Configuration, create_
     } else {
         let content = resp.text().await?;
         let entity: Option<CreateBranchError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Creates an external Reference pointing to the supplied root directory version.
+pub async fn create_external_branch_reference(configuration: &configuration::Configuration, create_reference_parameters: models::CreateReferenceParameters) -> Result<models::BranchCommandReturnValue, Error<CreateExternalBranchReferenceError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_create_reference_parameters = create_reference_parameters;
+
+    let uri_str = format!("{}/branch/createExternal", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_create_reference_parameters);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::BranchCommandReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::BranchCommandReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<CreateExternalBranchReferenceError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

@@ -48,12 +48,14 @@ class TestCreateBranchParameters(unittest.TestCase):
                 branch_name = 'MyBranch',
                 parent_branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d',
                 parent_branch_name = 'MyBranch',
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 initial_permissions = [
                     'Commit'
                     ]
             )
         else:
             return CreateBranchParameters(
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
         )
         """
 

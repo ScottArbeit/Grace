@@ -1,6 +1,6 @@
-# RebaseParameters
+# AssignParameters
 
-Parameters for the /branch/rebase endpoint.
+Parameters for the /branch/assign endpoint.
 
 ## Properties
 
@@ -17,24 +17,27 @@ Name | Type | Description | Notes
 **branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
 **reference_id** | **UUID** |  | 
-**based_on** | **UUID** |  | [optional] 
+**directory_version_id** | **UUID** |  | [optional] 
+**sha256_hash** | **str** | Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional] 
+**blake3_hash** | **str** | Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix. | [optional] 
+**message** | **str** |  | [optional] 
 
 ## Example
 
 ```python
-from grace_generated_openapi_probe.models.rebase_parameters import RebaseParameters
+from grace_generated_openapi_probe.models.assign_parameters import AssignParameters
 
 # TODO update the JSON string below
 json = "{}"
-# create an instance of RebaseParameters from a JSON string
-rebase_parameters_instance = RebaseParameters.from_json(json)
+# create an instance of AssignParameters from a JSON string
+assign_parameters_instance = AssignParameters.from_json(json)
 # print the JSON string representation of the object
-print(RebaseParameters.to_json())
+print(AssignParameters.to_json())
 
 # convert the object into a dict
-rebase_parameters_dict = rebase_parameters_instance.to_dict()
-# create an instance of RebaseParameters from a dict
-rebase_parameters_from_dict = RebaseParameters.from_dict(rebase_parameters_dict)
+assign_parameters_dict = assign_parameters_instance.to_dict()
+# create an instance of AssignParameters from a dict
+assign_parameters_from_dict = AssignParameters.from_dict(assign_parameters_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

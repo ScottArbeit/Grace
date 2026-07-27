@@ -68,9 +68,11 @@ All URIs are relative to *http://localhost:5000*
 *ApprovalsApi* | [**showApprovalRequest**](docs/ApprovalsApi.md#showapprovalrequest) | **POST** /approval/request/show | Show a workflow-generated approval request.
 *ApprovalsApi* | [**updateApprovalPolicy**](docs/ApprovalsApi.md#updateapprovalpolicy) | **POST** /approval/policy/update | Update an approval policy.
 *BranchesApi* | [**annotateBranch**](docs/BranchesApi.md#annotatebranch) | **POST** /branch/annotate | Annotate a branch reference.
+*BranchesApi* | [**assignBranch**](docs/BranchesApi.md#assignbranch) | **POST** /branch/assign | Assign a promotion to a branch.
 *BranchesApi* | [**checkpointBranch**](docs/BranchesApi.md#checkpointbranch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 *BranchesApi* | [**commitBranch**](docs/BranchesApi.md#commitbranch) | **POST** /branch/commit | Commit the current branch content.
 *BranchesApi* | [**createBranch**](docs/BranchesApi.md#createbranch) | **POST** /branch/create | Create a branch.
+*BranchesApi* | [**createExternalBranchReference**](docs/BranchesApi.md#createexternalbranchreference) | **POST** /branch/createExternal | Create an external Reference.
 *BranchesApi* | [**deleteBranch**](docs/BranchesApi.md#deletebranch) | **POST** /branch/delete | Delete a branch.
 *BranchesApi* | [**enableBranchCheckpoint**](docs/BranchesApi.md#enablebranchcheckpoint) | **POST** /branch/enableCheckpoint | Enable or disable checkpoint references.
 *BranchesApi* | [**enableBranchCommit**](docs/BranchesApi.md#enablebranchcommit) | **POST** /branch/enableCommit | Enable or disable commit references.
@@ -181,6 +183,7 @@ All URIs are relative to *http://localhost:5000*
 - [ApprovalScope](docs/ApprovalScope.md)
 - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
 - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
+- [AssignParameters](docs/AssignParameters.md)
 - [BlockUploadIntent](docs/BlockUploadIntent.md)
 - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
 - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)

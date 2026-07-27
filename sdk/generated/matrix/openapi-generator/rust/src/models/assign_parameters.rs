@@ -11,9 +11,9 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// CreateBranchParameters : Parameters for the /branch/create endpoint.
+/// AssignParameters : Parameters for the /branch/assign endpoint.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CreateBranchParameters {
+pub struct AssignParameters {
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
     #[serde(rename = "CorrelationId", skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
@@ -36,20 +36,24 @@ pub struct CreateBranchParameters {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
-    #[serde(rename = "ParentBranchId", skip_serializing_if = "Option::is_none")]
-    pub parent_branch_id: Option<uuid::Uuid>,
-    #[serde(rename = "ParentBranchName", skip_serializing_if = "Option::is_none")]
-    pub parent_branch_name: Option<String>,
     #[serde(rename = "ReferenceId")]
     pub reference_id: uuid::Uuid,
-    #[serde(rename = "InitialPermissions", skip_serializing_if = "Option::is_none")]
-    pub initial_permissions: Option<Vec<models::ReferenceType>>,
+    #[serde(rename = "DirectoryVersionId", skip_serializing_if = "Option::is_none")]
+    pub directory_version_id: Option<uuid::Uuid>,
+    /// Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
+    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
+    /// Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
+    #[serde(rename = "Message", skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
-impl CreateBranchParameters {
-    /// Parameters for the /branch/create endpoint.
-    pub fn new(reference_id: uuid::Uuid) -> CreateBranchParameters {
-        CreateBranchParameters {
+impl AssignParameters {
+    /// Parameters for the /branch/assign endpoint.
+    pub fn new(reference_id: uuid::Uuid) -> AssignParameters {
+        AssignParameters {
             correlation_id: None,
             principal: None,
             owner_id: None,
@@ -60,10 +64,11 @@ impl CreateBranchParameters {
             repository_name: None,
             branch_id: None,
             branch_name: None,
-            parent_branch_id: None,
-            parent_branch_name: None,
             reference_id,
-            initial_permissions: None,
+            directory_version_id: None,
+            sha256_hash: None,
+            blake3_hash: None,
+            message: None,
         }
     }
 }

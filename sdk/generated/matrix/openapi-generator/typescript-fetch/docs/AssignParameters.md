@@ -1,7 +1,7 @@
 
-# CreateReferenceParameters
+# AssignParameters
 
-Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
+Parameters for the /branch/assign endpoint.
 
 ## Properties
 
@@ -26,7 +26,7 @@ Name | Type
 ## Example
 
 ```typescript
-import type { CreateReferenceParameters } from '@grace-vcs/generated-openapi-probe'
+import type { AssignParameters } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
@@ -44,8 +44,8 @@ const example = {
   "directoryVersionId": 33a4e36b-828f-4fae-9343-50b6560dc842,
   "sha256Hash": 805331a98813,
   "blake3Hash": 9a35d91b2f63,
-  "message": Capture release candidate.,
-} satisfies CreateReferenceParameters
+  "message": Assign release candidate.,
+} satisfies AssignParameters
 
 console.log(example)
 
@@ -54,7 +54,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as CreateReferenceParameters
+const exampleParsed = JSON.parse(exampleJSON) as AssignParameters
 console.log(exampleParsed)
 ```
 

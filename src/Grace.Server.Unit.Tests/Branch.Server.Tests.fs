@@ -2,13 +2,16 @@ namespace Grace.Server.Tests
 
 open Grace.Actors.Branch
 open Grace.Shared.Parameters.Branch
+open Grace.Shared.Constants
 open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.Reference
+open Grace.Types.Repository
 open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Generic
 
 /// Covers branch Server Validation behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
@@ -79,6 +82,110 @@ type BranchServerValidationTests() =
         | Ok _ -> Assert.Fail("Expected an empty Commit ReferenceId to be rejected.")
 
         Assert.That(Result.isOk presentResult, Is.True)
+
+    /// Verifies every public Reference producer uses the same missing-identity validation result.
+    [<Test>]
+    member _.``all reference producer parameters require a stable reference id``() =
+        let parameterIdentities =
+            [|
+                CreateBranchParameters().ReferenceId
+                AssignParameters().ReferenceId
+                RebaseParameters().ReferenceId
+                CreateReferenceParameters().ReferenceId
+                CommitReferenceParameters().ReferenceId
+            |]
+
+        for parameterIdentity in parameterIdentities do
+            match (Grace.Server.Branch.validateReferenceId parameterIdentity)
+                .Result
+                with
+            | Error error -> Assert.That(error, Is.EqualTo(BranchError.InvalidReferenceId))
+            | Ok _ -> Assert.Fail("Expected an empty ReferenceId to be rejected for every producer parameter family.")
+
+        Assert.That(
+            (Grace.Server.Branch.validateReferenceId (Guid.NewGuid()))
+                .Result
+            |> Result.isOk,
+            Is.True
+        )
+
+/// Covers deterministic identities used by durable orchestration producers.
+[<Parallelizable(ParallelScope.All)>]
+type ReferenceProducerIdentityTests() =
+
+    /// Verifies repository initialization derives stable, role-separated child identities.
+    [<Test>]
+    member _.RepositoryInitialWorkflowIdentitiesAreStableAndRoleSeparated() =
+        let repositoryId = Guid.Parse("11111111-7300-4000-8000-111111111111")
+        let branchId = Grace.Actors.Repository.buildInitialWorkflowId "branch" repositoryId
+
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "branch" repositoryId, Is.EqualTo(branchId))
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "promotion-reference" repositoryId, Is.Not.EqualTo(branchId))
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "rebase-reference" repositoryId, Is.Not.EqualTo(branchId))
+        Assert.That(Grace.Actors.Repository.buildInitialWorkflowId "directory-version" repositoryId, Is.Not.EqualTo(branchId))
+
+    /// Verifies Repository Create replay uses immutable creation facts after mutable Repository settings change.
+    [<Test>]
+    member _.RepositoryCreateRetryUsesImmutableCreationFacts() =
+        let repositoryId = Guid.Parse("22222222-7300-4000-8000-222222222222")
+        let ownerId = Guid.Parse("33333333-7300-4000-8000-333333333333")
+        let organizationId = Guid.Parse("44444444-7300-4000-8000-444444444444")
+        let repositoryName = RepositoryName "stable-reference-retry"
+        let provider = ObjectStorageProvider.AzureBlobStorage
+
+        let created = RepositoryEventType.Created(repositoryName, repositoryId, ownerId, organizationId, provider)
+
+        let historyAfterMutation =
+            [
+                created
+                RepositoryEventType.NameSet(RepositoryName "renamed-after-create")
+                RepositoryEventType.ObjectStorageProviderSet ObjectStorageProvider.AWSS3
+            ]
+
+        let exact = RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, provider)
+        let renamed = RepositoryCommand.Create(RepositoryName "renamed-before-retry", repositoryId, ownerId, organizationId, provider)
+        let changedProvider = RepositoryCommand.Create(repositoryName, repositoryId, ownerId, organizationId, ObjectStorageProvider.AWSS3)
+
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationEvent created exact, Is.True)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationHistory historyAfterMutation exact, Is.True)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationHistory historyAfterMutation renamed, Is.False)
+        Assert.That(Grace.Actors.Repository.createCommandMatchesCreationHistory historyAfterMutation changedProvider, Is.False)
+
+    /// Verifies Repository bootstrap accepts a persisted exact empty root while rejecting conflicting deterministic reuse.
+    [<Test>]
+    member _.RepositoryInitialDirectoryRetryRequiresExactImmutableData() =
+        let directoryId = Guid.Parse("55555555-7300-4000-8000-555555555555")
+
+        let expected =
+            Grace.Types.Common.DirectoryVersion.CreateWithHashes
+                directoryId
+                (Guid.Parse("66666666-7300-4000-8000-666666666666"))
+                (Guid.Parse("77777777-7300-4000-8000-777777777777"))
+                (Guid.Parse("88888888-7300-4000-8000-888888888888"))
+                RootDirectoryPath
+                (Sha256Hash "empty-sha")
+                (Blake3Hash "empty-blake3")
+                (Collections.Generic.List<DirectoryVersionId>())
+                (Collections.Generic.List<FileVersion>())
+                0L
+
+        let persisted =
+            Grace.Types.Common.DirectoryVersion.CreateWithHashes
+                expected.DirectoryVersionId
+                expected.OwnerId
+                expected.OrganizationId
+                expected.RepositoryId
+                expected.RelativePath
+                expected.Sha256Hash
+                expected.Blake3Hash
+                (Collections.Generic.List<DirectoryVersionId>())
+                (Collections.Generic.List<FileVersion>())
+                expected.Size
+
+        Assert.That(Grace.Actors.Repository.initialDirectoryMatches expected persisted, Is.True)
+
+        persisted.Blake3Hash <- Blake3Hash "conflicting"
+        Assert.That(Grace.Actors.Repository.initialDirectoryMatches expected persisted, Is.False)
 
 /// Covers Branch aggregate retry decisions for caller-owned Reference identities.
 [<Parallelizable(ParallelScope.All)>]
@@ -266,3 +373,236 @@ type BranchActorReferenceRetryTests() =
                 Is.EqualTo(ReferenceOperationDisposition.NewReference),
                 $"Expected {referenceType} to use the same new-operation rule."
             )
+
+    /// Verifies a Rebase projection event cannot replace the caller-owned operation Reference identity in response metadata.
+    [<Test>]
+    member _.RebaseResponseMetadataPreservesOperationReferenceId() =
+        let operationReferenceId = Guid.Parse("77777777-7300-4000-8000-777777777777")
+        let basedOnReferenceId = Guid.Parse("88888888-7300-4000-8000-888888888888")
+        let properties = Dictionary<string, string>()
+        properties[nameof ReferenceId] <- $"{operationReferenceId}"
+
+        applyReferenceIdMetadata properties basedOnReferenceId
+
+        Assert.That(properties[nameof ReferenceId], Is.EqualTo($"{operationReferenceId}"))
+
+        let initiallyEmptyProperties = Dictionary<string, string>()
+        applyReferenceIdMetadata initiallyEmptyProperties basedOnReferenceId
+
+        Assert.That(initiallyEmptyProperties[nameof ReferenceId], Is.EqualTo($"{basedOnReferenceId}"))
+
+    /// Verifies historical Promotions remain reconstruction inputs after Assign and Promotion are both disabled.
+    [<Test>]
+    member _.DisabledPromotionPermissionsStillReconstructHistoricalPromotion() =
+        let assignOnly = { BranchDto.Default with AssignEnabled = true }
+        let promotionOnly = { BranchDto.Default with PromotionEnabled = true }
+        let both = { assignOnly with PromotionEnabled = true }
+        let bothDisabled = BranchDto.Default
+
+        for branch in
+            [
+                assignOnly
+                promotionOnly
+                both
+                bothDisabled
+            ] do
+            Assert.That(
+                projectionReconstructionReferenceTypes branch,
+                Does.Contain(ReferenceType.Promotion),
+                "Durable ordinary Promotions must remain visible to activation reconstruction after permissions change."
+            )
+
+    /// Verifies an exact Rebase retry repairs both latest Reference and BasedOn projections.
+    [<Test>]
+    member _.ExactRebaseRetryRecoversProjectionWithoutReplacingANewerBase() =
+        let basedOnReference = { persistedCommitAt (Guid.Parse("88888888-7291-4000-8000-888888888888")) earlier with ReferenceType = ReferenceType.Promotion }
+
+        let rebaseReference =
+            { persistedCommitAt referenceId earlier with
+                ReferenceType = ReferenceType.Rebase
+                Links =
+                    [
+                        ReferenceLinkType.BasedOn basedOnReference.ReferenceId
+                    ]
+            }
+
+        let retryCommand =
+            ReferenceCommand.Create(
+                rebaseReference.ReferenceId,
+                rebaseReference.OwnerId,
+                rebaseReference.OrganizationId,
+                rebaseReference.RepositoryId,
+                rebaseReference.BranchId,
+                rebaseReference.DirectoryId,
+                rebaseReference.Sha256Hash,
+                rebaseReference.Blake3Hash,
+                ReferenceType.Rebase,
+                rebaseReference.ReferenceText,
+                rebaseReference.Links
+            )
+
+        let retryDisposition = classifyReferenceOperation retryCommand (Some rebaseReference)
+        let recovered, changed = reconcileRebaseProjection (branchProjection ReferenceDto.Default ReferenceDto.Default) rebaseReference basedOnReference
+
+        Assert.That(retryDisposition, Is.EqualTo(ReferenceOperationDisposition.MatchingRetry))
+        Assert.That(shouldApplyReferenceEvent retryDisposition, Is.False, "An accepted-but-response-lost retry must not add another durable Rebase transition.")
+        Assert.That(changed, Is.True)
+        Assert.That(recovered.LatestReference, Is.EqualTo(rebaseReference))
+        Assert.That(recovered.BasedOn, Is.EqualTo(basedOnReference))
+
+        let newerReference = persistedCommitAt (Guid.Parse("99999999-7291-4000-8000-999999999999")) later
+        let current = { branchProjection newerReference ReferenceDto.Default with BasedOn = newerReference }
+        let lateRecovery, lateChanged = reconcileRebaseProjection current rebaseReference basedOnReference
+
+        Assert.That(lateChanged, Is.False)
+        Assert.That(lateRecovery.BasedOn, Is.EqualTo(newerReference))
+
+    /// Verifies failed and nonterminal PromotionSet References cannot affect the public Branch projection.
+    [<Test>]
+    member _.PromotionSetProjectionRequiresSucceededTerminalOutput() =
+        let promotionSetId = Guid.Parse("aaaaaaa1-7300-4000-8000-aaaaaaaaaaa1")
+
+        let ordinaryPromotion = { persistedCommitAt (Guid.Parse("bbbbbbb1-7300-4000-8000-bbbbbbbbbbb1")) earlier with ReferenceType = ReferenceType.Promotion }
+
+        let nonterminalPromotion =
+            { ordinaryPromotion with
+                ReferenceId = Guid.Parse("ccccccc1-7300-4000-8000-ccccccccccc1")
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                    ]
+            }
+
+        let terminalPromotion =
+            { nonterminalPromotion with
+                ReferenceId = Guid.Parse("ddddddd1-7300-4000-8000-ddddddddddd1")
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                        ReferenceLinkType.PromotionSetTerminal promotionSetId
+                    ]
+            }
+
+        Assert.That(canProjectPromotionReference Option.None Option.None ordinaryPromotion, Is.True)
+
+        Assert.That(
+            canProjectPromotionReference
+                (Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded)
+                (Some nonterminalPromotion.ReferenceId)
+                nonterminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference (Some Grace.Types.PromotionSet.PromotionSetStatus.Failed) (Some terminalPromotion.ReferenceId) terminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference (Some Grace.Types.PromotionSet.PromotionSetStatus.Running) (Some terminalPromotion.ReferenceId) terminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference
+                (Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded)
+                (Some(Guid.Parse("eeeeeee1-7300-4000-8000-eeeeeeeeeee1")))
+                terminalPromotion,
+            Is.False
+        )
+
+        Assert.That(
+            canProjectPromotionReference (Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded) (Some terminalPromotion.ReferenceId) terminalPromotion,
+            Is.True
+        )
+
+    /// Verifies Branch Create retry comparison remains anchored to immutable durable creation facts.
+    [<Test>]
+    member _.BranchCreateRetryUsesImmutableCreationFacts() =
+        let parentBranchId = Guid.Parse("10101010-7300-4000-8000-101010101010")
+        let basedOn = Guid.Parse("20202020-7300-4000-8000-202020202020")
+        let createReferenceId = Guid.Parse("30303030-7300-4000-8000-303030303030")
+        let branchName = BranchName "immutable-create"
+
+        let permissions =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+            ]
+
+        let created = BranchEventType.Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, permissions)
+
+        let exact =
+            BranchCommand.Create(branchId, branchName, parentBranchId, basedOn, createReferenceId, ownerId, organizationId, repositoryId, List.rev permissions)
+
+        let conflicting =
+            BranchCommand.Create(
+                branchId,
+                branchName,
+                parentBranchId,
+                Guid.Parse("40404040-7300-4000-8000-404040404040"),
+                createReferenceId,
+                ownerId,
+                organizationId,
+                repositoryId,
+                permissions
+            )
+
+        let conflictingPermissions =
+            BranchCommand.Create(
+                branchId,
+                branchName,
+                parentBranchId,
+                basedOn,
+                createReferenceId,
+                ownerId,
+                organizationId,
+                repositoryId,
+                [ ReferenceType.Promotion ]
+            )
+
+        Assert.That(createCommandMatchesCreationEvent created exact, Is.True)
+        Assert.That(createCommandMatchesCreationEvent created conflicting, Is.False)
+        Assert.That(createCommandMatchesCreationEvent created conflictingPermissions, Is.False)
+
+    /// Verifies the newest projectable Promotion or Rebase transition exclusively chooses public BasedOn.
+    [<Test>]
+    member _.NewestBaseChangingTransitionWins() =
+        let durableBase = { persistedCommitAt (Guid.Parse("50505050-7300-4000-8000-505050505050")) earlier with CreatedAt = earlier }
+
+        let olderPromotion =
+            { persistedCommitAt (Guid.Parse("60606060-7300-4000-8000-606060606060")) earlier with ReferenceType = ReferenceType.Promotion; CreatedAt = earlier }
+
+        let rebaseTransition =
+            { persistedCommitAt (Guid.Parse("70707070-7300-4000-8000-707070707070")) later with ReferenceType = ReferenceType.Rebase; CreatedAt = later }
+
+        let rebaseTarget =
+            { persistedCommitAt (Guid.Parse("80808080-7300-4000-8000-808080808080")) earlier with ReferenceType = ReferenceType.Promotion; CreatedAt = earlier }
+
+        let newerPromotion = { olderPromotion with ReferenceId = Guid.Parse("81818181-7300-4000-8000-818181818181"); CreatedAt = later }
+        let olderRebaseTransition = { rebaseTransition with ReferenceId = Guid.Parse("82828282-7300-4000-8000-828282828282"); CreatedAt = earlier }
+        let tiedPromotion = { newerPromotion with ReferenceId = Guid.Parse("83838383-7300-4000-8000-838383838383") }
+
+        Assert.That(selectBasedOnProjection durableBase (Some(rebaseTransition, rebaseTarget)) (Some olderPromotion), Is.EqualTo(rebaseTarget))
+        Assert.That(selectBasedOnProjection durableBase (Some(olderRebaseTransition, rebaseTarget)) (Some newerPromotion), Is.EqualTo(newerPromotion))
+        Assert.That(selectBasedOnProjection durableBase (Some(rebaseTransition, rebaseTarget)) (Some tiedPromotion), Is.EqualTo(tiedPromotion))
+        Assert.That(selectBasedOnProjection durableBase None None, Is.EqualTo(durableBase))
+
+    /// Verifies a just-created durable Promotion remains a recomputation candidate before storage queries catch up.
+    [<Test>]
+    member _.CurrentDurablePromotionBridgesQueryVisibilityLag() =
+        let currentPromotion =
+            { persistedCommitAt (Guid.Parse("90909090-7300-4000-8000-909090909090")) later with ReferenceType = ReferenceType.Promotion; CreatedAt = later }
+
+        let staleQueryCopy =
+            { currentPromotion with
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet(Guid.Parse("91919191-7300-4000-8000-919191919191"))
+                    ]
+            }
+
+        let candidates = orderPromotionCandidates [| staleQueryCopy |] None (Some currentPromotion)
+
+        Assert.That(candidates, Has.Length.EqualTo(1))
+        Assert.That(candidates[0], Is.EqualTo(currentPromotion))

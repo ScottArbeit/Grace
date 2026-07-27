@@ -62,6 +62,55 @@ module Branch =
     /// Emits a Branch Reference transition only when the caller-owned Reference does not already exist.
     let internal shouldApplyReferenceEvent disposition = disposition = NewReference
 
+    /// Keeps caller-owned operation identity when a projection event carries a different Reference id.
+    let internal applyReferenceIdMetadata (properties: IDictionary<string, string>) referenceId =
+        if not (properties.ContainsKey(nameof ReferenceId)) then
+            properties[nameof ReferenceId] <- $"{referenceId}"
+
+    /// Selects Reference types whose durable history can reconstruct the public Branch projection.
+    let internal projectionReconstructionReferenceTypes (branchDto: BranchDto) =
+        let referenceTypes = List<ReferenceType>()
+
+        // A later permission snapshot cannot erase an ordinary Promotion that previously changed the branch base.
+        referenceTypes.Add(ReferenceType.Promotion)
+
+        if branchDto.CommitEnabled then referenceTypes.Add(ReferenceType.Commit)
+
+        if branchDto.CheckpointEnabled then referenceTypes.Add(ReferenceType.Checkpoint)
+
+        if branchDto.SaveEnabled then referenceTypes.Add(ReferenceType.Save)
+        if branchDto.TagEnabled then referenceTypes.Add(ReferenceType.Tag)
+
+        if branchDto.ExternalEnabled then referenceTypes.Add(ReferenceType.External)
+
+        if branchDto.AutoRebaseEnabled then referenceTypes.Add(ReferenceType.Rebase)
+
+        referenceTypes.ToArray()
+
+    /// Compares a Branch Create command with the immutable facts in its durable Created event.
+    let internal createCommandMatchesCreationEvent branchEventType command =
+        match branchEventType, command with
+        | Created (createdBranchId,
+                   createdBranchName,
+                   createdParentBranchId,
+                   createdBasedOn,
+                   createdOwnerId,
+                   createdOrganizationId,
+                   createdRepositoryId,
+                   createdPermissions),
+          BranchCommand.Create (branchId, branchName, parentBranchId, basedOn, _, ownerId, organizationId, repositoryId, initialPermissions) ->
+            let durablePermissions = HashSet<ReferenceType>(createdPermissions)
+
+            createdBranchId = branchId
+            && createdBranchName = branchName
+            && createdParentBranchId = parentBranchId
+            && createdBasedOn = basedOn
+            && createdOwnerId = ownerId
+            && createdOrganizationId = organizationId
+            && createdRepositoryId = repositoryId
+            && durablePermissions.SetEquals(initialPermissions)
+        | _ -> false
+
     /// Reports whether a Branch event owns durable state and publication rather than only updating the in-memory projection.
     let internal shouldPersistAndPublishBranchEvent branchEventType =
         match branchEventType with
@@ -129,6 +178,74 @@ module Branch =
 
         recovered, projectionChanged
 
+    /// Reconciles a durable Rebase Reference without allowing a late retry to replace a newer branch base.
+    let internal reconcileRebaseProjection (branchDto: BranchDto) (referenceDto: ReferenceDto) (basedOnReferenceDto: ReferenceDto) =
+        let recovered, projectionChanged = reconcileReferenceProjection branchDto referenceDto
+
+        if projectionChanged then
+            { recovered with BasedOn = basedOnReferenceDto }, true
+        else
+            recovered, false
+
+    /// Returns the PromotionSet that owns a generated promotion Reference, if one is linked.
+    let internal tryGetPromotionSetId (referenceDto: ReferenceDto) =
+        referenceDto.Links
+        |> Seq.tryPick (fun link ->
+            match link with
+            | ReferenceLinkType.IncludedInPromotionSet promotionSetId -> Some promotionSetId
+            | _ -> None)
+
+    /// Reports whether a PromotionSet Reference carries the matching terminal link required for public projection.
+    let internal isPromotionSetTerminalReference promotionSetId (referenceDto: ReferenceDto) =
+        referenceDto.Links
+        |> Seq.exists (fun link ->
+            match link with
+            | ReferenceLinkType.PromotionSetTerminal terminalPromotionSetId -> terminalPromotionSetId = promotionSetId
+            | _ -> false)
+
+    /// Allows ordinary promotions or the current terminal output from a durably successful PromotionSet into Branch projections.
+    let internal canProjectPromotionReference promotionSetStatus expectedTerminalReferenceId (referenceDto: ReferenceDto) =
+        match tryGetPromotionSetId referenceDto with
+        | None -> true
+        | Some promotionSetId ->
+            isPromotionSetTerminalReference promotionSetId referenceDto
+            && promotionSetStatus = Some Grace.Types.PromotionSet.PromotionSetStatus.Succeeded
+            && expectedTerminalReferenceId = Some referenceDto.ReferenceId
+
+    /// Orders distinct Promotion candidates while allowing direct durable actor state to bridge query visibility lag.
+    let internal orderPromotionCandidates
+        (queriedPromotions: ReferenceDto array)
+        (latestTerminalPromotion: ReferenceDto option)
+        (currentDurablePromotion: ReferenceDto option)
+        =
+        seq {
+            match currentDurablePromotion with
+            | Some referenceDto -> yield referenceDto
+            | None -> ()
+
+            match latestTerminalPromotion with
+            | Some referenceDto -> yield referenceDto
+            | None -> ()
+
+            yield! queriedPromotions
+        }
+        |> Seq.filter (fun referenceDto -> referenceDto.ReferenceId <> ReferenceId.Empty)
+        |> Seq.distinctBy (fun referenceDto -> referenceDto.ReferenceId)
+        |> Seq.sortByDescending (fun referenceDto -> referenceDto.CreatedAt)
+        |> Seq.toArray
+
+    /// Selects BasedOn from the newest projectable Promotion or Rebase transition while leaving typed slots independent.
+    let internal selectBasedOnProjection
+        (durableBase: ReferenceDto)
+        (latestRebase: (ReferenceDto * ReferenceDto) option)
+        (latestProjectablePromotion: ReferenceDto option)
+        =
+        match latestRebase, latestProjectablePromotion with
+        | Some (rebaseTransition, rebaseTarget), Some promotion when rebaseTransition.CreatedAt > promotion.CreatedAt -> rebaseTarget
+        | _, Some promotion -> promotion
+        | Some (_, rebaseTarget), None -> rebaseTarget
+        | None, None -> durableBase
+
     /// Builds the public Branch command result without mutating the aggregate a second time for exact Commit retries.
     let private createBranchCommandReturnValue (branchDto: BranchDto) (branchEvent: BranchEvent) =
         let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
@@ -161,42 +278,95 @@ module Branch =
 
         let mutable currentCommand = String.Empty
 
+        /// Finds the newest promotion that can truthfully advance the public Branch projection.
+        let getLatestProjectablePromotion (branchDto: BranchDto) correlationId =
+            task {
+                let! promotions = getPromotions branchDto.RepositoryId branchDto.BranchId 500 correlationId
+                let! latestTerminalPromotion = getLatestPromotion branchDto.RepositoryId branchDto.BranchId
+
+                let! currentDurablePromotion =
+                    if branchDto.LatestPromotion.ReferenceId = ReferenceId.Empty then
+                        Task.FromResult<Option<ReferenceDto>> None
+                    else
+                        task {
+                            let referenceActor = Reference.CreateActorProxy branchDto.LatestPromotion.ReferenceId branchDto.RepositoryId correlationId
+
+                            let! referenceDto = referenceActor.Get correlationId
+
+                            if referenceDto.ReferenceId = ReferenceId.Empty then
+                                return None
+                            else
+                                return Some referenceDto
+                        }
+
+                let orderedPromotions = orderPromotionCandidates promotions latestTerminalPromotion currentDurablePromotion
+
+                let mutable projectablePromotion: ReferenceDto option = None
+                let mutable index = 0
+
+                while index < orderedPromotions.Length
+                      && projectablePromotion.IsNone do
+                    let referenceDto = orderedPromotions[index]
+
+                    if referenceDto.DeletedAt.IsNone then
+                        match tryGetPromotionSetId referenceDto with
+                        | None -> projectablePromotion <- Some referenceDto
+                        | Some promotionSetId when isPromotionSetTerminalReference promotionSetId referenceDto ->
+                            let promotionSetActorProxy =
+                                Grace.Actors.Extensions.ActorProxy.PromotionSet.CreateActorProxy promotionSetId branchDto.RepositoryId correlationId
+
+                            let! promotionSetDto = promotionSetActorProxy.Get correlationId
+                            let! promotionSetEvents = promotionSetActorProxy.GetEvents correlationId
+
+                            let expectedTerminalReferenceId =
+                                promotionSetEvents
+                                |> Seq.rev
+                                |> Seq.tryPick (fun promotionSetEvent ->
+                                    match promotionSetEvent.Event with
+                                    | Grace.Types.PromotionSet.PromotionSetEventType.Applied terminalReferenceId -> Some terminalReferenceId
+                                    | _ -> None)
+
+                            if canProjectPromotionReference (Some promotionSetDto.Status) expectedTerminalReferenceId referenceDto then
+                                projectablePromotion <- Some referenceDto
+                        | Some _ -> ()
+
+                    index <- index + 1
+
+                return projectablePromotion
+            }
+
         /// Updates the branchDto with the latest reference of each type from the branch.
         let updateLatestReferences (branchDto: BranchDto) correlationId =
             task {
-                let mutable newBranchDto = branchDto
+                let durableBranchDto =
+                    state.State
+                    |> Seq.fold (fun current branchEvent -> current |> BranchDto.UpdateDto branchEvent) BranchDto.Default
 
-                // Get the enabled reference types. This allows us to limit the ReferenceTypes we search for.
-                let enabledReferenceTypes = List<ReferenceType>()
+                let mutable newBranchDto = { branchDto with BasedOn = durableBranchDto.BasedOn; LatestPromotion = ReferenceDto.Default }
 
-                if branchDto.PromotionEnabled then
-                    enabledReferenceTypes.Add(ReferenceType.Promotion)
+                let mutable latestRebaseProjection: (ReferenceDto * ReferenceDto) option = None
 
-                if branchDto.CommitEnabled then enabledReferenceTypes.Add(ReferenceType.Commit)
-
-                if branchDto.CheckpointEnabled then
-                    enabledReferenceTypes.Add(ReferenceType.Checkpoint)
-
-                if branchDto.SaveEnabled then enabledReferenceTypes.Add(ReferenceType.Save)
-                if branchDto.TagEnabled then enabledReferenceTypes.Add(ReferenceType.Tag)
-
-                if branchDto.ExternalEnabled then
-                    enabledReferenceTypes.Add(ReferenceType.External)
-
-                if branchDto.AutoRebaseEnabled then
-                    enabledReferenceTypes.Add(ReferenceType.Rebase)
-
-                let referenceTypes = enabledReferenceTypes.ToArray()
+                let referenceTypes = projectionReconstructionReferenceTypes branchDto
 
                 // Get the latest references.
                 let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.RepositoryId branchDto.BranchId
+
+                let! latestProjectablePromotion = getLatestProjectablePromotion branchDto correlationId
 
                 // Get the latest reference of any type.
                 let latestReference =
                     latestReferences
                         .Values
+                        .Where(fun referenceDto ->
+                            referenceDto.ReferenceType
+                            <> ReferenceType.Promotion)
+                        .Concat(
+                            match latestProjectablePromotion with
+                            | Some referenceDto -> [| referenceDto |]
+                            | None -> Array.Empty<ReferenceDto>()
+                        )
                         .OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt)
-                        .FirstOrDefault(branchDto.BasedOn)
+                        .FirstOrDefault(durableBranchDto.BasedOn)
 
                 newBranchDto <- { newBranchDto with LatestReference = latestReference }
 
@@ -208,28 +378,33 @@ module Branch =
                     | Save -> newBranchDto <- { newBranchDto with LatestSave = referenceDto }
                     | Checkpoint -> newBranchDto <- { newBranchDto with LatestCheckpoint = referenceDto }
                     | Commit -> newBranchDto <- { newBranchDto with LatestCommit = referenceDto }
-                    | Promotion -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                    | Promotion -> ()
                     | Rebase ->
-                        let basedOnLink =
-                            kvp.Value.Links
-                            |> Seq.find (fun link ->
-                                match link with
-                                | ReferenceLinkType.BasedOn _ -> true
-                                | _ -> false)
-
                         let basedOnReferenceId =
-                            match basedOnLink with
-                            | ReferenceLinkType.BasedOn referenceId -> referenceId
-                            | _ -> ReferenceId.Empty
+                            kvp.Value.Links
+                            |> Seq.tryPick (fun link ->
+                                match link with
+                                | ReferenceLinkType.BasedOn referenceId -> Some referenceId
+                                | _ -> None)
 
-                        let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId branchDto.RepositoryId correlationId
-                        let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
-
-                        newBranchDto <- { newBranchDto with BasedOn = basedOnReferenceDto }
+                        match basedOnReferenceId with
+                        | Some referenceId ->
+                            let basedOnReferenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId correlationId
+                            let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
+                            latestRebaseProjection <- Some(referenceDto, basedOnReferenceDto)
+                        | None -> ()
                     | External -> ()
                     | Tag -> ()
 
-                return { newBranchDto with ShouldRecomputeLatestReferences = false }
+                match latestProjectablePromotion with
+                | Some referenceDto -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto }
+                | None -> ()
+
+                return
+                    { newBranchDto with
+                        BasedOn = selectBasedOnProjection durableBranchDto.BasedOn latestRebaseProjection latestProjectablePromotion
+                        ShouldRecomputeLatestReferences = false
+                    }
             }
 
         /// Stores the correlation id used by this actor while reporting timings and errors.
@@ -282,7 +457,7 @@ module Branch =
                     | Saved (referenceDto, _, _, _, _)
                     | Tagged (referenceDto, _, _, _, _)
                     | ExternalCreated (referenceDto, _, _, _, _) -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceDto.ReferenceId}"
-                    | Rebased referenceId -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
+                    | Rebased referenceId -> applyReferenceIdMetadata branchEvent.Metadata.Properties referenceId
                     | _ -> ()
 
                     if shouldPersistAndPublishBranchEvent branchEvent.Event then
@@ -409,8 +584,23 @@ module Branch =
                             return Error(GraceError.Create (getErrorMessage BranchError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | BranchCommand.Create (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
+                            | BranchCommand.Create (_, branchName, _, _, _, _, _, _, _) ->
+                                let matchesDurableCreation =
+                                    state.State
+                                    |> Seq.tryPick (fun branchEvent ->
+                                        match branchEvent.Event with
+                                        | Created _ -> Some(createCommandMatchesCreationEvent branchEvent.Event command)
+                                        | _ -> None)
+                                    |> Option.defaultValue false
+
                                 match branchDto.UpdatedAt with
+                                | Some _ when
+                                    matchesDurableCreation
+                                    && (referenceDisposition = Some MatchingRetry
+                                        || (branchName = InitialBranchName
+                                            && referenceDisposition.IsNone))
+                                    ->
+                                    return Ok command
                                 | Some _ -> return Error(GraceError.Create (BranchError.getErrorMessage BranchAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
@@ -462,15 +652,15 @@ module Branch =
                         return! referenceActor.Handle referenceCommand metadata
                     }
 
-                /// Creates a Reference with a server-generated identity for producer contracts not yet carrying one.
-                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
+                /// Creates a strict Reference with the identity owned by its producer contract.
+                let addReferenceToCurrentBranch referenceId directoryId sha256Hash blake3Hash referenceText referenceType links =
                     addReferenceWithId
-                        (ReferenceId.NewGuid())
-                        false
-                        ownerId
-                        organizationId
-                        repositoryId
-                        branchId
+                        referenceId
+                        true
+                        branchDto.OwnerId
+                        branchDto.OrganizationId
+                        branchDto.RepositoryId
+                        branchDto.BranchId
                         directoryId
                         sha256Hash
                         blake3Hash
@@ -478,14 +668,12 @@ module Branch =
                         referenceType
                         links
 
-                let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
-
-                /// Maps caller-owned Branch operations to the Reference Create command used for uniform retry classification.
+                /// Maps every Branch Reference producer to the uniform durable Reference Create contract.
                 let callerOwnedReferenceCommand command =
-                    match command with
-                    | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
-                        Some(
+                    task {
+                        let createFromCurrentBranch referenceId directoryVersionId sha256Hash blake3Hash referenceType referenceText links =
                             referenceId,
+                            branchDto.RepositoryId,
                             ReferenceCommand.Create(
                                 referenceId,
                                 branchDto.OwnerId,
@@ -495,21 +683,99 @@ module Branch =
                                 directoryVersionId,
                                 sha256Hash,
                                 blake3Hash,
-                                ReferenceType.Commit,
+                                referenceType,
                                 referenceText,
-                                List.empty
+                                links
                             )
-                        )
-                    | _ -> None
+
+                        match command with
+                        | BranchCommand.Create (branchId, _, _, basedOn, referenceId, ownerId, organizationId, repositoryId, _) when
+                            basedOn <> ReferenceId.Empty
+                            ->
+                            let basedOnActor = Reference.CreateActorProxy basedOn repositoryId metadata.CorrelationId
+                            let! basedOnReference = basedOnActor.Get metadata.CorrelationId
+
+                            return
+                                Some(
+                                    referenceId,
+                                    repositoryId,
+                                    ReferenceCommand.Create(
+                                        referenceId,
+                                        ownerId,
+                                        organizationId,
+                                        repositoryId,
+                                        branchId,
+                                        basedOnReference.DirectoryId,
+                                        basedOnReference.Sha256Hash,
+                                        basedOnReference.Blake3Hash,
+                                        ReferenceType.Rebase,
+                                        basedOnReference.ReferenceText,
+                                        [ ReferenceLinkType.BasedOn basedOn ]
+                                    )
+                                )
+                        | BranchCommand.Rebase (referenceId, basedOn) ->
+                            let basedOnActor = Reference.CreateActorProxy basedOn branchDto.RepositoryId metadata.CorrelationId
+                            let! basedOnReference = basedOnActor.Get metadata.CorrelationId
+
+                            return
+                                Some(
+                                    createFromCurrentBranch
+                                        referenceId
+                                        basedOnReference.DirectoryId
+                                        basedOnReference.Sha256Hash
+                                        basedOnReference.Blake3Hash
+                                        ReferenceType.Rebase
+                                        basedOnReference.ReferenceText
+                                        [ ReferenceLinkType.BasedOn basedOn ]
+                                )
+                        | BranchCommand.Assign (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                        | BranchCommand.Promote (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                            return
+                                Some(
+                                    createFromCurrentBranch
+                                        referenceId
+                                        directoryVersionId
+                                        sha256Hash
+                                        blake3Hash
+                                        ReferenceType.Promotion
+                                        referenceText
+                                        List.empty
+                                )
+                        | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                            return
+                                Some(createFromCurrentBranch referenceId directoryVersionId sha256Hash blake3Hash ReferenceType.Commit referenceText List.empty)
+                        | BranchCommand.Checkpoint (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                            return
+                                Some(
+                                    createFromCurrentBranch
+                                        referenceId
+                                        directoryVersionId
+                                        sha256Hash
+                                        blake3Hash
+                                        ReferenceType.Checkpoint
+                                        referenceText
+                                        List.empty
+                                )
+                        | BranchCommand.Save (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                            return
+                                Some(createFromCurrentBranch referenceId directoryVersionId sha256Hash blake3Hash ReferenceType.Save referenceText List.empty)
+                        | BranchCommand.Tag (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                            return Some(createFromCurrentBranch referenceId directoryVersionId sha256Hash blake3Hash ReferenceType.Tag referenceText List.empty)
+                        | BranchCommand.CreateExternal (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                            return
+                                Some(
+                                    createFromCurrentBranch referenceId directoryVersionId sha256Hash blake3Hash ReferenceType.External referenceText List.empty
+                                )
+                        | _ -> return None
+                    }
 
                 /// Reads durable Reference state before dispatch so an exact retry avoids a second Branch transition.
                 let getReferenceOperationDisposition command =
                     task {
-                        match callerOwnedReferenceCommand command, branchDto.UpdatedAt with
-                        | None, _
-                        | Some _, None -> return None
-                        | Some (referenceId, referenceCommand), Some _ ->
-                            let referenceActor = Reference.CreateActorProxy referenceId branchDto.RepositoryId metadata.CorrelationId
+                        match! callerOwnedReferenceCommand command with
+                        | None -> return None
+                        | Some (referenceId, repositoryId, referenceCommand) ->
+                            let referenceActor = Reference.CreateActorProxy referenceId repositoryId metadata.CorrelationId
                             let! exists = referenceActor.Exists metadata.CorrelationId
 
                             if exists then
@@ -530,17 +796,33 @@ module Branch =
                             let! event =
                                 task {
                                     match command with
-                                    | Create (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
+                                    | Create (branchId,
+                                              branchName,
+                                              parentBranchId,
+                                              basedOn,
+                                              referenceId,
+                                              ownerId,
+                                              organizationId,
+                                              repositoryId,
+                                              branchPermissions) ->
+                                        let createdEvent =
+                                            Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions)
+
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
-                                        if branchName <> InitialBranchName then
+                                        if branchName = InitialBranchName then
+                                            memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchId)
+                                            return Ok createdEvent
+                                        else
                                             // We need to get the reference that we're rebasing on, so we can get the DirectoryId and root hashes.
                                             let referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId this.correlationId
                                             let! promotionDto = referenceActorProxy.Get this.correlationId
 
                                             match!
-                                                addReference
-                                                    branchDto.OwnerId
-                                                    branchDto.OrganizationId
+                                                addReferenceWithId
+                                                    referenceId
+                                                    true
+                                                    ownerId
+                                                    organizationId
                                                     repositoryId
                                                     branchId
                                                     promotionDto.DirectoryId
@@ -554,29 +836,24 @@ module Branch =
                                                 with
                                             | Ok _ ->
                                                 //logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceDto: {rebaseReferenceDto}."
-                                                ()
-                                            | Error error ->
-                                                logToConsole
-                                                    $"In BranchActor.Handle.processCommand: Error rebasing on referenceId: {basedOn}. promotionDto: {serialize promotionDto}"
-
-                                        memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchId)
-
-                                        return
-                                            Ok(Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions))
-                                    | BranchCommand.Rebase referenceId ->
-                                        metadata.Properties[ "BasedOn" ] <- $"{referenceId}"
+                                                memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchId)
+                                                return Ok createdEvent
+                                            | Error error -> return Error error
+                                    | BranchCommand.Rebase (referenceId, basedOn) ->
+                                        metadata.Properties[ "BasedOn" ] <- $"{basedOn}"
                                         metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
                                         metadata.Properties[ nameof RepositoryId ] <- $"{branchDto.RepositoryId}"
                                         metadata.Properties[ nameof BranchId ] <- $"{this.GetGrainId().GetGuidKey()}"
                                         metadata.Properties[ nameof BranchName ] <- $"{branchDto.BranchName}"
 
                                         // We need to get the reference that we're rebasing on, so we can get the directoryId and root hashes.
-                                        let referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId this.correlationId
+                                        let referenceActorProxy = Reference.CreateActorProxy basedOn branchDto.RepositoryId this.correlationId
                                         let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
 
                                         // Add the Rebase reference to this branch.
                                         match!
                                             addReferenceToCurrentBranch
+                                                referenceId
                                                 promotionDto.DirectoryId
                                                 promotionDto.Sha256Hash
                                                 promotionDto.Blake3Hash
@@ -588,12 +865,12 @@ module Branch =
                                             with
                                         | Ok rebaseReferenceDto ->
                                             //logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceDto: {rebaseReferenceDto}."
-                                            return Ok(Rebased referenceId)
+                                            return Ok(Rebased basedOn)
                                         | Error error ->
                                             log.LogError(
                                                 "{CurrentInstant}: Error rebasing on referenceId: {referenceId}; promotionDto: {promotionDto}.\n{Error}",
                                                 getCurrentInstantExtended (),
-                                                referenceId,
+                                                basedOn,
                                                 serialize promotionDto,
                                                 error
                                             )
@@ -610,9 +887,10 @@ module Branch =
                                     | EnableAutoRebase enabled -> return Ok(EnabledAutoRebase enabled)
                                     | SetPromotionMode promotionMode -> return Ok(PromotionModeSet promotionMode)
                                     | UpdateParentBranch newParentBranchId -> return Ok(ParentBranchUpdated newParentBranchId)
-                                    | BranchCommand.Assign (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                    | BranchCommand.Assign (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
                                         match!
                                             addReferenceToCurrentBranch
+                                                referenceId
                                                 directoryVersionId
                                                 sha256Hash
                                                 blake3Hash
@@ -623,9 +901,10 @@ module Branch =
                                         | Ok returnValue ->
                                             return Ok(Assigned(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Promote (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                    | BranchCommand.Promote (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
                                         match!
                                             addReferenceToCurrentBranch
+                                                referenceId
                                                 directoryVersionId
                                                 sha256Hash
                                                 blake3Hash
@@ -638,13 +917,8 @@ module Branch =
                                         | Error error -> return Error error
                                     | BranchCommand.Commit (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
                                         match!
-                                            addReferenceWithId
+                                            addReferenceToCurrentBranch
                                                 referenceId
-                                                true
-                                                branchDto.OwnerId
-                                                branchDto.OrganizationId
-                                                branchDto.RepositoryId
-                                                branchDto.BranchId
                                                 directoryVersionId
                                                 sha256Hash
                                                 blake3Hash
@@ -655,9 +929,10 @@ module Branch =
                                         | Ok returnValue ->
                                             return Ok(Committed(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Checkpoint (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                    | BranchCommand.Checkpoint (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
                                         match!
                                             addReferenceToCurrentBranch
+                                                referenceId
                                                 directoryVersionId
                                                 sha256Hash
                                                 blake3Hash
@@ -668,20 +943,43 @@ module Branch =
                                         | Ok returnValue ->
                                             return Ok(Checkpointed(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Save (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.Save List.empty
+                                    | BranchCommand.Save (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match!
+                                            addReferenceToCurrentBranch
+                                                referenceId
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.Save
+                                                List.empty
                                             with
                                         | Ok returnValue -> return Ok(Saved(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Tag (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.Tag List.empty
+                                    | BranchCommand.Tag (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match!
+                                            addReferenceToCurrentBranch
+                                                referenceId
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.Tag
+                                                List.empty
                                             with
                                         | Ok returnValue ->
                                             return Ok(Tagged(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.CreateExternal (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                    | BranchCommand.CreateExternal (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
                                         match!
-                                            addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.External List.empty
+                                            addReferenceToCurrentBranch
+                                                referenceId
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.External
+                                                List.empty
                                             with
                                         | Ok returnValue ->
                                             return Ok(ExternalCreated(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
@@ -892,6 +1190,20 @@ module Branch =
                                 }
 
                             match event, referenceDisposition with
+                            | Ok (Created _ as event), _ when branchDto.UpdatedAt.IsSome ->
+                                return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                            | Ok event, Some MatchingRetry when branchDto.UpdatedAt.IsNone -> return! this.ApplyEvent { Event = event; Metadata = metadata }
+                            | Ok (Rebased basedOn as event), Some MatchingRetry ->
+                                match command with
+                                | BranchCommand.Rebase (referenceId, _) ->
+                                    let referenceActor = Reference.CreateActorProxy referenceId branchDto.RepositoryId metadata.CorrelationId
+                                    let basedOnActor = Reference.CreateActorProxy basedOn branchDto.RepositoryId metadata.CorrelationId
+                                    let! referenceDto = referenceActor.Get metadata.CorrelationId
+                                    let! basedOnReferenceDto = basedOnActor.Get metadata.CorrelationId
+                                    let recoveredBranchDto, _ = reconcileRebaseProjection branchDto referenceDto basedOnReferenceDto
+                                    branchDto <- recoveredBranchDto
+                                    return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                                | _ -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, Some MatchingRetry ->
                                 match tryGetReferenceFromBranchEvent event with
                                 | Some referenceDto ->

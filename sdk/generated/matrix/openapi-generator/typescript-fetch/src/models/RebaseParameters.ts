@@ -84,6 +84,12 @@ export interface RebaseParameters {
      * @type {string}
      * @memberof RebaseParameters
      */
+    referenceId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof RebaseParameters
+     */
     basedOn?: string;
 }
 
@@ -91,6 +97,7 @@ export interface RebaseParameters {
  * Check if a given object implements the RebaseParameters interface.
  */
 export function instanceOfRebaseParameters(value: object): value is RebaseParameters {
+    if (!('referenceId' in value) || value['referenceId'] === undefined) return false;
     return true;
 }
 
@@ -114,6 +121,7 @@ export function RebaseParametersFromJSONTyped(json: any, ignoreDiscriminator: bo
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
+        'referenceId': json['ReferenceId'],
         'basedOn': json['BasedOn'] == null ? undefined : json['BasedOn'],
     };
 }
@@ -139,6 +147,7 @@ export function RebaseParametersToJSONTyped(value?: RebaseParameters | null, ign
         'RepositoryName': value['repositoryName'],
         'BranchId': value['branchId'],
         'BranchName': value['branchName'],
+        'ReferenceId': value['referenceId'],
         'BasedOn': value['basedOn'],
     };
 }
