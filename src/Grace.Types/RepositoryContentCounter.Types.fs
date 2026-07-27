@@ -19,6 +19,26 @@ module RepositoryContentCounter =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterLifecycleState>()
 
+    /// Identifies the bounded counter operation recorded by the latest completed change.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type RepositoryContentCounterChangeOperation =
+        | Added
+        | Removed
+
+        /// Returns known nested union types for serializers.
+        static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterChangeOperation>()
+
+    /// Records the latest completed count transition without retaining a lifetime operation history.
+    [<GenerateSerializer>]
+    type RepositoryContentCounterCompletedChange =
+        {
+            OperationId: RepositoryContentCounterOperationId
+            Operation: RepositoryContentCounterChangeOperation
+            PreviousCount: ReferenceCount
+            CurrentCount: ReferenceCount
+            Revision: int64
+        }
+
     /// Represents repository content counter command.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterCommand =
@@ -52,8 +72,16 @@ module RepositoryContentCounter =
     /// Represents repository content counter intent.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterIntent =
-        | IncrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
-        | DecrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
+        | IncrementManifestReferenceCount of
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress *
+            counterRevision: int64
+        | DecrementManifestReferenceCount of
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress *
+            counterRevision: int64
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterIntent>()
@@ -69,10 +97,25 @@ module RepositoryContentCounter =
             RepositoryId: RepositoryId
             StoragePoolId: StoragePoolId
             ManifestAddress: ManifestAddress
-            ReferenceCount: ReferenceCount
-            LifecycleState: RepositoryContentCounterLifecycleState
-            LastOperationId: RepositoryContentCounterOperationId option
+            Count: ReferenceCount
+            Revision: int64
+            LastCompletedChange: RepositoryContentCounterCompletedChange option
         }
+
+        /// Preserves the established read name while the durable snapshot stores the contract's `Count` field.
+        member this.ReferenceCount = this.Count
+
+        /// Derives lifecycle from the bounded current count instead of persisting duplicate state.
+        member this.LifecycleState =
+            if this.Count = 0L then
+                RepositoryContentCounterLifecycleState.NotReferenced
+            else
+                RepositoryContentCounterLifecycleState.Referenced
+
+        /// Projects the latest operation identity for existing callers without persisting another field.
+        member this.LastOperationId =
+            this.LastCompletedChange
+            |> Option.map (fun change -> change.OperationId)
 
         /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
@@ -81,15 +124,17 @@ module RepositoryContentCounter =
                 RepositoryId = RepositoryId.Empty
                 StoragePoolId = String.Empty
                 ManifestAddress = String.Empty
-                ReferenceCount = 0L
-                LifecycleState = RepositoryContentCounterLifecycleState.NotReferenced
-                LastOperationId = None
+                Count = 0L
+                Revision = 0L
+                LastCompletedChange = None
             }
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto counterEvent current =
             match counterEvent.Event with
             | RepositoryContentCounterEventType.ReferenceAdded (operationId, repositoryId, storagePoolId, manifestAddress) ->
+                let nextCount = current.Count + 1L
+
                 { current with
                     RepositoryId =
                         if current.RepositoryId = RepositoryId.Empty then
@@ -106,21 +151,33 @@ module RepositoryContentCounter =
                             manifestAddress
                         else
                             current.ManifestAddress
-                    ReferenceCount = current.ReferenceCount + 1L
-                    LifecycleState = RepositoryContentCounterLifecycleState.Referenced
-                    LastOperationId = Some operationId
+                    Count = nextCount
+                    Revision = current.Revision + 1L
+                    LastCompletedChange =
+                        Some
+                            {
+                                OperationId = operationId
+                                Operation = RepositoryContentCounterChangeOperation.Added
+                                PreviousCount = current.Count
+                                CurrentCount = nextCount
+                                Revision = current.Revision + 1L
+                            }
                 }
             | RepositoryContentCounterEventType.ReferenceRemoved operationId ->
-                let nextReferenceCount = max 0L (current.ReferenceCount - 1L)
+                let nextReferenceCount = max 0L (current.Count - 1L)
 
                 { current with
-                    ReferenceCount = nextReferenceCount
-                    LifecycleState =
-                        if nextReferenceCount = 0L then
-                            RepositoryContentCounterLifecycleState.NotReferenced
-                        else
-                            RepositoryContentCounterLifecycleState.Referenced
-                    LastOperationId = Some operationId
+                    Count = nextReferenceCount
+                    Revision = current.Revision + 1L
+                    LastCompletedChange =
+                        Some
+                            {
+                                OperationId = operationId
+                                Operation = RepositoryContentCounterChangeOperation.Removed
+                                PreviousCount = current.Count
+                                CurrentCount = nextReferenceCount
+                                Revision = current.Revision + 1L
+                            }
                 }
 
     /// Represents repository content counter decision.

@@ -169,7 +169,47 @@ module ManifestContributionAccounting =
             |> Seq.toArray
         | Error graceError -> invalidOp graceError.Error
 
-    /// Reconciles one Reference Created event from fresh ReferenceActor and DirectoryVersionActor state.
+    /// Represents one bounded iterative step while converging a retained DirectoryVersion DAG.
+    type private DirectoryTraversalStep =
+        | VisitDirectory of directoryVersionId: DirectoryVersionId
+        | VisitChild of parentDirectoryVersionId: DirectoryVersionId * childDirectoryVersionId: DirectoryVersionId
+        | ConvergeParentChild of parentDirectoryVersionId: DirectoryVersionId * childDirectoryVersionId: DirectoryVersionId
+
+    /// Caps the retained-child probe at the first exact incoming relationship.
+    let private oneIncomingRelationshipBound =
+        match ExactRelationshipReadBound.create 1 with
+        | Ok bound -> bound
+        | Error error -> invalidOp error
+
+    /// Confirms the Reference actor still retains the same root named by this delivery.
+    let private isCurrentLiveReference
+        (dependencies: ManifestContributionAccountingDependencies)
+        repositoryId
+        referenceId
+        rootDirectoryVersionId
+        correlationId
+        =
+        task {
+            let! currentReference = dependencies.GetReference repositoryId referenceId correlationId
+
+            return
+                currentReference.ReferenceId = referenceId
+                && currentReference.RepositoryId = repositoryId
+                && currentReference.DirectoryId = rootDirectoryVersionId
+                && currentReference.DeletedAt.IsNone
+        }
+
+    /// Confirms a DirectoryVersion actor read belongs to the requested immutable repository node.
+    let private isCurrentDirectoryVersion repositoryId directoryVersionId (directoryVersionDto: DirectoryVersionDto) =
+        directoryVersionDto.DirectoryVersion.RepositoryId = repositoryId
+        && directoryVersionDto.DirectoryVersion.DirectoryVersionId = directoryVersionId
+
+    /// Confirms the current immutable parent still directly names the candidate child.
+    let private isCurrentDirectChild repositoryId parentDirectoryVersionId childDirectoryVersionId (parentDto: DirectoryVersionDto) =
+        isCurrentDirectoryVersion repositoryId parentDirectoryVersionId parentDto
+        && parentDto.DirectoryVersion.Directories.Contains childDirectoryVersionId
+
+    /// Reconciles one Reference Created event from fresh actor state before converging its independent lifecycle effect.
     let handleReferenceCreatedWith (dependencies: ManifestContributionAccountingDependencies) cancellationToken (referenceEvent: ReferenceEvent) =
         task {
             match referenceEvent.Event with
@@ -193,43 +233,178 @@ module ManifestContributionAccounting =
                     match! dependencies.ExactRelationships.VerifyAsync(referenceRoot, cancellationToken) with
                     | ExactRelationshipPresence.Present -> ()
                     | ExactRelationshipPresence.Absent ->
+                        let! stillLive =
+                            isCurrentLiveReference
+                                dependencies
+                                currentReference.RepositoryId
+                                currentReference.ReferenceId
+                                currentReference.DirectoryId
+                                correlationId
+
+                        if stillLive then
+                            let! _ = dependencies.ExactRelationships.EnsurePresentAsync(referenceRoot, cancellationToken)
+                            ()
+
+                    let pending = Stack<DirectoryTraversalStep>()
+                    pending.Push(VisitDirectory currentReference.DirectoryId)
+
+                    while pending.Count > 0 do
+                        cancellationToken.ThrowIfCancellationRequested()
+
+                        match pending.Pop() with
+                        | VisitDirectory directoryVersionId ->
+                            let! candidateState = dependencies.GetDirectoryVersion currentReference.RepositoryId directoryVersionId correlationId
+
+                            if isCurrentDirectoryVersion currentReference.RepositoryId directoryVersionId candidateState then
+                                let manifestCandidates = directManifests correlationId candidateState
+                                let mutable manifestIndex = 0
+
+                                while manifestIndex < manifestCandidates.Length do
+                                    cancellationToken.ThrowIfCancellationRequested()
+                                    let candidate = manifestCandidates[manifestIndex]
+
+                                    let! referenceStillLive =
+                                        isCurrentLiveReference
+                                            dependencies
+                                            currentReference.RepositoryId
+                                            currentReference.ReferenceId
+                                            currentReference.DirectoryId
+                                            correlationId
+
+                                    let! currentDirectoryVersion =
+                                        dependencies.GetDirectoryVersion currentReference.RepositoryId directoryVersionId correlationId
+
+                                    let currentManifest =
+                                        if referenceStillLive
+                                           && isCurrentDirectoryVersion currentReference.RepositoryId directoryVersionId currentDirectoryVersion then
+                                            directManifests correlationId currentDirectoryVersion
+                                            |> Array.tryFind (fun manifest ->
+                                                manifest.StoragePoolId = candidate.StoragePoolId
+                                                && manifest.ManifestAddress = candidate.ManifestAddress)
+                                        else
+                                            None
+
+                                    match currentManifest with
+                                    | None -> ()
+                                    | Some manifest ->
+                                        let relationship =
+                                            {
+                                                RepositoryId = currentReference.RepositoryId
+                                                StoragePoolId = manifest.StoragePoolId
+                                                ManifestAddress = manifest.ManifestAddress
+                                                DirectoryVersionId = directoryVersionId
+                                            }
+
+                                        do! dependencies.EnsureDirectoryVersionManifest relationship manifest referenceEvent.Metadata cancellationToken
+
+                                    manifestIndex <- manifestIndex + 1
+
+                                let childCandidates =
+                                    candidateState.DirectoryVersion.Directories
+                                    |> Seq.distinct
+                                    |> Seq.toArray
+
+                                let mutable childIndex = childCandidates.Length - 1
+
+                                while childIndex >= 0 do
+                                    pending.Push(VisitChild(directoryVersionId, childCandidates[childIndex]))
+                                    childIndex <- childIndex - 1
+                        | VisitChild (parentDirectoryVersionId, childDirectoryVersionId) ->
+                            let! referenceStillLive =
+                                isCurrentLiveReference
+                                    dependencies
+                                    currentReference.RepositoryId
+                                    currentReference.ReferenceId
+                                    currentReference.DirectoryId
+                                    correlationId
+
+                            let! currentParent = dependencies.GetDirectoryVersion currentReference.RepositoryId parentDirectoryVersionId correlationId
+
+                            if referenceStillLive
+                               && isCurrentDirectChild currentReference.RepositoryId parentDirectoryVersionId childDirectoryVersionId currentParent then
+                                let relationship =
+                                    ExactRelationship.ParentChild
+                                        {
+                                            RepositoryId = currentReference.RepositoryId
+                                            ParentDirectoryVersionId = parentDirectoryVersionId
+                                            ChildDirectoryVersionId = childDirectoryVersionId
+                                        }
+
+                                match! dependencies.ExactRelationships.VerifyAsync(relationship, cancellationToken) with
+                                | ExactRelationshipPresence.Present -> ()
+                                | ExactRelationshipPresence.Absent ->
+                                    let! incoming =
+                                        dependencies.ExactRelationships.EnumerateAsync(
+                                            ExactRelationshipPartition.IncomingDirectoryVersion(currentReference.RepositoryId, childDirectoryVersionId),
+                                            oneIncomingRelationshipBound,
+                                            None,
+                                            cancellationToken
+                                        )
+
+                                    if incoming.Relationships.Length > 0 then
+                                        let! latestReferenceStillLive =
+                                            isCurrentLiveReference
+                                                dependencies
+                                                currentReference.RepositoryId
+                                                currentReference.ReferenceId
+                                                currentReference.DirectoryId
+                                                correlationId
+
+                                        let! latestParent =
+                                            dependencies.GetDirectoryVersion currentReference.RepositoryId parentDirectoryVersionId correlationId
+
+                                        let! latestChild = dependencies.GetDirectoryVersion currentReference.RepositoryId childDirectoryVersionId correlationId
+
+                                        if latestReferenceStillLive
+                                           && isCurrentDirectChild currentReference.RepositoryId parentDirectoryVersionId childDirectoryVersionId latestParent
+                                           && isCurrentDirectoryVersion currentReference.RepositoryId childDirectoryVersionId latestChild then
+                                            let! _ = dependencies.ExactRelationships.EnsurePresentAsync(relationship, cancellationToken)
+                                            ()
+                                    else
+                                        pending.Push(ConvergeParentChild(parentDirectoryVersionId, childDirectoryVersionId))
+                                        pending.Push(VisitDirectory childDirectoryVersionId)
+                        | ConvergeParentChild (parentDirectoryVersionId, childDirectoryVersionId) ->
+                            let! referenceStillLive =
+                                isCurrentLiveReference
+                                    dependencies
+                                    currentReference.RepositoryId
+                                    currentReference.ReferenceId
+                                    currentReference.DirectoryId
+                                    correlationId
+
+                            let! currentParent = dependencies.GetDirectoryVersion currentReference.RepositoryId parentDirectoryVersionId correlationId
+
+                            let! currentChild = dependencies.GetDirectoryVersion currentReference.RepositoryId childDirectoryVersionId correlationId
+
+                            if referenceStillLive
+                               && isCurrentDirectChild currentReference.RepositoryId parentDirectoryVersionId childDirectoryVersionId currentParent
+                               && isCurrentDirectoryVersion currentReference.RepositoryId childDirectoryVersionId currentChild then
+                                let relationship =
+                                    ExactRelationship.ParentChild
+                                        {
+                                            RepositoryId = currentReference.RepositoryId
+                                            ParentDirectoryVersionId = parentDirectoryVersionId
+                                            ChildDirectoryVersionId = childDirectoryVersionId
+                                        }
+
+                                let! _ = dependencies.ExactRelationships.EnsurePresentAsync(relationship, cancellationToken)
+                                ()
+
+                    let! referenceStillLive =
+                        isCurrentLiveReference
+                            dependencies
+                            currentReference.RepositoryId
+                            currentReference.ReferenceId
+                            currentReference.DirectoryId
+                            correlationId
+
+                    if referenceStillLive then
                         do!
                             dependencies.EnsureAutomaticPhysicalDeletionReminder
                                 currentReference.RepositoryId
                                 currentReference.ReferenceId
                                 correlationId
                                 cancellationToken
-
-                        let! _ = dependencies.ExactRelationships.EnsurePresentAsync(referenceRoot, cancellationToken)
-                        ()
-
-                    let! candidateState = dependencies.GetDirectoryVersion currentReference.RepositoryId currentReference.DirectoryId correlationId
-
-                    let candidates = directManifests correlationId candidateState
-
-                    for candidate in candidates do
-                        cancellationToken.ThrowIfCancellationRequested()
-
-                        let! currentDirectoryVersion = dependencies.GetDirectoryVersion currentReference.RepositoryId currentReference.DirectoryId correlationId
-
-                        let currentManifest =
-                            directManifests correlationId currentDirectoryVersion
-                            |> Array.tryFind (fun manifest ->
-                                manifest.StoragePoolId = candidate.StoragePoolId
-                                && manifest.ManifestAddress = candidate.ManifestAddress)
-
-                        match currentManifest with
-                        | None -> ()
-                        | Some manifest ->
-                            let relationship =
-                                {
-                                    RepositoryId = currentReference.RepositoryId
-                                    StoragePoolId = manifest.StoragePoolId
-                                    ManifestAddress = manifest.ManifestAddress
-                                    DirectoryVersionId = currentDirectoryVersion.DirectoryVersion.DirectoryVersionId
-                                }
-
-                            do! dependencies.EnsureDirectoryVersionManifest relationship manifest referenceEvent.Metadata cancellationToken
             | _ -> ()
         }
         :> Task
@@ -275,32 +450,25 @@ module ManifestContributionAccounting =
                         WorkflowRanges =
                             manifest.Blocks
                             |> Seq.distinctBy (fun block -> block.Address)
-                            |> Seq.map (fun block ->
-                                { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+                            |> Seq.map (fun block -> { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address })
                             |> Seq.toArray
                     }
 
                 match Reference.tryCreateManifestContributionStartForCounterDecision plan counterReturnValue.ReturnValue counterEvents with
                 | None -> ()
-                | Some _ ->
+                | Some startCommand ->
                     let workflowActor =
                         grainFactory.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
                             ManifestContributionWorkflow.primaryKey relationship.RepositoryId relationship.StoragePoolId relationship.ManifestAddress,
                             metadata.CorrelationId
                         )
 
-                    match!
-                        workflowActor.Start
-                            (directoryVersionManifestWorkflowOperationId relationship)
-                            relationship.RepositoryId
-                            relationship.StoragePoolId
-                            relationship.ManifestAddress
-                            ManifestContributionDirection.Increment
-                            plan.WorkflowRanges
-                            metadata
-                        with
-                    | Ok _ -> ()
-                    | Error graceError -> invalidOp graceError.Error
+                    match startCommand with
+                    | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges, counterRevision) ->
+                        match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision metadata with
+                        | Ok _ -> ()
+                        | Error graceError -> invalidOp graceError.Error
+                    | _ -> invalidOp "Manifest contribution accounting expected a workflow start command."
         }
         :> Task
 

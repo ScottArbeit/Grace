@@ -181,14 +181,14 @@ module Reference =
             let block = manifest.Blocks[index]
 
             if seenContentBlocks.Add block.Address then
-                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address })
 
             index <- index + 1
 
         ranges.ToArray()
 
     /// Coordinates workflow start command for plan logic for the Reference actor.
-    let private workflowStartCommandForPlan plan =
+    let private workflowStartCommandForPlan plan counterRevision =
         let direction = counterCommandDirection plan.CounterCommand
 
         ManifestContributionWorkflowCommand.Start(
@@ -197,7 +197,8 @@ module Reference =
             plan.Manifest.StoragePoolId,
             plan.Manifest.ManifestAddress,
             direction,
-            plan.WorkflowRanges
+            plan.WorkflowRanges,
+            counterRevision
         )
 
     let private planManifestReferences
@@ -391,66 +392,26 @@ module Reference =
     /// Attempts to create manifest contribution start and returns no value when the required invariant is not met.
     let tryCreateManifestContributionStart plan intent =
         match intent with
-        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress, counterRevision) when
             repositoryId = plan.RepositoryId
             && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Increment
             ->
-            Some(workflowStartCommandForPlan plan)
-        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
+            Some(workflowStartCommandForPlan plan counterRevision)
+        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress, counterRevision) when
             repositoryId = plan.RepositoryId
             && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Decrement
             ->
-            Some(workflowStartCommandForPlan plan)
+            Some(workflowStartCommandForPlan plan counterRevision)
         | _ -> None
 
-    /// Coordinates counter command operation id logic for the Reference actor.
-    let private counterCommandOperationId command =
-        match command with
-        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _)
-        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> Some operationId
-
-    /// Coordinates command crossed zero logic for the Reference actor.
-    let private commandCrossedZero operationId command events =
-        let mutable referenceCount = 0L
-        let mutable crossedZero = false
-
-        for counterEvent in events do
-            match counterEvent.Event with
-            | RepositoryContentCounterEventType.ReferenceAdded (eventOperationId, _, _, _) ->
-                if eventOperationId = operationId
-                   && referenceCount = 0L
-                   && counterCommandDirection command = ManifestContributionDirection.Increment then
-                    crossedZero <- true
-
-                referenceCount <- referenceCount + 1L
-            | RepositoryContentCounterEventType.ReferenceRemoved eventOperationId ->
-                if eventOperationId = operationId
-                   && referenceCount = 1L
-                   && counterCommandDirection command = ManifestContributionDirection.Decrement then
-                    crossedZero <- true
-
-                referenceCount <- max 0L (referenceCount - 1L)
-
-        crossedZero
-
-    /// Attempts to create manifest contribution start for counter decision and returns no value when the required invariant is not met.
-    let tryCreateManifestContributionStartForCounterDecision plan (decision: RepositoryContentCounterDecision) events =
-        let startFromIntent =
-            decision.Intents
-            |> List.tryPick (tryCreateManifestContributionStart plan)
-
-        match startFromIntent with
-        | Some startCommand -> Some startCommand
-        | None when decision.WasIdempotentReplay ->
-            match counterCommandOperationId plan.CounterCommand with
-            | Some operationId when commandCrossedZero operationId plan.CounterCommand events -> Some(workflowStartCommandForPlan plan)
-            | None
-            | Some _ -> None
-        | None -> None
+    /// Creates workflow work only from the counter decision's revision-bearing zero-crossing intent.
+    let tryCreateManifestContributionStartForCounterDecision plan (decision: RepositoryContentCounterDecision) _events =
+        decision.Intents
+        |> List.tryPick (tryCreateManifestContributionStart plan)
 
     /// Builds repository content counter actor data needed by the Reference actor.
     let private createRepositoryContentCounterActor repositoryId storagePoolId manifestAddress correlationId =
@@ -511,8 +472,14 @@ module Reference =
                                 metadata.CorrelationId
 
                         match startCommand with
-                        | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
-                            match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata with
+                        | ManifestContributionWorkflowCommand.Start (operationId,
+                                                                     repositoryId,
+                                                                     storagePoolId,
+                                                                     manifestAddress,
+                                                                     direction,
+                                                                     ranges,
+                                                                     counterRevision) ->
+                            match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges counterRevision metadata with
                             | Ok _ -> ()
                             | Error graceError -> error <- Some graceError
                         | _ -> error <- Some(GraceError.Create "Manifest contribution save boundary expected a workflow start command." metadata.CorrelationId)

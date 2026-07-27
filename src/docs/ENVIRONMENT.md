@@ -210,8 +210,15 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 
 ### Redis
 
-- `grace__redis__host`: Redis host.
-- `grace__redis__port`: Redis port.
+- `grace__redis__host`: optional Redis host for ten-minute repository-counter
+  recent results.
+- `grace__redis__port`: Redis port; defaults to `6379` when a host is set.
+
+When Redis is not configured or cannot be reached, recent-result reads return
+unknown. Addition processing may continue because retaining content is safe.
+Removal processing pauses, or withholds its decrement workflow, until Redis
+confirms the bounded completed result. Durable exact relationships and bounded
+counter/workflow snapshots remain responsible for correctness.
 
 ### Orleans
 

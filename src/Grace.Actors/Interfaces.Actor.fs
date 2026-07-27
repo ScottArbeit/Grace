@@ -624,6 +624,10 @@ module Interfaces =
         abstract member MergePhysicalRanges:
             merge: MergeContentBlockPhysicalRanges -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
 
+        /// Applies one deterministic manifest-retention delta without serializing a new command union case across Orleans.
+        abstract member AdjustActiveManifestCount:
+            adjust: AdjustContentBlockActiveManifestCount -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
+
     /// Defines the operations for the cluster-scoped dedupe discovery index actor.
     [<Interface>]
     type IDedupeIndexActor =
@@ -796,6 +800,7 @@ module Interfaces =
             manifestAddress: ManifestAddress ->
             direction: ManifestContributionDirection ->
             ranges: ManifestContributionWorkflowRange array ->
+            counterRevision: int64 ->
             eventMetadata: EventMetadata ->
                 Task<GraceResult<ManifestContributionWorkflowDecision>>
 

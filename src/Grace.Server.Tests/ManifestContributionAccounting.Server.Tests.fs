@@ -17,7 +17,6 @@ open System
 open System.Collections.Generic
 open System.Net
 open System.Text.Json
-open System.Threading
 open System.Threading.Tasks
 
 /// Provides typed access to raw actor persistence for the focused Aspire tracer.
@@ -55,40 +54,39 @@ module private ManifestContributionAccountingAspireTestHelpers =
             return actorEventStreams
         }
 
+    /// Reads bounded actor snapshots of one grain type from the shared Aspire Cosmos container.
+    let readActorSnapshotsAsync<'T> (state: TestHostState) (grainType: string) =
+        task {
+            use client = AspireTestHost.createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            use iterator = container.GetItemQueryIterator<Dictionary<string, obj>>(QueryDefinition("SELECT * FROM c"))
+            let actorSnapshots = ResizeArray<'T>()
+
+            while iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync()
+
+                for document in page do
+                    let tryGetJsonElement name =
+                        match document.TryGetValue name with
+                        | true, (:? JsonElement as value) -> Some value
+                        | _ -> None
+
+                    let documentGrainType =
+                        tryGetJsonElement "GrainType"
+                        |> Option.bind (fun value -> if value.ValueKind = JsonValueKind.String then Some(value.GetString()) else None)
+                        |> Option.defaultValue String.Empty
+
+                    if documentGrainType.Equals(grainType, StringComparison.Ordinal) then
+                        match tryGetJsonElement "State" with
+                        | Some stateValue -> actorSnapshots.Add(JsonSerializer.Deserialize<'T>(stateValue.GetRawText(), Constants.JsonSerializerOptions))
+                        | None -> ()
+
+            return actorSnapshots
+        }
+
 /// Proves the public Commit tracer across the real Aspire Service Bus and Cosmos resources.
 [<NonParallelizable>]
 type ManifestContributionAccountingAspireTests() =
-
-    /// Waits for one canonical exact relationship item in the Aspire Cosmos container.
-    let waitForExactRelationshipAsync (state: TestHostState) relationship =
-        task {
-            let key =
-                match ExactRelationshipKey.create relationship with
-                | Ok key -> key
-                | Error error -> failwith error
-
-            use client = AspireTestHost.createCosmosClient state
-            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
-            let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
-            let mutable found = false
-
-            while not found && DateTime.UtcNow < timeoutAt do
-                try
-                    let! _ = container.ReadItemAsync<JsonElement>(key.ItemId, PartitionKey key.PartitionKey, cancellationToken = CancellationToken.None)
-
-                    found <- true
-                with
-                | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
-
-            if not found then
-                let! logs = AspireTestHost.getGraceServerLogsAsync state
-                let! fileLog = AspireTestHost.getGraceServerFileLogAsync state
-                let! subscription = AspireTestHost.describeGraceServerSubscriptionAsync state
-
-                Assert.Fail(
-                    $"Timed out waiting for exact relationship {key.PartitionKey}/{key.ItemId}.{Environment.NewLine}Grace.Server logs:{Environment.NewLine}{logs}{Environment.NewLine}Grace.Server file log:{Environment.NewLine}{fileLog}{Environment.NewLine}{subscription}"
-                )
-        }
 
     /// Verifies Commit returns after durable save plus broker acceptance while the existing subscriber converges retained content.
     [<Test>]
@@ -177,13 +175,13 @@ type ManifestContributionAccountingAspireTests() =
                     Constants.DefaultTimestamp
 
             do!
-                waitForExactRelationshipAsync
+                AspireTestHost.waitForExactRelationshipAsync
                     state
                     (ExactRelationship.ReferenceRoot
                         { RepositoryId = Guid.Parse repositoryId; RootDirectoryVersionId = root.DirectoryVersionId; ReferenceId = referenceId })
 
             do!
-                waitForExactRelationshipAsync
+                AspireTestHost.waitForExactRelationshipAsync
                     state
                     (ExactRelationship.DirectoryVersionManifest
                         {
@@ -231,14 +229,11 @@ type ManifestContributionAccountingAspireTests() =
             Assert.That(validationResult.ValidationName, Is.EqualTo("quick-scan"))
             Assert.That(validationResult.ValidationVersion, Is.EqualTo("1.0"))
 
-            let! counterEventStreams =
-                ManifestContributionAccountingAspireTestHelpers.readActorEventStreamsAsync<RepositoryContentCounterEvent> state "RepoContentCounter"
+            let! counterSnapshots =
+                ManifestContributionAccountingAspireTestHelpers.readActorSnapshotsAsync<RepositoryContentCounterDto> state "RepoContentCounter"
 
             let counter =
-                counterEventStreams
-                |> Seq.map (fun counterEvents ->
-                    counterEvents
-                    |> Seq.fold (fun current counterEvent -> RepositoryContentCounterDto.UpdateDto counterEvent current) RepositoryContentCounterDto.Default)
+                counterSnapshots
                 |> Seq.tryFind (fun candidate ->
                     candidate.RepositoryId = Guid.Parse(repositoryId)
                     && candidate.StoragePoolId = manifest.StoragePoolId
@@ -267,12 +262,13 @@ type ManifestContributionAccountingAspireTests() =
                 |> Option.defaultWith (fun () -> failwith "ContentBlock metadata was not retained.")
 
             Assert.That(retainedMetadata.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(retainedMetadata.Ranges, Is.Not.Empty, "The retained ContentBlock must contain authoritative physical ranges.")
 
             Assert.That(
                 retainedMetadata.Ranges
-                |> Array.exists (fun range -> range.ActiveManifestCount = 1),
+                |> Array.forall (fun range -> range.ActiveManifestCount = 1),
                 Is.True,
-                "The retained ContentBlock range must be active for the first manifest contribution."
+                "Every retained ContentBlock physical range must be active exactly once for the first repository manifest contribution."
             )
 
             let! subscription = AspireTestHost.describeGraceServerSubscriptionAsync state

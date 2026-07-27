@@ -61,7 +61,7 @@ Open `http://localhost:18888` and confirm the following resources show
 `Running`:
 
 - `azurite` – Azure Storage emulator (blob/queue/table) on ports `10000-10002`
-- `redis` – Redis cache on port `6379`
+- `redis` – Redis 8.6.3 recent-result cache on port `6379`
 - `cosmos` – Cosmos DB emulator on port `8081`
 - `servicebus-sql` – SQL Server container required by the Service Bus emulator
   and used locally for the `GraceOperations` SQL database
@@ -73,9 +73,19 @@ Open `http://localhost:18888` and confirm the following resources show
   subscription
 
 Redis is provisioned by AppHost and its host/port are forwarded to
-`Grace.Server`. Current startup code does not enable Redis-backed SignalR, so
-Redis remains an explicit AppHost dependency pending a follow-up runtime
-decision rather than a prerequisite proven by the integration tests.
+`Grace.Server`. Repository manifest accounting uses direct Redis `GET` and
+`SET` calls only to accelerate recently completed counter operations. Results
+expire after exactly ten minutes. Redis is not a membership ledger or source
+of truth: missing, expired, malformed, or unavailable results are cache misses,
+never a zero count. Additions can continue under cache loss because extra
+retention is safe; removals pause or withhold their decrement workflow until
+Redis confirms the bounded completed result. The client connects lazily, uses
+native reconnect, and bounds each connection and command wait without an outer
+Polly policy.
+
+Repository manifest counters persist only `Count`, `Revision`, and the latest
+completed change. Manifest contribution workflows overwrite their bounded
+current range progress instead of retaining lifetime event histories.
 
 The local operations worker creates the `ops` SQL schema and usage fact tables
 inside a `GraceOperations` database on the local SQL Server container before it

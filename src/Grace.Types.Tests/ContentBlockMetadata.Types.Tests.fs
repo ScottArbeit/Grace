@@ -65,6 +65,7 @@ type ContentBlockMetadataTypesTests() =
                     "MergePhysicalRanges", 1u
                     "CompactPhysicalRanges", 2u
                     "SetCompactionChurnState", 3u
+                    "AdjustActiveManifestCount", 4u
                 |]
             )
         )

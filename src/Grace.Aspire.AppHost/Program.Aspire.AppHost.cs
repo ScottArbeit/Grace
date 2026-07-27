@@ -82,7 +82,7 @@ public partial class Program
 
             // Redis: keep local container for both run modes (Local + Azure debug), and even in publish mode if you like.
             var redisContainerName = runSuffix is null ? "redis" : $"redis-{runSuffix}";
-            var redis = builder.AddContainer("redis", "redis", "latest")
+            var redis = builder.AddContainer("redis", "redis", "8.6.3")
                 .WithContainerName(redisContainerName)
                 //.WithLifetime(ContainerLifetime.Session)
                 .WithEnvironment("ACCEPT_EULA", "Y")

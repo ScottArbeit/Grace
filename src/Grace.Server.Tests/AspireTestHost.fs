@@ -22,6 +22,7 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open Grace.Types
+open Grace.Types.ManifestContributionAccounting
 open Grace.Shared.Utilities
 
 /// Captures test host state values used by the test suite.
@@ -48,6 +49,7 @@ module AspireTestHost =
     let private graceServerResourceName = "grace-server"
     let private operationsWorkerResourceName = "grace-operations-worker"
     let private azuriteResourceName = "azurite"
+    let private redisResourceName = "redis"
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
     let mutable private sharedBootstrapUserId: string option = None
@@ -1100,6 +1102,12 @@ module AspireTestHost =
                 do! waitForResourceHealthyAsync notificationService app azuriteResourceName cts.Token
             | None -> Console.WriteLine("Azurite resource not found in model.")
 
+            match tryFindResourceByName app redisResourceName with
+            | Some _ ->
+                Console.WriteLine($"Redis resource detected: {redisResourceName}")
+                do! waitForResourceHealthyAsync notificationService app redisResourceName cts.Token
+            | None -> Console.WriteLine("Redis resource not found in model.")
+
             let serviceBusSqlResourceName = getServiceBusSqlResourceName ()
             let serviceBusEmulatorResourceName = getServiceBusEmulatorResourceName ()
 
@@ -1692,6 +1700,14 @@ module AspireTestHost =
     /// Returns current Grace.Server resource logs for focused Aspire failure diagnostics.
     let getGraceServerLogsAsync (state: TestHostState) = getResourceLogsAsync state.App graceServerResourceName
 
+    /// Returns the Redis endpoint published by the running Aspire application model.
+    let getRedisEndpoint (state: TestHostState) =
+        let endpointName =
+            tryGetEndpointNameForTargetPort state.App redisResourceName 6379
+            |> Option.defaultWith (fun () -> getEndpointName state.App redisResourceName)
+
+        state.App.GetEndpoint(redisResourceName, endpointName)
+
     /// Returns the latest Grace.Server file-log tail for focused Aspire failure diagnostics.
     let getGraceServerFileLogAsync (state: TestHostState) =
         task {
@@ -1737,4 +1753,35 @@ module AspireTestHost =
                 |> String.concat Environment.NewLine
 
             return $"Active:{Environment.NewLine}{describe active}{Environment.NewLine}DeadLetter:{Environment.NewLine}{describe deadLetter}"
+        }
+
+    /// Waits until manifest contribution accounting records one canonical exact relationship.
+    let waitForExactRelationshipAsync (state: TestHostState) relationship =
+        task {
+            let key =
+                match ExactRelationshipKey.create relationship with
+                | Ok key -> key
+                | Error error -> failwith error
+
+            use client = createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
+            let mutable found = false
+
+            while not found && DateTime.UtcNow < timeoutAt do
+                try
+                    let! _ = container.ReadItemAsync<JsonElement>(key.ItemId, PartitionKey key.PartitionKey, cancellationToken = CancellationToken.None)
+
+                    found <- true
+                with
+                | :? CosmosException as ex when ex.StatusCode = System.Net.HttpStatusCode.NotFound -> do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
+
+            if not found then
+                let! logs = getGraceServerLogsAsync state
+                let! fileLog = getGraceServerFileLogAsync state
+                let! subscription = describeGraceServerSubscriptionAsync state
+
+                Assert.Fail(
+                    $"Timed out waiting for exact relationship {key.PartitionKey}/{key.ItemId}.{Environment.NewLine}Grace.Server logs:{Environment.NewLine}{logs}{Environment.NewLine}Grace.Server file log:{Environment.NewLine}{fileLog}{Environment.NewLine}{subscription}"
+                )
         }
