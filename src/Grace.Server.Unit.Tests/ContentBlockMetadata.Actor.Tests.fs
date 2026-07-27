@@ -14,6 +14,8 @@ module ContentBlockMetadataActor = Grace.Actors.ContentBlockMetadata
 
 module ContentBlockMetadataTypes = Grace.Types.ContentBlockMetadata
 
+module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
+
 /// Covers content Block Metadata Actor behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ContentBlockMetadataActorTests() =
@@ -230,6 +232,67 @@ type ContentBlockMetadataActorTests() =
 
         Assert.That(decrement.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
         Assert.That(decrement.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(1))
+
+    /// Verifies a later add after removal and Redis loss remains distinct and reactivates every physical range once.
+    [<Test>]
+    member _.CounterRevisionReactivatesEveryRangeAfterRemovalAndRedisLoss() =
+        let firstRange = { activeRange with ActiveManifestCount = 0 }
+        let secondRange = { reclaimableRange with ActiveManifestCount = 0 }
+
+        let currentMetadata =
+            recordWithTotals
+                [| firstRange; secondRange |]
+                (firstRange.PhysicalLength
+                 + secondRange.PhysicalLength)
+                0L
+                timestamp
+                7L
+
+        let current = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let workflowOperationId = "stable-workflow"
+        let addV1OperationId = ManifestContributionWorkflowActor.contentBlockOperationId workflowOperationId 1L 0
+        let removeV2OperationId = ManifestContributionWorkflowActor.contentBlockOperationId workflowOperationId 2L 0
+        let addV3OperationId = ManifestContributionWorkflowActor.contentBlockOperationId workflowOperationId 3L 0
+
+        let addV1 =
+            ContentBlockMetadataActor.decideCommand [] current (adjust addV1OperationId 7L 1) (metadata "corr-add-v1")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-1 add to succeed, got {error.Error}.")
+
+        let afterAddV1 = applyAll addV1.Events current
+
+        let removeV2 =
+            ContentBlockMetadataActor.decideCommand addV1.Events afterAddV1 (adjust removeV2OperationId 8L -1) (metadata "corr-remove-v2")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-2 removal to succeed, got {error.Error}.")
+
+        let throughRemovalEvents = addV1.Events @ removeV2.Events
+        let afterRemoveV2 = applyAll removeV2.Events afterAddV1
+
+        let addV3AfterRedisLoss =
+            ContentBlockMetadataActor.decideCommand throughRemovalEvents afterRemoveV2 (adjust addV3OperationId 9L 1) (metadata "corr-add-v3")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-3 add after Redis loss to succeed, got {error.Error}.")
+
+        Assert.That(addV3AfterRedisLoss.WasIdempotentReplay, Is.False)
+
+        Assert.That(
+            addV3AfterRedisLoss.Metadata.Ranges
+            |> Array.forall (fun range -> range.ActiveManifestCount = 1),
+            Is.True
+        )
+
+        let allEvents = throughRemovalEvents @ addV3AfterRedisLoss.Events
+        let afterAddV3 = applyAll addV3AfterRedisLoss.Events afterRemoveV2
+
+        let replayedAddV3 =
+            ContentBlockMetadataActor.decideCommand allEvents afterAddV3 (adjust addV3OperationId 10L 1) (metadata "corr-add-v3-replay")
+            |> Result.defaultWith (fun error -> failwith $"Expected revision-3 replay to succeed, got {error.Error}.")
+
+        Assert.That(replayedAddV3.WasIdempotentReplay, Is.True)
+
+        Assert.That(
+            replayedAddV3.Metadata.Ranges
+            |> Array.forall (fun range -> range.ActiveManifestCount = 1),
+            Is.True
+        )
 
     /// Verifies decrement deltas fail closed instead of making a reclaimable range negative.
     [<Test>]

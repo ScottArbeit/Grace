@@ -22,6 +22,10 @@ module ManifestContributionWorkflow =
     let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
+    /// Builds the deterministic downstream ContentBlock operation id for one workflow range.
+    let contentBlockOperationId (startOperationId: ManifestContributionWorkflowOperationId) (counterRevision: int64) (rangeIndex: int) =
+        $"{startOperationId}:revision:{counterRevision}:range:{rangeIndex}:active-count"
+
     /// Maps a ManifestContributionWorkflow command case to the operation name used in idempotency and diagnostics.
     let commandName command =
         match command with
@@ -417,8 +421,6 @@ module ManifestContributionWorkflow =
             let grainFactory = this.GrainFactory
 
             task {
-                let operationPrefix = $"{startOperationId}:range:{rangeIndex}"
-
                 let contentBlockActor =
                     grainFactory.GetGrain<IContentBlockMetadataActor>(ContentBlockMetadataActorKey.Create range.StoragePoolId range.ContentBlockAddress)
 
@@ -437,7 +439,7 @@ module ManifestContributionWorkflow =
 
                     let adjust =
                         {
-                            OperationId = $"{operationPrefix}:active-count"
+                            OperationId = contentBlockOperationId startOperationId workflow.CounterRevision rangeIndex
                             ExpectedMetadataVersion = currentMetadata.MetadataVersion
                             StoragePoolId = range.StoragePoolId
                             ContentBlockAddress = range.ContentBlockAddress
@@ -450,7 +452,7 @@ module ManifestContributionWorkflow =
                         match! (this :> IManifestContributionWorkflowActor)
                                    .Handle
                                    (ManifestContributionWorkflowCommand.RecordRangeSucceeded(
-                                       $"{operationPrefix}:completed",
+                                       $"{startOperationId}:revision:{workflow.CounterRevision}:range:{rangeIndex}:completed",
                                        workflow.RepositoryId,
                                        workflow.StoragePoolId,
                                        workflow.ManifestAddress,

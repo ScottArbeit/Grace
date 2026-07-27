@@ -16,6 +16,34 @@ open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
 
+/// Captures Redis boundary failures in the NUnit witness without changing nonthrowing production behavior.
+type private RedisWitnessLogger() =
+    let entries = ResizeArray<string>()
+
+    let emptyScope =
+        { new IDisposable with
+            member _.Dispose() = ()
+        }
+
+    /// Returns the structured messages captured from Redis boundary calls.
+    member _.Entries = entries |> Seq.toArray
+
+    interface ILogger with
+        member _.IsEnabled _ = true
+        member _.BeginScope<'TState>(_state: 'TState) = emptyScope
+
+        member _.Log<'TState>(level: LogLevel, eventId: EventId, state: 'TState, error: exn, formatter: Func<'TState, exn, string>) =
+            let message = formatter.Invoke(state, error)
+
+            let entry =
+                if isNull error then
+                    $"{level} {eventId.Id}: {message}"
+                else
+                    $"{level} {eventId.Id}: {message}{Environment.NewLine}{error}"
+
+            entries.Add entry
+            TestContext.Progress.WriteLine entry
+
 /// Proves the bounded Redis accelerator against the Redis version and lifecycle supplied by Grace Aspire.
 [<NonParallelizable>]
 type RepositoryCounterRecentResultIntegrationTests() =
@@ -29,25 +57,27 @@ type RepositoryCounterRecentResultIntegrationTests() =
             let storagePoolId = StoragePoolId "integration"
             let manifestAddress = ManifestAddress(String.replicate 64 "a")
             let operationId = RepositoryContentCounterOperationId $"redis-witness:{Guid.NewGuid():N}"
+            let redisEndpoint = AspireTestHost.getRedisEndpoint state
 
             let change =
                 { OperationId = operationId; Operation = RepositoryContentCounterChangeOperation.Added; PreviousCount = 0L; CurrentCount = 1L; Revision = 1L }
 
-            let redisLog =
-                state
-                    .App
-                    .Services
-                    .GetRequiredService<ILoggerFactory>()
-                    .CreateLogger("RepositoryCounterRecentResult.Integration")
+            let redisLog = RedisWitnessLogger()
 
-            use redisRecentResult = new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult("127.0.0.1", 6379, redisLog)
+            use redisRecentResult = new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisEndpoint.Host, redisEndpoint.Port, redisLog)
+
             let recentResult = redisRecentResult :> IRepositoryCounterRecentResult
 
             let! stored = recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, change, CancellationToken.None)
 
-            Assert.That(stored, Is.True, "The Aspire Redis instance must accept the recent result.")
+            Assert.That(
+                stored,
+                Is.True,
+                $"The Aspire Redis instance at {redisEndpoint} must accept the recent result.{Environment.NewLine}{String.Join(Environment.NewLine, redisLog.Entries)}"
+            )
 
-            let! rawConnection = ConnectionMultiplexer.ConnectAsync("127.0.0.1:6379,abortConnect=false")
+            let rawConfiguration = RepositoryCounterRecentResult.configurationForEndpoint redisEndpoint.Host redisEndpoint.Port
+            let! rawConnection = ConnectionMultiplexer.ConnectAsync(rawConfiguration)
             use rawConnection = rawConnection
             let database = rawConnection.GetDatabase()
             let redisKey = RepositoryCounterRecentResult.key repositoryId storagePoolId manifestAddress operationId

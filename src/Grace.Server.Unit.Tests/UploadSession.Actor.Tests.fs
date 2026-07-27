@@ -918,7 +918,7 @@ type UploadSessionActorTests() =
                 Assert.That(merge.Ranges, Has.Length.EqualTo(1))
                 Assert.That(merge.Ranges[0].OrdinalStart, Is.EqualTo(0))
                 Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(1))
-                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.Zero)
                 Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
                 Assert.That(merge.RequireMissingMetadata, Is.False)
                 Assert.That(merge.ExpectedRanges, Is.Empty)
@@ -986,7 +986,7 @@ type UploadSessionActorTests() =
             Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(metadataRange.OrdinalCount))
             Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(metadataRange.PhysicalOffset))
             Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(metadataRange.PhysicalLength))
-            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.Zero)
             Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
             Assert.That(merge.RequireMissingMetadata, Is.False)
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| metadataRange |]))
@@ -1005,7 +1005,7 @@ type UploadSessionActorTests() =
             Assert.That(
                 mergeDecision.Metadata.Ranges[0]
                     .ActiveManifestCount,
-                Is.EqualTo(3)
+                Is.EqualTo(metadataRange.ActiveManifestCount)
             )
         | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
@@ -1079,7 +1079,7 @@ type UploadSessionActorTests() =
 
             Assert.That(subwindowContribution.PhysicalOffset, Is.EqualTo(subwindowClaim.PhysicalOffset))
             Assert.That(subwindowContribution.PhysicalLength, Is.EqualTo(subwindowClaim.PhysicalLength))
-            Assert.That(subwindowContribution.ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(subwindowContribution.ActiveManifestCount, Is.Zero)
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| coveringRange; coveringRange |]))
 
             let mergeDecision =
@@ -1098,7 +1098,7 @@ type UploadSessionActorTests() =
 
             Assert.That(subwindowRange.PhysicalOffset, Is.EqualTo(subwindowClaim.PhysicalOffset))
             Assert.That(subwindowRange.PhysicalLength, Is.EqualTo(subwindowClaim.PhysicalLength))
-            Assert.That(subwindowRange.ActiveManifestCount, Is.EqualTo(coveringRange.ActiveManifestCount + 1))
+            Assert.That(subwindowRange.ActiveManifestCount, Is.EqualTo(coveringRange.ActiveManifestCount))
         | _ -> Assert.Fail("Expected claimed reuse subwindow finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     /// Verifies that finalize Manifest Accepts Claimed Reuse Range Cover For Multi Chunk Block.
@@ -1188,7 +1188,7 @@ type UploadSessionActorTests() =
             Assert.That(
                 merge.Ranges
                 |> Array.map (fun range -> range.ActiveManifestCount),
-                Is.All.EqualTo(1)
+                Is.All.Zero
             )
 
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| firstRange; secondRange |]))
@@ -1486,7 +1486,7 @@ type UploadSessionActorTests() =
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
                 Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
                 Assert.That(merge.StoragePlacement.ObjectKey, Is.EqualTo(StorageKeys.contentBlockObjectKey block.Address))
-                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.Zero)
                 Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
                 Assert.That(merge.RequireMissingMetadata, Is.False)
                 Assert.That(merge.ExpectedRanges, Is.Empty)
@@ -1561,7 +1561,7 @@ type UploadSessionActorTests() =
                 Assert.That(merge.StoragePlacement, Is.EqualTo(freshMetadata.StoragePlacement))
                 Assert.That(merge.Ranges, Has.Length.EqualTo(1))
                 Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(int64 fileBytes.Length))
-                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.Zero)
                 Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
                 Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| freshRange |]))
                 Assert.That(merge.IsFinalizeContribution, Is.True)
@@ -1634,7 +1634,7 @@ type UploadSessionActorTests() =
                 Assert.That(merge.Ranges, Has.Length.EqualTo(1))
                 Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(activeCurrentRange.PhysicalOffset))
                 Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(activeCurrentRange.PhysicalLength))
-                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.Zero)
                 Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| activeCurrentRange |]))
                 Assert.That(merge.IsFinalizeContribution, Is.True)
             | _ -> Assert.Fail("Expected the matching active exact claimed range to provide the metadata merge command.")
@@ -1891,7 +1891,7 @@ type UploadSessionActorTests() =
 
         let secondDecision =
             ContentBlockMetadataActor.decideCommand firstDecision.Events currentMetadataDto revalidatedSecondCommand (metadata "corr-metadata-second")
-            |> decisionOrFail "Expected second metadata merge to be a distinct contribution"
+            |> decisionOrFail "Expected second metadata merge to remain a distinct upload-session operation"
 
         Assert.That(secondDecision.WasIdempotentReplay, Is.False)
         Assert.That(secondDecision.Metadata.Ranges, Has.Length.EqualTo(1))
@@ -1899,7 +1899,7 @@ type UploadSessionActorTests() =
         Assert.That(
             secondDecision.Metadata.Ranges[0]
                 .ActiveManifestCount,
-            Is.EqualTo(2)
+            Is.Zero
         )
 
     /// Verifies that finalize Metadata Merge Operation Ids Include Repository Scope For Shared Pool Sessions.
@@ -2034,7 +2034,7 @@ type UploadSessionActorTests() =
             |> decisionOrFail "Expected first metadata merge to succeed"
 
         Assert.That(firstResult.Metadata.Ranges, Has.Length.EqualTo(1))
-        Assert.That(firstResult.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(firstResult.Metadata.Ranges[0].ActiveManifestCount, Is.Zero)
 
         let finalizedSession =
             apply { Event = UploadSessionEventType.Finalized("op-finalize", manifest.ManifestAddress); Metadata = metadata "corr-finalized" } session
@@ -2053,7 +2053,7 @@ type UploadSessionActorTests() =
         match advancedSecondResult with
         | Ok decision ->
             Assert.That(decision.WasIdempotentReplay, Is.False)
-            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.Zero)
         | Error error -> Assert.Fail($"Expected versionless finalized merge to tolerate advanced metadata, got {error.Error}.")
 
         let firstMetadataDto =
@@ -2070,7 +2070,7 @@ type UploadSessionActorTests() =
 
         Assert.That(firstRetry.WasIdempotentReplay, Is.True)
         Assert.That(firstRetry.Events, Is.Empty)
-        Assert.That(firstRetry.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(firstRetry.Metadata.Ranges[0].ActiveManifestCount, Is.Zero)
 
         let secondRetryMerge = UploadSessionActor.withFinalizeMergePrecondition (mergeAt 1)
 
@@ -2084,19 +2084,19 @@ type UploadSessionActorTests() =
 
         Assert.That(secondRetry.WasIdempotentReplay, Is.False)
         Assert.That(secondRetry.Metadata.Ranges, Has.Length.EqualTo(1))
-        Assert.That(secondRetry.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(secondRetry.Metadata.Ranges[0].ActiveManifestCount, Is.Zero)
 
-    /// Verifies that finalized Manifest Ranges Emit Single Reference Contribution Delta.
+    /// Verifies finalized physical ranges remain reclaimable until a repository contributes the manifest.
     [<Test>]
-    member _.FinalizedManifestRangesEmitSingleReferenceContributionDelta() =
+    member _.FinalizedManifestRangesDoNotPreemptRepositoryContribution() =
         let ranges =
             [|
                 { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = 11L }
             |]
 
-        let activeRanges = UploadSessionActor.finalizedManifestContributionRanges ranges
+        let finalizedRanges = UploadSessionActor.finalizedManifestPhysicalRanges ranges
 
-        Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(finalizedRanges[0].ActiveManifestCount, Is.Zero)
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     /// Verifies that finalize Manifest Replay Repairs Metadata Before Dedupe Registration.
@@ -2376,7 +2376,7 @@ type UploadSessionActorTests() =
         Assert.That(rebasedMerge.Ranges[0].OrdinalCount, Is.EqualTo(activeCurrentRange.OrdinalCount))
         Assert.That(rebasedMerge.Ranges[0].PhysicalOffset, Is.EqualTo(activeCurrentRange.PhysicalOffset))
         Assert.That(rebasedMerge.Ranges[0].PhysicalLength, Is.EqualTo(activeCurrentRange.PhysicalLength))
-        Assert.That(rebasedMerge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(rebasedMerge.Ranges[0].ActiveManifestCount, Is.Zero)
 
         Assert.That(
             rebasedMerge.Ranges
@@ -2450,7 +2450,7 @@ type UploadSessionActorTests() =
         | Ok (Some (ContentBlockMetadataCommand.MergePhysicalRanges merge)) ->
             Assert.That(merge.Ranges, Has.Length.EqualTo(1))
             Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(activeRelocatedRange.PhysicalOffset))
-            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.Zero)
             Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| activeRelocatedRange |]))
         | Ok _ -> Assert.Fail("Expected active relocated metadata to produce a claimed merge command.")

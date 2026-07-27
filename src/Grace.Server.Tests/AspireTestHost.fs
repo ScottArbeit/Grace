@@ -1699,6 +1699,14 @@ module AspireTestHost =
     /// Returns current Grace.Server resource logs for focused Aspire failure diagnostics.
     let getGraceServerLogsAsync (state: TestHostState) = getResourceLogsAsync state.App graceServerResourceName
 
+    /// Returns the Redis endpoint published by the running Aspire application model.
+    let getRedisEndpoint (state: TestHostState) =
+        let endpointName =
+            tryGetEndpointNameForTargetPort state.App redisResourceName 6379
+            |> Option.defaultWith (fun () -> getEndpointName state.App redisResourceName)
+
+        state.App.GetEndpoint(redisResourceName, endpointName)
+
     /// Returns the latest Grace.Server file-log tail for focused Aspire failure diagnostics.
     let getGraceServerFileLogAsync (state: TestHostState) =
         task {

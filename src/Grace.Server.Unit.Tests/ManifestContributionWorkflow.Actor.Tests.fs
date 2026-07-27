@@ -71,6 +71,17 @@ type ManifestContributionWorkflowActorTests() =
             Assert.Fail($"Expected command to succeed, got {error.Error}.")
             Unchecked.defaultof<ManifestContributionWorkflowDecision>
 
+    /// Verifies add/remove/add cycles cannot reuse the original downstream ContentBlock operation identity.
+    [<Test>]
+    member _.CounterRevisionDistinguishesDownstreamContentBlockOperationIdentity() =
+        let originalAdd = ManifestContributionWorkflowActor.contentBlockOperationId "workflow-cycle" 1L 0
+        let removal = ManifestContributionWorkflowActor.contentBlockOperationId "workflow-cycle" 2L 0
+        let laterAddAfterRedisLoss = ManifestContributionWorkflowActor.contentBlockOperationId "workflow-cycle" 3L 0
+
+        Assert.That(removal, Is.Not.EqualTo(originalAdd))
+        Assert.That(laterAddAfterRedisLoss, Is.Not.EqualTo(originalAdd))
+        Assert.That(laterAddAfterRedisLoss, Is.Not.EqualTo(removal))
+
     /// Verifies a completed cycle is overwritten by the next bounded workflow snapshot.
     [<Test>]
     member _.NextCycleOverwritesPriorRangeProgress() =

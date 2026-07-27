@@ -294,12 +294,13 @@ type ManifestContributionAccountingAspireTests() =
                 |> Option.defaultWith (fun () -> failwith "ContentBlock metadata was not retained.")
 
             Assert.That(retainedMetadata.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(retainedMetadata.Ranges, Is.Not.Empty, "The retained ContentBlock must contain authoritative physical ranges.")
 
             Assert.That(
                 retainedMetadata.Ranges
-                |> Array.exists (fun range -> range.ActiveManifestCount = 1),
+                |> Array.forall (fun range -> range.ActiveManifestCount = 1),
                 Is.True,
-                "The retained ContentBlock range must be active for the first manifest contribution."
+                "Every retained ContentBlock physical range must be active exactly once for the first repository manifest contribution."
             )
 
             let! subscription = AspireTestHost.describeGraceServerSubscriptionAsync state

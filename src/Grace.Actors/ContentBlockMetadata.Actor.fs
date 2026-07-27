@@ -257,10 +257,9 @@ module ContentBlockMetadata =
             existing.ActiveManifestCount = 0
             && range.ActiveManifestCount > 0
 
-        /// Folds a finalize contribution into an already covering metadata range when the bytes match.
+        /// Folds finalized physical-range evidence into an already covering metadata range without changing its active count.
         let tryMergeFinalizeContributionIntoCoveringRange (range: ContentBlockMetadataRange) =
-            if not isFinalizeContribution
-               || range.ActiveManifestCount <= 0 then
+            if not isFinalizeContribution then
                 false
             else
                 /// Calculates the exclusive logical ordinal end for a metadata range.
