@@ -79,6 +79,7 @@ When acting as the main implementation orchestrator, follow the repo policy:
 
 - Delegate coding and fixing tasks to worker subagents when the available tools and user authorization allow
   delegation.
+- When spawning a subagent, always set `fork_turns` to `"none"` unless the assigned task specifically requires parent conversation history. Pass all required context explicitly in the subagent's task message.
 - Do not replace the worker by locally implementing or validating code fixes from the orchestrator role.
 - Include a status-reporting protocol in worker prompts. Ask the worker to maintain a temp status file outside the repo,
   for example `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with `phase`, `lastUpdate`, `changedFiles`,
