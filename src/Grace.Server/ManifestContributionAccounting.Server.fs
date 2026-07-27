@@ -169,7 +169,7 @@ module ManifestContributionAccounting =
             |> Seq.toArray
         | Error graceError -> invalidOp graceError.Error
 
-    /// Reconciles one Reference Created event from fresh ReferenceActor and DirectoryVersionActor state.
+    /// Reconciles one Reference Created event from fresh actor state before converging its independent lifecycle effect.
     let handleReferenceCreatedWith (dependencies: ManifestContributionAccountingDependencies) cancellationToken (referenceEvent: ReferenceEvent) =
         task {
             match referenceEvent.Event with
@@ -193,13 +193,6 @@ module ManifestContributionAccounting =
                     match! dependencies.ExactRelationships.VerifyAsync(referenceRoot, cancellationToken) with
                     | ExactRelationshipPresence.Present -> ()
                     | ExactRelationshipPresence.Absent ->
-                        do!
-                            dependencies.EnsureAutomaticPhysicalDeletionReminder
-                                currentReference.RepositoryId
-                                currentReference.ReferenceId
-                                correlationId
-                                cancellationToken
-
                         let! _ = dependencies.ExactRelationships.EnsurePresentAsync(referenceRoot, cancellationToken)
                         ()
 
@@ -230,6 +223,13 @@ module ManifestContributionAccounting =
                                 }
 
                             do! dependencies.EnsureDirectoryVersionManifest relationship manifest referenceEvent.Metadata cancellationToken
+
+                    do!
+                        dependencies.EnsureAutomaticPhysicalDeletionReminder
+                            currentReference.RepositoryId
+                            currentReference.ReferenceId
+                            correlationId
+                            cancellationToken
             | _ -> ()
         }
         :> Task

@@ -207,7 +207,7 @@ type ManifestContributionAccountingServerTests() =
                 do! handleReferenceCreatedWith dependencies CancellationToken.None delivery
                 do! handleReferenceCreatedWith dependencies CancellationToken.None delivery
 
-                Assert.That(lifecycleCount, Is.EqualTo(1), $"Expected {referenceType} lifecycle preparation to converge.")
+                Assert.That(lifecycleCount, Is.EqualTo(2), $"Expected {referenceType} lifecycle convergence on each idempotent delivery.")
                 Assert.That(contributionCount, Is.EqualTo(1), $"Expected {referenceType} contribution work to converge.")
                 Assert.That(storedRelationships.Count, Is.EqualTo(2), $"Expected {referenceType} to retain one root and one manifest relationship.")
         }
@@ -258,7 +258,7 @@ type ManifestContributionAccountingServerTests() =
             Assert.That(referenceReads, Is.EqualTo(1))
             Assert.That(directoryReads, Is.EqualTo(2), "The current root is read to discover candidates and reread immediately before the manifest mutation.")
             Assert.That(exactWrites.Count, Is.EqualTo(1))
-            Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "lifecycle"; "exact-root" |]))
+            Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "exact-root"; "lifecycle" |]))
 
             match exactWrites[0] with
             | ExactRelationship.ReferenceRoot relationship ->
@@ -272,9 +272,73 @@ type ManifestContributionAccountingServerTests() =
             Assert.That(manifestWrites[0].ManifestAddress, Is.EqualTo(manifestAddress))
         }
 
-    /// Verifies a failed lifecycle effect leaves the Reference-root exact item absent so a retry cannot skip repair.
+    /// Verifies a pending Save lifecycle write cannot delay Reference-wide manifest accounting.
     [<Test>]
-    member _.ReferenceLifecycleFailurePreventsExactRootWrite() =
+    member _.PendingReferenceLifecycleDoesNotBlockManifestAccounting() =
+        task {
+            let exactWrites = ResizeArray<ExactRelationship>()
+            let manifestWrites = ResizeArray<DirectoryVersionManifestRelationship>()
+            let effectOrder = ResizeArray<string>()
+            let lifecycleStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let releaseLifecycle = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let dependencies: ManifestContributionAccountingDependencies =
+                {
+                    GetReference =
+                        fun _ _ _ ->
+                            Task.FromResult
+                                { ReferenceDto.Default with
+                                    ReferenceId = referenceId
+                                    RepositoryId = repositoryId
+                                    DirectoryId = currentDirectoryVersionId
+                                    ReferenceType = ReferenceType.Save
+                                    UpdatedAt = Some(getCurrentInstant ())
+                                }
+                    GetDirectoryVersion = fun _ _ _ -> Task.FromResult(currentDirectoryVersionDto ())
+                    ExactRelationships = recordingStore exactWrites effectOrder
+                    EnsureAutomaticPhysicalDeletionReminder =
+                        fun _ _ _ _ ->
+                            task {
+                                effectOrder.Add("lifecycle")
+                                lifecycleStarted.SetResult()
+                                do! releaseLifecycle.Task
+                            }
+                            :> Task
+                    EnsureDirectoryVersionManifest =
+                        fun relationship _ _ _ ->
+                            effectOrder.Add("manifest")
+                            manifestWrites.Add(relationship)
+                            Task.CompletedTask
+                }
+
+            let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Save)
+            do! lifecycleStarted.Task.WaitAsync(TimeSpan.FromSeconds(1.0))
+
+            let exactWritesBeforeLifecycleCompleted = exactWrites.Count
+            let manifestWritesBeforeLifecycleCompleted = manifestWrites.Count
+            let effectOrderBeforeLifecycleCompleted = effectOrder |> Seq.toArray
+
+            releaseLifecycle.SetResult()
+            do! operation
+
+            Assert.That(exactWritesBeforeLifecycleCompleted, Is.EqualTo(1))
+            Assert.That(manifestWritesBeforeLifecycleCompleted, Is.EqualTo(1))
+
+            Assert.That(
+                effectOrderBeforeLifecycleCompleted,
+                Is.EqualTo<string array>(
+                    [|
+                        "exact-root"
+                        "manifest"
+                        "lifecycle"
+                    |]
+                )
+            )
+        }
+
+    /// Verifies a failed lifecycle effect does not roll back already-converged Reference accounting.
+    [<Test>]
+    member _.ReferenceLifecycleFailurePreservesExactRootWrite() =
         task {
             let exactWrites = ResizeArray<ExactRelationship>()
             let effectOrder = ResizeArray<string>()
@@ -297,19 +361,32 @@ type ManifestContributionAccountingServerTests() =
                         fun _ _ _ _ ->
                             effectOrder.Add("lifecycle")
                             Task.FromException(InvalidOperationException("reminder scheduling failed"))
-                    EnsureDirectoryVersionManifest = fun _ _ _ _ -> Task.CompletedTask
+                    EnsureDirectoryVersionManifest =
+                        fun _ _ _ _ ->
+                            effectOrder.Add("manifest")
+                            Task.CompletedTask
                 }
 
             let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Commit)
             let _ = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
 
-            Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "lifecycle" |]))
-            Assert.That(exactWrites, Is.Empty)
+            Assert.That(
+                effectOrder |> Seq.toArray,
+                Is.EqualTo<string array>(
+                    [|
+                        "exact-root"
+                        "manifest"
+                        "lifecycle"
+                    |]
+                )
+            )
+
+            Assert.That(exactWrites.Count, Is.EqualTo(1))
         }
 
-    /// Verifies a conflicting stable reminder target fails delivery before the exact Reference root is recorded.
+    /// Verifies a conflicting stable reminder target fails delivery after independent Reference accounting converges.
     [<Test>]
-    member _.ReferenceLifecycleConflictPreventsExactRootWrite() =
+    member _.ReferenceLifecycleConflictPreservesExactRootWrite() =
         task {
             let exactWrites = ResizeArray<ExactRelationship>()
             let effectOrder = ResizeArray<string>()
@@ -332,15 +409,29 @@ type ManifestContributionAccountingServerTests() =
                         fun _ _ _ _ ->
                             effectOrder.Add("lifecycle-conflict")
                             Task.FromException(InvalidOperationException("stable reminder targets different Reference data"))
-                    EnsureDirectoryVersionManifest = fun _ _ _ _ -> Task.CompletedTask
+                    EnsureDirectoryVersionManifest =
+                        fun _ _ _ _ ->
+                            effectOrder.Add("manifest")
+                            Task.CompletedTask
                 }
 
             let operation = handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Checkpoint)
             let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> operation))
 
             Assert.That(error.Message, Does.Contain("different Reference data"))
-            Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "lifecycle-conflict" |]))
-            Assert.That(exactWrites, Is.Empty)
+
+            Assert.That(
+                effectOrder |> Seq.toArray,
+                Is.EqualTo<string array>(
+                    [|
+                        "exact-root"
+                        "manifest"
+                        "lifecycle-conflict"
+                    |]
+                )
+            )
+
+            Assert.That(exactWrites.Count, Is.EqualTo(1))
         }
 
     /// Verifies response loss after stable lifecycle persistence retries once and records one Reference root.
