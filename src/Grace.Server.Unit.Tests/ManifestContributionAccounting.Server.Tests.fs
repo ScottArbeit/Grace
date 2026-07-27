@@ -293,21 +293,28 @@ type ManifestContributionAccountingServerTests() =
             Assert.That(manifestWrites[0].ManifestAddress, Is.EqualTo(manifestAddress))
         }
 
-    /// Verifies a Reference retains manifests through exact parent-child edges without attributing them to the root.
+    /// Verifies a diamond DAG retains one shared manifest after traversing each newly retained parent.
     [<Test>]
-    member _.ReferenceCreatedTraversesNestedDirectoryVersionsAndAttributesDirectManifestOwner() =
+    member _.ReferenceCreatedTraversesDiamondAndAttributesSharedManifestToDirectOwnerOnce() =
         task {
-            let childDirectoryVersionId = Guid.Parse("88888888-7290-4000-8000-888888888888")
-            let childDirectories = List<DirectoryVersionId>()
+            let leftDirectoryVersionId = Guid.Parse("88888888-7290-4000-8000-888888888888")
+            let rightDirectoryVersionId = Guid.Parse("89898989-7290-4000-8000-898989898989")
+            let sharedDirectoryVersionId = Guid.Parse("90909090-7290-4000-8000-909090909090")
             let rootDirectories = List<DirectoryVersionId>()
-            rootDirectories.Add(childDirectoryVersionId)
-            let childFiles = List<FileVersion>()
+            rootDirectories.Add(leftDirectoryVersionId)
+            rootDirectories.Add(rightDirectoryVersionId)
+            let sharedDirectories = List<DirectoryVersionId>()
+            sharedDirectories.Add(sharedDirectoryVersionId)
+            let sharedFiles = List<FileVersion>()
             let file, manifest = manifestBackedFile ()
-            childFiles.Add(file)
+            sharedFiles.Add(file)
 
             let root = nestedDirectoryVersionDto currentDirectoryVersionId (RelativePath ".") rootDirectories (List<FileVersion>())
 
-            let child = nestedDirectoryVersionDto childDirectoryVersionId (RelativePath "nested") childDirectories childFiles
+            let left = nestedDirectoryVersionDto leftDirectoryVersionId (RelativePath "left") sharedDirectories (List<FileVersion>())
+            let right = nestedDirectoryVersionDto rightDirectoryVersionId (RelativePath "right") sharedDirectories (List<FileVersion>())
+
+            let shared = nestedDirectoryVersionDto sharedDirectoryVersionId (RelativePath "shared") (List<DirectoryVersionId>()) sharedFiles
 
             let storedRelationships = HashSet<ExactRelationship>()
             let manifestWrites = ResizeArray<DirectoryVersionManifestRelationship>()
@@ -371,7 +378,9 @@ type ManifestContributionAccountingServerTests() =
                         fun _ directoryVersionId _ ->
                             Task.FromResult(
                                 if directoryVersionId = currentDirectoryVersionId then root
-                                elif directoryVersionId = childDirectoryVersionId then child
+                                elif directoryVersionId = leftDirectoryVersionId then left
+                                elif directoryVersionId = rightDirectoryVersionId then right
+                                elif directoryVersionId = sharedDirectoryVersionId then shared
                                 else DirectoryVersionDto.Default
                             )
                     ExactRelationships = store
@@ -392,30 +401,43 @@ type ManifestContributionAccountingServerTests() =
 
             do! handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Save)
 
-            Assert.That(
-                storedRelationships,
-                Does.Contain(
-                    ExactRelationship.ParentChild
-                        { RepositoryId = repositoryId; ParentDirectoryVersionId = currentDirectoryVersionId; ChildDirectoryVersionId = childDirectoryVersionId }
-                )
-            )
+            let expectedEdges =
+                [|
+                    currentDirectoryVersionId, leftDirectoryVersionId
+                    currentDirectoryVersionId, rightDirectoryVersionId
+                    leftDirectoryVersionId, sharedDirectoryVersionId
+                    rightDirectoryVersionId, sharedDirectoryVersionId
+                |]
+
+            expectedEdges
+            |> Array.iter (fun (parentDirectoryVersionId, childDirectoryVersionId) ->
+                Assert.That(
+                    storedRelationships,
+                    Does.Contain(
+                        ExactRelationship.ParentChild
+                            {
+                                RepositoryId = repositoryId
+                                ParentDirectoryVersionId = parentDirectoryVersionId
+                                ChildDirectoryVersionId = childDirectoryVersionId
+                            }
+                    )
+                ))
 
             Assert.That(manifestWrites.Count, Is.EqualTo(1))
-            Assert.That(manifestWrites[0].DirectoryVersionId, Is.EqualTo(childDirectoryVersionId))
+            Assert.That(manifestWrites[0].DirectoryVersionId, Is.EqualTo(sharedDirectoryVersionId))
             Assert.That(manifestWrites[0].StoragePoolId, Is.EqualTo(storagePoolId))
             Assert.That(manifestWrites[0].ManifestAddress, Is.EqualTo(manifestAddress))
 
+            Assert.That(effectOrder[0], Is.EqualTo("reference-root"))
+            Assert.That(effectOrder[1], Is.EqualTo("manifest-effect"))
+            Assert.That(effectOrder[2], Is.EqualTo("directory-version-manifest"))
+            Assert.That(effectOrder[3], Is.EqualTo("parent-child"), "Shared child contents must converge before its first incoming edge.")
+
             Assert.That(
-                effectOrder,
-                Is.EqualTo<string array>(
-                    [|
-                        "reference-root"
-                        "manifest-effect"
-                        "directory-version-manifest"
-                        "parent-child"
-                    |]
-                ),
-                "Child contents must converge before the parent-child edge makes retries stop at that retained child."
+                effectOrder
+                |> Seq.filter ((=) "parent-child")
+                |> Seq.length,
+                Is.EqualTo(4)
             )
         }
 

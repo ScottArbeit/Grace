@@ -125,8 +125,13 @@ type ManifestContributionAccountingAspireTests() =
 
             fileVersion.ContentReference <- FileContentReference.FileManifest manifest
 
-            let root = BranchServerTestHelpers.createRootDirectoryVersion repositoryId fileVersion
-            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root ]
+            let shared = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId (RelativePath "shared") fileVersion
+            let left = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId (RelativePath "left") [ shared ]
+            let right = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId (RelativePath "right") [ shared ]
+
+            let root = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ left; right ]
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ shared; left; right; root ]
 
             let! _ = AspireTestHost.drainServiceBusAsync state
             let referenceId = Guid.NewGuid()
@@ -188,8 +193,33 @@ type ManifestContributionAccountingAspireTests() =
                             RepositoryId = Guid.Parse repositoryId
                             StoragePoolId = manifest.StoragePoolId
                             ManifestAddress = manifest.ManifestAddress
-                            DirectoryVersionId = root.DirectoryVersionId
+                            DirectoryVersionId = shared.DirectoryVersionId
                         })
+
+            let expectedEdges =
+                [|
+                    root.DirectoryVersionId, left.DirectoryVersionId
+                    root.DirectoryVersionId, right.DirectoryVersionId
+                    left.DirectoryVersionId, shared.DirectoryVersionId
+                    right.DirectoryVersionId, shared.DirectoryVersionId
+                |]
+
+            let mutable edgeIndex = 0
+
+            while edgeIndex < expectedEdges.Length do
+                let parentDirectoryVersionId, childDirectoryVersionId = expectedEdges[edgeIndex]
+
+                do!
+                    AspireTestHost.waitForExactRelationshipAsync
+                        state
+                        (ExactRelationship.ParentChild
+                            {
+                                RepositoryId = Guid.Parse repositoryId
+                                ParentDirectoryVersionId = parentDirectoryVersionId
+                                ChildDirectoryVersionId = childDirectoryVersionId
+                            })
+
+                edgeIndex <- edgeIndex + 1
 
             parameters.CorrelationId <- generateCorrelationId ()
             let! retryResponse = state.Client.PostAsync("/branch/commit", createJsonContent parameters)
