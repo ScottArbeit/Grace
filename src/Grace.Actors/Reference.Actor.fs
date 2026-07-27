@@ -181,7 +181,7 @@ module Reference =
             let block = manifest.Blocks[index]
 
             if seenContentBlocks.Add block.Address then
-                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address })
 
             index <- index + 1
 

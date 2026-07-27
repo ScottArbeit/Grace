@@ -4,6 +4,8 @@ open Grace.Shared
 open Grace.Actors
 open Grace.Types.Common
 open Grace.Types.RepositoryContentCounter
+open Microsoft.Extensions.Logging
+open Microsoft.Extensions.Logging.Abstractions
 open StackExchange.Redis
 open System
 open System.Globalization
@@ -22,6 +24,22 @@ module RepositoryCounterRecentResult =
 
     /// Gives the lazy first connection enough bounded time for a healthy CI container to finish its handshake.
     let connectionTimeout = TimeSpan.FromSeconds 10.0
+
+    /// Builds the StackExchange.Redis configuration whose native reconnect lifecycle is bounded by Grace at each call boundary.
+    let configurationForEndpoint (host: string) (port: int) =
+        let configuration =
+            ConfigurationOptions(
+                AbortOnConnectFail = false,
+                ConnectTimeout = int connectionTimeout.TotalMilliseconds,
+                SyncTimeout = int commandTimeout.TotalMilliseconds,
+                AsyncTimeout = int connectionTimeout.TotalMilliseconds
+            )
+
+        configuration.EndPoints.Add(host, port)
+        configuration
+
+    /// Requires an explicit readiness probe when StackExchange.Redis returns its reconnecting multiplexer before a socket is connected.
+    let requiresReadinessProbe isConnected = not isConnected
 
     /// Creates the opaque direct-lookup key for one repository-manifest operation.
     let key repositoryId storagePoolId manifestAddress operationId =
@@ -89,54 +107,87 @@ module RepositoryCounterRecentResult =
 
             member _.TrySetAsync(_, _, _, _, _) = Task.FromResult false
 
-    /// Uses one lazy StackExchange.Redis connection with native reconnect and bounded direct GET/SET calls.
-    type RedisRepositoryCounterRecentResult(host: string, port: int) =
+    /// Uses one lazy StackExchange.Redis connection with native reconnect, readiness proof, bounded commands, and structured failure evidence.
+    type RedisRepositoryCounterRecentResult(host: string, port: int, log: ILogger) =
 
-        let configuration =
-            ConfigurationOptions(
-                AbortOnConnectFail = false,
-                ConnectTimeout = int connectionTimeout.TotalMilliseconds,
-                SyncTimeout = int commandTimeout.TotalMilliseconds,
-                AsyncTimeout = int commandTimeout.TotalMilliseconds
-            )
-
-        do configuration.EndPoints.Add(host, port)
+        let configuration = configurationForEndpoint host port
 
         let connection = lazy (task { return! ConnectionMultiplexer.ConnectAsync configuration })
 
         let database (cancellationToken: CancellationToken) : Task<IDatabase> =
             task {
                 let! multiplexer = connection.Value.WaitAsync(connectionTimeout, cancellationToken)
-                return multiplexer.GetDatabase()
+                let database = multiplexer.GetDatabase()
+
+                if requiresReadinessProbe multiplexer.IsConnected then
+                    let! _ =
+                        database
+                            .PingAsync()
+                            .WaitAsync(connectionTimeout, cancellationToken)
+
+                    ()
+
+                return database
             }
+
+        let logBoundaryFailure operation cacheKey fallback (error: Exception) =
+            log.LogWarning(
+                error,
+                "Redis repository counter recent-result {Operation} failed for cache key {CacheKey}; using nonauthoritative fallback {Fallback}.",
+                operation,
+                cacheKey,
+                fallback
+            )
+
+        /// Creates the Redis accelerator with a no-op logger for focused callers that intentionally omit structured diagnostics.
+        new(host: string, port: int) = new RedisRepositoryCounterRecentResult(host, port, NullLogger.Instance)
 
         interface IRepositoryCounterRecentResult with
             member _.TryGetAsync(repositoryId, storagePoolId, manifestAddress, operationId, (cancellationToken: CancellationToken)) =
                 task {
+                    let cacheKey = key repositoryId storagePoolId manifestAddress operationId
+
                     try
                         let! database = database cancellationToken
 
                         let! value =
                             database
-                                .StringGetAsync(key repositoryId storagePoolId manifestAddress operationId)
+                                .StringGetAsync(cacheKey)
                                 .WaitAsync(commandTimeout, cancellationToken)
 
                         return if value.IsNullOrEmpty then None else tryDeserialize (string value)
                     with
-                    | :? RedisException
-                    | :? TimeoutException -> return None
+                    | :? RedisException as error ->
+                        logBoundaryFailure "GET" cacheKey "cache-miss" error
+                        return None
+                    | :? TimeoutException as error ->
+                        logBoundaryFailure "GET" cacheKey "cache-miss" error
+                        return None
                 }
 
             member _.TrySetAsync(repositoryId, storagePoolId, manifestAddress, change, (cancellationToken: CancellationToken)) =
                 task {
+                    let cacheKey = key repositoryId storagePoolId manifestAddress change.OperationId
+
                     try
                         let! database = database cancellationToken
 
                         return!
                             database
-                                .StringSetAsync(key repositoryId storagePoolId manifestAddress change.OperationId, serialize change, expiry)
+                                .StringSetAsync(cacheKey, serialize change, expiry)
                                 .WaitAsync(commandTimeout, cancellationToken)
                     with
-                    | :? RedisException
-                    | :? TimeoutException -> return false
+                    | :? RedisException as error ->
+                        logBoundaryFailure "SET" cacheKey "unconfirmed-write" error
+                        return false
+                    | :? TimeoutException as error ->
+                        logBoundaryFailure "SET" cacheKey "unconfirmed-write" error
+                        return false
                 }
+
+        interface IDisposable with
+            /// Releases the singleton multiplexer when application shutdown follows a completed connection attempt.
+            member _.Dispose() =
+                if connection.IsValueCreated
+                   && connection.Value.IsCompletedSuccessfully then
+                    connection.Value.Result.Dispose()

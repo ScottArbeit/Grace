@@ -8,6 +8,7 @@ open Grace.Server.Tests.Services
 open Grace.Types.Common
 open Grace.Types.RepositoryContentCounter
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 open NUnit.Framework
 open StackExchange.Redis
 open System
@@ -32,7 +33,15 @@ type RepositoryCounterRecentResultIntegrationTests() =
             let change =
                 { OperationId = operationId; Operation = RepositoryContentCounterChangeOperation.Added; PreviousCount = 0L; CurrentCount = 1L; Revision = 1L }
 
-            let recentResult = RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult("127.0.0.1", 6379) :> IRepositoryCounterRecentResult
+            let redisLog =
+                state
+                    .App
+                    .Services
+                    .GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("RepositoryCounterRecentResult.Integration")
+
+            use redisRecentResult = new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult("127.0.0.1", 6379, redisLog)
+            let recentResult = redisRecentResult :> IRepositoryCounterRecentResult
 
             let! stored = recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, change, CancellationToken.None)
 

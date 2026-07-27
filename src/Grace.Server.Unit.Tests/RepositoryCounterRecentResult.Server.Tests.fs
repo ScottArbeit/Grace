@@ -21,6 +21,17 @@ type RepositoryCounterRecentResultTests() =
     [<Test>]
     member _.InitialRedisConnectionAllowsBoundedContainerHandshake() = Assert.That(connectionTimeout, Is.EqualTo(TimeSpan.FromSeconds 10.0))
 
+    /// Verifies a disconnected lazy multiplexer receives the full readiness window observed missing in CI before bounded commands begin.
+    [<Test>]
+    member _.DisconnectedInitialMultiplexerUsesReadinessProbeConfiguration() =
+        let configuration = configurationForEndpoint "127.0.0.1" 6379
+
+        Assert.That(configuration.AbortOnConnectFail, Is.False)
+        Assert.That(configuration.ConnectTimeout, Is.EqualTo(int connectionTimeout.TotalMilliseconds))
+        Assert.That(configuration.AsyncTimeout, Is.EqualTo(int connectionTimeout.TotalMilliseconds))
+        Assert.That(requiresReadinessProbe false, Is.True)
+        Assert.That(requiresReadinessProbe true, Is.False)
+
     /// Verifies cached changes round-trip without inventing a zero for missing or malformed values.
     [<Test>]
     member _.RecentResultRoundTripsAndMalformedValueIsMiss() =

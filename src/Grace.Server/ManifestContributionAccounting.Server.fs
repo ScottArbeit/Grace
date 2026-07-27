@@ -275,8 +275,7 @@ module ManifestContributionAccounting =
                         WorkflowRanges =
                             manifest.Blocks
                             |> Seq.distinctBy (fun block -> block.Address)
-                            |> Seq.map (fun block ->
-                                { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+                            |> Seq.map (fun block -> { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address })
                             |> Seq.toArray
                     }
 

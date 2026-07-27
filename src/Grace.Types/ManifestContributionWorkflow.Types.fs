@@ -31,7 +31,7 @@ module ManifestContributionWorkflow =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowLifecycleState>()
 
-    /// Represents manifest contribution workflow range.
+    /// Identifies one ContentBlock whose authoritative current physical ranges receive a manifest contribution.
     [<CLIMutable; GenerateSerializer; CustomComparison; CustomEquality>]
     type ManifestContributionWorkflowRange =
         {
@@ -40,12 +40,6 @@ module ManifestContributionWorkflow =
 
             [<Id(1u)>]
             ContentBlockAddress: ContentBlockAddress
-
-            [<Id(2u)>]
-            OrdinalStart: int
-
-            [<Id(3u)>]
-            OrdinalCount: int
         }
 
         interface IComparable with
@@ -53,9 +47,7 @@ module ManifestContributionWorkflow =
             member this.CompareTo other =
                 match other with
                 | :? ManifestContributionWorkflowRange as otherRange ->
-                    compare
-                        (this.StoragePoolId, this.ContentBlockAddress, this.OrdinalStart, this.OrdinalCount)
-                        (otherRange.StoragePoolId, otherRange.ContentBlockAddress, otherRange.OrdinalStart, otherRange.OrdinalCount)
+                    compare (this.StoragePoolId, this.ContentBlockAddress) (otherRange.StoragePoolId, otherRange.ContentBlockAddress)
                 | _ -> invalidArg (nameof other) "Cannot compare ManifestContributionWorkflowRange with a different type."
 
         /// Compares the domain identity fields that define whether two values refer to the same Grace object.
@@ -64,12 +56,10 @@ module ManifestContributionWorkflow =
             | :? ManifestContributionWorkflowRange as otherRange ->
                 this.StoragePoolId = otherRange.StoragePoolId
                 && this.ContentBlockAddress = otherRange.ContentBlockAddress
-                && this.OrdinalStart = otherRange.OrdinalStart
-                && this.OrdinalCount = otherRange.OrdinalCount
             | _ -> false
 
         /// Computes a hash code from the same domain identity fields used by equality.
-        override this.GetHashCode() = HashCode.Combine(this.StoragePoolId, this.ContentBlockAddress, this.OrdinalStart, this.OrdinalCount)
+        override this.GetHashCode() = HashCode.Combine(this.StoragePoolId, this.ContentBlockAddress)
 
     /// Represents start manifest contribution workflow.
     [<GenerateSerializer>]

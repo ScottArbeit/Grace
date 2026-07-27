@@ -874,8 +874,7 @@ type SaveBoundaryActorTests() =
             plan.WorkflowRanges
             |> Seq.forall (fun range ->
                 range.StoragePoolId = expectedStoragePoolId
-                && range.OrdinalStart = 0
-                && range.OrdinalCount = 1),
+                && range.ContentBlockAddress = manifest.Blocks[0].Address),
             Is.True
         )
 

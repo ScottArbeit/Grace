@@ -69,7 +69,6 @@ module ContentBlockMetadata =
         recorded.OperationId = requested.OperationId
         && recorded.StoragePoolId = requested.StoragePoolId
         && recorded.ContentBlockAddress = requested.ContentBlockAddress
-        && recorded.Range = requested.Range
         && recorded.Delta = requested.Delta
 
     /// Replays persisted ContentBlockMetadata events into an in-memory state snapshot.
@@ -602,15 +601,12 @@ module ContentBlockMetadata =
     /// Coordinates stamp metadata logic for the ContentBlockMetadata actor.
     let private stampMetadata (metadata: ContentBlockMetadata) nextVersion timestamp = { metadata with MetadataVersion = nextVersion; UpdatedAt = timestamp }
 
-    /// Applies a contribution delta to every stored physical range covering the requested logical range.
+    /// Applies one ContentBlock contribution delta to every authoritative current physical range atomically.
     let private adjustActiveManifestCount correlationId (current: ContentBlockMetadataDto) (adjust: AdjustContentBlockActiveManifestCount) timestamp =
         if isNull (box adjust) then
             Error(graceError correlationId "AdjustActiveManifestCount payload is required.")
         elif adjust.Delta <> 1 && adjust.Delta <> -1 then
             Error(graceError correlationId "AdjustActiveManifestCount Delta must be 1 or -1.")
-        elif adjust.Range.OrdinalStart < 0
-             || adjust.Range.OrdinalCount <= 0 then
-            Error(graceError correlationId "AdjustActiveManifestCount range must have a non-negative start and positive count.")
         else
             match current.Metadata with
             | None -> Error(graceError correlationId "ContentBlockMetadata does not exist; active manifest count cannot be adjusted.")
@@ -630,40 +626,19 @@ module ContentBlockMetadata =
                         correlationId
                         $"Stale ContentBlockMetadata active-count delta rejected. Expected MetadataVersion {adjust.ExpectedMetadataVersion}, current MetadataVersion {metadata.MetadataVersion}."
                 )
+            | Some metadata when Array.isEmpty metadata.Ranges ->
+                Error(graceError correlationId "AdjustActiveManifestCount requires at least one authoritative physical range.")
             | Some metadata ->
-                let requestedEnd =
-                    int64 adjust.Range.OrdinalStart
-                    + int64 adjust.Range.OrdinalCount
-
-                let matchingIndexes =
-                    metadata.Ranges
-                    |> Array.mapi (fun index range ->
-                        let rangeEnd =
-                            int64 range.OrdinalStart
-                            + int64 range.OrdinalCount
-
-                        if int64 range.OrdinalStart
-                           <= int64 adjust.Range.OrdinalStart
-                           && rangeEnd >= requestedEnd then
-                            Some index
-                        else
-                            None)
-                    |> Array.choose id
-
-                if Array.isEmpty matchingIndexes then
-                    Error(graceError correlationId "AdjustActiveManifestCount range is absent from current metadata.")
-                elif matchingIndexes
-                     |> Array.exists (fun index ->
-                         let count = metadata.Ranges[index].ActiveManifestCount
-
-                         adjust.Delta < 0 && count = 0
-                         || adjust.Delta > 0 && count = Int32.MaxValue) then
+                if metadata.Ranges
+                   |> Array.exists (fun range ->
+                       adjust.Delta < 0 && range.ActiveManifestCount = 0
+                       || adjust.Delta > 0
+                          && range.ActiveManifestCount = Int32.MaxValue) then
                     Error(graceError correlationId "AdjustActiveManifestCount would move an active manifest count outside its valid range.")
                 else
-                    let ranges = Array.copy metadata.Ranges
-
-                    matchingIndexes
-                    |> Array.iter (fun index -> ranges[index] <- { ranges[index] with ActiveManifestCount = ranges[index].ActiveManifestCount + adjust.Delta })
+                    let ranges =
+                        metadata.Ranges
+                        |> Array.map (fun range -> { range with ActiveManifestCount = range.ActiveManifestCount + adjust.Delta })
 
                     match activePhysicalBytes correlationId ranges with
                     | Error error -> Error error

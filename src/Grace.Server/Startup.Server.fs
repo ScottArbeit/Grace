@@ -2065,7 +2065,7 @@ module Application =
                     new CosmosClient(cosmosConnectionString, options))
             |> ignore
 
-            services.AddSingleton<IRepositoryCounterRecentResult> (fun _ ->
+            services.AddSingleton<IRepositoryCounterRecentResult> (fun serviceProvider ->
                 let redisHost = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.RedisHost)
 
                 let redisPort = configuration.GetValue<int>(getConfigKey Constants.EnvironmentVariables.RedisPort)
@@ -2075,7 +2075,12 @@ module Application =
                 else
                     let effectivePort = if redisPort > 0 then redisPort else 6379
 
-                    RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort) :> IRepositoryCounterRecentResult)
+                    let redisLog =
+                        serviceProvider
+                            .GetRequiredService<ILoggerFactory>()
+                            .CreateLogger("RepositoryCounterRecentResult.Server")
+
+                    new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog) :> IRepositoryCounterRecentResult)
             |> ignore
 
             let apiVersioningBuilder =

@@ -20,9 +20,9 @@ type ManifestContributionWorkflowActorTests() =
     let otherStoragePoolId = StoragePoolId "pool-archive"
     let manifestAddress = "manifest:blake3:alpha"
 
-    let range0 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-a"; OrdinalStart = 0; OrdinalCount = 8 }
+    let range0 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-a" }
 
-    let range1 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-b"; OrdinalStart = 8; OrdinalCount = 4 }
+    let range1 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-b" }
 
     /// Constructs metadata fixtures used by the server unit manifest Contribution Workflow Actor assertions.
     let metadata correlationId =
@@ -164,7 +164,26 @@ type ManifestContributionWorkflowActorTests() =
 
         Assert.That(completedRanges.ValueKind, Is.EqualTo(JsonValueKind.Array))
         Assert.That(completedRanges.GetArrayLength(), Is.EqualTo(1))
-        Assert.That(completedRanges[0].GetProperty("Range").ValueKind, Is.EqualTo(JsonValueKind.Object))
+        let completedRange = completedRanges[ 0 ].GetProperty("Range")
+        Assert.That(completedRange.ValueKind, Is.EqualTo(JsonValueKind.Object))
+
+        Assert.That(
+            completedRange
+                .GetProperty("StoragePoolId")
+                .GetString(),
+            Is.EqualTo(storagePoolId)
+        )
+
+        Assert.That(
+            completedRange
+                .GetProperty("ContentBlockAddress")
+                .GetString(),
+            Is.EqualTo(string range0.ContentBlockAddress)
+        )
+
+        let mutable ignoredProperty = Unchecked.defaultof<JsonElement>
+        Assert.That(completedRange.TryGetProperty("OrdinalStart", &ignoredProperty), Is.False)
+        Assert.That(completedRange.TryGetProperty("OrdinalCount", &ignoredProperty), Is.False)
         Assert.That(failedRanges.ValueKind, Is.EqualTo(JsonValueKind.Array))
 
     /// Verifies bounded failed-range progress retains enough identity for snapshot-only retries.

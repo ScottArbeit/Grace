@@ -216,10 +216,6 @@ module ManifestContributionWorkflow =
             Some(graceError correlationId "ManifestContributionWorkflow range requires a non-empty StoragePoolId.")
         elif String.IsNullOrWhiteSpace range.ContentBlockAddress then
             Some(graceError correlationId "ManifestContributionWorkflow range requires a non-empty ContentBlockAddress.")
-        elif range.OrdinalStart < 0 then
-            Some(graceError correlationId "ManifestContributionWorkflow range OrdinalStart must be zero or greater.")
-        elif range.OrdinalCount <= 0 then
-            Some(graceError correlationId "ManifestContributionWorkflow range OrdinalCount must be greater than zero.")
         else
             None
 
@@ -445,7 +441,6 @@ module ManifestContributionWorkflow =
                             ExpectedMetadataVersion = currentMetadata.MetadataVersion
                             StoragePoolId = range.StoragePoolId
                             ContentBlockAddress = range.ContentBlockAddress
-                            Range = { OrdinalStart = range.OrdinalStart; OrdinalCount = range.OrdinalCount }
                             Delta = delta
                         }
 

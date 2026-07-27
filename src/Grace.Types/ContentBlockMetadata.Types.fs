@@ -242,7 +242,7 @@ module ContentBlockMetadata =
             ChurnState: ContentBlockCompactionChurnState
         }
 
-    /// Applies one deterministic manifest contribution delta to an authoritative logical range.
+    /// Applies one deterministic manifest contribution delta to every authoritative physical range in a ContentBlock.
     [<GenerateSerializer>]
     type AdjustContentBlockActiveManifestCount =
         {
@@ -255,8 +255,6 @@ module ContentBlockMetadata =
             [<Id(3u)>]
             ContentBlockAddress: ContentBlockAddress
             [<Id(4u)>]
-            Range: ContentBlockRangeQuery
-            [<Id(5u)>]
             Delta: int
         }
 
