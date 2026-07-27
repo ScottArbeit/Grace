@@ -53,9 +53,24 @@ module RepositoryContentCounter =
         | RepositoryContentCounterEventType.ReferenceRemoved _ -> "RemoveReference"
 
     /// Attempts to find applied operation and returns no value when the required invariant is not met.
-    let private tryFindAppliedOperation (events: seq<RepositoryContentCounterEvent>) operationId =
-        events
-        |> Seq.tryFind (fun counterEvent -> eventOperationId counterEvent = operationId)
+    let private tryFindAppliedOperation (counter: RepositoryContentCounterDto) operationId =
+        counter.LastCompletedChange
+        |> Option.bind (fun change ->
+            if change.OperationId <> operationId then
+                None
+            else
+                let eventType =
+                    match change.Operation with
+                    | RepositoryContentCounterChangeOperation.Added ->
+                        RepositoryContentCounterEventType.ReferenceAdded(
+                            change.OperationId,
+                            counter.RepositoryId,
+                            counter.StoragePoolId,
+                            counter.ManifestAddress
+                        )
+                    | RepositoryContentCounterChangeOperation.Removed -> RepositoryContentCounterEventType.ReferenceRemoved change.OperationId
+
+                Some { Event = eventType; Metadata = Unchecked.defaultof<EventMetadata> })
 
     /// Applies events changes to the RepositoryContentCounter actor state.
     let private applyEvents (events: RepositoryContentCounterEvent list) (counter: RepositoryContentCounterDto) =
@@ -94,7 +109,7 @@ module RepositoryContentCounter =
 
     let decideCommandForKey
         (expectedPrimaryKey: string option)
-        (events: seq<RepositoryContentCounterEvent>)
+        (_events: seq<RepositoryContentCounterEvent>)
         (counter: RepositoryContentCounterDto)
         (command: RepositoryContentCounterCommand)
         (metadata: EventMetadata)
@@ -117,7 +132,7 @@ module RepositoryContentCounter =
         elif targetMismatch counter repositoryId storagePoolId manifestAddress then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the initialized counter.")
         else
-            match tryFindAppliedOperation events operationId with
+            match tryFindAppliedOperation counter operationId with
             | Some counterEvent when
                 eventCommandName counterEvent
                 <> commandName command
@@ -164,7 +179,7 @@ module RepositoryContentCounter =
     /// Implements the Orleans grain for repository content counter actor.
     type RepositoryContentCounterActor
         (
-            [<PersistentState(StateName.RepositoryContentCounter, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryContentCounterEvent>>
+            [<PersistentState(StateName.RepositoryContentCounter, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<RepositoryContentCounterDto>
         ) =
         inherit Grain()
 
@@ -177,18 +192,16 @@ module RepositoryContentCounter =
             let activateStartTime = getCurrentInstant ()
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            counter <-
-                state.State
-                |> Seq.fold (fun dto event -> RepositoryContentCounterDto.UpdateDto event dto) RepositoryContentCounterDto.Default
+            counter <- if state.RecordExists then state.State else RepositoryContentCounterDto.Default
 
             Task.CompletedTask
 
-        /// Replays persisted RepositoryContentCounter events into an in-memory state snapshot.
-        member private this.ApplyEvents(events: RepositoryContentCounterEvent list) =
+        /// Overwrites the bounded RepositoryContentCounter snapshot after one completed transition.
+        member private this.ApplySnapshot(snapshot: RepositoryContentCounterDto) =
             task {
-                state.State.AddRange(events)
+                state.State <- snapshot
                 do! state.WriteStateAsync()
-                counter <- applyEvents events counter
+                counter <- snapshot
             }
 
         interface IRepositoryContentCounterActor with
@@ -206,11 +219,11 @@ module RepositoryContentCounter =
                 this.correlationId <- correlationId
                 counter |> returnTask
 
-            /// Returns the persisted RepositoryContentCounter event stream for replay or audit.
+            /// Returns no lifetime events because the actor persists only its bounded current snapshot.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
-                (state.State :> IReadOnlyList<RepositoryContentCounterEvent>)
+                (Array.empty<RepositoryContentCounterEvent> :> IReadOnlyList<RepositoryContentCounterEvent>)
                 |> returnTask
 
             /// Routes a public actor command to the domain operation that validates and persists it.
@@ -219,9 +232,9 @@ module RepositoryContentCounter =
                     this.correlationId <- metadata.CorrelationId
                     RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, commandName command)
 
-                    match decideCommandForKey (Some(this.GetPrimaryKeyString())) state.State counter command metadata with
+                    match decideCommandForKey (Some(this.GetPrimaryKeyString())) Seq.empty counter command metadata with
                     | Ok decision ->
-                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                        if not decision.Events.IsEmpty then do! this.ApplySnapshot decision.Counter
 
                         let returnValue =
                             (GraceReturnValue.Create decision metadata.CorrelationId)

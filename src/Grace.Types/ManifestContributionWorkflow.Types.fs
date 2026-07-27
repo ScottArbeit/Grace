@@ -186,6 +186,10 @@ module ManifestContributionWorkflow =
     [<GenerateSerializer>]
     type ManifestContributionWorkflowEvent = { Event: ManifestContributionWorkflowEventType; Metadata: EventMetadata }
 
+    /// Records the latest failed attempt for one bounded current workflow range.
+    [<GenerateSerializer>]
+    type ManifestContributionWorkflowFailure = { OperationId: ManifestContributionWorkflowOperationId; Message: string }
+
     /// Represents manifest contribution workflow dto.
     [<GenerateSerializer>]
     type ManifestContributionWorkflowDto =
@@ -197,9 +201,10 @@ module ManifestContributionWorkflow =
             Direction: ManifestContributionDirection
             Ranges: ManifestContributionWorkflowRange array
             CompletedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>
-            FailedRanges: Dictionary<ManifestContributionWorkflowRange, string>
+            FailedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>
             LifecycleState: ManifestContributionWorkflowLifecycleState
             LastOperationId: ManifestContributionWorkflowOperationId option
+            Revision: int64
         }
 
         /// Represents the deterministic default instance used when callers need an initialized contract value.
@@ -212,9 +217,10 @@ module ManifestContributionWorkflow =
                 Direction = ManifestContributionDirection.Increment
                 Ranges = Array.empty
                 CompletedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>()
-                FailedRanges = Dictionary<ManifestContributionWorkflowRange, string>()
+                FailedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>()
                 LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted
                 LastOperationId = None
+                Revision = 0L
             }
 
         /// Summarizes the workflow timestamps that describe clone and promotion progress.
@@ -231,8 +237,8 @@ module ManifestContributionWorkflow =
             Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>(completedRanges)
 
         /// Marks the workflow clone phase as failed while retaining the failure reason.
-        static member private CloneFailed(failedRanges: Dictionary<ManifestContributionWorkflowRange, string>) =
-            Dictionary<ManifestContributionWorkflowRange, string>(failedRanges)
+        static member private CloneFailed(failedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>) =
+            Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>(failedRanges)
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto workflowEvent current =
@@ -251,9 +257,10 @@ module ManifestContributionWorkflow =
                     Direction = start.Direction
                     Ranges = Array.copy start.Ranges
                     CompletedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>()
-                    FailedRanges = Dictionary<ManifestContributionWorkflowRange, string>()
+                    FailedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>()
                     LifecycleState = lifecycle
                     LastOperationId = Some start.OperationId
+                    Revision = current.Revision + 1L
                 }
             | ManifestContributionWorkflowEventType.RangeSucceeded progress ->
                 let completed = ManifestContributionWorkflowDto.CloneCompleted current.CompletedRanges
@@ -267,15 +274,17 @@ module ManifestContributionWorkflow =
                     FailedRanges = failed
                     LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges completed.Count
                     LastOperationId = Some progress.OperationId
+                    Revision = current.Revision + 1L
                 }
             | ManifestContributionWorkflowEventType.RangeFailed failure ->
                 let failed = ManifestContributionWorkflowDto.CloneFailed current.FailedRanges
-                failed[failure.Range] <- failure.Message
+                failed[failure.Range] <- { OperationId = failure.OperationId; Message = failure.Message }
 
                 { current with
                     FailedRanges = failed
                     LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges current.CompletedRanges.Count
                     LastOperationId = Some failure.OperationId
+                    Revision = current.Revision + 1L
                 }
 
     /// Represents manifest contribution workflow decision.

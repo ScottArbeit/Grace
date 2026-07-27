@@ -66,6 +66,102 @@ type ManifestContributionWorkflowActorTests() =
             Assert.Fail($"Expected command to succeed, got {error.Error}.")
             Unchecked.defaultof<ManifestContributionWorkflowDecision>
 
+    /// Verifies a completed cycle is overwritten by the next bounded workflow snapshot.
+    [<Test>]
+    member _.NextCycleOverwritesPriorRangeProgress() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-bounded-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        let firstRange =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "bounded-range-0" range0) (metadata "corr-bounded-range-0")
+            |> expectOk
+
+        let afterFirst = applyAll firstRange.Events afterStart
+
+        let secondRange =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events @ firstRange.Events)
+                afterFirst
+                (succeeded "bounded-range-1" range1)
+                (metadata "corr-bounded-range-1")
+            |> expectOk
+
+        let restarted =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events
+                 @ firstRange.Events @ secondRange.Events)
+                secondRange.Workflow
+                (startWithOperation "bounded-next-cycle" ManifestContributionDirection.Decrement [| range0 |])
+                (metadata "corr-bounded-next-cycle")
+            |> expectOk
+
+        Assert.That(restarted.Workflow.Revision, Is.EqualTo(4L))
+        Assert.That(restarted.Workflow.Ranges, Is.EquivalentTo([| range0 |]))
+        Assert.That(restarted.Workflow.CompletedRanges, Is.Empty)
+        Assert.That(restarted.Workflow.FailedRanges, Is.Empty)
+
+    /// Verifies snapshot-only restart recovery replays start and range completion without persisted lifetime events.
+    [<Test>]
+    member _.SnapshotOnlyRecoveryReplaysCurrentProgress() =
+        let startCommand = start ManifestContributionDirection.Increment
+
+        let started =
+            ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-snapshot-start")
+            |> expectOk
+
+        let replayedStart =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow startCommand (metadata "corr-snapshot-start-replay")
+            |> expectOk
+
+        Assert.That(replayedStart.WasIdempotentReplay, Is.True)
+        Assert.That(replayedStart.Events, Is.Empty)
+
+        let rangeCommand = succeeded "snapshot-range" range0
+
+        let completed =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow rangeCommand (metadata "corr-snapshot-range")
+            |> expectOk
+
+        let replayedRange =
+            ManifestContributionWorkflowActor.decideCommand [] completed.Workflow rangeCommand (metadata "corr-snapshot-range-replay")
+            |> expectOk
+
+        Assert.That(replayedRange.WasIdempotentReplay, Is.True)
+        Assert.That(replayedRange.Events, Is.Empty)
+        Assert.That(replayedRange.Intents, Is.Empty)
+
+    /// Verifies bounded failed-range progress retains enough identity for snapshot-only retries.
+    [<Test>]
+    member _.SnapshotOnlyRecoveryReplaysFailedRange() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-failure-start")
+            |> expectOk
+
+        let failureCommand = failed "snapshot-failure" range0 "transient"
+
+        let failedRange =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow failureCommand (metadata "corr-failure")
+            |> expectOk
+
+        let replay =
+            ManifestContributionWorkflowActor.decideCommand [] failedRange.Workflow failureCommand (metadata "corr-failure-replay")
+            |> expectOk
+
+        Assert.That(replay.WasIdempotentReplay, Is.True)
+        Assert.That(replay.Events, Is.Empty)
+        Assert.That(replay.Workflow.Revision, Is.EqualTo(failedRange.Workflow.Revision))
+
     /// Verifies that workflow Primary Key Combines Repository Id Storage Pool Id And Manifest Address.
     [<Test>]
     member _.WorkflowPrimaryKeyCombinesRepositoryIdStoragePoolIdAndManifestAddress() =

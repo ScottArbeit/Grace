@@ -242,6 +242,24 @@ module ContentBlockMetadata =
             ChurnState: ContentBlockCompactionChurnState
         }
 
+    /// Applies one deterministic manifest contribution delta to an authoritative logical range.
+    [<GenerateSerializer>]
+    type AdjustContentBlockActiveManifestCount =
+        {
+            [<Id(0u)>]
+            OperationId: string
+            [<Id(1u)>]
+            ExpectedMetadataVersion: MetadataVersion
+            [<Id(2u)>]
+            StoragePoolId: StoragePoolId
+            [<Id(3u)>]
+            ContentBlockAddress: ContentBlockAddress
+            [<Id(4u)>]
+            Range: ContentBlockRangeQuery
+            [<Id(5u)>]
+            Delta: int
+        }
+
     /// Represents content block metadata command.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
@@ -249,6 +267,7 @@ module ContentBlockMetadata =
         | [<Id(1u)>] MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
         | [<Id(2u)>] CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
         | [<Id(3u)>] SetCompactionChurnState of setChurnState: SetContentBlockCompactionChurnState
+        | [<Id(4u)>] AdjustActiveManifestCount of adjust: AdjustContentBlockActiveManifestCount
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
@@ -260,6 +279,7 @@ module ContentBlockMetadata =
         | PhysicalRangesMerged of operationId: string * metadata: ContentBlockMetadata
         | PhysicalRangesCompacted of operationId: string * metadata: ContentBlockMetadata
         | CompactionChurnStateSet of operationId: string * churnState: ContentBlockCompactionChurnState
+        | ActiveManifestCountAdjusted of adjust: AdjustContentBlockActiveManifestCount * metadata: ContentBlockMetadata
 
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataEventType>()
@@ -291,6 +311,8 @@ module ContentBlockMetadata =
                 { _current with Metadata = Some metadata; LastOperationId = Some operationId }
             | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, churnState) ->
                 { _current with CompactionChurnState = churnState; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.ActiveManifestCountAdjusted (adjust, metadata) ->
+                { _current with Metadata = Some metadata; LastOperationId = Some adjust.OperationId }
 
     /// Represents content block metadata decision.
     [<GenerateSerializer>]

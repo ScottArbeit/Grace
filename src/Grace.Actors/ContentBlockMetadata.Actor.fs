@@ -31,6 +31,7 @@ module ContentBlockMetadata =
         | ContentBlockMetadataCommand.MergePhysicalRanges _ -> "MergePhysicalRanges"
         | ContentBlockMetadataCommand.CompactPhysicalRanges _ -> "CompactPhysicalRanges"
         | ContentBlockMetadataCommand.SetCompactionChurnState _ -> "SetCompactionChurnState"
+        | ContentBlockMetadataCommand.AdjustActiveManifestCount _ -> "AdjustActiveManifestCount"
 
     /// Extracts the client operation id that lets command retries match previously emitted events.
     let operationId command =
@@ -41,6 +42,8 @@ module ContentBlockMetadata =
         | ContentBlockMetadataCommand.CompactPhysicalRanges compact -> compact.OperationId
         | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState when isNull (box setChurnState) -> String.Empty
         | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState -> setChurnState.OperationId
+        | ContentBlockMetadataCommand.AdjustActiveManifestCount adjust when isNull (box adjust) -> String.Empty
+        | ContentBlockMetadataCommand.AdjustActiveManifestCount adjust -> adjust.OperationId
 
     /// Coordinates event operation id logic for the ContentBlockMetadata actor.
     let private eventOperationId metadataEvent =
@@ -49,11 +52,17 @@ module ContentBlockMetadata =
         | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, _) -> operationId
         | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, _) -> operationId
         | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, _) -> operationId
+        | ContentBlockMetadataEventType.ActiveManifestCountAdjusted (adjust, _) -> adjust.OperationId
 
     /// Checks whether the operation id has already produced a persisted event.
     let private hasAppliedOperationId (events: seq<ContentBlockMetadataEvent>) operationId =
         events
         |> Seq.exists (fun metadataEvent -> eventOperationId metadataEvent = operationId)
+
+    /// Finds the persisted event for an operation so delta retries can verify their exact payload.
+    let private tryFindAppliedOperation (events: seq<ContentBlockMetadataEvent>) operationId =
+        events
+        |> Seq.tryFind (fun metadataEvent -> eventOperationId metadataEvent = operationId)
 
     /// Replays persisted ContentBlockMetadata events into an in-memory state snapshot.
     let applyEvents (events: ContentBlockMetadataEvent list) (current: ContentBlockMetadataDto) =
@@ -585,6 +594,80 @@ module ContentBlockMetadata =
     /// Coordinates stamp metadata logic for the ContentBlockMetadata actor.
     let private stampMetadata (metadata: ContentBlockMetadata) nextVersion timestamp = { metadata with MetadataVersion = nextVersion; UpdatedAt = timestamp }
 
+    /// Applies a contribution delta to every stored physical range covering the requested logical range.
+    let private adjustActiveManifestCount correlationId (current: ContentBlockMetadataDto) (adjust: AdjustContentBlockActiveManifestCount) timestamp =
+        if isNull (box adjust) then
+            Error(graceError correlationId "AdjustActiveManifestCount payload is required.")
+        elif adjust.Delta <> 1 && adjust.Delta <> -1 then
+            Error(graceError correlationId "AdjustActiveManifestCount Delta must be 1 or -1.")
+        elif adjust.Range.OrdinalStart < 0
+             || adjust.Range.OrdinalCount <= 0 then
+            Error(graceError correlationId "AdjustActiveManifestCount range must have a non-negative start and positive count.")
+        else
+            match current.Metadata with
+            | None -> Error(graceError correlationId "ContentBlockMetadata does not exist; active manifest count cannot be adjusted.")
+            | Some metadata when metadata.StoragePoolId <> adjust.StoragePoolId ->
+                Error(graceError correlationId "AdjustActiveManifestCount StoragePoolId does not match current metadata.")
+            | Some metadata when
+                metadata.ContentBlockAddress
+                <> adjust.ContentBlockAddress
+                ->
+                Error(graceError correlationId "AdjustActiveManifestCount ContentBlockAddress does not match current metadata.")
+            | Some metadata when
+                metadata.MetadataVersion
+                <> adjust.ExpectedMetadataVersion
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"Stale ContentBlockMetadata active-count delta rejected. Expected MetadataVersion {adjust.ExpectedMetadataVersion}, current MetadataVersion {metadata.MetadataVersion}."
+                )
+            | Some metadata ->
+                let requestedEnd =
+                    int64 adjust.Range.OrdinalStart
+                    + int64 adjust.Range.OrdinalCount
+
+                let matchingIndexes =
+                    metadata.Ranges
+                    |> Array.mapi (fun index range ->
+                        let rangeEnd =
+                            int64 range.OrdinalStart
+                            + int64 range.OrdinalCount
+
+                        if int64 range.OrdinalStart
+                           <= int64 adjust.Range.OrdinalStart
+                           && rangeEnd >= requestedEnd then
+                            Some index
+                        else
+                            None)
+                    |> Array.choose id
+
+                if Array.isEmpty matchingIndexes then
+                    Error(graceError correlationId "AdjustActiveManifestCount range is absent from current metadata.")
+                elif matchingIndexes
+                     |> Array.exists (fun index ->
+                         let count = metadata.Ranges[index].ActiveManifestCount
+
+                         adjust.Delta < 0 && count = 0
+                         || adjust.Delta > 0 && count = Int32.MaxValue) then
+                    Error(graceError correlationId "AdjustActiveManifestCount would move an active manifest count outside its valid range.")
+                else
+                    let ranges = Array.copy metadata.Ranges
+
+                    matchingIndexes
+                    |> Array.iter (fun index -> ranges[index] <- { ranges[index] with ActiveManifestCount = ranges[index].ActiveManifestCount + adjust.Delta })
+
+                    match activePhysicalBytes correlationId ranges with
+                    | Error error -> Error error
+                    | Ok activeBytes ->
+                        Ok
+                            { metadata with
+                                Ranges = ranges
+                                ActivePhysicalBytes = activeBytes
+                                MetadataVersion = metadata.MetadataVersion + 1L
+                                UpdatedAt = timestamp
+                            }
+
     /// Coordinates ok decision logic for the ContentBlockMetadata actor.
     let private okDecision metadata operationId events wasReplay message =
         Ok { Metadata = metadata; OperationId = operationId; Events = events; WasIdempotentReplay = wasReplay; Message = message }
@@ -600,9 +683,16 @@ module ContentBlockMetadata =
         if String.IsNullOrWhiteSpace operationId then
             Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata command requires a non-empty operation id.")
         elif hasAppliedOperationId events operationId then
-            match current.Metadata with
-            | Some metadata -> okDecision metadata operationId [] true "ContentBlockMetadata command replayed."
-            | None -> Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata operation was replayed but no metadata state is available.")
+            match tryFindAppliedOperation events operationId, command, current.Metadata with
+            | Some { Event = ContentBlockMetadataEventType.ActiveManifestCountAdjusted (recorded, _) },
+              ContentBlockMetadataCommand.AdjustActiveManifestCount requested,
+              Some metadata when recorded = requested -> okDecision metadata operationId [] true "ContentBlockMetadata command replayed."
+            | Some { Event = ContentBlockMetadataEventType.ActiveManifestCountAdjusted _ }, ContentBlockMetadataCommand.AdjustActiveManifestCount _, _ ->
+                Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata operation id was already used with a different active-count payload.")
+            | Some _, ContentBlockMetadataCommand.AdjustActiveManifestCount _, _ ->
+                Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata operation id was already used for a different command.")
+            | _, _, Some metadata -> okDecision metadata operationId [] true "ContentBlockMetadata command replayed."
+            | _ -> Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata operation was replayed but no metadata state is available.")
         else
             match command with
             | ContentBlockMetadataCommand.ReplaceWholeRecord replace ->
@@ -676,6 +766,16 @@ module ContentBlockMetadata =
                             ]
 
                         okDecision metadata operationId events false "ContentBlockMetadata compaction churn state set."
+            | ContentBlockMetadataCommand.AdjustActiveManifestCount adjust ->
+                match adjustActiveManifestCount eventMetadata.CorrelationId current adjust eventMetadata.Timestamp with
+                | Error error -> Error error
+                | Ok metadata ->
+                    let events =
+                        [
+                            { Event = ContentBlockMetadataEventType.ActiveManifestCountAdjusted(adjust, metadata); Metadata = eventMetadata }
+                        ]
+
+                    okDecision metadata operationId events false "ContentBlockMetadata active manifest count adjusted."
 
     /// Implements the Orleans grain for content block metadata actor.
     type ContentBlockMetadataActor

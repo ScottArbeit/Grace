@@ -40,6 +40,31 @@ type RepositoryContentCounterActorTests() =
         events
         |> List.fold (fun current event -> RepositoryContentCounterDto.UpdateDto event current) dto
 
+    /// Verifies repeated counter changes retain only the latest bounded completion snapshot.
+    [<Test>]
+    member _.RepeatedChangesRetainOnlyLatestCompletedSnapshot() =
+        let addDecision =
+            match RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-bounded") (metadata "corr-add-bounded") with
+            | Ok decision -> decision
+            | Error error ->
+                Assert.Fail($"Expected bounded add to succeed, got {error.Error}.")
+                Unchecked.defaultof<RepositoryContentCounterDecision>
+
+        let removeDecision =
+            match
+                RepositoryContentCounterActor.decideCommand addDecision.Events addDecision.Counter (remove "op-remove-bounded") (metadata "corr-remove-bounded")
+                with
+            | Ok decision -> decision
+            | Error error ->
+                Assert.Fail($"Expected bounded remove to succeed, got {error.Error}.")
+                Unchecked.defaultof<RepositoryContentCounterDecision>
+
+        Assert.That(removeDecision.Counter.Count, Is.EqualTo(0L))
+        Assert.That(removeDecision.Counter.Revision, Is.EqualTo(2L))
+        Assert.That(removeDecision.Counter.LastCompletedChange.Value.OperationId, Is.EqualTo("op-remove-bounded"))
+        Assert.That(removeDecision.Counter.LastCompletedChange.Value.PreviousCount, Is.EqualTo(1L))
+        Assert.That(removeDecision.Counter.LastCompletedChange.Value.CurrentCount, Is.EqualTo(0L))
+
     /// Verifies that zero To One Emits Increment Intent And Retry Is Idempotent.
     [<Test>]
     member _.ZeroToOneEmitsIncrementIntentAndRetryIsIdempotent() =
