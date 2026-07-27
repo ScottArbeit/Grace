@@ -79,6 +79,27 @@ type ManifestContributionAccountingServerTests() =
             HashesValidated = true
         }
 
+    /// Builds one current DirectoryVersion actor snapshot for a nested traversal witness.
+    let nestedDirectoryVersionDto directoryVersionId relativePath directories files =
+        {
+            DirectoryVersion =
+                DirectoryVersion.CreateWithHashes
+                    directoryVersionId
+                    ownerId
+                    organizationId
+                    repositoryId
+                    relativePath
+                    (Sha256Hash $"sha-{directoryVersionId:N}")
+                    (Blake3Hash $"b3-{directoryVersionId:N}")
+                    directories
+                    files
+                    4L
+            RecursiveSize = 4L
+            DeletedAt = None
+            DeleteReason = String.Empty
+            HashesValidated = true
+        }
+
     /// Builds a stale delivery whose DirectoryVersionId differs from the durable Reference actor state.
     let staleCreatedEvent referenceType =
         {
@@ -255,7 +276,7 @@ type ManifestContributionAccountingServerTests() =
 
             do! handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Commit)
 
-            Assert.That(referenceReads, Is.EqualTo(1))
+            Assert.That(referenceReads, Is.EqualTo(4), "The Reference is reread before the root write, manifest mutation, and lifecycle convergence.")
             Assert.That(directoryReads, Is.EqualTo(2), "The current root is read to discover candidates and reread immediately before the manifest mutation.")
             Assert.That(exactWrites.Count, Is.EqualTo(1))
             Assert.That(effectOrder |> Seq.toArray, Is.EqualTo<string array>([| "exact-root"; "lifecycle" |]))
@@ -270,6 +291,298 @@ type ManifestContributionAccountingServerTests() =
             Assert.That(manifestWrites[0].DirectoryVersionId, Is.EqualTo(currentDirectoryVersionId))
             Assert.That(manifestWrites[0].StoragePoolId, Is.EqualTo(storagePoolId))
             Assert.That(manifestWrites[0].ManifestAddress, Is.EqualTo(manifestAddress))
+        }
+
+    /// Verifies a Reference retains manifests through exact parent-child edges without attributing them to the root.
+    [<Test>]
+    member _.ReferenceCreatedTraversesNestedDirectoryVersionsAndAttributesDirectManifestOwner() =
+        task {
+            let childDirectoryVersionId = Guid.Parse("88888888-7290-4000-8000-888888888888")
+            let childDirectories = List<DirectoryVersionId>()
+            let rootDirectories = List<DirectoryVersionId>()
+            rootDirectories.Add(childDirectoryVersionId)
+            let childFiles = List<FileVersion>()
+            let file, manifest = manifestBackedFile ()
+            childFiles.Add(file)
+
+            let root = nestedDirectoryVersionDto currentDirectoryVersionId (RelativePath ".") rootDirectories (List<FileVersion>())
+
+            let child = nestedDirectoryVersionDto childDirectoryVersionId (RelativePath "nested") childDirectories childFiles
+
+            let storedRelationships = HashSet<ExactRelationship>()
+            let manifestWrites = ResizeArray<DirectoryVersionManifestRelationship>()
+            let effectOrder = ResizeArray<string>()
+
+            let store =
+                { new IExactRelationshipStore with
+                    member _.EnsurePresentAsync(relationship, _) =
+                        let outcome =
+                            if storedRelationships.Add relationship then
+                                effectOrder.Add(
+                                    match relationship with
+                                    | ExactRelationship.ReferenceRoot _ -> "reference-root"
+                                    | ExactRelationship.ParentChild _ -> "parent-child"
+                                    | ExactRelationship.DirectoryVersionManifest _ -> "directory-version-manifest"
+                                )
+
+                                ExactRelationshipWriteOutcome.Changed
+                            else
+                                ExactRelationshipWriteOutcome.AlreadyConverged
+
+                        Task.FromResult outcome
+
+                    member _.EnsureAbsentAsync(_, _) = Task.FromResult ExactRelationshipWriteOutcome.AlreadyConverged
+
+                    member _.EnumerateAsync(partition, bound, _, _) =
+                        let maximumCount = ExactRelationshipReadBound.value bound
+
+                        Task.FromResult
+                            {
+                                Relationships =
+                                    storedRelationships
+                                    |> Seq.filter (fun relationship -> ExactRelationshipKey.partition relationship = Ok partition)
+                                    |> Seq.truncate maximumCount
+                                    |> Seq.toArray
+                                ContinuationToken = None
+                            }
+
+                    member _.VerifyAsync(relationship, _) =
+                        Task.FromResult(
+                            if storedRelationships.Contains relationship then
+                                ExactRelationshipPresence.Present
+                            else
+                                ExactRelationshipPresence.Absent
+                        )
+                }
+
+            let dependencies: ManifestContributionAccountingDependencies =
+                {
+                    GetReference =
+                        fun _ _ _ ->
+                            Task.FromResult
+                                { ReferenceDto.Default with
+                                    ReferenceId = referenceId
+                                    RepositoryId = repositoryId
+                                    DirectoryId = currentDirectoryVersionId
+                                    ReferenceType = ReferenceType.Save
+                                    UpdatedAt = Some(getCurrentInstant ())
+                                }
+                    GetDirectoryVersion =
+                        fun _ directoryVersionId _ ->
+                            Task.FromResult(
+                                if directoryVersionId = currentDirectoryVersionId then root
+                                elif directoryVersionId = childDirectoryVersionId then child
+                                else DirectoryVersionDto.Default
+                            )
+                    ExactRelationships = store
+                    EnsureAutomaticPhysicalDeletionReminder = fun _ _ _ _ -> Task.CompletedTask
+                    EnsureDirectoryVersionManifest =
+                        fun relationship currentManifest _ cancellationToken ->
+                            task {
+                                Assert.That(currentManifest, Is.EqualTo(manifest))
+                                manifestWrites.Add(relationship)
+                                effectOrder.Add("manifest-effect")
+
+                                let! _ = store.EnsurePresentAsync(ExactRelationship.DirectoryVersionManifest relationship, cancellationToken)
+
+                                return ()
+                            }
+                            :> Task
+                }
+
+            do! handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Save)
+
+            Assert.That(
+                storedRelationships,
+                Does.Contain(
+                    ExactRelationship.ParentChild
+                        { RepositoryId = repositoryId; ParentDirectoryVersionId = currentDirectoryVersionId; ChildDirectoryVersionId = childDirectoryVersionId }
+                )
+            )
+
+            Assert.That(manifestWrites.Count, Is.EqualTo(1))
+            Assert.That(manifestWrites[0].DirectoryVersionId, Is.EqualTo(childDirectoryVersionId))
+            Assert.That(manifestWrites[0].StoragePoolId, Is.EqualTo(storagePoolId))
+            Assert.That(manifestWrites[0].ManifestAddress, Is.EqualTo(manifestAddress))
+
+            Assert.That(
+                effectOrder,
+                Is.EqualTo<string array>(
+                    [|
+                        "reference-root"
+                        "manifest-effect"
+                        "directory-version-manifest"
+                        "parent-child"
+                    |]
+                ),
+                "Child contents must converge before the parent-child edge makes retries stop at that retained child."
+            )
+        }
+
+    /// Verifies an already-retained shared child gains the new edge without walking its subtree again.
+    [<Test>]
+    member _.ReferenceCreatedStopsAtSharedChildWithExistingIncomingRelationship() =
+        task {
+            let childDirectoryVersionId = Guid.Parse("aaaaaaaa-7290-4000-8000-aaaaaaaaaaaa")
+            let existingReferenceId = Guid.Parse("bbbbbbbb-7290-4000-8000-bbbbbbbbbbbb")
+            let rootDirectories = List<DirectoryVersionId>()
+            rootDirectories.Add(childDirectoryVersionId)
+
+            let root = nestedDirectoryVersionDto currentDirectoryVersionId (RelativePath ".") rootDirectories (List<FileVersion>())
+
+            let child =
+                let childFiles = List<FileVersion>()
+                let file, _ = manifestBackedFile ()
+                childFiles.Add(file)
+
+                nestedDirectoryVersionDto childDirectoryVersionId (RelativePath "shared") (List<DirectoryVersionId>()) childFiles
+
+            let storedRelationships =
+                HashSet<ExactRelationship>(
+                    [
+                        ExactRelationship.ReferenceRoot
+                            { RepositoryId = repositoryId; RootDirectoryVersionId = childDirectoryVersionId; ReferenceId = existingReferenceId }
+                    ]
+                )
+
+            let mutable childReads = 0
+            let mutable manifestWrites = 0
+
+            let store =
+                { new IExactRelationshipStore with
+                    member _.EnsurePresentAsync(relationship, _) =
+                        Task.FromResult(
+                            if storedRelationships.Add relationship then
+                                ExactRelationshipWriteOutcome.Changed
+                            else
+                                ExactRelationshipWriteOutcome.AlreadyConverged
+                        )
+
+                    member _.EnsureAbsentAsync(_, _) = Task.FromResult ExactRelationshipWriteOutcome.AlreadyConverged
+
+                    member _.EnumerateAsync(partition, bound, _, _) =
+                        let maximumCount = ExactRelationshipReadBound.value bound
+
+                        Task.FromResult
+                            {
+                                Relationships =
+                                    storedRelationships
+                                    |> Seq.filter (fun relationship -> ExactRelationshipKey.partition relationship = Ok partition)
+                                    |> Seq.truncate maximumCount
+                                    |> Seq.toArray
+                                ContinuationToken = None
+                            }
+
+                    member _.VerifyAsync(relationship, _) =
+                        Task.FromResult(
+                            if storedRelationships.Contains relationship then
+                                ExactRelationshipPresence.Present
+                            else
+                                ExactRelationshipPresence.Absent
+                        )
+                }
+
+            let dependencies: ManifestContributionAccountingDependencies =
+                {
+                    GetReference =
+                        fun _ _ _ ->
+                            Task.FromResult
+                                { ReferenceDto.Default with
+                                    ReferenceId = referenceId
+                                    RepositoryId = repositoryId
+                                    DirectoryId = currentDirectoryVersionId
+                                    ReferenceType = ReferenceType.Tag
+                                    UpdatedAt = Some(getCurrentInstant ())
+                                }
+                    GetDirectoryVersion =
+                        fun _ directoryVersionId _ ->
+                            if directoryVersionId = currentDirectoryVersionId then
+                                Task.FromResult root
+                            else
+                                childReads <- childReads + 1
+                                Task.FromResult child
+                    ExactRelationships = store
+                    EnsureAutomaticPhysicalDeletionReminder = fun _ _ _ _ -> Task.CompletedTask
+                    EnsureDirectoryVersionManifest =
+                        fun _ _ _ _ ->
+                            manifestWrites <- manifestWrites + 1
+                            Task.CompletedTask
+                }
+
+            do! handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Tag)
+
+            Assert.That(
+                storedRelationships,
+                Does.Contain(
+                    ExactRelationship.ParentChild
+                        { RepositoryId = repositoryId; ParentDirectoryVersionId = currentDirectoryVersionId; ChildDirectoryVersionId = childDirectoryVersionId }
+                )
+            )
+
+            Assert.That(childReads, Is.EqualTo(1), "The child is reread only to validate the exact edge before mutation.")
+            Assert.That(manifestWrites, Is.Zero, "An existing incoming edge proves the shared child's contents were already converged.")
+        }
+
+    /// Verifies a child removed from current parent state cannot create stale child or manifest relationships.
+    [<Test>]
+    member _.ReferenceCreatedRevalidatesNestedDirectoryVersionBeforeRelationshipMutations() =
+        task {
+            let childDirectoryVersionId = Guid.Parse("99999999-7290-4000-8000-999999999999")
+            let candidateRootDirectories = List<DirectoryVersionId>()
+            candidateRootDirectories.Add(childDirectoryVersionId)
+            let currentRootDirectories = List<DirectoryVersionId>()
+            let childFiles = List<FileVersion>()
+            let file, _ = manifestBackedFile ()
+            childFiles.Add(file)
+
+            let candidateRoot = nestedDirectoryVersionDto currentDirectoryVersionId (RelativePath ".") candidateRootDirectories (List<FileVersion>())
+
+            let currentRoot = nestedDirectoryVersionDto currentDirectoryVersionId (RelativePath ".") currentRootDirectories (List<FileVersion>())
+
+            let child = nestedDirectoryVersionDto childDirectoryVersionId (RelativePath "nested") (List<DirectoryVersionId>()) childFiles
+
+            let exactWrites = ResizeArray<ExactRelationship>()
+            let manifestWrites = ResizeArray<DirectoryVersionManifestRelationship>()
+            let mutable rootReads = 0
+
+            let dependencies: ManifestContributionAccountingDependencies =
+                {
+                    GetReference =
+                        fun _ _ _ ->
+                            Task.FromResult
+                                { ReferenceDto.Default with
+                                    ReferenceId = referenceId
+                                    RepositoryId = repositoryId
+                                    DirectoryId = currentDirectoryVersionId
+                                    ReferenceType = ReferenceType.Commit
+                                    UpdatedAt = Some(getCurrentInstant ())
+                                }
+                    GetDirectoryVersion =
+                        fun _ directoryVersionId _ ->
+                            if directoryVersionId = currentDirectoryVersionId then
+                                rootReads <- rootReads + 1
+                                Task.FromResult(if rootReads = 1 then candidateRoot else currentRoot)
+                            else
+                                Task.FromResult child
+                    ExactRelationships = recordingStore exactWrites (ResizeArray<string>())
+                    EnsureAutomaticPhysicalDeletionReminder = fun _ _ _ _ -> Task.CompletedTask
+                    EnsureDirectoryVersionManifest =
+                        fun relationship _ _ _ ->
+                            manifestWrites.Add(relationship)
+                            Task.CompletedTask
+                }
+
+            do! handleReferenceCreatedWith dependencies CancellationToken.None (staleCreatedEvent ReferenceType.Commit)
+
+            Assert.That(
+                exactWrites
+                |> Seq.exists (function
+                    | ExactRelationship.ParentChild _ -> true
+                    | _ -> false),
+                Is.False
+            )
+
+            Assert.That(manifestWrites, Is.Empty)
         }
 
     /// Verifies a pending Save lifecycle write cannot delay Reference-wide manifest accounting.

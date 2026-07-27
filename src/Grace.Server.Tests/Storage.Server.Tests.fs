@@ -2068,7 +2068,7 @@ type StorageManifestUploadSessionRoutes() =
                             RepositoryId = Guid.Parse repositoryId
                             StoragePoolId = manifest.StoragePoolId
                             ManifestAddress = manifest.ManifestAddress
-                            DirectoryVersionId = root.DirectoryVersionId
+                            DirectoryVersionId = child.DirectoryVersionId
                         })
 
             let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
