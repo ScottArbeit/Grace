@@ -77,8 +77,11 @@ Redis is provisioned by AppHost and its host/port are forwarded to
 `SET` calls only to accelerate recently completed counter operations. Results
 expire after exactly ten minutes. Redis is not a membership ledger or source
 of truth: missing, expired, malformed, or unavailable results are cache misses,
-never a zero count. The client connects lazily, uses native reconnect, and
-bounds each connection and command wait without an outer Polly policy.
+never a zero count. Additions can continue under cache loss because extra
+retention is safe; removals pause or withhold their decrement workflow until
+Redis confirms the bounded completed result. The client connects lazily, uses
+native reconnect, and bounds each connection and command wait without an outer
+Polly policy.
 
 Repository manifest counters persist only `Count`, `Revision`, and the latest
 completed change. Manifest contribution workflows overwrite their bounded

@@ -64,6 +64,14 @@ module ContentBlockMetadata =
         events
         |> Seq.tryFind (fun metadataEvent -> eventOperationId metadataEvent = operationId)
 
+    /// Compares the durable delta identity while allowing a retry to observe the metadata version produced by its first attempt.
+    let private sameActiveManifestCountDelta (recorded: AdjustContentBlockActiveManifestCount) (requested: AdjustContentBlockActiveManifestCount) =
+        recorded.OperationId = requested.OperationId
+        && recorded.StoragePoolId = requested.StoragePoolId
+        && recorded.ContentBlockAddress = requested.ContentBlockAddress
+        && recorded.Range = requested.Range
+        && recorded.Delta = requested.Delta
+
     /// Replays persisted ContentBlockMetadata events into an in-memory state snapshot.
     let applyEvents (events: ContentBlockMetadataEvent list) (current: ContentBlockMetadataDto) =
         events
@@ -686,7 +694,8 @@ module ContentBlockMetadata =
             match tryFindAppliedOperation events operationId, command, current.Metadata with
             | Some { Event = ContentBlockMetadataEventType.ActiveManifestCountAdjusted (recorded, _) },
               ContentBlockMetadataCommand.AdjustActiveManifestCount requested,
-              Some metadata when recorded = requested -> okDecision metadata operationId [] true "ContentBlockMetadata command replayed."
+              Some metadata when sameActiveManifestCountDelta recorded requested ->
+                okDecision metadata operationId [] true "ContentBlockMetadata command replayed."
             | Some { Event = ContentBlockMetadataEventType.ActiveManifestCountAdjusted _ }, ContentBlockMetadataCommand.AdjustActiveManifestCount _, _ ->
                 Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata operation id was already used with a different active-count payload.")
             | Some _, ContentBlockMetadataCommand.AdjustActiveManifestCount _, _ ->
@@ -879,3 +888,7 @@ module ContentBlockMetadata =
 
             /// Merges physical range metadata for uploaded or reused content-block bytes.
             member this.MergePhysicalRanges merge eventMetadata = this.HandleCommand (ContentBlockMetadataCommand.MergePhysicalRanges merge) eventMetadata
+
+            /// Applies a manifest-retention delta through a stable actor method payload.
+            member this.AdjustActiveManifestCount adjust eventMetadata =
+                this.HandleCommand (ContentBlockMetadataCommand.AdjustActiveManifestCount adjust) eventMetadata

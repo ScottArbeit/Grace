@@ -217,6 +217,32 @@ type ManifestContributionWorkflowActorTests() =
         | Ok _ -> Assert.Fail("Expected reused start operation id with different payload to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow operation id was already used with a different payload."))
 
+    /// Verifies a workflow start can resume after bounded range progress replaced LastOperationId.
+    [<Test>]
+    member _.StartReplayAfterRangeProgressResumesCurrentWorkflow() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start-resume")
+            |> expectOk
+
+        let progressed =
+            ManifestContributionWorkflowActor.decideCommand [] started.Workflow (succeeded "range-resume" range0) (metadata "corr-range-resume")
+            |> expectOk
+
+        let replay =
+            ManifestContributionWorkflowActor.decideCommand [] progressed.Workflow (start ManifestContributionDirection.Increment) (metadata "corr-start-retry")
+            |> expectOk
+
+        Assert.That(replay.WasIdempotentReplay, Is.True)
+        Assert.That(replay.Events, Is.Empty)
+        Assert.That(replay.Workflow.CompletedRanges.ContainsKey(range0), Is.True)
+        let pending = ManifestContributionWorkflowActor.pendingRanges replay.Workflow
+        Assert.That(pending, Has.Length.EqualTo(1))
+        Assert.That(pending[0], Is.EqualTo(range1))
+
     /// Verifies that reused Range Success Operation Id With Different Range Rejects Instead Of Replaying.
     [<Test>]
     member _.ReusedRangeSuccessOperationIdWithDifferentRangeRejectsInsteadOfReplaying() =

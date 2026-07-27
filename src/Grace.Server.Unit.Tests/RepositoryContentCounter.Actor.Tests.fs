@@ -6,6 +6,8 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Threading
+open System.Threading.Tasks
 
 module RepositoryContentCounterActor = Grace.Actors.RepositoryContentCounter
 
@@ -34,6 +36,14 @@ type RepositoryContentCounterActorTests() =
     let add operationId = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)
 
     let remove operationId = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, storagePoolId, manifestAddress)
+
+    /// Unwraps a counter decision while preserving a useful assertion failure.
+    let expectDecision result =
+        match result with
+        | Ok decision -> decision
+        | Error error ->
+            Assert.Fail($"Expected counter decision, got {error.Error}.")
+            Unchecked.defaultof<RepositoryContentCounterDecision>
 
     /// Applies all inputs to drive the server unit repository Content Counter Actor state transition under test.
     let applyAll events dto =
@@ -90,7 +100,7 @@ type RepositoryContentCounterActorTests() =
             | Ok replayDecision ->
                 Assert.That(replayDecision.WasIdempotentReplay, Is.True)
                 Assert.That(replayDecision.Events, Is.Empty)
-                Assert.That(replayDecision.Intents, Is.Empty)
+                Assert.That(replayDecision.Intents.Length, Is.EqualTo(1))
                 Assert.That(replayDecision.Counter.ReferenceCount, Is.EqualTo(1L))
             | Error error -> Assert.Fail($"Expected add replay to be idempotent, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected add to succeed, got {error.Error}.")
@@ -173,7 +183,7 @@ type RepositoryContentCounterActorTests() =
         | Ok decision ->
             Assert.That(decision.WasIdempotentReplay, Is.True)
             Assert.That(decision.Events, Is.Empty)
-            Assert.That(decision.Intents, Is.Empty)
+            Assert.That(decision.Intents.Length, Is.EqualTo(1))
             Assert.That(decision.Counter.ReferenceCount, Is.EqualTo(0L))
             Assert.That(decision.Counter.LifecycleState, Is.EqualTo(RepositoryContentCounterLifecycleState.NotReferenced))
         | Error error -> Assert.Fail($"Expected remove replay to be idempotent, got {error.Error}.")
@@ -243,3 +253,198 @@ type RepositoryContentCounterActorTests() =
         match result with
         | Ok _ -> Assert.Fail("Expected cross-pool command on same manifest address to reject against the wrong grain key.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter command target does not match the grain key."))
+
+    /// Verifies a superseded operation can replay its original zero transition from Redis without another count write.
+    [<Test>]
+    member _.SupersededOperationReplaysFromRecentResult() =
+        task {
+            let first =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-first") (metadata "corr-add-first")
+                |> expectDecision
+
+            let second =
+                RepositoryContentCounterActor.decideCommand [] first.Counter (add "op-add-second") (metadata "corr-add-second")
+                |> expectDecision
+
+            let recent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, operationId, _) =
+                        Task.FromResult(if operationId = "op-add-first" then first.Counter.LastCompletedChange else None)
+
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult true
+                }
+
+            let mutable persisted = false
+
+            let! result =
+                RepositoryContentCounterActor.handleWithRecentResult
+                    recent
+                    (fun _ ->
+                        persisted <- true
+                        Task.CompletedTask)
+                    None
+                    second.Counter
+                    (add "op-add-first")
+                    (metadata "corr-replay-first")
+                    CancellationToken.None
+
+            match result with
+            | Error error -> Assert.Fail($"Expected recent-result replay, got {error.Error}.")
+            | Ok decision ->
+                Assert.That(decision.WasIdempotentReplay, Is.True)
+                Assert.That(decision.Intents.Length, Is.EqualTo(1))
+                Assert.That(decision.Counter.Count, Is.EqualTo(2L))
+                Assert.That(persisted, Is.False)
+        }
+
+    /// Verifies a cached removal replay is resolved before the current zero count can reject it as a new removal.
+    [<Test>]
+    member _.SupersededRemovalReplaysFromRecentResultAtCurrentZero() =
+        task {
+            let addedFirst =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-first") (metadata "corr-add-first")
+                |> expectDecision
+
+            let removedFirst =
+                RepositoryContentCounterActor.decideCommand [] addedFirst.Counter (remove "op-remove-first") (metadata "corr-remove-first")
+                |> expectDecision
+
+            let addedSecond =
+                RepositoryContentCounterActor.decideCommand [] removedFirst.Counter (add "op-add-second") (metadata "corr-add-second")
+                |> expectDecision
+
+            let removedSecond =
+                RepositoryContentCounterActor.decideCommand [] addedSecond.Counter (remove "op-remove-second") (metadata "corr-remove-second")
+                |> expectDecision
+
+            let recent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, operationId, _) =
+                        Task.FromResult(
+                            if operationId = "op-remove-first" then
+                                removedFirst.Counter.LastCompletedChange
+                            else
+                                None
+                        )
+
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult true
+                }
+
+            let mutable persisted = false
+
+            let! result =
+                RepositoryContentCounterActor.handleWithRecentResult
+                    recent
+                    (fun _ ->
+                        persisted <- true
+                        Task.CompletedTask)
+                    None
+                    removedSecond.Counter
+                    (remove "op-remove-first")
+                    (metadata "corr-replay-remove-first")
+                    CancellationToken.None
+
+            match result with
+            | Error error -> Assert.Fail($"Expected recent removal replay, got {error.Error}.")
+            | Ok decision ->
+                Assert.That(decision.WasIdempotentReplay, Is.True)
+                Assert.That(decision.Intents.Length, Is.EqualTo(1))
+                Assert.That(decision.Counter.Count, Is.EqualTo(0L))
+                Assert.That(persisted, Is.False)
+        }
+
+    /// Verifies Redis loss pauses a removal before the bounded count is changed.
+    [<Test>]
+    member _.RedisLossPausesRemovalBeforeCountChange() =
+        task {
+            let added =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add") (metadata "corr-add")
+                |> expectDecision
+
+            let recent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, _, _) = Task.FromResult(None)
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult false
+                }
+
+            let mutable persisted = false
+
+            let! result =
+                RepositoryContentCounterActor.handleWithRecentResult
+                    recent
+                    (fun _ ->
+                        persisted <- true
+                        Task.CompletedTask)
+                    None
+                    added.Counter
+                    (remove "op-remove")
+                    (metadata "corr-remove")
+                    CancellationToken.None
+
+            match result with
+            | Ok _ -> Assert.Fail("Expected removal to pause while Redis cannot preserve the previous result.")
+            | Error error -> Assert.That(error.Error, Does.Contain("removal paused"))
+
+            Assert.That(persisted, Is.False)
+            Assert.That(added.Counter.Count, Is.EqualTo(1L))
+        }
+
+    /// Verifies a removal whose Redis reply is lost remains recoverable from LastCompletedChange.
+    [<Test>]
+    member _.RemovalRecoversAfterCompletedResultWriteReturnsUnknown() =
+        task {
+            let added =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add") (metadata "corr-add")
+                |> expectDecision
+
+            let firstRecent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, _, _) = Task.FromResult(None)
+
+                    member _.TrySetAsync(_, _, _, change, _) = Task.FromResult(change.Operation = RepositoryContentCounterChangeOperation.Added)
+                }
+
+            let mutable persisted = RepositoryContentCounterDto.Default
+
+            let! first =
+                RepositoryContentCounterActor.handleWithRecentResult
+                    firstRecent
+                    (fun snapshot ->
+                        persisted <- snapshot
+                        Task.CompletedTask)
+                    None
+                    added.Counter
+                    (remove "op-remove")
+                    (metadata "corr-remove")
+                    CancellationToken.None
+
+            match first with
+            | Ok _ -> Assert.Fail("Expected the unconfirmed completed-result write to withhold removal intent.")
+            | Error error -> Assert.That(error.Error, Does.Contain("retained safely"))
+
+            Assert.That(persisted.Count, Is.EqualTo(0L))
+            Assert.That(persisted.LastCompletedChange.Value.OperationId, Is.EqualTo("op-remove"))
+
+            let recoveredRecent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, _, _) = Task.FromResult(None)
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult true
+                }
+
+            let! recovered =
+                RepositoryContentCounterActor.handleWithRecentResult
+                    recoveredRecent
+                    (fun _ -> Task.CompletedTask)
+                    None
+                    persisted
+                    (remove "op-remove")
+                    (metadata "corr-remove-retry")
+                    CancellationToken.None
+
+            match recovered with
+            | Error error -> Assert.Fail($"Expected removal recovery, got {error.Error}.")
+            | Ok decision ->
+                Assert.That(decision.WasIdempotentReplay, Is.True)
+                Assert.That(decision.Intents.Length, Is.EqualTo(1))
+                Assert.That(decision.Counter.Count, Is.EqualTo(0L))
+        }

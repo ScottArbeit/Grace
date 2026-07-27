@@ -48,6 +48,7 @@ module AspireTestHost =
     let private graceServerResourceName = "grace-server"
     let private operationsWorkerResourceName = "grace-operations-worker"
     let private azuriteResourceName = "azurite"
+    let private redisResourceName = "redis"
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
     let mutable private sharedBootstrapUserId: string option = None
@@ -1099,6 +1100,12 @@ module AspireTestHost =
                 Console.WriteLine($"Azurite resource detected: {azuriteResourceName}")
                 do! waitForResourceHealthyAsync notificationService app azuriteResourceName cts.Token
             | None -> Console.WriteLine("Azurite resource not found in model.")
+
+            match tryFindResourceByName app redisResourceName with
+            | Some _ ->
+                Console.WriteLine($"Redis resource detected: {redisResourceName}")
+                do! waitForResourceHealthyAsync notificationService app redisResourceName cts.Token
+            | None -> Console.WriteLine("Redis resource not found in model.")
 
             let serviceBusSqlResourceName = getServiceBusSqlResourceName ()
             let serviceBusEmulatorResourceName = getServiceBusEmulatorResourceName ()

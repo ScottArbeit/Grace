@@ -5,6 +5,7 @@ open Grace.Actors.Context
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared.Utilities
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Common
 open Microsoft.Extensions.Logging
@@ -113,7 +114,7 @@ module ManifestContributionWorkflow =
 
         match command with
         | ManifestContributionWorkflowCommand.Start (_, repositoryId, storagePoolId, manifestAddress, direction, ranges) when
-            workflow.LastOperationId = Some commandOperationId
+            workflow.StartOperationId = Some commandOperationId
             ->
             Some(
                 workflow.RepositoryId = repositoryId
@@ -389,6 +390,104 @@ module ManifestContributionWorkflow =
                 workflow <- snapshot
             }
 
+        /// Executes one deterministic ContentBlock delta and records bounded workflow progress.
+        member private this.ApplyRange
+            (
+                startOperationId: ManifestContributionWorkflowOperationId,
+                rangeIndex: int,
+                range: ManifestContributionWorkflowRange,
+                metadata: EventMetadata
+            ) =
+            let grainFactory = this.GrainFactory
+
+            task {
+                let operationPrefix = $"{startOperationId}:range:{rangeIndex}"
+
+                let contentBlockActor =
+                    grainFactory.GetGrain<IContentBlockMetadataActor>(ContentBlockMetadataActorKey.Create range.StoragePoolId range.ContentBlockAddress)
+
+                let! currentMetadata = contentBlockActor.Get metadata.CorrelationId
+
+                match currentMetadata with
+                | None ->
+                    return
+                        Error(
+                            GraceError.Create
+                                $"ContentBlockMetadata does not exist for workflow range {range.StoragePoolId}/{range.ContentBlockAddress}."
+                                metadata.CorrelationId
+                        )
+                | Some currentMetadata ->
+                    let delta = activeCountDelta workflow.Direction
+
+                    let adjust =
+                        {
+                            OperationId = $"{operationPrefix}:active-count"
+                            ExpectedMetadataVersion = currentMetadata.MetadataVersion
+                            StoragePoolId = range.StoragePoolId
+                            ContentBlockAddress = range.ContentBlockAddress
+                            Range = { OrdinalStart = range.OrdinalStart; OrdinalCount = range.OrdinalCount }
+                            Delta = delta
+                        }
+
+                    match! contentBlockActor.AdjustActiveManifestCount adjust metadata with
+                    | Error error -> return Error error
+                    | Ok _ ->
+                        match! (this :> IManifestContributionWorkflowActor)
+                                   .Handle
+                                   (ManifestContributionWorkflowCommand.RecordRangeSucceeded(
+                                       $"{operationPrefix}:completed",
+                                       workflow.RepositoryId,
+                                       workflow.StoragePoolId,
+                                       workflow.ManifestAddress,
+                                       range
+                                   ))
+                                   metadata
+                            with
+                        | Error error -> return Error error
+                        | Ok _ -> return Ok()
+            }
+
+        /// Resumes every pending range from the bounded workflow snapshot.
+        member private this.ApplyPendingRanges(startOperationId: ManifestContributionWorkflowOperationId, metadata: EventMetadata) =
+            task {
+                let ranges = workflow.Ranges
+                let mutable rangeIndex = 0
+                let mutable error: GraceError option = None
+
+                while rangeIndex < ranges.Length && error.IsNone do
+                    let range = ranges[rangeIndex]
+
+                    if not (workflow.CompletedRanges.ContainsKey range) then
+                        match! this.ApplyRange(startOperationId, rangeIndex, range, metadata) with
+                        | Ok _ -> ()
+                        | Error rangeError ->
+                            let failureOperationId = $"{startOperationId}:range:{rangeIndex}:failed"
+
+                            let! failureResult =
+                                (this :> IManifestContributionWorkflowActor)
+                                    .Handle
+                                    (ManifestContributionWorkflowCommand.RecordRangeFailed(
+                                        failureOperationId,
+                                        workflow.RepositoryId,
+                                        workflow.StoragePoolId,
+                                        workflow.ManifestAddress,
+                                        range,
+                                        rangeError.Error
+                                    ))
+                                    metadata
+
+                            match failureResult with
+                            | Ok _ -> error <- Some rangeError
+                            | Error failureError -> error <- Some failureError
+
+                    rangeIndex <- rangeIndex + 1
+
+                return
+                    match error with
+                    | Some rangeError -> Error rangeError
+                    | None -> Ok()
+            }
+
         interface IHasRepositoryId with
             /// Returns the repository id recorded in this ManifestContributionWorkflow actor state.
             member this.GetRepositoryId correlationId =
@@ -430,11 +529,16 @@ module ManifestContributionWorkflow =
             /// Coordinates start logic for the ManifestContributionWorkflow actor.
             member this.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata =
                 task {
-                    return!
-                        (this :> IManifestContributionWorkflowActor)
-                            .Handle
-                            (ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges))
-                            metadata
+                    match! (this :> IManifestContributionWorkflowActor)
+                               .Handle
+                               (ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges))
+                               metadata
+                        with
+                    | Error error -> return Error error
+                    | Ok startResult ->
+                        match! this.ApplyPendingRanges(operationId, metadata) with
+                        | Error error -> return Error error
+                        | Ok _ -> return Ok startResult
                 }
 
             /// Routes a public actor command to the domain operation that validates and persists it.

@@ -1,6 +1,7 @@
 namespace Grace.Server
 
 open Grace.Shared
+open Grace.Actors
 open Grace.Types.Common
 open Grace.Types.RepositoryContentCounter
 open StackExchange.Redis
@@ -66,33 +67,12 @@ module RepositoryCounterRecentResult =
                 | :? DecoderFallbackException -> None
             | _ -> None
 
-    /// Exposes direct recent-result reads and best-effort writes without making Redis authoritative.
-    type IRepositoryCounterRecentResult =
-
-        /// Returns a cached result or `None` when Redis is missing, unavailable, expired, or malformed.
-        abstract member TryGetAsync:
-            repositoryId: RepositoryId *
-            storagePoolId: StoragePoolId *
-            manifestAddress: ManifestAddress *
-            operationId: RepositoryContentCounterOperationId *
-            cancellationToken: CancellationToken ->
-                Task<RepositoryContentCounterCompletedChange option>
-
-        /// Stores one recent result for exactly ten minutes; Redis failure never changes the durable outcome.
-        abstract member SetAsync:
-            repositoryId: RepositoryId *
-            storagePoolId: StoragePoolId *
-            manifestAddress: ManifestAddress *
-            change: RepositoryContentCounterCompletedChange *
-            cancellationToken: CancellationToken ->
-                Task
-
     /// Represents an intentionally absent Redis configuration as cache misses and ignored best-effort writes.
     type UnavailableRepositoryCounterRecentResult() =
         interface IRepositoryCounterRecentResult with
             member _.TryGetAsync(_, _, _, _, _) = Task.FromResult<RepositoryContentCounterCompletedChange option>(None)
 
-            member _.SetAsync(_, _, _, _, _) = Task.CompletedTask
+            member _.TrySetAsync(_, _, _, _, _) = Task.FromResult false
 
     /// Uses one lazy StackExchange.Redis connection with native reconnect and bounded direct GET/SET calls.
     type RedisRepositoryCounterRecentResult(host: string, port: int) =
@@ -132,18 +112,16 @@ module RepositoryCounterRecentResult =
                     | :? TimeoutException -> return None
                 }
 
-            member _.SetAsync(repositoryId, storagePoolId, manifestAddress, change, (cancellationToken: CancellationToken)) =
+            member _.TrySetAsync(repositoryId, storagePoolId, manifestAddress, change, (cancellationToken: CancellationToken)) =
                 task {
                     try
                         let! database = database cancellationToken
 
-                        let! _ =
+                        return!
                             database
                                 .StringSetAsync(key repositoryId storagePoolId manifestAddress change.OperationId, serialize change, expiry)
                                 .WaitAsync(commandTimeout, cancellationToken)
-
-                        ()
                     with
                     | :? RedisException
-                    | :? TimeoutException -> ()
+                    | :? TimeoutException -> return false
                 }

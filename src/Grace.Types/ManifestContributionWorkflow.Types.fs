@@ -203,6 +203,7 @@ module ManifestContributionWorkflow =
             CompletedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>
             FailedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>
             LifecycleState: ManifestContributionWorkflowLifecycleState
+            StartOperationId: ManifestContributionWorkflowOperationId option
             LastOperationId: ManifestContributionWorkflowOperationId option
             Revision: int64
         }
@@ -219,6 +220,7 @@ module ManifestContributionWorkflow =
                 CompletedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>()
                 FailedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>()
                 LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted
+                StartOperationId = None
                 LastOperationId = None
                 Revision = 0L
             }
@@ -259,6 +261,7 @@ module ManifestContributionWorkflow =
                     CompletedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>()
                     FailedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowFailure>()
                     LifecycleState = lifecycle
+                    StartOperationId = Some start.OperationId
                     LastOperationId = Some start.OperationId
                     Revision = current.Revision + 1L
                 }

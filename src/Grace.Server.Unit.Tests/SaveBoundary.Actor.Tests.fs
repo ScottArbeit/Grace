@@ -681,7 +681,12 @@ type SaveBoundaryActorTests() =
                 Unchecked.defaultof<RepositoryContentCounterDecision>
 
         Assert.That(replayDecision.WasIdempotentReplay, Is.True)
-        Assert.That(replayDecision.Intents, Is.Empty)
+        Assert.That(replayDecision.Intents, Has.Length.EqualTo(1))
+
+        match replayDecision.Intents[0] with
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (_, _, replayManifestAddress) ->
+            Assert.That(replayManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        | intent -> Assert.Fail($"Expected increment workflow intent on replay, got {intent}.")
 
         match ReferenceActor.tryCreateManifestContributionStartForCounterDecision plan replayDecision firstCounterDecision.Events with
         | Some startCommand ->
@@ -1031,7 +1036,12 @@ type SaveBoundaryActorTests() =
         | Ok decision ->
             Assert.That(decision.WasIdempotentReplay, Is.True)
             Assert.That(decision.Events, Is.Empty)
-            Assert.That(decision.Intents, Is.Empty)
+            Assert.That(decision.Intents, Has.Length.EqualTo(1))
+
+            match decision.Intents[0] with
+            | RepositoryContentCounterIntent.DecrementManifestReferenceCount (_, _, replayManifestAddress) ->
+                Assert.That(replayManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+            | intent -> Assert.Fail($"Expected decrement workflow intent on replay, got {intent}.")
 
             match ReferenceActor.tryCreateManifestContributionStartForCounterDecision decrementPlan decision allEvents with
             | Some startCommand ->

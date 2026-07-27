@@ -1,5 +1,6 @@
 namespace Grace.Server.Tests
 
+open Grace.Actors
 open Grace.Server.RepositoryCounterRecentResult
 open Grace.Shared
 open Grace.Types.Common
@@ -55,4 +56,30 @@ type RepositoryCounterRecentResultTests() =
                 )
 
             Assert.That(result, Is.EqualTo(None))
+        }
+
+    /// Verifies absent Redis reports an unconfirmed write so removal work can pause safely.
+    [<Test>]
+    member _.UnavailableRedisDoesNotConfirmWrite() =
+        task {
+            let recent = UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
+
+            let change =
+                {
+                    OperationId = "directory-version:1:remove"
+                    Operation = RepositoryContentCounterChangeOperation.Removed
+                    PreviousCount = 1L
+                    CurrentCount = 0L
+                }
+
+            let! confirmed =
+                recent.TrySetAsync(
+                    Guid.Parse("75ce5e36-25f6-4da0-afdd-ad4ad56540d5"),
+                    StoragePoolId "pool-main",
+                    "manifest:alpha",
+                    change,
+                    CancellationToken.None
+                )
+
+            Assert.That(confirmed, Is.False)
         }

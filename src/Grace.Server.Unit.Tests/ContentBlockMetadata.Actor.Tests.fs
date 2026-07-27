@@ -160,6 +160,19 @@ type ContentBlockMetadataActorTests() =
                 Assert.That(replay.WasIdempotentReplay, Is.True)
                 Assert.That(replay.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(3))
 
+            let replayAfterUnknownOutcome =
+                ContentBlockMetadataActor.decideCommand
+                    decision.Events
+                    (applyAll decision.Events current)
+                    (adjust "workflow-range-1" 8L 1 { OrdinalStart = 0; OrdinalCount = 1 })
+                    (metadata "corr-delta-unknown-outcome")
+
+            match replayAfterUnknownOutcome with
+            | Error error -> Assert.Fail($"Expected active-count delta unknown-outcome replay to succeed, got {error.Error}.")
+            | Ok replay ->
+                Assert.That(replay.WasIdempotentReplay, Is.True)
+                Assert.That(replay.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(3))
+
     /// Verifies decrement deltas fail closed instead of making a reclaimable range negative.
     [<Test>]
     member _.ActiveManifestCountDeltaRejectsUnderflow() =

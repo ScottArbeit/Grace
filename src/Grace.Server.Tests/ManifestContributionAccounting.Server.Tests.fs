@@ -55,6 +55,36 @@ module private ManifestContributionAccountingAspireTestHelpers =
             return actorEventStreams
         }
 
+    /// Reads bounded actor snapshots of one grain type from the shared Aspire Cosmos container.
+    let readActorSnapshotsAsync<'T> (state: TestHostState) (grainType: string) =
+        task {
+            use client = AspireTestHost.createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            use iterator = container.GetItemQueryIterator<Dictionary<string, obj>>(QueryDefinition("SELECT * FROM c"))
+            let actorSnapshots = ResizeArray<'T>()
+
+            while iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync()
+
+                for document in page do
+                    let tryGetJsonElement name =
+                        match document.TryGetValue name with
+                        | true, (:? JsonElement as value) -> Some value
+                        | _ -> None
+
+                    let documentGrainType =
+                        tryGetJsonElement "GrainType"
+                        |> Option.bind (fun value -> if value.ValueKind = JsonValueKind.String then Some(value.GetString()) else None)
+                        |> Option.defaultValue String.Empty
+
+                    if documentGrainType.Equals(grainType, StringComparison.Ordinal) then
+                        match tryGetJsonElement "State" with
+                        | Some stateValue -> actorSnapshots.Add(JsonSerializer.Deserialize<'T>(stateValue.GetRawText(), Constants.JsonSerializerOptions))
+                        | None -> ()
+
+            return actorSnapshots
+        }
+
 /// Proves the public Commit tracer across the real Aspire Service Bus and Cosmos resources.
 [<NonParallelizable>]
 type ManifestContributionAccountingAspireTests() =
@@ -231,14 +261,11 @@ type ManifestContributionAccountingAspireTests() =
             Assert.That(validationResult.ValidationName, Is.EqualTo("quick-scan"))
             Assert.That(validationResult.ValidationVersion, Is.EqualTo("1.0"))
 
-            let! counterEventStreams =
-                ManifestContributionAccountingAspireTestHelpers.readActorEventStreamsAsync<RepositoryContentCounterEvent> state "RepoContentCounter"
+            let! counterSnapshots =
+                ManifestContributionAccountingAspireTestHelpers.readActorSnapshotsAsync<RepositoryContentCounterDto> state "RepoContentCounter"
 
             let counter =
-                counterEventStreams
-                |> Seq.map (fun counterEvents ->
-                    counterEvents
-                    |> Seq.fold (fun current counterEvent -> RepositoryContentCounterDto.UpdateDto counterEvent current) RepositoryContentCounterDto.Default)
+                counterSnapshots
                 |> Seq.tryFind (fun candidate ->
                     candidate.RepositoryId = Guid.Parse(repositoryId)
                     && candidate.StoragePoolId = manifest.StoragePoolId
