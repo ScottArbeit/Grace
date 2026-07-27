@@ -943,3 +943,232 @@ type ManifestContributionAccountingServerTests() =
             Assert.That(durableCount, Is.EqualTo(1))
             Assert.That(relationshipPresent, Is.True)
         }
+
+    /// Verifies a current incoming relationship blocks physical deletion before any outgoing mutation.
+    [<Test>]
+    member _.DirectoryVersionPhysicalDeletionStopsBeforeMutationWhenIncomingRelationshipExists() =
+        task {
+            let dto = currentDirectoryVersionDto ()
+
+            let incoming =
+                ExactRelationship.ReferenceRoot { RepositoryId = repositoryId; RootDirectoryVersionId = currentDirectoryVersionId; ReferenceId = referenceId }
+
+            let mutable releaseCalls = 0
+            let mutable removeCalls = 0
+
+            let dependencies: Grace.Actors.DirectoryVersion.PhysicalDeletionDependencies =
+                {
+                    EnumerateIncoming = fun _ _ _ -> Task.FromResult [| incoming |]
+                    Verify = fun _ _ -> Task.FromResult ExactRelationshipPresence.Present
+                    EnsureAbsent =
+                        fun _ _ ->
+                            removeCalls <- removeCalls + 1
+                            Task.FromResult ExactRelationshipWriteOutcome.Changed
+                    ReleaseManifest =
+                        fun _ _ _ _ ->
+                            releaseCalls <- releaseCalls + 1
+                            Task.CompletedTask
+                }
+
+            let! disposition =
+                Grace.Actors.DirectoryVersion.convergePhysicalDeletionWith
+                    dependencies
+                    dto
+                    (EventMetadata.New "directory-delete-blocked" "unit-test")
+                    CancellationToken.None
+
+            Assert.That(disposition, Is.EqualTo(Grace.Actors.DirectoryVersion.PhysicalDeletionDisposition.BlockedByIncomingRelationship))
+            Assert.That(releaseCalls, Is.Zero)
+            Assert.That(removeCalls, Is.Zero)
+        }
+
+    /// Verifies restart resumes from exact outgoing evidence after manifest release returns unknown.
+    [<Test>]
+    member _.DirectoryVersionPhysicalDeletionRetainsExactEvidenceUntilReleaseCompletes() =
+        task {
+            let dto = currentDirectoryVersionDto ()
+            let childDirectoryVersionId = Guid.Parse("88888888-7290-4000-8000-888888888888")
+            dto.DirectoryVersion.Directories.Add(childDirectoryVersionId)
+
+            let manifestRelationship =
+                ExactRelationship.DirectoryVersionManifest
+                    {
+                        RepositoryId = repositoryId
+                        StoragePoolId = storagePoolId
+                        ManifestAddress = manifestAddress
+                        DirectoryVersionId = currentDirectoryVersionId
+                    }
+
+            let childRelationship =
+                ExactRelationship.ParentChild
+                    { RepositoryId = repositoryId; ParentDirectoryVersionId = currentDirectoryVersionId; ChildDirectoryVersionId = childDirectoryVersionId }
+
+            let present =
+                HashSet<ExactRelationship>(
+                    [|
+                        manifestRelationship
+                        childRelationship
+                    |]
+                )
+
+            let calls = ResizeArray<string>()
+            let mutable releaseAttempts = 0
+
+            let dependencies: Grace.Actors.DirectoryVersion.PhysicalDeletionDependencies =
+                {
+                    EnumerateIncoming = fun _ _ _ -> Task.FromResult Array.empty
+                    Verify =
+                        fun relationship _ ->
+                            Task.FromResult(
+                                if present.Contains relationship then
+                                    ExactRelationshipPresence.Present
+                                else
+                                    ExactRelationshipPresence.Absent
+                            )
+                    EnsureAbsent =
+                        fun relationship _ ->
+                            calls.Add($"remove:{relationship}")
+                            let changed = present.Remove relationship
+
+                            Task.FromResult(
+                                if changed then
+                                    ExactRelationshipWriteOutcome.Changed
+                                else
+                                    ExactRelationshipWriteOutcome.AlreadyConverged
+                            )
+                    ReleaseManifest =
+                        fun relationship _ _ _ ->
+                            releaseAttempts <- releaseAttempts + 1
+                            calls.Add($"release:{relationship.ManifestAddress}")
+
+                            if releaseAttempts = 1 then
+                                Task.FromException(TimeoutException("counter response lost"))
+                            else
+                                Task.CompletedTask
+                }
+
+            let metadata = EventMetadata.New "directory-delete-restart" "unit-test"
+            let first = Grace.Actors.DirectoryVersion.convergePhysicalDeletionWith dependencies dto metadata CancellationToken.None
+            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> first :> Task))
+
+            Assert.That(present.Contains manifestRelationship, Is.True)
+            Assert.That(present.Contains childRelationship, Is.True)
+            Assert.That(calls, Is.EqualTo<string array>([| $"release:{manifestAddress}" |]))
+
+            let! disposition = Grace.Actors.DirectoryVersion.convergePhysicalDeletionWith dependencies dto metadata CancellationToken.None
+
+            Assert.That(disposition, Is.EqualTo(Grace.Actors.DirectoryVersion.PhysicalDeletionDisposition.ReadyToClear))
+            Assert.That(present, Is.Empty)
+            Assert.That(releaseAttempts, Is.EqualTo(2))
+            Assert.That(calls[1], Is.EqualTo($"release:{manifestAddress}"))
+            Assert.That(calls[2], Does.StartWith("remove:DirectoryVersionManifest"))
+            Assert.That(calls[3], Does.StartWith("remove:ParentChild"))
+        }
+
+    /// Verifies final exact verification prevents actor-state clear when a removal has not converged.
+    [<Test>]
+    member _.DirectoryVersionPhysicalDeletionRequiresFinalOutgoingAbsence() =
+        task {
+            let dto = currentDirectoryVersionDto ()
+            let mutable verifyCalls = 0
+
+            let dependencies: Grace.Actors.DirectoryVersion.PhysicalDeletionDependencies =
+                {
+                    EnumerateIncoming = fun _ _ _ -> Task.FromResult Array.empty
+                    Verify =
+                        fun _ _ ->
+                            verifyCalls <- verifyCalls + 1
+                            Task.FromResult ExactRelationshipPresence.Present
+                    EnsureAbsent = fun _ _ -> Task.FromResult ExactRelationshipWriteOutcome.Changed
+                    ReleaseManifest = fun _ _ _ _ -> Task.CompletedTask
+                }
+
+            let! disposition =
+                Grace.Actors.DirectoryVersion.convergePhysicalDeletionWith
+                    dependencies
+                    dto
+                    (EventMetadata.New "directory-delete-final-verify" "unit-test")
+                    CancellationToken.None
+
+            Assert.That(disposition, Is.EqualTo(Grace.Actors.DirectoryVersion.PhysicalDeletionDisposition.OutgoingRelationshipStillPresent))
+            Assert.That(verifyCalls, Is.EqualTo(2))
+        }
+
+    /// Verifies an unknown exact-removal outcome stops deletion before later outgoing evidence is removed.
+    [<Test>]
+    member _.DirectoryVersionPhysicalDeletionStopsAfterUnknownExactRemoval() =
+        task {
+            let dto = currentDirectoryVersionDto ()
+            let childDirectoryVersionId = Guid.Parse("99999999-7290-4000-8000-999999999999")
+            dto.DirectoryVersion.Directories.Add(childDirectoryVersionId)
+
+            let mutable releaseCalls = 0
+            let mutable removeCalls = 0
+
+            let dependencies: Grace.Actors.DirectoryVersion.PhysicalDeletionDependencies =
+                {
+                    EnumerateIncoming = fun _ _ _ -> Task.FromResult Array.empty
+                    Verify = fun _ _ -> Task.FromResult ExactRelationshipPresence.Present
+                    EnsureAbsent =
+                        fun _ _ ->
+                            removeCalls <- removeCalls + 1
+                            Task.FromException<ExactRelationshipWriteOutcome>(TimeoutException("exact removal response lost"))
+                    ReleaseManifest =
+                        fun _ _ _ _ ->
+                            releaseCalls <- releaseCalls + 1
+                            Task.CompletedTask
+                }
+
+            let deletion =
+                Grace.Actors.DirectoryVersion.convergePhysicalDeletionWith
+                    dependencies
+                    dto
+                    (EventMetadata.New "directory-delete-exact-unknown" "unit-test")
+                    CancellationToken.None
+
+            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> deletion :> Task))
+
+            Assert.That(releaseCalls, Is.EqualTo(1))
+            Assert.That(removeCalls, Is.EqualTo(1), "The child relationship must remain untouched after the manifest removal is unknown.")
+        }
+
+    /// Verifies a DirectoryVersion with no outgoing evidence clears after exactly one incoming check.
+    [<Test>]
+    member _.DirectoryVersionPhysicalDeletionConvergesWithoutOutgoingEvidence() =
+        task {
+            let dto = currentDirectoryVersionDto ()
+            dto.DirectoryVersion.Files.Clear()
+            let mutable incomingChecks = 0
+            let mutable outgoingCalls = 0
+
+            let dependencies: Grace.Actors.DirectoryVersion.PhysicalDeletionDependencies =
+                {
+                    EnumerateIncoming =
+                        fun _ _ _ ->
+                            incomingChecks <- incomingChecks + 1
+                            Task.FromResult Array.empty
+                    Verify =
+                        fun _ _ ->
+                            outgoingCalls <- outgoingCalls + 1
+                            Task.FromResult ExactRelationshipPresence.Absent
+                    EnsureAbsent =
+                        fun _ _ ->
+                            outgoingCalls <- outgoingCalls + 1
+                            Task.FromResult ExactRelationshipWriteOutcome.AlreadyConverged
+                    ReleaseManifest =
+                        fun _ _ _ _ ->
+                            outgoingCalls <- outgoingCalls + 1
+                            Task.CompletedTask
+                }
+
+            let! disposition =
+                Grace.Actors.DirectoryVersion.convergePhysicalDeletionWith
+                    dependencies
+                    dto
+                    (EventMetadata.New "directory-delete-no-outgoing" "unit-test")
+                    CancellationToken.None
+
+            Assert.That(disposition, Is.EqualTo(Grace.Actors.DirectoryVersion.PhysicalDeletionDisposition.ReadyToClear))
+            Assert.That(incomingChecks, Is.EqualTo(1))
+            Assert.That(outgoingCalls, Is.Zero)
+        }

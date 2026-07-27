@@ -349,7 +349,8 @@ accepted `FileManifest` records, `ContentBlock` payloads, `ContentBlockMetadata`
 Grace keeps repository fan-in separate from StoragePool-level content lifecycle.
 
 `RepositoryContentCounter` is repository-scoped state for one StoragePool-shared CAS target. For manifest-backed
-content, the target is the `ManifestAddress`. The counter absorbs repeated live references inside one repository:
+content, the target is the `ManifestAddress`. The counter absorbs repeated current `DirectoryVersion` relationships
+inside one repository:
 
 ```text
 (RepositoryId, ManifestAddress).ReferenceCount
@@ -368,12 +369,22 @@ and not an upload-session child. The workflow actor owns:
 - Retry state for range liveness updates.
 - The ability to resume after activation, crash, or timeout.
 
-A save that introduces a manifest-backed `FileVersion` is complete only after the increment intent for
-`(RepositoryId, ManifestAddress)` is durably recorded. The full block-range fan-out may complete asynchronously with
-retry. Garbage collection and compaction must treat a pending contribution workflow as live enough to prevent deleting
-the manifest or ranges it is in the process of making active.
+A `DirectoryVersion` creation request returns after the `DirectoryVersion` is stored. Background accounting records its
+exact manifest relationships, updates the repository counter, and runs any required block-range fan-out. Garbage
+collection and compaction must treat a pending contribution workflow as live enough to prevent deleting the manifest or
+ranges it is in the process of making active.
 
-This keeps user-facing saves responsive without letting accepted manifests outrun content retention.
+Logical deletion does not change those relationships. Physical deletion first checks for a current incoming
+relationship. If none exists, it completes each manifest decrement before removing the matching exact relationship,
+removes its parent-child relationships, verifies that all outgoing evidence is absent, and only then clears actor state.
+Retries reconstruct this work from the immutable `DirectoryVersion` and current exact relationships; no deletion ledger
+or Reference-type-specific behavior is required.
+
+Grace performs the incoming check once. A new relationship created after physical cleanup begins does not cancel the
+deletion; this narrow race is accepted in the current design.
+
+Reference physical deletion removes only that Reference's root relationship. Manifest retention remains owned by the
+referenced `DirectoryVersion`, regardless of `ReferenceType`.
 
 ## Dedupe Index Maintenance
 

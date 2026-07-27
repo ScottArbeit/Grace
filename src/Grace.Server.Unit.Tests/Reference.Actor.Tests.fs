@@ -490,6 +490,9 @@ type ReferenceActorHashValidationTests() =
                 do!
                     completeReferencePhysicalDeletion
                         (fun () ->
+                            calls.Add($"remove-root:{getDiscriminatedUnionCaseName referenceType}")
+                            Task.CompletedTask)
+                        (fun () ->
                             calls.Add($"mark:{getDiscriminatedUnionCaseName referenceType}")
                             Task.CompletedTask)
                         (fun () ->
@@ -500,9 +503,32 @@ type ReferenceActorHashValidationTests() =
                     calls,
                     Is.EqualTo<string array>(
                         [|
+                            $"remove-root:{getDiscriminatedUnionCaseName referenceType}"
                             $"mark:{getDiscriminatedUnionCaseName referenceType}"
                             $"clear:{getDiscriminatedUnionCaseName referenceType}"
                         |]
                     )
                 )
+        }
+
+    /// Verifies an unknown Reference-root removal prevents later physical-deletion effects.
+    [<Test>]
+    member _.ReferencePhysicalDeletionStopsWhenRootRemovalIsUnknown() =
+        task {
+            let calls = ResizeArray<string>()
+
+            let deletion =
+                completeReferencePhysicalDeletion
+                    (fun () ->
+                        calls.Add("remove-root")
+                        Task.FromException(TimeoutException("exact removal response lost")))
+                    (fun () ->
+                        calls.Add("mark")
+                        Task.CompletedTask)
+                    (fun () ->
+                        calls.Add("clear")
+                        Task.CompletedTask)
+
+            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> deletion :> Task))
+            Assert.That(calls, Is.EqualTo<string array>([| "remove-root" |]))
         }
