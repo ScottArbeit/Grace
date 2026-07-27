@@ -2083,6 +2083,10 @@ module Application =
                     new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog) :> IRepositoryCounterRecentResult)
             |> ignore
 
+            services.AddSingleton<IExactRelationshipStore> (fun _ ->
+                ManifestContributionAccounting.CosmosExactRelationshipStore(ApplicationContext.cosmosContainer) :> IExactRelationshipStore)
+            |> ignore
+
             let apiVersioningBuilder =
                 services.AddApiVersioning (fun options ->
                     options.ReportApiVersions <- true

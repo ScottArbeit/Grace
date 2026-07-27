@@ -15,6 +15,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
+open Grace.Types.ManifestContributionAccounting
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Reference
 open Grace.Types.Reminder
@@ -30,6 +31,7 @@ open System.Globalization
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups Orleans actor helpers for reference keys, proxies, state, or workflow transitions.
@@ -284,10 +286,11 @@ module Reference =
     let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
         planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
 
-    /// Completes Reference physical deletion without changing DirectoryVersion-owned manifest retention.
-    let internal completeReferencePhysicalDeletion (markBranchForRecompute: unit -> Task) (clearReferenceState: unit -> Task) =
+    /// Completes ordered Reference physical-deletion effects without changing DirectoryVersion-owned manifest retention.
+    let internal completeReferencePhysicalDeletion (removeReferenceRoot: unit -> Task) (afterRootRemoval: unit -> Task) (clearReferenceState: unit -> Task) =
         task {
-            do! markBranchForRecompute ()
+            do! removeReferenceRoot ()
+            do! afterRootRemoval ()
             do! clearReferenceState ()
         }
 
@@ -492,7 +495,11 @@ module Reference =
         }
 
     /// Implements the Orleans grain for reference actor.
-    type ReferenceActor([<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>) =
+    type ReferenceActor
+        (
+            [<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>,
+            exactRelationships: IExactRelationshipStore
+        ) =
         inherit Grain()
 
         static let actorName = ActorName.Reference
@@ -556,6 +563,23 @@ module Reference =
 
                         do!
                             completeReferencePhysicalDeletion
+                                (fun () ->
+                                    task {
+                                        let relationship =
+                                            ExactRelationship.ReferenceRoot
+                                                {
+                                                    RepositoryId = physicalDeletionReminderState.RepositoryId
+                                                    RootDirectoryVersionId = physicalDeletionReminderState.DirectoryVersionId
+                                                    ReferenceId = referenceId
+                                                }
+
+                                        let! _ = exactRelationships.EnsureAbsentAsync(relationship, CancellationToken.None)
+
+                                        match! exactRelationships.VerifyAsync(relationship, CancellationToken.None) with
+                                        | ExactRelationshipPresence.Absent -> ()
+                                        | ExactRelationshipPresence.Present ->
+                                            invalidOp $"Reference-root relationship remained present for Reference {referenceId}."
+                                    })
                                 (fun () ->
                                     // Mark the branch as needing to update its latest references.
                                     let branchActorProxy =
@@ -772,32 +796,33 @@ module Reference =
 
                 /// Runs Reference command decisions, applies emitted events, and persists the result.
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
-                    /// Coordinates existing reference return value logic for the Reference actor.
-                    let existingReferenceReturnValue () =
+                    /// Builds the stable Reference response metadata for one persisted or completed event.
+                    let referenceReturnValue referenceEventType =
                         (GraceReturnValue.Create referenceDto metadata.CorrelationId)
                             .enhance(nameof RepositoryId, referenceDto.RepositoryId)
                             .enhance(nameof BranchId, referenceDto.BranchId)
                             .enhance(nameof ReferenceId, referenceDto.ReferenceId)
                             .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
                             .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
-                            .enhance (
-                                nameof ReferenceEventType,
-                                getDiscriminatedUnionFullName (
-                                    Created(
-                                        referenceDto.ReferenceId,
-                                        referenceDto.OwnerId,
-                                        referenceDto.OrganizationId,
-                                        referenceDto.RepositoryId,
-                                        referenceDto.BranchId,
-                                        referenceDto.DirectoryId,
-                                        referenceDto.Sha256Hash,
-                                        referenceDto.Blake3Hash,
-                                        referenceDto.ReferenceType,
-                                        referenceDto.ReferenceText,
-                                        referenceDto.Links
-                                    )
-                                )
+                            .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName referenceEventType)
+
+                    /// Coordinates existing reference return value logic for the Reference actor.
+                    let existingReferenceReturnValue () =
+                        referenceReturnValue (
+                            Created(
+                                referenceDto.ReferenceId,
+                                referenceDto.OwnerId,
+                                referenceDto.OrganizationId,
+                                referenceDto.RepositoryId,
+                                referenceDto.BranchId,
+                                referenceDto.DirectoryId,
+                                referenceDto.Sha256Hash,
+                                referenceDto.Blake3Hash,
+                                referenceDto.ReferenceType,
+                                referenceDto.ReferenceText,
+                                referenceDto.Links
                             )
+                        )
 
                     /// Reconstructs and republishes the persisted Created event for an exact matching identity retry.
                     let republishSavedCreatedEvent () =
@@ -933,7 +958,28 @@ module Reference =
 
                                         return Ok(LogicalDeleted(force, deleteReason))
                                     | DeletePhysical ->
-                                        do! completeReferencePhysicalDeletion (fun () -> Task.CompletedTask) (fun () -> state.ClearStateAsync())
+                                        let relationship =
+                                            ExactRelationship.ReferenceRoot
+                                                {
+                                                    RepositoryId = referenceDto.RepositoryId
+                                                    RootDirectoryVersionId = referenceDto.DirectoryId
+                                                    ReferenceId = referenceDto.ReferenceId
+                                                }
+
+                                        do!
+                                            completeReferencePhysicalDeletion
+                                                (fun () ->
+                                                    task {
+                                                        let! _ = exactRelationships.EnsureAbsentAsync(relationship, CancellationToken.None)
+
+                                                        match! exactRelationships.VerifyAsync(relationship, CancellationToken.None) with
+                                                        | ExactRelationshipPresence.Absent -> ()
+                                                        | ExactRelationshipPresence.Present ->
+                                                            invalidOp $"Reference-root relationship remained present for Reference {referenceDto.ReferenceId}."
+                                                    })
+                                                (fun () ->
+                                                    publishGraceEvent (GraceEvent.ReferenceEvent { Event = PhysicalDeleted; Metadata = metadata }) metadata)
+                                                (fun () -> state.ClearStateAsync())
 
                                         this.DeactivateOnIdle()
                                         return Ok PhysicalDeleted
@@ -941,6 +987,7 @@ module Reference =
                                 }
 
                             match referenceEventTypeResult with
+                            | Ok ReferenceEventType.PhysicalDeleted -> return Ok(referenceReturnValue PhysicalDeleted)
                             | Ok referenceEventType ->
                                 let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
                                 return! this.ApplyEvent referenceEvent

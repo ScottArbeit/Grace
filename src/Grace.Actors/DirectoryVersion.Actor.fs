@@ -16,8 +16,11 @@ open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
+open Grace.Types.ManifestContributionAccounting
+open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Reminder
 open Grace.Types.Repository
+open Grace.Types.RepositoryContentCounter
 open Grace.Types.DirectoryVersion
 open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
@@ -547,10 +550,142 @@ module DirectoryVersion =
 
         validateManifestReferencesForSaveBoundaryWithResolver getScopedRangePresence repositoryId correlationId manifestReferences
 
+    /// Reports whether physical deletion must wait or may clear the DirectoryVersion actor state.
+    type PhysicalDeletionDisposition =
+        | BlockedByIncomingRelationship
+        | OutgoingRelationshipStillPresent
+        | ReadyToClear
+
+    /// Supplies exact relationship and manifest-release effects to the restart-safe deletion loop.
+    type PhysicalDeletionDependencies =
+        {
+            EnumerateIncoming: RepositoryId -> DirectoryVersionId -> CancellationToken -> Task<ExactRelationship array>
+            Verify: ExactRelationship -> CancellationToken -> Task<ExactRelationshipPresence>
+            EnsureAbsent: ExactRelationship -> CancellationToken -> Task<ExactRelationshipWriteOutcome>
+            ReleaseManifest: DirectoryVersionManifestRelationship -> FileManifest -> EventMetadata -> CancellationToken -> Task
+        }
+
+    /// Caps the physical-deletion incoming probe at the first relationship that blocks deletion.
+    let private oneIncomingRelationshipBound =
+        match ExactRelationshipReadBound.create 1 with
+        | Ok bound -> bound
+        | Error error -> invalidOp error
+
+    /// Builds the shared repository, storage-pool, and manifest actor key.
+    let private manifestAccountingPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
+
+    /// Reconstructs exact outgoing evidence from immutable DirectoryVersion actor state.
+    let private outgoingPhysicalDeletionEvidence (directoryVersionDto: DirectoryVersionDto) correlationId =
+        let directoryVersion = directoryVersionDto.DirectoryVersion
+
+        let manifestEvidence =
+            match getManifestReferencesForSaveBoundary directoryVersion correlationId with
+            | Error graceError -> invalidOp graceError.Error
+            | Ok manifestReferences ->
+                manifestReferences
+                |> Seq.map (fun manifestReference -> manifestReference.Manifest)
+                |> Seq.distinctBy (fun manifest -> manifest.StoragePoolId, manifest.ManifestAddress)
+                |> Seq.map (fun manifest ->
+                    ExactRelationship.DirectoryVersionManifest
+                        {
+                            RepositoryId = directoryVersion.RepositoryId
+                            StoragePoolId = manifest.StoragePoolId
+                            ManifestAddress = manifest.ManifestAddress
+                            DirectoryVersionId = directoryVersion.DirectoryVersionId
+                        },
+                    manifest)
+                |> Seq.toArray
+
+        let childEvidence =
+            directoryVersion.Directories
+            |> Seq.distinct
+            |> Seq.map (fun childDirectoryVersionId ->
+                ExactRelationship.ParentChild
+                    {
+                        RepositoryId = directoryVersion.RepositoryId
+                        ParentDirectoryVersionId = directoryVersion.DirectoryVersionId
+                        ChildDirectoryVersionId = childDirectoryVersionId
+                    })
+            |> Seq.toArray
+
+        manifestEvidence, childEvidence
+
+    /// Converges physical deletion from current exact evidence without recording deletion progress.
+    let convergePhysicalDeletionWith
+        (dependencies: PhysicalDeletionDependencies)
+        (directoryVersionDto: DirectoryVersionDto)
+        (metadata: EventMetadata)
+        cancellationToken
+        =
+        task {
+            let directoryVersion = directoryVersionDto.DirectoryVersion
+
+            let! incoming = dependencies.EnumerateIncoming directoryVersion.RepositoryId directoryVersion.DirectoryVersionId cancellationToken
+
+            if incoming.Length > 0 then
+                return BlockedByIncomingRelationship
+            else
+                let manifestEvidence, childEvidence = outgoingPhysicalDeletionEvidence directoryVersionDto metadata.CorrelationId
+                let mutable manifestIndex = 0
+
+                while manifestIndex < manifestEvidence.Length do
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let relationship, manifest = manifestEvidence[manifestIndex]
+
+                    match! dependencies.Verify relationship cancellationToken with
+                    | ExactRelationshipPresence.Absent -> ()
+                    | ExactRelationshipPresence.Present ->
+                        let manifestRelationship =
+                            match relationship with
+                            | ExactRelationship.DirectoryVersionManifest manifestRelationship -> manifestRelationship
+                            | _ -> invalidOp "DirectoryVersion physical deletion expected manifest evidence."
+
+                        do! dependencies.ReleaseManifest manifestRelationship manifest metadata cancellationToken
+                        let! _ = dependencies.EnsureAbsent relationship cancellationToken
+                        ()
+
+                    manifestIndex <- manifestIndex + 1
+
+                let mutable childIndex = 0
+
+                while childIndex < childEvidence.Length do
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let! _ = dependencies.EnsureAbsent childEvidence[childIndex] cancellationToken
+                    childIndex <- childIndex + 1
+
+                let finalManifestEvidence, finalChildEvidence = outgoingPhysicalDeletionEvidence directoryVersionDto metadata.CorrelationId
+                let mutable allAbsent = true
+                let mutable finalManifestIndex = 0
+
+                while finalManifestIndex < finalManifestEvidence.Length
+                      && allAbsent do
+                    let relationship, _ = finalManifestEvidence[finalManifestIndex]
+
+                    match! dependencies.Verify relationship cancellationToken with
+                    | ExactRelationshipPresence.Absent -> ()
+                    | ExactRelationshipPresence.Present -> allAbsent <- false
+
+                    finalManifestIndex <- finalManifestIndex + 1
+
+                let mutable finalChildIndex = 0
+
+                while finalChildIndex < finalChildEvidence.Length
+                      && allAbsent do
+                    match! dependencies.Verify finalChildEvidence[finalChildIndex] cancellationToken with
+                    | ExactRelationshipPresence.Absent -> ()
+                    | ExactRelationshipPresence.Present -> allAbsent <- false
+
+                    finalChildIndex <- finalChildIndex + 1
+
+                return if allAbsent then ReadyToClear else OutgoingRelationshipStillPresent
+        }
+
     /// Implements the Orleans grain for directory version actor.
     type DirectoryVersionActor
         (
-            [<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>
+            [<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>,
+            exactRelationships: IExactRelationshipStore
         ) =
         inherit Grain()
 
@@ -569,6 +704,121 @@ module DirectoryVersion =
 
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
+
+        /// Releases one direct manifest contribution before removing its exact relationship evidence.
+        member private this.ReleaseManifestContribution
+            (
+                relationship: DirectoryVersionManifestRelationship,
+                manifest: FileManifest,
+                metadata: EventMetadata,
+                cancellationToken: CancellationToken
+            ) =
+            let grainFactory = this.GrainFactory
+
+            task {
+                cancellationToken.ThrowIfCancellationRequested()
+
+                let counterActor =
+                    grainFactory.GetGrain<IRepositoryContentCounterActor>(
+                        manifestAccountingPrimaryKey relationship.RepositoryId relationship.StoragePoolId relationship.ManifestAddress
+                    )
+
+                let operationId =
+                    RepositoryContentCounterOperationId
+                        $"directory-version:{relationship.DirectoryVersionId:N}:{relationship.StoragePoolId}:{relationship.ManifestAddress}:remove"
+
+                let counterCommand =
+                    RepositoryContentCounterCommand.RemoveReference(
+                        operationId,
+                        relationship.RepositoryId,
+                        relationship.StoragePoolId,
+                        relationship.ManifestAddress
+                    )
+
+                match! counterActor.Handle counterCommand metadata with
+                | Error graceError -> invalidOp graceError.Error
+                | Ok counterReturnValue ->
+                    let decrementRevision =
+                        counterReturnValue.ReturnValue.Intents
+                        |> List.tryPick (function
+                            | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress, counterRevision) when
+                                repositoryId = relationship.RepositoryId
+                                && storagePoolId = relationship.StoragePoolId
+                                && manifestAddress = relationship.ManifestAddress
+                                ->
+                                Some counterRevision
+                            | _ -> None)
+
+                    match decrementRevision with
+                    | None -> ()
+                    | Some counterRevision ->
+                        let ranges =
+                            manifest.Blocks
+                            |> Seq.distinctBy (fun block -> block.Address)
+                            |> Seq.map (fun block -> { StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address })
+                            |> Seq.toArray
+
+                        let workflowActor =
+                            grainFactory.GetGrain<IManifestContributionWorkflowActor>(
+                                manifestAccountingPrimaryKey relationship.RepositoryId relationship.StoragePoolId relationship.ManifestAddress
+                            )
+
+                        let workflowOperationId =
+                            ManifestContributionWorkflowOperationId
+                                $"directory-version:{relationship.DirectoryVersionId:N}:{relationship.StoragePoolId}:{relationship.ManifestAddress}:release"
+
+                        match!
+                            workflowActor.Start
+                                workflowOperationId
+                                relationship.RepositoryId
+                                relationship.StoragePoolId
+                                relationship.ManifestAddress
+                                ManifestContributionDirection.Decrement
+                                ranges
+                                counterRevision
+                                metadata
+                            with
+                        | Ok _ -> ()
+                        | Error graceError -> invalidOp graceError.Error
+            }
+            :> Task
+
+        /// Runs the one-shot incoming check and restart-safe outgoing convergence for physical deletion.
+        member private this.ConvergePhysicalDeletion(metadata: EventMetadata, cancellationToken: CancellationToken) =
+            let dependencies =
+                {
+                    EnumerateIncoming =
+                        fun repositoryId directoryVersionId cancellationToken ->
+                            task {
+                                let! page =
+                                    exactRelationships.EnumerateAsync(
+                                        ExactRelationshipPartition.IncomingDirectoryVersion(repositoryId, directoryVersionId),
+                                        oneIncomingRelationshipBound,
+                                        None,
+                                        cancellationToken
+                                    )
+
+                                return page.Relationships
+                            }
+                    Verify = fun relationship cancellationToken -> exactRelationships.VerifyAsync(relationship, cancellationToken)
+                    EnsureAbsent = fun relationship cancellationToken -> exactRelationships.EnsureAbsentAsync(relationship, cancellationToken)
+                    ReleaseManifest =
+                        fun relationship manifest metadata cancellationToken ->
+                            this.ReleaseManifestContribution(relationship, manifest, metadata, cancellationToken)
+                }
+
+            convergePhysicalDeletionWith dependencies directoryVersionDto metadata cancellationToken
+
+        /// Converts a retained physical-deletion disposition into a retryable actor error.
+        member private this.PhysicalDeletionError(disposition, correlationId) =
+            let message =
+                match disposition with
+                | BlockedByIncomingRelationship -> "DirectoryVersion physical deletion is blocked by a current incoming relationship."
+                | OutgoingRelationshipStillPresent -> "DirectoryVersion physical deletion retained state because outgoing exact evidence is still present."
+                | ReadyToClear -> invalidArg (nameof disposition) "Ready-to-clear physical deletion is not an error."
+
+            (GraceError.Create message correlationId)
+                .enhance ("IsRetryable", "true")
 
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
@@ -694,21 +944,25 @@ module DirectoryVersion =
                     | ReminderTypes.PhysicalDeletion, ReminderState.DirectoryVersionPhysicalDeletion reminderState ->
                         this.correlationId <- reminderState.CorrelationId
 
-                        // Delete saved state for this actor.
-                        do! state.ClearStateAsync()
+                        let metadata = EventMetadata.New reminderState.CorrelationId "DirectoryVersionPhysicalDeletionReminder"
 
-                        log.LogInformation(
-                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                            getCurrentInstantExtended (),
-                            getMachineName,
-                            reminderState.CorrelationId,
-                            directoryVersionDto.DirectoryVersion.RepositoryId,
-                            directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                            reminderState.DeleteReason
-                        )
+                        match! this.ConvergePhysicalDeletion(metadata, CancellationToken.None) with
+                        | ReadyToClear ->
+                            do! state.ClearStateAsync()
 
-                        this.DeactivateOnIdle()
-                        return Ok()
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                reminderState.CorrelationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                reminderState.DeleteReason
+                            )
+
+                            this.DeactivateOnIdle()
+                            return Ok()
+                        | disposition -> return Error(this.PhysicalDeletionError(disposition, reminderState.CorrelationId))
                     | reminderType, state ->
                         return
                             Error(
@@ -1368,13 +1622,28 @@ module DirectoryVersion =
 
                                         return Ok(LogicalDeleted deleteReason)
                                     | DeletePhysical ->
-                                        do! state.ClearStateAsync()
-                                        this.DeactivateOnIdle()
-                                        return Ok(PhysicalDeleted)
+                                        match! this.ConvergePhysicalDeletion(metadata, CancellationToken.None) with
+                                        | ReadyToClear -> return Ok PhysicalDeleted
+                                        | disposition -> return Error(this.PhysicalDeletionError(disposition, metadata.CorrelationId))
                                     | Undelete -> return Ok(Undeleted)
                                 }
 
                             match event with
+                            | Ok PhysicalDeleted ->
+                                let directoryVersion = directoryVersionDto.DirectoryVersion
+                                let directoryVersionEvent: DirectoryVersionEvent = { Event = PhysicalDeleted; Metadata = metadata }
+                                do! publishGraceEvent (GraceEvent.DirectoryVersionEvent directoryVersionEvent) metadata
+                                do! state.ClearStateAsync()
+                                this.DeactivateOnIdle()
+
+                                return
+                                    Ok(
+                                        (GraceReturnValue.Create "Directory version command succeeded." metadata.CorrelationId)
+                                            .enhance(nameof RepositoryId, directoryVersion.RepositoryId)
+                                            .enhance(nameof DirectoryVersionId, directoryVersion.DirectoryVersionId)
+                                            .enhance(nameof Sha256Hash, directoryVersion.Sha256Hash)
+                                            .enhance (nameof DirectoryVersionEventType, getDiscriminatedUnionFullName PhysicalDeleted)
+                                    )
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with

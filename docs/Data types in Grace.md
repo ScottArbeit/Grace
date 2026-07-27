@@ -157,9 +157,13 @@ References and DirectoryVersions are where the action happens. New References an
 
 The ratio of new-DirectoryVersions-to-new-References is directly proportional to how deep in the directory tree the updated files are. For every directory level, a new DirectoryVersion will be created. For example, if I update a file called `src/web/js/lib/blah.js` and hit save, that will create one Save Reference, and five new DirectoryVersions - one for the root, and one each for each directory in the path.
 
-Saves have short lifetimes, and checkpoints (by default) have longer, but finite, lifetimes, and they both get deleted at some point. Any DirectoryVersions that are unique to those references, and any FileVersions in object storage that only appear in those references, get deleted when the Reference is deleted.
+References can have different lifetimes, but every `ReferenceType` follows the same deletion rules. Removing a Reference
+removes only its relationship to the root DirectoryVersion. Background relationship accounting later identifies
+DirectoryVersions with no current incoming relationship. Physical DirectoryVersion deletion releases its direct manifest
+relationships and child relationships before the DirectoryVersion state is removed.
 
-Also, of course, every time a Branch is deleted, all References in that Branch get deleted. And all DirectoryVersions unique to those References get deleted. Etc.
+Deleting a Branch therefore removes its References first. DirectoryVersions and stored file content are reclaimed
+separately when their relationship evidence shows that they are no longer in use.
 
 It's completely normal in Grace for References to be deleted. Happens all the time.
 
