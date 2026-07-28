@@ -931,7 +931,7 @@ module ManifestContributionDiagnosis =
         }
 
     /// Creates production read dependencies without exposing a mutation-capable service to the diagnosis core.
-    let private productionDependencies (context: HttpContext) =
+    let internal productionDependencies (context: HttpContext) =
         let store = ManifestContributionAccounting.CosmosExactRelationshipStore(cosmosContainer) :> IExactRelationshipStore
 
         let recentResults = context.RequestServices.GetRequiredService<IRepositoryCounterRecentResult>()

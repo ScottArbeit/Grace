@@ -1,7 +1,14 @@
 namespace Grace.Server
 
 open Giraffe
+open Grace.Actors
+open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Interfaces
+open Grace.Server.ApplicationContext
 open Grace.Server.ManifestContributionDiagnosis
+open Grace.Server.Services
+open Grace.Shared.Utilities
+open Grace.Types.DirectoryVersion
 open Grace.Types.ManifestContributionAccounting
 open Microsoft.AspNetCore.Http
 open System
@@ -308,7 +315,7 @@ module ManifestContributionRepair =
                         let proposedKeys =
                             proposed
                             |> Array.map (fun action -> action.Kind, action.Identity)
-                            |> Set.ofArray
+                            |> set
 
                         let mutable completed: ManifestContributionRepairReport option = None
                         let mutable previousPlan: (string * string) array option = None
@@ -417,11 +424,85 @@ module ManifestContributionRepair =
                             $"Repair failed before convergence and retained current evidence: {ex.Message}"
         }
 
-    /// Rejects hosted calls until production actor and exact-mutation dependencies have been assembled.
+    /// Creates the production bounded read and mutation adapters for the internal repair route.
+    let private productionDependencies (context: HttpContext) =
+        let store = ManifestContributionAccounting.CosmosExactRelationshipStore(cosmosContainer) :> IExactRelationshipStore
+        let correlationId = getCorrelationId context
+        let metadata = createMetadata context
+
+        let applyAction _ action cancellationToken =
+            task {
+                match action.Kind, action.Target with
+                | "ResendDeterministicEvent", RepairActionTarget.Relationship (ExactRelationship.DirectoryVersionManifest relationship) ->
+                    let actor = grainFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(relationship.DirectoryVersionId, correlationId)
+
+                    let! current = actor.Get correlationId
+
+                    if current.DirectoryVersion.DirectoryVersionId
+                       <> relationship.DirectoryVersionId
+                       || current.DirectoryVersion.RepositoryId
+                          <> relationship.RepositoryId then
+                        invalidOp "The DirectoryVersion source changed before deterministic event resend."
+
+                    let manifest =
+                        match DirectoryVersion.getManifestReferencesForSaveBoundary current.DirectoryVersion correlationId with
+                        | Error graceError -> invalidOp graceError.Error
+                        | Ok references ->
+                            references
+                            |> Seq.map (fun reference -> reference.Manifest)
+                            |> Seq.tryFind (fun candidate ->
+                                String.Equals(candidate.StoragePoolId, relationship.StoragePoolId, StringComparison.Ordinal)
+                                && String.Equals(candidate.ManifestAddress, relationship.ManifestAddress, StringComparison.Ordinal))
+                            |> Option.defaultWith (fun () -> invalidOp "The direct manifest source changed before deterministic event resend.")
+
+                    do! ManifestContributionAccounting.ensureDirectoryVersionManifest store relationship manifest metadata cancellationToken
+                | "GetOrAddExactRelationship", RepairActionTarget.Relationship relationship ->
+                    let! _ = store.EnsurePresentAsync(relationship, cancellationToken)
+                    ()
+                | "RemoveStaleExactRelationship", RepairActionTarget.Relationship relationship ->
+                    let! _ = store.EnsureAbsentAsync(relationship, cancellationToken)
+                    ()
+                | "ReconcileCounter", RepairActionTarget.Counter _ ->
+                    invalidOp "Counter reconciliation requires a fresh complete diagnosis and is not admissible through this adapter."
+                | _ -> invalidOp "The validated repair plan contained an unsupported mutation."
+            }
+            :> Task
+
+        {
+            DiagnoseCurrent =
+                fun selector bound cancellationToken ->
+                    diagnoseWith
+                        (ManifestContributionDiagnosis.productionDependencies context)
+                        (getCurrentInstantExtended ())
+                        correlationId
+                        cancellationToken
+                        bound
+                        selector
+            ApplyAction = applyAction
+        }
+
+    /// Handles the internal SystemAdmin repair route with dry-run as the default.
     let Repair: HttpHandler =
         fun next context ->
             task {
-                let! _ = context.BindJsonAsync<RepairManifestContributionParameters>()
+                try
+                    let! parameters = context.BindJsonAsync<RepairManifestContributionParameters>()
 
-                return! ServerErrors.INTERNAL_ERROR "Manifest contribution repair dependencies are not configured." next context
+                    match validateRequest parameters.ReportJson parameters.ExpectedReportSha256 parameters.Execute with
+                    | Error error -> return! RequestErrors.BAD_REQUEST error next context
+                    | Ok (report, _, bound, execute) ->
+                        let! repairReport =
+                            repairWith
+                                (productionDependencies context)
+                                (getCurrentInstantExtended ())
+                                (getCorrelationId context)
+                                context.RequestAborted
+                                bound
+                                report
+                                execute
+
+                        return! context.WriteJsonAsync repairReport
+                with
+                | RelationshipBoundExceeded error -> return! RequestErrors.BAD_REQUEST error next context
+                | :? JsonException -> return! RequestErrors.BAD_REQUEST "The repair request body must be valid JSON." next context
             }
