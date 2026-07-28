@@ -351,7 +351,7 @@ type ManifestContributionDiagnosisServerTests() =
 
             Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
             Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
-            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileRepositoryContentCount:"))
             Assert.That(report.EvidenceGaps, Has.Some.Contains("absent or unreadable"))
         }
 
@@ -379,7 +379,7 @@ type ManifestContributionDiagnosisServerTests() =
             Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
             Assert.That(report.MissingRelationships, Has.Length.EqualTo(1))
             Assert.That(report.RepairTargets, Has.Some.StartsWith("GetOrAddExactRelationship:"))
-            Assert.That(report.RepairTargets, Has.Some.StartsWith("ReconcileCounter:"))
+            Assert.That(report.RepairTargets, Has.Some.StartsWith("ReconcileRepositoryContentCount:"))
             Assert.That(report.CountEvidence, Has.Length.EqualTo(1))
             Assert.That(report.CountEvidence[0].StoredCount, Is.EqualTo(Some 0L))
             Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(Some 1L))
@@ -461,7 +461,7 @@ type ManifestContributionDiagnosisServerTests() =
                     Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
                     Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
                     Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
-                    Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+                    Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileRepositoryContentCount:"))
                     Assert.That(report.RepairTargets, Has.None.StartsWith("ResumeManifestContributionWorkflow:"))
                 }
 
@@ -513,7 +513,7 @@ type ManifestContributionDiagnosisServerTests() =
             Assert.That(newerRevisionReport.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
             Assert.That(newerRevisionReport.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
             Assert.That(newerRevisionReport.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
-            Assert.That(newerRevisionReport.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(newerRevisionReport.RepairTargets, Has.None.StartsWith("ReconcileRepositoryContentCount:"))
             Assert.That(newerRevisionReport.EvidenceGaps, Has.Length.EqualTo(1))
             Assert.That(newerRevisionReport.EvidenceGaps, Has.Some.Contains("newer than the counter snapshot revision"))
         }
@@ -652,7 +652,7 @@ type ManifestContributionDiagnosisServerTests() =
 
                 Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
                 Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
-                Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+                Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileRepositoryContentCount:"))
                 Assert.That(report.RepairTargets, Has.None.StartsWith("ResumeManifestContributionWorkflow:"))
         }
 
@@ -718,7 +718,7 @@ type ManifestContributionDiagnosisServerTests() =
                 Assert.That(report.CountEvidence[0].StoredCount, Is.EqualTo(None))
                 Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(Some 1L))
                 Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
-                Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+                Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileRepositoryContentCount:"))
                 Assert.That(report.EvidenceGaps, Has.Some.Contains("counter"))
         }
 
@@ -757,7 +757,7 @@ type ManifestContributionDiagnosisServerTests() =
             Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
             Assert.That(report.StaleRelationships, Is.Empty)
             Assert.That(report.RepairTargets, Has.None.StartsWith("RemoveStaleExactRelationship:"))
-            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileRepositoryContentCount:"))
             Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
             Assert.That(report.EvidenceGaps, Has.Some.Contains("did not return readable current state"))
         }
@@ -793,7 +793,7 @@ type ManifestContributionDiagnosisServerTests() =
             Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
             Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
             Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
-            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileRepositoryContentCount:"))
             Assert.That(report.EvidenceGaps, Has.Some.Contains("repeated a continuation token"))
         }
 

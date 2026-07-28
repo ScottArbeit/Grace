@@ -41,19 +41,21 @@ module ManifestContributionDiagnosis =
             | None -> null
 
         JsonSerializer.Serialize(
-            {| Class = snapshot.Class
-               RepositoryId = snapshot.RepositoryId
-               StoragePoolId = snapshot.StoragePoolId
-               ManifestAddress = snapshot.ManifestAddress
-               Direction = unionName snapshot.Direction
-               Ranges = snapshot.Ranges
-               CompletedRanges = snapshot.CompletedRanges
-               FailedRanges = snapshot.FailedRanges
-               LifecycleState = unionName snapshot.LifecycleState
-               StartOperationId = optionalIdentity snapshot.StartOperationId
-               LastOperationId = optionalIdentity snapshot.LastOperationId
-               CounterRevision = snapshot.CounterRevision
-               Revision = snapshot.Revision |},
+            {|
+                Class = snapshot.Class
+                RepositoryId = snapshot.RepositoryId
+                StoragePoolId = snapshot.StoragePoolId
+                ManifestAddress = snapshot.ManifestAddress
+                Direction = unionName snapshot.Direction
+                Ranges = snapshot.Ranges
+                CompletedRanges = snapshot.CompletedRanges
+                FailedRanges = snapshot.FailedRanges
+                LifecycleState = unionName snapshot.LifecycleState
+                StartOperationId = optionalIdentity snapshot.StartOperationId
+                LastOperationId = optionalIdentity snapshot.LastOperationId
+                CounterRevision = snapshot.CounterRevision
+                Revision = snapshot.Revision
+            |},
             Constants.JsonSerializerOptions
         )
 
@@ -96,38 +98,53 @@ module ManifestContributionDiagnosis =
 
     /// Compares one durable counter value with a bounded actor-derived reconstruction.
     type ManifestCountEvidence =
-        { RepositoryId: string; StoragePoolId: string; ManifestAddress: string; StoredCount: int64 option; RebuiltCount: int64 option; Completeness: string }
+        {
+            RepositoryId: string
+            StoragePoolId: string
+            ManifestAddress: string
+            StoredCount: int64 option
+            RebuiltCount: int64 option
+            Completeness: string
+        }
 
     /// Is the complete, self-verifying, read-only operator report written by the diagnosis script.
     type ManifestContributionDiagnosisReport =
-        { SchemaVersion: string
-          GeneratedAt: string
-          Target: DiagnosisTarget
-          MaxRelationships: int
-          RelationshipsRead: int
-          ActorFacts: ActorFact array
-          ExpectedRelationships: string array
-          ObservedRelationships: string array
-          MissingRelationships: string array
-          StaleRelationships: string array
-          CountEvidence: ManifestCountEvidence array
-          DeterministicIdentities: string array
-          RedisEvidence: string array
-          RepairTargets: string array
-          UnknownFields: string array
-          EvidenceGaps: string array
-          Outcome: DiagnosisOutcome
-          ReportSha256: string }
+        {
+            SchemaVersion: string
+            GeneratedAt: string
+            Target: DiagnosisTarget
+            MaxRelationships: int
+            RelationshipsRead: int
+            ActorFacts: ActorFact array
+            ExpectedRelationships: string array
+            ObservedRelationships: string array
+            MissingRelationships: string array
+            StaleRelationships: string array
+            CountEvidence: ManifestCountEvidence array
+            DeterministicIdentities: string array
+            RedisEvidence: string array
+            RepairTargets: string array
+            UnknownFields: string array
+            EvidenceGaps: string array
+            Outcome: DiagnosisOutcome
+            ReportSha256: string
+        }
 
     /// Supplies only read operations to the diagnosis core so tests can prove that diagnosis cannot mutate Grace.
     type DiagnosisDependencies =
-        { GetReference: ReferenceId -> CorrelationId -> Task<ReferenceDto>
-          GetDirectoryVersion: DirectoryVersionId -> CorrelationId -> Task<DirectoryVersionDto>
-          EnumerateRelationships: ExactRelationshipPartition -> ExactRelationshipReadBound -> string option -> CancellationToken -> Task<ExactRelationshipPage>
-          VerifyRelationship: ExactRelationship -> CancellationToken -> Task<ExactRelationshipPresence>
-          GetCounter: CounterTuple -> CorrelationId -> Task<RepositoryContentCounterDto>
-          GetWorkflow: CounterTuple -> CorrelationId -> Task<ManifestContributionWorkflowDto>
-          GetRecentResult: CounterTuple -> RepositoryContentCounterOperationId -> CancellationToken -> Task<RepositoryContentCounterCompletedChange option> }
+        {
+            GetReference: ReferenceId -> CorrelationId -> Task<ReferenceDto>
+            GetDirectoryVersion: DirectoryVersionId -> CorrelationId -> Task<DirectoryVersionDto>
+            EnumerateRelationships: ExactRelationshipPartition
+                -> ExactRelationshipReadBound
+                -> string option
+                -> CancellationToken
+                -> Task<ExactRelationshipPage>
+            VerifyRelationship: ExactRelationship -> CancellationToken -> Task<ExactRelationshipPresence>
+            GetCounter: CounterTuple -> CorrelationId -> Task<RepositoryContentCounterDto>
+            GetWorkflow: CounterTuple -> CorrelationId -> Task<ManifestContributionWorkflowDto>
+            GetRecentResult: CounterTuple -> RepositoryContentCounterOperationId -> CancellationToken -> Task<RepositoryContentCounterCompletedChange option>
+        }
 
     /// Signals that a bounded read found more relationship identities than the operator allowed.
     exception RelationshipBoundExceeded of string
@@ -166,13 +183,22 @@ module ManifestContributionDiagnosis =
                 let tupleComponentOutsideQualifiedSource =
                     hasStoragePool
                     || hasManifest
-                    || (hasRepository && not hasReference && not hasDirectoryVersion && not hasOperation)
+                    || (hasRepository
+                        && not hasReference
+                        && not hasDirectoryVersion
+                        && not hasOperation)
 
-                if tupleComponentOutsideQualifiedSource && not hasCompleteCounterTuple then
+                if tupleComponentOutsideQualifiedSource
+                   && not hasCompleteCounterTuple then
                     Error "RepositoryId, StoragePoolId, and ManifestAddress must form one complete counter tuple."
                 else
                     let selectorCount =
-                        [ hasReference; hasDirectoryVersion; hasCompleteCounterTuple; hasOperation ]
+                        [
+                            hasReference
+                            hasDirectoryVersion
+                            hasCompleteCounterTuple
+                            hasOperation
+                        ]
                         |> List.filter id
                         |> List.length
 
@@ -195,33 +221,37 @@ module ManifestContributionDiagnosis =
                         | Ok repositoryId ->
                             Ok(
                                 DiagnosisSelector.CounterTuple
-                                    { RepositoryId = (repositoryId: RepositoryId)
-                                      StoragePoolId = StoragePoolId parameters.StoragePoolId
-                                      ManifestAddress = ManifestAddress parameters.ManifestAddress }
+                                    {
+                                        RepositoryId = (repositoryId: RepositoryId)
+                                        StoragePoolId = StoragePoolId parameters.StoragePoolId
+                                        ManifestAddress = ManifestAddress parameters.ManifestAddress
+                                    }
                             )
                     else
                         Ok(DiagnosisSelector.OperationId(RepositoryContentCounterOperationId parameters.RepositoryContentCounterOperationId))
 
     /// Creates a report shell for deterministic tests and terminal failures.
     let emptyReport generatedAt target maxRelationships outcome unknownFields =
-        { SchemaVersion = "grace.manifest-contribution-diagnosis.v1"
-          GeneratedAt = generatedAt
-          Target = target
-          MaxRelationships = maxRelationships
-          RelationshipsRead = 0
-          ActorFacts = Array.empty
-          ExpectedRelationships = Array.empty
-          ObservedRelationships = Array.empty
-          MissingRelationships = Array.empty
-          StaleRelationships = Array.empty
-          CountEvidence = Array.empty
-          DeterministicIdentities = Array.empty
-          RedisEvidence = Array.empty
-          RepairTargets = Array.empty
-          UnknownFields = unknownFields
-          EvidenceGaps = Array.empty
-          Outcome = outcome
-          ReportSha256 = String.Empty }
+        {
+            SchemaVersion = "grace.manifest-contribution-diagnosis.v1"
+            GeneratedAt = generatedAt
+            Target = target
+            MaxRelationships = maxRelationships
+            RelationshipsRead = 0
+            ActorFacts = Array.empty
+            ExpectedRelationships = Array.empty
+            ObservedRelationships = Array.empty
+            MissingRelationships = Array.empty
+            StaleRelationships = Array.empty
+            CountEvidence = Array.empty
+            DeterministicIdentities = Array.empty
+            RedisEvidence = Array.empty
+            RepairTargets = Array.empty
+            UnknownFields = unknownFields
+            EvidenceGaps = Array.empty
+            Outcome = outcome
+            ReportSha256 = String.Empty
+        }
 
     let private reportDigestOptions =
         let options = JsonSerializerOptions(Constants.JsonSerializerOptions)
@@ -232,11 +262,15 @@ module ManifestContributionDiagnosis =
     let private reportDigest (report: ManifestContributionDiagnosisReport) =
         let unsigned = JsonSerializer.SerializeToNode(report, reportDigestOptions)
 
-        unsigned.AsObject().Remove(nameof report.ReportSha256) |> ignore
+        unsigned
+            .AsObject()
+            .Remove(nameof report.ReportSha256)
+        |> ignore
 
         let json = unsigned.ToJsonString(reportDigestOptions)
 
-        SHA256.HashData(Encoding.UTF8.GetBytes json) |> Convert.ToHexStringLower
+        SHA256.HashData(Encoding.UTF8.GetBytes json)
+        |> Convert.ToHexStringLower
 
     /// Adds the deterministic SHA-256 that the operator script verifies before writing the report.
     let signReport report = { report with ReportSha256 = reportDigest report }
@@ -248,8 +282,8 @@ module ManifestContributionDiagnosis =
 
             not (isNull (box report))
             && String.Equals(report.ReportSha256, reportDigest report, StringComparison.OrdinalIgnoreCase)
-        with :? JsonException ->
-            false
+        with
+        | :? JsonException -> false
 
     /// Converts one exact relationship into the provider-neutral identity shown in operator evidence.
     let relationshipIdentity relationship =
@@ -260,15 +294,18 @@ module ManifestContributionDiagnosis =
     /// Converts the validated selector into its stable report target.
     let private selectorTarget selector =
         match selector with
-        | DiagnosisSelector.ReferenceId(referenceId, _) -> DiagnosisTarget.Reference $"{referenceId:D}"
-        | DiagnosisSelector.DirectoryVersionId(directoryVersionId, _) -> DiagnosisTarget.DirectoryVersion $"{directoryVersionId:D}"
+        | DiagnosisSelector.ReferenceId (referenceId, _) -> DiagnosisTarget.Reference $"{referenceId:D}"
+        | DiagnosisSelector.DirectoryVersionId (directoryVersionId, _) -> DiagnosisTarget.DirectoryVersion $"{directoryVersionId:D}"
         | DiagnosisSelector.CounterTuple target -> DiagnosisTarget.Counter($"{target.RepositoryId:D}", $"{target.StoragePoolId}", $"{target.ManifestAddress}")
         | DiagnosisSelector.OperationId operationId -> DiagnosisTarget.Operation $"{operationId}"
 
     /// Returns the direct manifests that current DirectoryVersion actor state authoritatively names.
     let internal directManifests directoryVersionDto correlationId =
         DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersionDto.DirectoryVersion correlationId
-        |> Result.map (fun references -> references |> Seq.map (fun reference -> reference.Manifest) |> Seq.toArray)
+        |> Result.map (fun references ->
+            references
+            |> Seq.map (fun reference -> reference.Manifest)
+            |> Seq.toArray)
 
     /// Parses the current deterministic DirectoryVersion counter-operation identity.
     let private tryParseOperationSource (operationId: RepositoryContentCounterOperationId) =
@@ -277,11 +314,9 @@ module ManifestContributionDiagnosis =
         let sourceStart = prefix.Length
         let sourceLength = 32
 
-        if
-            value.StartsWith(prefix, StringComparison.Ordinal)
-            && value.Length > sourceStart + sourceLength
-            && value[sourceStart + sourceLength] = ':'
-        then
+        if value.StartsWith(prefix, StringComparison.Ordinal)
+           && value.Length > sourceStart + sourceLength
+           && value[sourceStart + sourceLength] = ':' then
             match Guid.TryParseExact(value.Substring(sourceStart, sourceLength), "N") with
             | true, directoryVersionId when directoryVersionId <> Guid.Empty ->
                 if value.EndsWith(":add", StringComparison.Ordinal) then
@@ -342,7 +377,8 @@ module ManifestContributionDiagnosis =
             let noteRelationshipRead relationship =
                 let identity = relationshipIdentity relationship
 
-                if relationshipReads.Add identity && relationshipReads.Count > maximumRelationships then
+                if relationshipReads.Add identity
+                   && relationshipReads.Count > maximumRelationships then
                     raise (
                         RelationshipBoundExceeded
                             $"Diagnosis exceeded MaxRelationships={maximumRelationships} while reading '{identity}'. No complete report can be produced at this bound."
@@ -361,7 +397,8 @@ module ManifestContributionDiagnosis =
             let addManifestTarget (counterTuple: CounterTuple) =
                 let key = RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
 
-                manifestTargets.TryAdd(key, counterTuple) |> ignore
+                manifestTargets.TryAdd(key, counterTuple)
+                |> ignore
 
             /// Records the distinct ContentBlocks that current readable source state requires one manifest workflow to cover.
             let addManifestSourceTarget repositoryId (manifest: FileManifest) =
@@ -412,10 +449,8 @@ module ManifestContributionDiagnosis =
                             let! dto = readDirectoryVersion directoryVersionId
                             let current = dto.DirectoryVersion
 
-                            if
-                                current.DirectoryVersionId <> directoryVersionId
-                                || current.RepositoryId <> repositoryId
-                            then
+                            if current.DirectoryVersionId <> directoryVersionId
+                               || current.RepositoryId <> repositoryId then
                                 evidenceGaps.Add($"DirectoryVersion '{directoryVersionId:D}' did not return current state for repository '{repositoryId:D}'.")
                             else
                                 match directManifests dto correlationId with
@@ -424,10 +459,12 @@ module ManifestContributionDiagnosis =
                                 | Ok manifests ->
                                     for manifest in manifests do
                                         let relationship =
-                                            { RepositoryId = repositoryId
-                                              StoragePoolId = manifest.StoragePoolId
-                                              ManifestAddress = manifest.ManifestAddress
-                                              DirectoryVersionId = directoryVersionId }
+                                            {
+                                                RepositoryId = repositoryId
+                                                StoragePoolId = manifest.StoragePoolId
+                                                ManifestAddress = manifest.ManifestAddress
+                                                DirectoryVersionId = directoryVersionId
+                                            }
 
                                         addExpected (ExactRelationship.DirectoryVersionManifest relationship)
 
@@ -436,16 +473,18 @@ module ManifestContributionDiagnosis =
                                 for childDirectoryVersionId in current.Directories |> Seq.distinct do
                                     addExpected (
                                         ExactRelationship.ParentChild
-                                            { RepositoryId = repositoryId
-                                              ParentDirectoryVersionId = directoryVersionId
-                                              ChildDirectoryVersionId = childDirectoryVersionId }
+                                            {
+                                                RepositoryId = repositoryId
+                                                ParentDirectoryVersionId = directoryVersionId
+                                                ChildDirectoryVersionId = childDirectoryVersionId
+                                            }
                                     )
 
                                     pending.Push childDirectoryVersionId
                 }
 
             match selector with
-            | DiagnosisSelector.ReferenceId(referenceId, repositoryIdHint) ->
+            | DiagnosisSelector.ReferenceId (referenceId, repositoryIdHint) ->
                 let! referenceDto = dependencies.GetReference referenceId correlationId
                 addActorFact "Reference" $"{referenceId:D}" None referenceDto
 
@@ -453,26 +492,26 @@ module ManifestContributionDiagnosis =
                     repositoryIdHint
                     |> Option.forall (fun repositoryId -> repositoryId = referenceDto.RepositoryId)
 
-                if
-                    referenceDto.ReferenceId <> referenceId
-                    || referenceDto.RepositoryId = RepositoryId.Empty
-                    || referenceDto.DirectoryId = DirectoryVersionId.Empty
-                    || referenceDto.DeletedAt.IsSome
-                    || not repositoryMatches
-                then
+                if referenceDto.ReferenceId <> referenceId
+                   || referenceDto.RepositoryId = RepositoryId.Empty
+                   || referenceDto.DirectoryId = DirectoryVersionId.Empty
+                   || referenceDto.DeletedAt.IsSome
+                   || not repositoryMatches then
                     rootFailure <- Some $"Reference '{referenceId:D}' has no readable current live root matching the selector."
                 else
                     sourceBacked <- true
 
                     addExpected (
                         ExactRelationship.ReferenceRoot
-                            { RepositoryId = referenceDto.RepositoryId
-                              RootDirectoryVersionId = referenceDto.DirectoryId
-                              ReferenceId = referenceDto.ReferenceId }
+                            {
+                                RepositoryId = referenceDto.RepositoryId
+                                RootDirectoryVersionId = referenceDto.DirectoryId
+                                ReferenceId = referenceDto.ReferenceId
+                            }
                     )
 
                     do! traverseDirectoryTree referenceDto.RepositoryId referenceDto.DirectoryId
-            | DiagnosisSelector.DirectoryVersionId(directoryVersionId, repositoryIdHint) ->
+            | DiagnosisSelector.DirectoryVersionId (directoryVersionId, repositoryIdHint) ->
                 let! directoryVersionDto = readDirectoryVersion directoryVersionId
                 let current = directoryVersionDto.DirectoryVersion
 
@@ -480,11 +519,9 @@ module ManifestContributionDiagnosis =
                     repositoryIdHint
                     |> Option.forall (fun repositoryId -> repositoryId = current.RepositoryId)
 
-                if
-                    current.DirectoryVersionId <> directoryVersionId
-                    || current.RepositoryId = RepositoryId.Empty
-                    || not repositoryMatches
-                then
+                if current.DirectoryVersionId <> directoryVersionId
+                   || current.RepositoryId = RepositoryId.Empty
+                   || not repositoryMatches then
                     rootFailure <- Some $"DirectoryVersion '{directoryVersionId:D}' has no readable current state matching the selector."
                 else
                     sourceBacked <- true
@@ -494,7 +531,8 @@ module ManifestContributionDiagnosis =
                 unknownFields.Add "MissingRelationships" |> ignore
                 unknownFields.Add "RebuiltCount" |> ignore
 
-                unknownFields.Add "CompleteRepairTargets" |> ignore
+                unknownFields.Add "CompleteRepairTargets"
+                |> ignore
 
                 evidenceGaps.Add "A counter tuple has no readable source actor that can prove every expected DirectoryVersion-manifest relationship."
             | DiagnosisSelector.OperationId selectedOperationId ->
@@ -503,14 +541,12 @@ module ManifestContributionDiagnosis =
                 match tryParseOperationSource selectedOperationId with
                 | None ->
                     rootFailure <- Some $"Operation id '{selectedOperationId}' is not a current deterministic DirectoryVersion manifest operation identity."
-                | Some(directoryVersionId, action) ->
+                | Some (directoryVersionId, action) ->
                     let! directoryVersionDto = readDirectoryVersion directoryVersionId
                     let current = directoryVersionDto.DirectoryVersion
 
-                    if
-                        current.DirectoryVersionId <> directoryVersionId
-                        || current.RepositoryId = RepositoryId.Empty
-                    then
+                    if current.DirectoryVersionId <> directoryVersionId
+                       || current.RepositoryId = RepositoryId.Empty then
                         rootFailure <- Some $"Operation id '{selectedOperationId}' names a DirectoryVersion whose current actor state is not readable."
                     else
                         match directManifests directoryVersionDto correlationId with
@@ -521,10 +557,12 @@ module ManifestContributionDiagnosis =
                                 manifests
                                 |> Array.tryFind (fun manifest ->
                                     let relationship =
-                                        { RepositoryId = current.RepositoryId
-                                          StoragePoolId = manifest.StoragePoolId
-                                          ManifestAddress = manifest.ManifestAddress
-                                          DirectoryVersionId = directoryVersionId }
+                                        {
+                                            RepositoryId = current.RepositoryId
+                                            StoragePoolId = manifest.StoragePoolId
+                                            ManifestAddress = manifest.ManifestAddress
+                                            DirectoryVersionId = directoryVersionId
+                                        }
 
                                     operationIdentity action relationship = selectedOperationId)
 
@@ -533,12 +571,14 @@ module ManifestContributionDiagnosis =
                             | Some manifest ->
                                 addManifestSourceTarget current.RepositoryId manifest
 
-                                deterministicIdentities.Add $"{selectedOperationId}" |> ignore
+                                deterministicIdentities.Add $"{selectedOperationId}"
+                                |> ignore
 
                                 unknownFields.Add "MissingRelationships" |> ignore
                                 unknownFields.Add "RebuiltCount" |> ignore
 
-                                unknownFields.Add "CompleteRepairTargets" |> ignore
+                                unknownFields.Add "CompleteRepairTargets"
+                                |> ignore
 
                                 evidenceGaps.Add "An operation id identifies one source operation, not every actor that may expect this manifest."
 
@@ -550,7 +590,8 @@ module ManifestContributionDiagnosis =
                         { report with
                             ActorFacts = actorFacts.ToArray()
                             DeterministicIdentities = deterministicIdentities |> Seq.sort |> Seq.toArray
-                            EvidenceGaps = [| failure |] }
+                            EvidenceGaps = [| failure |]
+                        }
                     |> signReport
             | None ->
                 for relationship in expected.Values do
@@ -562,7 +603,13 @@ module ManifestContributionDiagnosis =
                     | ExactRelationshipPresence.Absent ->
                         missing.Add identity |> ignore
 
-                        repairTargets.Add $"GetOrAddExactRelationship:{identity}" |> ignore
+                        let action =
+                            match relationship with
+                            | ExactRelationship.ReferenceRoot _ -> "RepublishReferenceCreated"
+                            | ExactRelationship.ParentChild _
+                            | ExactRelationship.DirectoryVersionManifest _ -> "GetOrAddExactRelationship"
+
+                        repairTargets.Add $"{action}:{identity}" |> ignore
 
                 let countEvidence = ResizeArray<ManifestCountEvidence>()
 
@@ -606,7 +653,11 @@ module ManifestContributionDiagnosis =
                                 observed.TryAdd(identity, relationship) |> ignore
 
                             match page.ContinuationToken with
-                            | Some token when not (String.IsNullOrWhiteSpace token) && continuationTokens.Add token -> continuationToken <- Some token
+                            | Some token when
+                                not (String.IsNullOrWhiteSpace token)
+                                && continuationTokens.Add token
+                                ->
+                                continuationToken <- Some token
                             | Some _ ->
                                 evidenceGaps.Add("Exact relationship enumeration repeated a continuation token before completing the manifest partition.")
 
@@ -617,7 +668,7 @@ module ManifestContributionDiagnosis =
                     let mutable validObservedCount = 0L
                     let mutable sourceStateComplete = true
 
-                    for KeyValue(identity, relationship) in observed do
+                    for KeyValue (identity, relationship) in observed do
                         match relationship with
                         | ExactRelationship.DirectoryVersionManifest manifestRelationship when
                             manifestRelationship.RepositoryId = counterTuple.RepositoryId
@@ -709,14 +760,15 @@ module ManifestContributionDiagnosis =
                         && workflowDto.CounterRevision > 0L
                         && workflowDto.Revision > 0L
 
-                    let workflowCounterSnapshotCoherent = not counterReadable || workflowDto.CounterRevision <= counterDto.Revision
+                    let workflowCounterSnapshotCoherent =
+                        not counterReadable
+                        || workflowDto.CounterRevision <= counterDto.Revision
 
                     let workflowRangesExact =
                         match
-                            expectedWorkflowRanges.TryGetValue(
-                                RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
-                            )
-                        with
+                            expectedWorkflowRanges.TryGetValue
+                                (RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress)
+                            with
                         | true, expectedRanges when expectedRanges.Count > 0 && workflowReadable ->
                             let actualRanges = HashSet<ManifestContributionWorkflowRange>(workflowDto.Ranges)
 
@@ -763,12 +815,15 @@ module ManifestContributionDiagnosis =
                                 $"Manifest contribution workflow for '{targetIdentity}' has unfinished, failed, duplicate, or source-mismatched ranges."
                             )
 
-                    let partitionEvidenceComplete = enumerationComplete && sourceStateComplete && workflowCompleted
+                    let partitionEvidenceComplete =
+                        enumerationComplete
+                        && sourceStateComplete
+                        && workflowCompleted
 
                     let completeEvidence = partitionEvidenceComplete && counterReadable
 
                     if completeEvidence then
-                        for KeyValue(identity, relationship) in observed do
+                        for KeyValue (identity, relationship) in observed do
                             match relationship with
                             | ExactRelationship.DirectoryVersionManifest manifestRelationship when
                                 manifestRelationship.RepositoryId = counterTuple.RepositoryId
@@ -776,14 +831,15 @@ module ManifestContributionDiagnosis =
                                 && manifestRelationship.ManifestAddress = counterTuple.ManifestAddress
                                 && stale.Contains identity
                                 ->
-                                repairTargets.Add $"RemoveStaleExactRelationship:{identity}" |> ignore
+                                repairTargets.Add $"RemoveStaleExactRelationship:{identity}"
+                                |> ignore
                             | _ -> ()
 
                     let rebuiltCount =
                         if sourceBacked && partitionEvidenceComplete then
                             let missingExpectedForTuple =
                                 expected
-                                |> Seq.sumBy (fun (KeyValue(identity, relationship)) ->
+                                |> Seq.sumBy (fun (KeyValue (identity, relationship)) ->
                                     match relationship with
                                     | ExactRelationship.DirectoryVersionManifest manifestRelationship when
                                         manifestRelationship.RepositoryId = counterTuple.RepositoryId
@@ -799,17 +855,21 @@ module ManifestContributionDiagnosis =
                             None
 
                     countEvidence.Add(
-                        { RepositoryId = $"{counterTuple.RepositoryId:D}"
-                          StoragePoolId = $"{counterTuple.StoragePoolId}"
-                          ManifestAddress = $"{counterTuple.ManifestAddress}"
-                          StoredCount = if counterReadable then Some counterDto.Count else None
-                          RebuiltCount = rebuiltCount
-                          Completeness = if sourceBacked && completeEvidence then "Complete" else "IncompleteRetain" }
+                        {
+                            RepositoryId = $"{counterTuple.RepositoryId:D}"
+                            StoragePoolId = $"{counterTuple.StoragePoolId}"
+                            ManifestAddress = $"{counterTuple.ManifestAddress}"
+                            StoredCount = if counterReadable then Some counterDto.Count else None
+                            RebuiltCount = rebuiltCount
+                            Completeness = if sourceBacked && completeEvidence then "Complete" else "IncompleteRetain"
+                        }
                     )
 
                     match (if counterReadable then Some counterDto.Count else None), rebuiltCount with
                     | Some stored, Some rebuilt when rebuilt <> stored ->
-                        repairTargets.Add($"ReconcileCounter:{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}")
+                        repairTargets.Add(
+                            $"ReconcileRepositoryContentCount:{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}"
+                        )
                         |> ignore
                     | _ -> ()
 
@@ -853,28 +913,30 @@ module ManifestContributionDiagnosis =
                     && countsMatch
 
                 return
-                    { SchemaVersion = "grace.manifest-contribution-diagnosis.v1"
-                      GeneratedAt = generatedAt
-                      Target = target
-                      MaxRelationships = maximumRelationships
-                      RelationshipsRead = relationshipReads.Count
-                      ActorFacts = actorFacts.ToArray()
-                      ExpectedRelationships = expected.Keys |> Seq.sort |> Seq.toArray
-                      ObservedRelationships = observed.Keys |> Seq.sort |> Seq.toArray
-                      MissingRelationships = missing |> Seq.sort |> Seq.toArray
-                      StaleRelationships = stale |> Seq.sort |> Seq.toArray
-                      CountEvidence = countEvidence.ToArray()
-                      DeterministicIdentities = deterministicIdentities |> Seq.sort |> Seq.toArray
-                      RedisEvidence = redisEvidence.ToArray()
-                      RepairTargets = repairTargets |> Seq.sort |> Seq.toArray
-                      UnknownFields = unknownFields |> Seq.sort |> Seq.toArray
-                      EvidenceGaps = evidenceGaps.ToArray()
-                      Outcome =
-                        if verified then
-                            DiagnosisOutcome.VerifiedComplete
-                        else
-                            DiagnosisOutcome.IncompleteRetain
-                      ReportSha256 = String.Empty }
+                    {
+                        SchemaVersion = "grace.manifest-contribution-diagnosis.v1"
+                        GeneratedAt = generatedAt
+                        Target = target
+                        MaxRelationships = maximumRelationships
+                        RelationshipsRead = relationshipReads.Count
+                        ActorFacts = actorFacts.ToArray()
+                        ExpectedRelationships = expected.Keys |> Seq.sort |> Seq.toArray
+                        ObservedRelationships = observed.Keys |> Seq.sort |> Seq.toArray
+                        MissingRelationships = missing |> Seq.sort |> Seq.toArray
+                        StaleRelationships = stale |> Seq.sort |> Seq.toArray
+                        CountEvidence = countEvidence.ToArray()
+                        DeterministicIdentities = deterministicIdentities |> Seq.sort |> Seq.toArray
+                        RedisEvidence = redisEvidence.ToArray()
+                        RepairTargets = repairTargets |> Seq.sort |> Seq.toArray
+                        UnknownFields = unknownFields |> Seq.sort |> Seq.toArray
+                        EvidenceGaps = evidenceGaps.ToArray()
+                        Outcome =
+                            if verified then
+                                DiagnosisOutcome.VerifiedComplete
+                            else
+                                DiagnosisOutcome.IncompleteRetain
+                        ReportSha256 = String.Empty
+                    }
                     |> signReport
         }
 
@@ -884,40 +946,48 @@ module ManifestContributionDiagnosis =
 
         let recentResults = context.RequestServices.GetRequiredService<IRepositoryCounterRecentResult>()
 
-        { GetReference =
-            fun referenceId correlationId ->
-                let actor = grainFactory.CreateActorProxyWithCorrelationId<IReferenceActor>(referenceId, correlationId)
+        {
+            GetReference =
+                fun referenceId correlationId ->
+                    let actor = grainFactory.CreateActorProxyWithCorrelationId<IReferenceActor>(referenceId, correlationId)
 
-                actor.Get correlationId
-          GetDirectoryVersion =
-            fun directoryVersionId correlationId ->
-                let actor = grainFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(directoryVersionId, correlationId)
+                    actor.Get correlationId
+            GetDirectoryVersion =
+                fun directoryVersionId correlationId ->
+                    let actor = grainFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(directoryVersionId, correlationId)
 
-                actor.Get correlationId
-          EnumerateRelationships =
-            fun partition bound continuationToken cancellationToken -> store.EnumerateAsync(partition, bound, continuationToken, cancellationToken)
-          VerifyRelationship = fun relationship cancellationToken -> store.VerifyAsync(relationship, cancellationToken)
-          GetCounter =
-            fun counterTuple correlationId ->
-                let actor =
-                    grainFactory.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
-                        RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress,
-                        correlationId
+                    actor.Get correlationId
+            EnumerateRelationships =
+                fun partition bound continuationToken cancellationToken -> store.EnumerateAsync(partition, bound, continuationToken, cancellationToken)
+            VerifyRelationship = fun relationship cancellationToken -> store.VerifyAsync(relationship, cancellationToken)
+            GetCounter =
+                fun counterTuple correlationId ->
+                    let actor =
+                        grainFactory.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
+                            RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress,
+                            correlationId
+                        )
+
+                    actor.Get correlationId
+            GetWorkflow =
+                fun counterTuple correlationId ->
+                    let actor =
+                        grainFactory.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
+                            ManifestContributionWorkflow.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress,
+                            correlationId
+                        )
+
+                    actor.Get correlationId
+            GetRecentResult =
+                fun counterTuple operationId cancellationToken ->
+                    recentResults.TryGetAsync(
+                        counterTuple.RepositoryId,
+                        counterTuple.StoragePoolId,
+                        counterTuple.ManifestAddress,
+                        operationId,
+                        cancellationToken
                     )
-
-                actor.Get correlationId
-          GetWorkflow =
-            fun counterTuple correlationId ->
-                let actor =
-                    grainFactory.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
-                        ManifestContributionWorkflow.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress,
-                        correlationId
-                    )
-
-                actor.Get correlationId
-          GetRecentResult =
-            fun counterTuple operationId cancellationToken ->
-                recentResults.TryGetAsync(counterTuple.RepositoryId, counterTuple.StoragePoolId, counterTuple.ManifestAddress, operationId, cancellationToken) }
+        }
 
     /// Handles the internal SystemAdmin diagnosis route and returns signed operator evidence without writing Grace state.
     let Diagnose: HttpHandler =

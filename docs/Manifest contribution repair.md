@@ -60,13 +60,14 @@ pwsh ./scripts/repair-manifest-contribution.ps1 `
   -OutputPath ./artifacts/manifest-contribution-repair.json
 ```
 
-Grace rereads the specific source, exact relationship, counter, and workflow evidence before every mutation. Unknown,
-unreadable, incomplete, or changed evidence retains current state. After the applied prefix, Grace performs another
-bounded reread; only that post-repair `VerifiedComplete` result reports success.
+Grace first requires current bounded evidence to match the signed report exactly. It rejects duplicate actions and
+plans larger than twice the signed `MaxRelationships`. Each distinct signed action is attempted at most once, with a
+target-specific source reread immediately before mutation. Grace then performs one final bounded diagnosis; only that
+final `VerifiedComplete` result reports success.
 
-If a dependency fails after partial progress, the result is `FailedRetain`. Preserve the original report and inspect
-current diagnosis. After the dependency is healthy, repeating `-Execute` with that report can resume only the exact
-deterministic counter workflow left by its completed repair command. Any other changed evidence retains without a write.
+If a dependency fails or cancellation arrives after partial progress, the result preserves the confirmed
+`AppliedActions` prefix as `FailedRetain`. The current action may have an unknown outcome. Do not repeat `-Execute` with
+the old report. Run a fresh diagnosis, review its new SHA-256 and plan, and start with another dry run.
 
 ## Exit codes
 
@@ -82,10 +83,24 @@ bounded evidence, not permission to reclaim data.
 
 ## Safety boundaries
 
-The repair can only resend a deterministic event, ensure one exact relationship present or absent, or reconcile one
-bounded repository-manifest counter through its existing actor operations.
+The repair has five actions:
+
+- Republish a live Reference actor's original `Created` event. Its deterministic broker `MessageId` remains
+  `Reference/<ReferenceId>/Created`, and every `ReferenceType` follows the same path.
+- Get or add one missing parent-DirectoryVersion relationship after the parent still names the child.
+- Get or add one missing DirectoryVersion-manifest relationship after the DirectoryVersion still names the manifest.
+  This projection-only repair does not rerun normal manifest accounting.
+- Remove one proven stale DirectoryVersion-manifest relationship after current source absence and unchanged counter and
+  workflow evidence are confirmed.
+- Atomically replace one proven positive Repository logical manifest count at an expected actor revision.
+
+Logical and physical contribution state stay separate. Repository count repair writes one
+`RepositoryContentCounterActor` snapshot, advances its revision once, and records one bounded completed change. It emits
+no contribution intent, starts no `ManifestContributionWorkflowActor`, and does not change `ContentBlockMetadata`.
+Normal repository zero-crossing accounting remains the only path that changes physical StoragePool contribution.
 
 There is no force-clear or resume command. The workflow adds no scheduler, durable repair queue, audit actor,
 checkpoint, cursor, history, Repository-wide scan, reverse index, or elapsed-time release rule.
 
-Treat every nonzero result as retention guidance. Investigate the current report rather than guessing another mutation.
+Rebuilt-zero repair is not admitted. Treat every nonzero result as retention guidance and run a fresh diagnosis rather
+than guessing or resuming another mutation.

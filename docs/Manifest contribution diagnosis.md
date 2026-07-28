@@ -138,10 +138,13 @@ record.
 
 The diagnostic can emit the following repair target prefixes:
 
-- `GetOrAddExactRelationship:` identifies an actor-supported exact relationship that is missing.
+- `RepublishReferenceCreated:` identifies a missing Reference-root projection that can be rebuilt from the Reference
+  actor's original deterministic `Created` event.
+- `GetOrAddExactRelationship:` identifies a missing parent-DirectoryVersion or DirectoryVersion-manifest projection.
 - `RemoveStaleExactRelationship:` identifies an exact relationship whose source DirectoryVersion no longer supports
   it.
-- `ReconcileCounter:` identifies a repository manifest counter that differs from a complete actor rebuild.
+- `ReconcileRepositoryContentCount:` identifies a positive logical Repository count that differs from a complete actor
+  rebuild. It never changes physical StoragePool contribution.
 - `DiagnoseReadableSourceRequired:` means the selector cannot identify a complete missing set. Supply a readable
   Reference or DirectoryVersion before attempting repair.
 
