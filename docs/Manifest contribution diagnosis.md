@@ -142,8 +142,6 @@ The diagnostic can emit the following repair target prefixes:
 - `RemoveStaleExactRelationship:` identifies an exact relationship whose source DirectoryVersion no longer supports
   it.
 - `ReconcileCounter:` identifies a repository manifest counter that differs from a complete actor rebuild.
-- `ResumeManifestContributionWorkflow:` identifies unfinished or failed ContentBlock fan-out for one repository
-  manifest.
 - `DiagnoseReadableSourceRequired:` means the selector cannot identify a complete missing set. Supply a readable
   Reference or DirectoryVersion before attempting repair.
 

@@ -26,6 +26,7 @@ type ManifestContributionDiagnosisServerTests() =
     let repositoryId = Guid.Parse("33333333-7340-4000-8000-333333333333")
     let directoryVersionId = Guid.Parse("44444444-7340-4000-8000-444444444444")
     let otherDirectoryVersionId = Guid.Parse("55555555-7340-4000-8000-555555555555")
+    let referenceId = Guid.Parse("77777777-7340-4000-8000-777777777777")
     let storagePoolId = StoragePoolId "diagnosis:pool"
     let fileContentHash = FileContentHash(String.replicate 64 "b")
 
@@ -745,6 +746,165 @@ type ManifestContributionDiagnosisServerTests() =
             Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
             Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
             Assert.That(report.EvidenceGaps, Has.Some.Contains("repeated a continuation token"))
+        }
+
+    /// Verifies DirectoryVersion discovery charges distinct expected relationships before reading a later child actor.
+    [<Test>]
+    member _.DirectoryVersionDiscoveryStopsBeforeReadingPastTheRelationshipBound() =
+        task {
+            let root = directoryVersionDto directoryVersionId
+            root.DirectoryVersion.Directories.Add otherDirectoryVersionId
+            root.DirectoryVersion.Directories.Add otherDirectoryVersionId
+
+            let child = directoryVersionDto otherDirectoryVersionId
+            child.DirectoryVersion.Files.Clear()
+
+            let directoryVersions =
+                Map.ofList [ directoryVersionId, root
+                             otherDirectoryVersionId, child ]
+
+            let createDependencies (reads: ResizeArray<DirectoryVersionId>) =
+                let baseDependencies =
+                    dependencies
+                        directoryVersions
+                        (fun () ->
+                            {
+                                Relationships =
+                                    [|
+                                        manifestRelationship directoryVersionId
+                                    |]
+                                ContinuationToken = None
+                            })
+                        (fun _ -> ExactRelationshipPresence.Present)
+                        None
+                        1L
+
+                { baseDependencies with
+                    GetDirectoryVersion =
+                        fun id _ ->
+                            reads.Add id
+                            Task.FromResult directoryVersions[id]
+                }
+
+            let exactReads = ResizeArray<DirectoryVersionId>()
+
+            let! exactReport =
+                diagnoseWith
+                    (createDependencies exactReads)
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 2)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(exactReport.ExpectedRelationships, Has.Length.EqualTo(2))
+
+            Assert.That(
+                exactReads.ToArray() =
+                    [|
+                        directoryVersionId
+                        otherDirectoryVersionId
+                    |],
+                Is.True
+            )
+
+            let exceededReads = ResizeArray<DirectoryVersionId>()
+
+            Assert.ThrowsAsync<RelationshipBoundExceeded>(
+                Func<Task> (fun () ->
+                    diagnoseWith
+                        (createDependencies exceededReads)
+                        "2026-07-27T00:00:00Z"
+                        "diagnosis-test"
+                        CancellationToken.None
+                        (readBound 1)
+                        (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+                    :> Task)
+            )
+            |> ignore
+
+            Assert.That(exceededReads.ToArray() = [| directoryVersionId |], Is.True)
+        }
+
+    /// Verifies Reference discovery charges its root relationship and stops before reading a child beyond the bound.
+    [<Test>]
+    member _.ReferenceDiscoveryStopsBeforeReadingPastTheRelationshipBound() =
+        task {
+            let root = directoryVersionDto directoryVersionId
+            root.DirectoryVersion.Directories.Add otherDirectoryVersionId
+            root.DirectoryVersion.Directories.Add otherDirectoryVersionId
+
+            let child = directoryVersionDto otherDirectoryVersionId
+            child.DirectoryVersion.Files.Clear()
+
+            let directoryVersions =
+                Map.ofList [ directoryVersionId, root
+                             otherDirectoryVersionId, child ]
+
+            let reference = { ReferenceDto.Default with ReferenceId = referenceId; RepositoryId = repositoryId; DirectoryId = directoryVersionId }
+
+            let createDependencies (reads: ResizeArray<DirectoryVersionId>) =
+                let baseDependencies =
+                    dependencies
+                        directoryVersions
+                        (fun () ->
+                            {
+                                Relationships =
+                                    [|
+                                        manifestRelationship directoryVersionId
+                                    |]
+                                ContinuationToken = None
+                            })
+                        (fun _ -> ExactRelationshipPresence.Present)
+                        None
+                        1L
+
+                { baseDependencies with
+                    GetReference = fun _ _ -> Task.FromResult reference
+                    GetDirectoryVersion =
+                        fun id _ ->
+                            reads.Add id
+                            Task.FromResult directoryVersions[id]
+                }
+
+            let exactReads = ResizeArray<DirectoryVersionId>()
+
+            let! exactReport =
+                diagnoseWith
+                    (createDependencies exactReads)
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 3)
+                    (DiagnosisSelector.ReferenceId(referenceId, Some repositoryId))
+
+            Assert.That(exactReport.ExpectedRelationships, Has.Length.EqualTo(3))
+
+            Assert.That(
+                exactReads.ToArray() =
+                    [|
+                        directoryVersionId
+                        otherDirectoryVersionId
+                    |],
+                Is.True
+            )
+
+            let exceededReads = ResizeArray<DirectoryVersionId>()
+
+            Assert.ThrowsAsync<RelationshipBoundExceeded>(
+                Func<Task> (fun () ->
+                    diagnoseWith
+                        (createDependencies exceededReads)
+                        "2026-07-27T00:00:00Z"
+                        "diagnosis-test"
+                        CancellationToken.None
+                        (readBound 2)
+                        (DiagnosisSelector.ReferenceId(referenceId, Some repositoryId))
+                    :> Task)
+            )
+            |> ignore
+
+            Assert.That(exceededReads.ToArray() = [| directoryVersionId |], Is.True)
         }
 
     /// Verifies the cumulative relationship bound stops a report before it can imply complete evidence.

@@ -387,8 +387,11 @@ module ManifestContributionDiagnosis =
 
             let addExpected relationship =
                 let identity = relationshipIdentity relationship
-                expected.TryAdd(identity, relationship) |> ignore
-                deterministicIdentities.Add identity |> ignore
+
+                if not (expected.ContainsKey identity) then
+                    noteRelationshipRead relationship |> ignore
+                    expected.Add(identity, relationship)
+                    deterministicIdentities.Add identity |> ignore
 
             let addManifestTarget (counterTuple: CounterTuple) =
                 let key = RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
