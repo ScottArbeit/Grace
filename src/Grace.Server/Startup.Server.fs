@@ -1775,7 +1775,7 @@ module Application =
                 subRoute
                     "/admin"
                     [
-                        POST [
+                        POST [ route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)
 #if DEBUG
                                route "/deleteAllFromCosmosDB" (composeHandlers requireSystemAdmin Storage.DeleteAllFromCosmosDB)
                                route "/deleteAllRemindersFromCosmosDB" (composeHandlers requireSystemAdmin Storage.DeleteAllRemindersFromCosmosDB)

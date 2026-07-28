@@ -18,7 +18,8 @@
         { "method": "GET", "path": "/" },
         { "method": "GET", "path": "/healthz" },
         { "method": "GET", "path": "/metrics" },
-        { "method": "GET", "path": "/notifications" }
+        { "method": "GET", "path": "/notifications" },
+        { "method": "POST", "path": "/admin/manifest-contribution/diagnose" }
       ]
     },
     {
