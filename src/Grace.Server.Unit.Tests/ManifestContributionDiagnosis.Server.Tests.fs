@@ -473,6 +473,51 @@ type ManifestContributionDiagnosisServerTests() =
             do! verifyIncompleteWorkflow revisionIncompatibleWorkflow
         }
 
+    /// Verifies workflow evidence cannot come from a counter revision newer than the counter snapshot read by diagnosis.
+    [<Test>]
+    member _.WorkflowCounterRevisionMustNotExceedCounterSnapshotRevision() =
+        task {
+            let target = counterTuple ()
+            let relationship = manifestRelationship directoryVersionId
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () -> { Relationships = [| relationship |]; ContinuationToken = None })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            /// Runs the otherwise-complete diagnosis against one selected workflow snapshot.
+            let diagnose workflow =
+                diagnoseWith
+                    { baseDependencies with GetWorkflow = fun _ _ -> Task.FromResult workflow }
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            let! equalRevisionReport = diagnose (completedWorkflow target)
+            Assert.That(equalRevisionReport.Outcome, Is.EqualTo(DiagnosisOutcome.VerifiedComplete))
+
+            let! olderRevisionReport = diagnose { completedWorkflow target with CounterRevision = 6L }
+
+            Assert.That(olderRevisionReport.Outcome, Is.EqualTo(DiagnosisOutcome.VerifiedComplete))
+
+            let! newerRevisionReport = diagnose { completedWorkflow target with CounterRevision = 8L }
+
+            Assert.That(newerRevisionReport.MissingRelationships, Is.Empty)
+            Assert.That(newerRevisionReport.StaleRelationships, Is.Empty)
+            Assert.That(newerRevisionReport.CountEvidence[0].StoredCount, Is.EqualTo(Some 1L))
+            Assert.That(newerRevisionReport.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
+            Assert.That(newerRevisionReport.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
+            Assert.That(newerRevisionReport.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
+            Assert.That(newerRevisionReport.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(newerRevisionReport.EvidenceGaps, Has.Length.EqualTo(1))
+            Assert.That(newerRevisionReport.EvidenceGaps, Has.Some.Contains("newer than the counter snapshot revision"))
+        }
+
     /// Verifies stale relationship removal is advice only when the selected target's workflow and counter evidence are complete.
     [<Test>]
     member _.StaleRelationshipRemovalRequiresCompleteTargetEvidence() =

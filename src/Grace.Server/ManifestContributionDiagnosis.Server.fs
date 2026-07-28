@@ -752,6 +752,10 @@ module ManifestContributionDiagnosis =
                         && workflowDto.CounterRevision > 0L
                         && workflowDto.Revision > 0L
 
+                    let workflowCounterSnapshotCoherent =
+                        not counterReadable
+                        || workflowDto.CounterRevision <= counterDto.Revision
+
                     let workflowRangesExact =
                         match
                             expectedWorkflowRanges.TryGetValue
@@ -767,6 +771,7 @@ module ManifestContributionDiagnosis =
 
                     let workflowCompleted =
                         workflowReadable
+                        && workflowCounterSnapshotCoherent
                         && workflowRangesExact
                         && workflowDto.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
                         && workflowDto.FailedRanges.Length = 0
@@ -793,6 +798,10 @@ module ManifestContributionDiagnosis =
                             evidenceGaps.Add($"Manifest contribution workflow for '{targetIdentity}' returned state for a different target.")
                         elif not workflowReadable then
                             evidenceGaps.Add($"Manifest contribution workflow for '{targetIdentity}' was absent or unreadable.")
+                        elif not workflowCounterSnapshotCoherent then
+                            evidenceGaps.Add(
+                                $"Manifest contribution workflow for '{targetIdentity}' recorded counter revision {workflowDto.CounterRevision}, which is newer than the counter snapshot revision {counterDto.Revision}."
+                            )
                         else
                             evidenceGaps.Add(
                                 $"Manifest contribution workflow for '{targetIdentity}' has unfinished, failed, duplicate, or source-mismatched ranges."
