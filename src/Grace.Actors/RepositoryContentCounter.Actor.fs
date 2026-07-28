@@ -67,6 +67,15 @@ module RepositoryContentCounter =
         counter.LastCompletedChange
         |> Option.filter (fun change -> change.OperationId = operationId)
 
+    /// Requires a repair replay to remain the actor's latest transition at the diagnosed successor revision.
+    let private repairReplayMatchesCurrentRevision expectedRevision (counter: RepositoryContentCounterDto) (change: RepositoryContentCounterCompletedChange) =
+        match expectedRevision with
+        | None -> true
+        | Some expected ->
+            change.Revision = expected + 1L
+            && counter.Revision = change.Revision
+            && counter.LastCompletedChange = Some change
+
     /// Returns whether the completed change matches the requested counter direction.
     let private changeMatchesCommand change command =
         match change.Operation, command with
@@ -220,8 +229,9 @@ module RepositoryContentCounter =
     /// Validates a RepositoryContentCounter command and derives the events needed for a state transition.
     let decideCommand events counter command metadata = decideCommandForKey None events counter command metadata
 
-    /// Resolves Redis replay, bounded persistence, and safe removal gating for one counter command.
-    let handleWithRecentResult
+    /// Resolves Redis replay, optional repair revision validation, bounded persistence, and safe removal gating.
+    let private handleWithRecentResultCore
+        expectedRevision
         (recentResult: IRepositoryCounterRecentResult)
         (persistSnapshot: RepositoryContentCounterDto -> Task)
         expectedPrimaryKey
@@ -243,6 +253,8 @@ module RepositoryContentCounter =
                         Error(graceError metadata.CorrelationId "RepositoryContentCounter recent result operation id does not match the requested operation.")
                 | Some cachedChange when not (changeMatchesCommand cachedChange command) ->
                     return Error(graceError metadata.CorrelationId "RepositoryContentCounter operation id was already used for a different command.")
+                | Some cachedChange when not (repairReplayMatchesCurrentRevision expectedRevision counter cachedChange) ->
+                    return Error(graceError metadata.CorrelationId "RepositoryContentCounter repair replay no longer matches the diagnosed revision.")
                 | Some cachedChange ->
                     return
                         okDecision
@@ -256,45 +268,72 @@ module RepositoryContentCounter =
                     match decideCommandForKey expectedPrimaryKey Seq.empty counter command metadata with
                     | Error error -> return Error error
                     | Ok localDecision ->
-                        let isRemoval =
-                            match command with
-                            | RepositoryContentCounterCommand.RemoveReference _ -> true
-                            | RepositoryContentCounterCommand.AddReference _ -> false
+                        let repairRevisionMismatch =
+                            match expectedRevision, localDecision.Events.IsEmpty, counter.LastCompletedChange with
+                            | None, _, _ -> false
+                            | Some expected, false, _ -> counter.Revision <> expected
+                            | Some _, true, Some completedChange -> not (repairReplayMatchesCurrentRevision expectedRevision counter completedChange)
+                            | Some _, true, None -> true
 
-                        let! previousResultCached =
-                            match counter.LastCompletedChange with
-                            | Some previousChange when previousChange.OperationId <> operationId ->
-                                recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, previousChange, cancellationToken)
-                            | Some _
-                            | None -> Task.FromResult true
+                        if repairRevisionMismatch then
+                            let expected =
+                                expectedRevision
+                                |> Option.defaultValue counter.Revision
 
-                        if isRemoval && not previousResultCached then
                             return
                                 Error(
                                     graceError
                                         metadata.CorrelationId
-                                        "RepositoryContentCounter removal paused because Redis could not preserve the previous completed result."
+                                        $"RepositoryContentCounter repair expected revision {expected}, but the current revision no longer matches that mutation or its completed replay."
                                 )
                         else
-                            if not localDecision.Events.IsEmpty then
-                                do! persistSnapshot localDecision.Counter
+                            let isRemoval =
+                                match command with
+                                | RepositoryContentCounterCommand.RemoveReference _ -> true
+                                | RepositoryContentCounterCommand.AddReference _ -> false
 
-                            match localDecision.Counter.LastCompletedChange with
-                            | None -> return Error(graceError metadata.CorrelationId "RepositoryContentCounter completed without a bounded result.")
-                            | Some completedChange ->
-                                let! completedResultCached =
-                                    recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, completedChange, cancellationToken)
+                            let! previousResultCached =
+                                match counter.LastCompletedChange with
+                                | Some previousChange when previousChange.OperationId <> operationId ->
+                                    recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, previousChange, cancellationToken)
+                                | Some _
+                                | None -> Task.FromResult true
 
-                                if isRemoval && not completedResultCached then
-                                    return
-                                        Error(
-                                            graceError
-                                                metadata.CorrelationId
-                                                "RepositoryContentCounter removal was retained safely because Redis did not confirm the completed result."
-                                        )
-                                else
-                                    return Ok localDecision
+                            if isRemoval && not previousResultCached then
+                                return
+                                    Error(
+                                        graceError
+                                            metadata.CorrelationId
+                                            "RepositoryContentCounter removal paused because Redis could not preserve the previous completed result."
+                                    )
+                            else
+                                if not localDecision.Events.IsEmpty then
+                                    do! persistSnapshot localDecision.Counter
+
+                                match localDecision.Counter.LastCompletedChange with
+                                | None -> return Error(graceError metadata.CorrelationId "RepositoryContentCounter completed without a bounded result.")
+                                | Some completedChange ->
+                                    let! completedResultCached =
+                                        recentResult.TrySetAsync(repositoryId, storagePoolId, manifestAddress, completedChange, cancellationToken)
+
+                                    if isRemoval && not completedResultCached then
+                                        return
+                                            Error(
+                                                graceError
+                                                    metadata.CorrelationId
+                                                    "RepositoryContentCounter removal was retained safely because Redis did not confirm the completed result."
+                                            )
+                                    else
+                                        return Ok localDecision
         }
+
+    /// Resolves an ordinary counter command without imposing a repair-only snapshot revision.
+    let handleWithRecentResult recentResult persistSnapshot expectedPrimaryKey counter command metadata cancellationToken =
+        handleWithRecentResultCore None recentResult persistSnapshot expectedPrimaryKey counter command metadata cancellationToken
+
+    /// Rejects a new repair mutation unless the actor still owns the diagnosed counter revision.
+    let handleRepairWithRecentResult recentResult persistSnapshot expectedPrimaryKey counter command expectedRevision metadata cancellationToken =
+        handleWithRecentResultCore (Some expectedRevision) recentResult persistSnapshot expectedPrimaryKey counter command metadata cancellationToken
 
     /// Implements the Orleans grain for repository content counter actor.
     type RepositoryContentCounterActor
@@ -326,6 +365,58 @@ module RepositoryContentCounter =
             }
             :> Task)
 
+        /// Executes ordinary and repair-only counter commands through the same bounded persistence path.
+        member private this.HandleCommand(command: RepositoryContentCounterCommand, expectedRevision: int64 option, metadata: EventMetadata) =
+            task {
+                this.correlationId <- metadata.CorrelationId
+                RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, commandName command)
+
+                let operation =
+                    match expectedRevision with
+                    | Some revision ->
+                        handleRepairWithRecentResult
+                            recentResult
+                            this.ApplySnapshot
+                            (Some(this.GetPrimaryKeyString()))
+                            counter
+                            command
+                            revision
+                            metadata
+                            CancellationToken.None
+                    | None ->
+                        handleWithRecentResult
+                            recentResult
+                            this.ApplySnapshot
+                            (Some(this.GetPrimaryKeyString()))
+                            counter
+                            command
+                            metadata
+                            CancellationToken.None
+
+                match! operation with
+                | Ok decision ->
+                    let returnValue =
+                        (GraceReturnValue.Create decision metadata.CorrelationId)
+                            .enhance(nameof RepositoryId, decision.Counter.RepositoryId)
+                            .enhance(nameof StoragePoolId, decision.Counter.StoragePoolId)
+                            .enhance(nameof ManifestAddress, decision.Counter.ManifestAddress)
+                            .enhance(nameof ReferenceCount, decision.Counter.ReferenceCount)
+                            .enhance (nameof RepositoryContentCounterLifecycleState, decision.Counter.LifecycleState)
+
+                    return Ok returnValue
+                | Error error ->
+                    log.LogWarning(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Rejected RepositoryContentCounter command {Command}. Error: {Error}",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        metadata.CorrelationId,
+                        commandName command,
+                        error.Error
+                    )
+
+                    return Error error
+            }
+
         interface IRepositoryContentCounterActor with
             /// Reports whether this RepositoryContentCounter actor has persisted state.
             member this.Exists correlationId =
@@ -349,40 +440,7 @@ module RepositoryContentCounter =
                 |> returnTask
 
             /// Routes a public actor command to the domain operation that validates and persists it.
-            member this.Handle command metadata =
-                task {
-                    this.correlationId <- metadata.CorrelationId
-                    RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, commandName command)
+            member this.Handle command metadata = this.HandleCommand(command, None, metadata)
 
-                    match!
-                        handleWithRecentResult
-                            recentResult
-                            this.ApplySnapshot
-                            (Some(this.GetPrimaryKeyString()))
-                            counter
-                            command
-                            metadata
-                            CancellationToken.None
-                        with
-                    | Ok decision ->
-                        let returnValue =
-                            (GraceReturnValue.Create decision metadata.CorrelationId)
-                                .enhance(nameof RepositoryId, decision.Counter.RepositoryId)
-                                .enhance(nameof StoragePoolId, decision.Counter.StoragePoolId)
-                                .enhance(nameof ManifestAddress, decision.Counter.ManifestAddress)
-                                .enhance(nameof ReferenceCount, decision.Counter.ReferenceCount)
-                                .enhance (nameof RepositoryContentCounterLifecycleState, decision.Counter.LifecycleState)
-
-                        return Ok returnValue
-                    | Error error ->
-                        log.LogWarning(
-                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Rejected RepositoryContentCounter command {Command}. Error: {Error}",
-                            getCurrentInstantExtended (),
-                            getMachineName,
-                            metadata.CorrelationId,
-                            commandName command,
-                            error.Error
-                        )
-
-                        return Error error
-                }
+            /// Routes a bounded repair command through an activation-local revision precondition.
+            member this.HandleRepair command expectedRevision metadata = this.HandleCommand(command, Some expectedRevision, metadata)

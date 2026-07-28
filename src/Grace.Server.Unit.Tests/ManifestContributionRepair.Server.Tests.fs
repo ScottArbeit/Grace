@@ -190,7 +190,7 @@ type ManifestContributionRepairServerTests() =
                 {
                     DiagnoseCurrent = fun _ _ _ -> Task.FromResult current
                     ApplyAction =
-                        fun _ _ _ ->
+                        fun _ _ _ _ ->
                             mutationCalls <- mutationCalls + 1
                             Task.CompletedTask
                 }
@@ -243,14 +243,14 @@ type ManifestContributionRepairServerTests() =
                 {
                     DiagnoseCurrent = fun _ _ _ -> Task.FromResult(reads.Dequeue())
                     ApplyAction =
-                        fun _ action _ ->
+                        fun _ _ action _ ->
                             applied.Add action.Action.Kind
                             Task.CompletedTask
                 }
 
             let! result = repairWith dependencies "2026-07-28T00:01:00Z" "repair-test" CancellationToken.None (bound 10) initial true
 
-            Assert.That(result.Outcome, Is.EqualTo(RepairOutcome.VerifiedComplete))
+            Assert.That(result.Outcome, Is.EqualTo(RepairOutcome.VerifiedComplete), result.Message)
             Assert.That((applied.ToArray() = [| "ResendDeterministicEvent" |]), Is.True)
 
             let appliedKinds =
@@ -295,7 +295,7 @@ type ManifestContributionRepairServerTests() =
                 {
                     DiagnoseCurrent = fun _ _ _ -> Task.FromResult changed
                     ApplyAction =
-                        fun _ _ _ ->
+                        fun _ _ _ _ ->
                             mutationCalls <- mutationCalls + 1
                             Task.CompletedTask
                 }
@@ -328,7 +328,7 @@ type ManifestContributionRepairServerTests() =
                 {
                     DiagnoseCurrent = fun _ _ _ -> Task.FromResult initial
                     ApplyAction =
-                        fun _ _ _ ->
+                        fun _ _ _ _ ->
                             failureCalls <- failureCalls + 1
                             Task.FromException(InvalidOperationException "focused dependency failure")
                 }
@@ -347,7 +347,7 @@ type ManifestContributionRepairServerTests() =
 
             let diagnoseCurrent _ _ _ = retryReads.Dequeue() |> Task.FromResult
 
-            let applyAction _ _ _ = Task.CompletedTask
+            let applyAction _ _ _ _ = Task.CompletedTask
 
             let retry = { DiagnoseCurrent = diagnoseCurrent; ApplyAction = applyAction }
 
@@ -484,7 +484,8 @@ type ManifestContributionRepairServerTests() =
                     GetCounter = fun _ -> Task.FromResult counter
                     GetWorkflow = fun _ -> Task.FromResult workflow
                     HandleCounter =
-                        fun command ->
+                        fun command expectedRevision ->
+                            Assert.That(expectedRevision, Is.EqualTo(7L))
                             commands.Add command
 
                             let operationId =
@@ -510,7 +511,7 @@ type ManifestContributionRepairServerTests() =
                             Task.CompletedTask
                 }
 
-            do! reconcileCounterStepWith dependencies current target 2L
+            do! reconcileCounterStepWith dependencies current current target 2L
 
             Assert.That(commands.Count, Is.EqualTo(1))
 
@@ -576,7 +577,7 @@ type ManifestContributionRepairServerTests() =
                     GetCounter = fun _ -> Task.FromResult counter
                     GetWorkflow = fun _ -> Task.FromResult workflow
                     HandleCounter =
-                        fun _ ->
+                        fun _ _ ->
                             counterWrites <- counterWrites + 1
                             Task.FromException<RepositoryContentCounterDecision>(InvalidOperationException "unexpected counter write")
                     StartWorkflow =
@@ -588,10 +589,180 @@ type ManifestContributionRepairServerTests() =
                             Task.CompletedTask
                 }
 
-            do! reconcileCounterStepWith dependencies current target 1L
+            do! reconcileCounterStepWith dependencies current current target 1L
 
             Assert.That(counterWrites, Is.Zero)
             Assert.That(workflowStarts, Is.EqualTo(1))
+        }
+
+    /// Verifies retry recognizes a persisted repair counter change when workflow start never replaced the signed prior snapshot.
+    [<Test>]
+    member _.RepairRetriesMissingWorkflowStartFromExactSignedPriorWorkflow() =
+        task {
+            let source = sourceWithoutManifest ()
+            let target = { RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress }
+            let counterOperationId = counterRepairOperationId target 1L 7L "add"
+
+            let originalCounter =
+                { RepositoryContentCounterDto.Default with
+                    RepositoryId = repositoryId
+                    StoragePoolId = storagePoolId
+                    ManifestAddress = manifestAddress
+                    Count = 0L
+                    Revision = 7L
+                }
+
+            let repairedCounter =
+                { originalCounter with
+                    Count = 1L
+                    Revision = 8L
+                    LastCompletedChange =
+                        Some
+                            {
+                                OperationId = counterOperationId
+                                Operation = RepositoryContentCounterChangeOperation.Added
+                                PreviousCount = 0L
+                                CurrentCount = 1L
+                                Revision = 8L
+                            }
+                }
+
+            let priorWorkflow = completedWorkflow ()
+            let identity = $"{repositoryId:D}|{storagePoolId}|{manifestAddress}"
+
+            let original =
+                report DiagnosisOutcome.IncompleteRetain Array.empty Array.empty 0L 1L [| $"ReconcileCounter:{identity}" |]
+                |> withCurrentActorFacts source originalCounter priorWorkflow
+
+            let postCounter =
+                report DiagnosisOutcome.IncompleteRetain Array.empty Array.empty 1L 1L Array.empty
+                |> withCurrentActorFacts source repairedCounter priorWorkflow
+
+            let workflowOperationId = ManifestContributionWorkflowOperationId $"{counterOperationId}:workflow"
+
+            let replayedWorkflow =
+                { priorWorkflow with
+                    StartOperationId = Some workflowOperationId
+                    LastOperationId = Some workflowOperationId
+                    CompletedRanges =
+                        priorWorkflow.CompletedRanges
+                        |> Array.map (fun completedRange -> { completedRange with OperationId = workflowOperationId })
+                    CounterRevision = 8L
+                    Revision = priorWorkflow.Revision + 1L
+                }
+
+            let verified =
+                report DiagnosisOutcome.VerifiedComplete Array.empty Array.empty 1L 1L Array.empty
+                |> withCurrentActorFacts source repairedCounter replayedWorkflow
+
+            let mutable diagnosisCalls = 0
+            let mutable counterWrites = 0
+            let mutable workflowStarts = 0
+
+            let reconciliationDependencies =
+                {
+                    GetCounter = fun _ -> Task.FromResult repairedCounter
+                    GetWorkflow = fun _ -> Task.FromResult priorWorkflow
+                    HandleCounter =
+                        fun _ _ ->
+                            counterWrites <- counterWrites + 1
+                            Task.FromException<RepositoryContentCounterDecision>(InvalidOperationException "unexpected second counter mutation")
+                    StartWorkflow =
+                        fun operationId _ direction ranges revision ->
+                            Assert.That(operationId, Is.EqualTo(workflowOperationId))
+                            Assert.That(direction, Is.EqualTo(ManifestContributionDirection.Increment))
+                            Assert.That((ranges = priorWorkflow.Ranges), Is.True)
+                            Assert.That(revision, Is.EqualTo(8L))
+                            workflowStarts <- workflowStarts + 1
+                            Task.CompletedTask
+                }
+
+            let dependencies =
+                {
+                    DiagnoseCurrent =
+                        fun _ _ _ ->
+                            diagnosisCalls <- diagnosisCalls + 1
+                            Task.FromResult(if diagnosisCalls <= 2 then postCounter else verified)
+                    ApplyAction =
+                        fun signed current _ _ ->
+                            Assert.That(current.ActorFacts = postCounter.ActorFacts, Is.True)
+
+                            reconcileCounterStepWith reconciliationDependencies signed current target 1L :> Task
+                }
+
+            let! result = repairWith dependencies "2026-07-28T00:03:00Z" "repair-test" CancellationToken.None (bound 10) original true
+
+            Assert.That(result.Outcome, Is.EqualTo(RepairOutcome.VerifiedComplete), result.Message)
+            Assert.That(counterWrites, Is.Zero)
+            Assert.That(workflowStarts, Is.EqualTo(1))
+            Assert.That(result.AppliedActions.Length, Is.EqualTo(1))
+        }
+
+    /// Verifies retry rejects a prior workflow snapshot that no longer exactly matches the signed diagnosis.
+    [<Test>]
+    member _.RepairRejectsChangedPriorWorkflowAfterCounterPersistence() =
+        task {
+            let source = sourceWithoutManifest ()
+            let target = { RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress }
+            let counterOperationId = counterRepairOperationId target 1L 7L "add"
+
+            let originalCounter =
+                { RepositoryContentCounterDto.Default with
+                    RepositoryId = repositoryId
+                    StoragePoolId = storagePoolId
+                    ManifestAddress = manifestAddress
+                    Count = 0L
+                    Revision = 7L
+                }
+
+            let repairedCounter =
+                { originalCounter with
+                    Count = 1L
+                    Revision = 8L
+                    LastCompletedChange =
+                        Some
+                            {
+                                OperationId = counterOperationId
+                                Operation = RepositoryContentCounterChangeOperation.Added
+                                PreviousCount = 0L
+                                CurrentCount = 1L
+                                Revision = 8L
+                            }
+                }
+
+            let priorWorkflow = completedWorkflow ()
+
+            let changedWorkflow =
+                { priorWorkflow with
+                    LastOperationId = Some(ManifestContributionWorkflowOperationId "later-workflow-operation")
+                    Revision = priorWorkflow.Revision + 1L
+                }
+
+            let identity = $"{repositoryId:D}|{storagePoolId}|{manifestAddress}"
+
+            let original =
+                report DiagnosisOutcome.IncompleteRetain Array.empty Array.empty 0L 1L [| $"ReconcileCounter:{identity}" |]
+                |> withCurrentActorFacts source originalCounter priorWorkflow
+
+            let changed =
+                report DiagnosisOutcome.IncompleteRetain Array.empty Array.empty 1L 1L Array.empty
+                |> withCurrentActorFacts source repairedCounter changedWorkflow
+
+            let mutable mutationCalls = 0
+
+            let dependencies =
+                {
+                    DiagnoseCurrent = fun _ _ _ -> Task.FromResult changed
+                    ApplyAction =
+                        fun _ _ _ _ ->
+                            mutationCalls <- mutationCalls + 1
+                            Task.CompletedTask
+                }
+
+            let! result = repairWith dependencies "2026-07-28T00:03:00Z" "repair-test" CancellationToken.None (bound 10) original true
+
+            Assert.That(result.Outcome, Is.EqualTo(RepairOutcome.IncompleteRetain))
+            Assert.That(mutationCalls, Is.Zero)
         }
 
     /// Verifies unchanged partial-workflow evidence stops one repair request after one deterministic replay.
@@ -663,7 +834,7 @@ type ManifestContributionRepairServerTests() =
                             else
                                 Task.FromException<ManifestContributionDiagnosisReport>(InvalidOperationException "unbounded replay")
                     ApplyAction =
-                        fun _ _ _ ->
+                        fun _ _ _ _ ->
                             replayCalls <- replayCalls + 1
                             Task.CompletedTask
                 }

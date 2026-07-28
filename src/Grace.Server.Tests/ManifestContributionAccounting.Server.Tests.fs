@@ -88,9 +88,9 @@ module private ManifestContributionAccountingAspireTestHelpers =
 [<NonParallelizable>]
 type ManifestContributionRepairAspireTests() =
 
-    /// Verifies the internal repair route rejects a wrong digest and keeps dry-run and empty execute plans wire-identical.
+    /// Verifies the internal repair route rejects a wrong digest and preserves an incomplete empty plan as retain-safe.
     [<Test>]
-    member _.``manifest contribution repair validates hash and converges an empty bounded plan``() =
+    member _.``manifest contribution repair validates hash and retains an incomplete empty bounded plan``() =
         task {
             let! state = AspireTestHost.startAsync testUserId
             let repositoryId = repositoryIds[2]
@@ -112,6 +112,7 @@ type ManifestContributionRepairAspireTests() =
             Assert.That(diagnosisResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), diagnosisJson)
             use diagnosisDocument = JsonDocument.Parse diagnosisJson
             let diagnosisSha = diagnosisDocument.RootElement.GetProperty("ReportSha256").GetString()
+            Assert.That(diagnosisDocument.RootElement.GetProperty("Outcome").GetString(), Is.EqualTo("incompleteRetain"))
 
             let wrongHashRequest = {| ReportJson = diagnosisJson; ExpectedReportSha256 = String.replicate 64 "0"; Execute = false |}
 
@@ -141,8 +142,8 @@ type ManifestContributionRepairAspireTests() =
             Assert.That(executeRoot.GetProperty("ProposedActions").GetArrayLength(), Is.Zero)
             Assert.That(dryRoot.GetProperty("AppliedActions").GetArrayLength(), Is.Zero)
             Assert.That(executeRoot.GetProperty("AppliedActions").GetArrayLength(), Is.Zero)
-            Assert.That(dryRoot.GetProperty("Outcome").GetString(), Is.EqualTo("verifiedComplete"))
-            Assert.That(executeRoot.GetProperty("Outcome").GetString(), Is.EqualTo("verifiedComplete"))
+            Assert.That(dryRoot.GetProperty("Outcome").GetString(), Is.EqualTo("incompleteRetain"))
+            Assert.That(executeRoot.GetProperty("Outcome").GetString(), Is.EqualTo("incompleteRetain"))
         }
 
 /// Proves the public Commit tracer across the real Aspire Service Bus and Cosmos resources.

@@ -448,3 +448,124 @@ type RepositoryContentCounterActorTests() =
                 Assert.That(decision.Intents.Length, Is.EqualTo(1))
                 Assert.That(decision.Counter.Count, Is.EqualTo(0L))
         }
+
+    /// Verifies repair rejects a stale diagnosed revision inside the actor before persisting another counter transition.
+    [<Test>]
+    member _.RepairRevisionMismatchRejectsBeforePersistence() =
+        task {
+            let current =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-concurrent") (metadata "corr-concurrent")
+                |> expectDecision
+
+            let recent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, _, _) = Task.FromResult None
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult true
+                }
+
+            let mutable persisted = false
+
+            let! result =
+                RepositoryContentCounterActor.handleRepairWithRecentResult
+                    recent
+                    (fun _ ->
+                        persisted <- true
+                        Task.CompletedTask)
+                    None
+                    current.Counter
+                    (add "op-repair")
+                    0L
+                    (metadata "corr-repair")
+                    CancellationToken.None
+
+            match result with
+            | Ok _ -> Assert.Fail("Expected the stale repair revision to reject.")
+            | Error error -> Assert.That(error.Error, Does.Contain("revision"))
+
+            Assert.That(persisted, Is.False)
+            Assert.That(current.Counter.Count, Is.EqualTo(1L))
+            Assert.That(current.Counter.Revision, Is.EqualTo(1L))
+        }
+
+    /// Verifies an identical completed repair operation remains replayable after its pre-mutation revision was consumed.
+    [<Test>]
+    member _.RepairCompletedOperationReplayDoesNotMutateAgain() =
+        task {
+            let completed =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-repair") (metadata "corr-repair-first")
+                |> expectDecision
+
+            let recent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, _, _) = Task.FromResult None
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult true
+                }
+
+            let mutable persisted = false
+
+            let! result =
+                RepositoryContentCounterActor.handleRepairWithRecentResult
+                    recent
+                    (fun _ ->
+                        persisted <- true
+                        Task.CompletedTask)
+                    None
+                    completed.Counter
+                    (add "op-repair")
+                    0L
+                    (metadata "corr-repair-replay")
+                    CancellationToken.None
+
+            match result with
+            | Error error -> Assert.Fail($"Expected completed repair replay, got {error.Error}.")
+            | Ok decision ->
+                Assert.That(decision.WasIdempotentReplay, Is.True)
+                Assert.That(decision.Events, Is.Empty)
+                Assert.That(decision.Counter.Count, Is.EqualTo(1L))
+
+            Assert.That(persisted, Is.False)
+        }
+
+    /// Verifies a cached repair result cannot replay after a later counter revision supersedes its zero crossing.
+    [<Test>]
+    member _.RepairCachedReplayRejectsAfterLaterCounterChange() =
+        task {
+            let repaired =
+                RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-repair") (metadata "corr-repair-first")
+                |> expectDecision
+
+            let later =
+                RepositoryContentCounterActor.decideCommand [] repaired.Counter (add "op-later") (metadata "corr-later")
+                |> expectDecision
+
+            let recent =
+                { new Grace.Actors.IRepositoryCounterRecentResult with
+                    member _.TryGetAsync(_, _, _, operationId, _) =
+                        Task.FromResult(if operationId = "op-repair" then repaired.Counter.LastCompletedChange else None)
+
+                    member _.TrySetAsync(_, _, _, _, _) = Task.FromResult true
+                }
+
+            let mutable persisted = false
+
+            let! result =
+                RepositoryContentCounterActor.handleRepairWithRecentResult
+                    recent
+                    (fun _ ->
+                        persisted <- true
+                        Task.CompletedTask)
+                    None
+                    later.Counter
+                    (add "op-repair")
+                    0L
+                    (metadata "corr-repair-stale-replay")
+                    CancellationToken.None
+
+            match result with
+            | Ok _ -> Assert.Fail("Expected the superseded repair replay to reject.")
+            | Error error -> Assert.That(error.Error, Does.Contain("revision"))
+
+            Assert.That(persisted, Is.False)
+            Assert.That(later.Counter.Count, Is.EqualTo(2L))
+            Assert.That(later.Counter.Revision, Is.EqualTo(2L))
+        }

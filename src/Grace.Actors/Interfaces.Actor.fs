@@ -772,6 +772,13 @@ module Interfaces =
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
+        /// Applies a repair command only while the actor still owns the diagnosed pre-mutation revision.
+        abstract member HandleRepair:
+            command: RepositoryContentCounterCommand ->
+            expectedRevision: int64 ->
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<RepositoryContentCounterDecision>>
+
     /// Defines the operations for the ManifestContributionWorkflow actor.
     [<Interface>]
     type IManifestContributionWorkflowActor =
