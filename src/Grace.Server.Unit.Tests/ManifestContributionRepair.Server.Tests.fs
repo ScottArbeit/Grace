@@ -165,12 +165,13 @@ type ManifestContributionRepairServerTests() =
         | Ok bound -> bound
         | Error error -> invalidOp error
 
-    /// Creates production-shaped diagnosis dependencies over mutable actor and projection state.
-    let diagnosisDependencies
+    /// Creates production-shaped diagnosis dependencies over mutable actor, workflow, and projection state.
+    let diagnosisDependenciesWithWorkflow
         currentReference
         (directoryVersions: Map<DirectoryVersionId, DirectoryVersionDto>)
         (relationships: HashSet<ExactRelationship>)
         (counter: unit -> RepositoryContentCounterDto)
+        (workflow: unit -> ManifestContributionWorkflowDto)
         =
         {
             GetReference = fun _ _ -> Task.FromResult currentReference
@@ -201,9 +202,18 @@ type ManifestContributionRepairServerTests() =
                             ExactRelationshipPresence.Absent
                     )
             GetCounter = fun _ _ -> Task.FromResult(counter ())
-            GetWorkflow = fun _ _ -> Task.FromResult(completedWorkflow (counter ()).Revision)
+            GetWorkflow = fun _ _ -> Task.FromResult(workflow ())
             GetRecentResult = fun _ _ _ -> Task.FromResult None
         }
+
+    /// Creates production-shaped diagnosis dependencies with completed Increment accounting.
+    let diagnosisDependencies
+        currentReference
+        (directoryVersions: Map<DirectoryVersionId, DirectoryVersionDto>)
+        (relationships: HashSet<ExactRelationship>)
+        (counter: unit -> RepositoryContentCounterDto)
+        =
+        diagnosisDependenciesWithWorkflow currentReference directoryVersions relationships counter (fun () -> completedWorkflow (counter ()).Revision)
 
     /// Runs the production diagnosis engine for one selector and mutable test state.
     let diagnose dependencies selector = diagnoseWith dependencies "2026-07-28T12:00:00Z" "corr-repair" CancellationToken.None (readBound 20) selector
@@ -402,6 +412,115 @@ type ManifestContributionRepairServerTests() =
                     :> obj
                 )
             )
+        }
+
+    /// Verifies incomplete physical evidence retains a missing manifest relationship for normal accounting replay.
+    [<Test>]
+    member _.MissingManifestRelationshipWithIncompleteEvidenceProducesNoRepairMutation() =
+        task {
+            let source = directoryVersionDto rootDirectoryVersionId Array.empty true
+            let relationship = manifestRelationship rootDirectoryVersionId
+            let relationships = HashSet<ExactRelationship>()
+            let counter = logicalCounter 0L 7L
+
+            let incompleteWorkflow =
+                { completedWorkflow counter.Revision with
+                    LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress
+                    CompletedRanges = Array.empty
+                }
+
+            let diagnosisDeps =
+                diagnosisDependenciesWithWorkflow
+                    ReferenceDto.Default
+                    (Map.ofList [ rootDirectoryVersionId, source ])
+                    relationships
+                    (fun () -> counter)
+                    (fun () -> incompleteWorkflow)
+
+            let selector = DiagnosisSelector.DirectoryVersionId(rootDirectoryVersionId, None)
+            let! report = diagnose diagnosisDeps selector
+
+            Assert.That(report.MissingRelationships, Does.Contain(ManifestContributionDiagnosis.relationshipIdentity relationship))
+
+            Assert.That(
+                report.CountEvidence,
+                Has
+                    .Exactly(1)
+                    .Matches<ManifestCountEvidence>(fun evidence -> evidence.Completeness = "IncompleteRetain")
+            )
+
+            Assert.That(report.RepairTargets, Has.None.StartsWith("GetOrAddExactRelationship:"))
+
+            let plan = expectPlan report
+            Assert.That(plan, Is.Empty)
+
+            let mutable writes = 0
+
+            let repairDependencies =
+                {
+                    DiagnoseCurrent = fun _ _ _ -> diagnose diagnosisDeps selector
+                    ApplyAction =
+                        fun _ _ _ _ ->
+                            writes <- writes + 1
+                            Task.CompletedTask
+                }
+
+            let! repaired = repairWith repairDependencies "2026-07-28T12:00:30Z" "corr-incomplete" CancellationToken.None (readBound 20) report true
+
+            Assert.That(repaired.Outcome, Is.EqualTo(RepairOutcome.IncompleteRetain))
+            Assert.That(repaired.ProposedActions, Is.Empty)
+            Assert.That(repaired.AppliedActions, Is.Empty)
+            Assert.That(writes, Is.Zero)
+            Assert.That(relationships.Contains relationship, Is.False)
+        }
+
+    /// Verifies complete signed evidence that becomes incomplete is rejected before the manifest projection write.
+    [<Test>]
+    member _.MissingManifestRelationshipRejectsEvidenceDowngradeBeforeExecution() =
+        task {
+            let source = directoryVersionDto rootDirectoryVersionId Array.empty true
+            let relationships = HashSet<ExactRelationship>()
+            let counter = logicalCounter 1L 7L
+            let mutable workflow = completedWorkflow counter.Revision
+
+            let diagnosisDeps =
+                diagnosisDependenciesWithWorkflow
+                    ReferenceDto.Default
+                    (Map.ofList [ rootDirectoryVersionId, source ])
+                    relationships
+                    (fun () -> counter)
+                    (fun () -> workflow)
+
+            let selector = DiagnosisSelector.DirectoryVersionId(rootDirectoryVersionId, None)
+            let! signed = diagnose diagnosisDeps selector
+            Assert.That(expectPlan signed, Has.Length.EqualTo(1))
+
+            let mutable diagnosisCalls = 0
+            let mutable writes = 0
+
+            let repairDependencies =
+                {
+                    DiagnoseCurrent =
+                        fun _ _ _ ->
+                            diagnosisCalls <- diagnosisCalls + 1
+
+                            if diagnosisCalls = 2 then
+                                workflow <-
+                                    { workflow with LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress; CompletedRanges = Array.empty }
+
+                            diagnose diagnosisDeps selector
+                    ApplyAction =
+                        fun _ _ _ _ ->
+                            writes <- writes + 1
+                            Task.CompletedTask
+                }
+
+            let! repaired = repairWith repairDependencies "2026-07-28T12:00:45Z" "corr-downgrade" CancellationToken.None (readBound 20) signed true
+
+            Assert.That(repaired.Outcome, Is.EqualTo(RepairOutcome.IncompleteRetain))
+            Assert.That(repaired.AppliedActions, Is.Empty)
+            Assert.That(writes, Is.Zero)
+            Assert.That(diagnosisCalls, Is.EqualTo(2))
         }
 
     /// Verifies a missing parent projection is written only after the current parent still names the exact child.
@@ -611,7 +730,8 @@ type ManifestContributionRepairServerTests() =
                 [|
                     referenceRelationship
                     parentRelationship
-                    relationship
+                    ExactRelationship.ParentChild
+                        { RepositoryId = repositoryId; ParentDirectoryVersionId = rootDirectoryVersionId; ChildDirectoryVersionId = staleDirectoryVersionId }
                 |]
 
             let oversized =
@@ -624,7 +744,7 @@ type ManifestContributionRepairServerTests() =
                         [|
                             $"RepublishReferenceCreated:{ManifestContributionDiagnosis.relationshipIdentity referenceRelationship}"
                             $"GetOrAddExactRelationship:{ManifestContributionDiagnosis.relationshipIdentity parentRelationship}"
-                            $"GetOrAddExactRelationship:{identity}"
+                            $"GetOrAddExactRelationship:{ManifestContributionDiagnosis.relationshipIdentity oversizedRelationships[2]}"
                         |]
                     CountEvidence = Array.empty
                 }
@@ -740,6 +860,17 @@ type ManifestContributionRepairServerTests() =
             let selector = DiagnosisSelector.DirectoryVersionId(rootDirectoryVersionId, None)
 
             let! signed = diagnose diagnosisDeps selector
+
+            Assert.That(
+                signed.CountEvidence,
+                Has
+                    .Exactly(1)
+                    .Matches<ManifestCountEvidence>(fun evidence ->
+                        evidence.Completeness = "Complete"
+                        && evidence.StoredCount = Some 2L
+                        && evidence.RebuiltCount = Some 1L)
+            )
+
             let attempts = ResizeArray<string>()
             let mutable diagnosisCalls = 0
 

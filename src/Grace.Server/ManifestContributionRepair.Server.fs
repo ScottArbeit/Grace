@@ -183,6 +183,19 @@ module ManifestContributionRepair =
     /// Returns the stable identity used to reject duplicate actions and validate remaining-plan prefixes.
     let private actionKey mutation = mutation.Action.Kind, mutation.Action.Identity
 
+    /// Confirms current bounded diagnosis proved completed Increment accounting for one exact manifest tuple.
+    let private hasCompleteManifestAccountingEvidence (report: ManifestContributionDiagnosisReport) (relationship: DirectoryVersionManifestRelationship) =
+        not (isNull report.CountEvidence)
+        && (report.CountEvidence
+            |> Array.exists (fun evidence ->
+                not (isNull (box evidence))
+                && String.Equals(evidence.RepositoryId, $"{relationship.RepositoryId:D}", StringComparison.Ordinal)
+                && String.Equals(evidence.StoragePoolId, relationship.StoragePoolId, StringComparison.Ordinal)
+                && String.Equals(evidence.ManifestAddress, relationship.ManifestAddress, StringComparison.Ordinal)
+                && String.Equals(evidence.Completeness, "Complete", StringComparison.Ordinal)
+                && evidence.StoredCount.IsSome
+                && evidence.RebuiltCount.IsSome))
+
     /// Derives the only allowed finite action plan from structured diagnosis evidence.
     let internal buildPlan (report: ManifestContributionDiagnosisReport) =
         let actions = ResizeArray<RepairMutation>()
@@ -201,13 +214,17 @@ module ManifestContributionRepair =
                 match parseRelationshipIdentity identity with
                 | Error error -> errors.Add error
                 | Ok relationship ->
-                    let kind =
-                        match relationship with
-                        | ExactRelationship.ReferenceRoot _ -> "RepublishReferenceCreated"
-                        | ExactRelationship.ParentChild _
-                        | ExactRelationship.DirectoryVersionManifest _ -> "GetOrAddExactRelationship"
-
-                    actions.Add { Action = { Kind = kind; Identity = identity }; Target = RepairMutationTarget.Relationship relationship }
+                    match relationship with
+                    | ExactRelationship.ReferenceRoot _ ->
+                        actions.Add
+                            { Action = { Kind = "RepublishReferenceCreated"; Identity = identity }; Target = RepairMutationTarget.Relationship relationship }
+                    | ExactRelationship.ParentChild _ ->
+                        actions.Add
+                            { Action = { Kind = "GetOrAddExactRelationship"; Identity = identity }; Target = RepairMutationTarget.Relationship relationship }
+                    | ExactRelationship.DirectoryVersionManifest manifestRelationship when hasCompleteManifestAccountingEvidence report manifestRelationship ->
+                        actions.Add
+                            { Action = { Kind = "GetOrAddExactRelationship"; Identity = identity }; Target = RepairMutationTarget.Relationship relationship }
+                    | ExactRelationship.DirectoryVersionManifest _ -> ()
 
         if isNull report.StaleRelationships then
             errors.Add "StaleRelationships must not be JSON null."
@@ -427,6 +444,9 @@ module ManifestContributionRepair =
                     || not (String.Equals(fact.SnapshotJson, actorSnapshotJson current, StringComparison.Ordinal))
                 then
                     invalidOp "DirectoryVersion manifest source changed before exact relationship repair."
+
+                if not (hasCompleteManifestAccountingEvidence report relationship) then
+                    invalidOp "DirectoryVersion manifest repair requires complete current Increment accounting evidence."
 
                 cancellationToken.ThrowIfCancellationRequested()
                 let! _ = dependencies.GetOrAdd exact cancellationToken

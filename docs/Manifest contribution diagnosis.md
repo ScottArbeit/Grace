@@ -140,7 +140,8 @@ The diagnostic can emit the following repair target prefixes:
 
 - `RepublishReferenceCreated:` identifies a missing Reference-root projection that can be rebuilt from the Reference
   actor's original deterministic `Created` event.
-- `GetOrAddExactRelationship:` identifies a missing parent-DirectoryVersion or DirectoryVersion-manifest projection.
+- `GetOrAddExactRelationship:` identifies a missing parent-DirectoryVersion projection, or a missing
+  DirectoryVersion-manifest projection only when matching `CountEvidence` is `Complete`.
 - `RemoveStaleExactRelationship:` identifies an exact relationship whose source DirectoryVersion no longer supports
   it.
 - `ReconcileRepositoryContentCount:` identifies a positive logical Repository count that differs from a complete actor

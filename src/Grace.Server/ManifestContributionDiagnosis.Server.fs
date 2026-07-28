@@ -605,11 +605,12 @@ module ManifestContributionDiagnosis =
 
                         let action =
                             match relationship with
-                            | ExactRelationship.ReferenceRoot _ -> "RepublishReferenceCreated"
-                            | ExactRelationship.ParentChild _
-                            | ExactRelationship.DirectoryVersionManifest _ -> "GetOrAddExactRelationship"
+                            | ExactRelationship.ReferenceRoot _ -> Some "RepublishReferenceCreated"
+                            | ExactRelationship.ParentChild _ -> Some "GetOrAddExactRelationship"
+                            | ExactRelationship.DirectoryVersionManifest _ -> None
 
-                        repairTargets.Add $"{action}:{identity}" |> ignore
+                        action
+                        |> Option.iter (fun value -> repairTargets.Add $"{value}:{identity}" |> ignore)
 
                 let countEvidence = ResizeArray<ManifestCountEvidence>()
 
@@ -821,6 +822,19 @@ module ManifestContributionDiagnosis =
                         && workflowCompleted
 
                     let completeEvidence = partitionEvidenceComplete && counterReadable
+
+                    if sourceBacked && completeEvidence then
+                        for KeyValue (identity, relationship) in expected do
+                            match relationship with
+                            | ExactRelationship.DirectoryVersionManifest manifestRelationship when
+                                manifestRelationship.RepositoryId = counterTuple.RepositoryId
+                                && manifestRelationship.StoragePoolId = counterTuple.StoragePoolId
+                                && manifestRelationship.ManifestAddress = counterTuple.ManifestAddress
+                                && missing.Contains identity
+                                ->
+                                repairTargets.Add $"GetOrAddExactRelationship:{identity}"
+                                |> ignore
+                            | _ -> ()
 
                     if completeEvidence then
                         for KeyValue (identity, relationship) in observed do

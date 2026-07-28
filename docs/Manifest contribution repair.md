@@ -88,8 +88,10 @@ The repair has five actions:
 - Republish a live Reference actor's original `Created` event. Its deterministic broker `MessageId` remains
   `Reference/<ReferenceId>/Created`, and every `ReferenceType` follows the same path.
 - Get or add one missing parent-DirectoryVersion relationship after the parent still names the child.
-- Get or add one missing DirectoryVersion-manifest relationship after the DirectoryVersion still names the manifest.
-  This projection-only repair does not rerun normal manifest accounting.
+- Get or add one missing DirectoryVersion-manifest relationship after the DirectoryVersion still names the manifest
+  and matching `CountEvidence` remains `Complete`. Incomplete evidence retains the missing projection for normal
+  accounting replay and performs no write. A permitted projection-only repair does not rerun normal manifest
+  accounting.
 - Remove one proven stale DirectoryVersion-manifest relationship after current source absence and unchanged counter and
   workflow evidence are confirmed.
 - Atomically replace one proven positive Repository logical manifest count at an expected actor revision.
