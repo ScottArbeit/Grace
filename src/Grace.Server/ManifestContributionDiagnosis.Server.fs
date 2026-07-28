@@ -592,6 +592,7 @@ module ManifestContributionDiagnosis =
 
                     let mutable continuationToken = None
                     let mutable hasMore = true
+                    let mutable enumerationComplete = true
                     let continuationTokens = HashSet<string>(StringComparer.Ordinal)
 
                     while hasMore do
@@ -602,14 +603,20 @@ module ManifestContributionDiagnosis =
                             observed.TryAdd(identity, relationship) |> ignore
 
                         match page.ContinuationToken with
-                        | Some token when continuationTokens.Add token -> continuationToken <- Some token
+                        | Some token when
+                            not (String.IsNullOrWhiteSpace token)
+                            && continuationTokens.Add token
+                            ->
+                            continuationToken <- Some token
                         | Some _ ->
                             evidenceGaps.Add("Exact relationship enumeration repeated a continuation token before completing the manifest partition.")
 
+                            enumerationComplete <- false
                             hasMore <- false
                         | None -> hasMore <- false
 
                     let mutable validObservedCount = 0L
+                    let mutable sourceStateComplete = true
 
                     for KeyValue (identity, relationship) in observed do
                         match relationship with
@@ -620,34 +627,38 @@ module ManifestContributionDiagnosis =
                             ->
                             let! sourceDto = readDirectoryVersion manifestRelationship.DirectoryVersionId
 
-                            let sourceIsCurrent =
+                            let sourceMatchesRelationship =
                                 sourceDto.DirectoryVersion.DirectoryVersionId = manifestRelationship.DirectoryVersionId
                                 && sourceDto.DirectoryVersion.RepositoryId = manifestRelationship.RepositoryId
 
-                            let sourceNamesManifest =
-                                if sourceIsCurrent then
-                                    match directManifests sourceDto correlationId with
-                                    | Ok manifests ->
+                            if not sourceMatchesRelationship then
+                                sourceStateComplete <- false
+
+                                evidenceGaps.Add(
+                                    $"DirectoryVersion '{manifestRelationship.DirectoryVersionId:D}' did not return readable current state for repository '{manifestRelationship.RepositoryId:D}'."
+                                )
+                            else
+                                match directManifests sourceDto correlationId with
+                                | Ok manifests ->
+                                    let sourceNamesManifest =
                                         manifests
                                         |> Array.exists (fun manifest ->
                                             manifest.StoragePoolId = manifestRelationship.StoragePoolId
                                             && manifest.ManifestAddress = manifestRelationship.ManifestAddress)
-                                    | Error error ->
-                                        evidenceGaps.Add(
-                                            $"DirectoryVersion '{manifestRelationship.DirectoryVersionId:D}' manifests could not be interpreted: {error.Error}"
-                                        )
 
-                                        false
-                                else
-                                    false
+                                    if sourceNamesManifest then
+                                        validObservedCount <- validObservedCount + 1L
+                                    else
+                                        stale.Add identity |> ignore
 
-                            if sourceNamesManifest then
-                                validObservedCount <- validObservedCount + 1L
-                            else
-                                stale.Add identity |> ignore
+                                        repairTargets.Add $"RemoveStaleExactRelationship:{identity}"
+                                        |> ignore
+                                | Error error ->
+                                    sourceStateComplete <- false
 
-                                repairTargets.Add $"RemoveStaleExactRelationship:{identity}"
-                                |> ignore
+                                    evidenceGaps.Add(
+                                        $"DirectoryVersion '{manifestRelationship.DirectoryVersionId:D}' manifests could not be interpreted: {error.Error}"
+                                    )
                         | _ -> ()
 
                     let! counterDto = dependencies.GetCounter counterTuple correlationId
@@ -666,21 +677,62 @@ module ManifestContributionDiagnosis =
                         (Some workflowDto.Revision)
                         workflowDto
 
-                    if (not (isNull (box workflowDto.LifecycleState))
-                        && workflowDto.LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress)
-                       || (not (isNull workflowDto.FailedRanges)
-                           && workflowDto.FailedRanges.Length > 0) then
-                        evidenceGaps.Add(
-                            $"Manifest contribution workflow for '{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}' has unfinished or failed ranges."
-                        )
+                    let workflowTargetMatches =
+                        workflowDto.RepositoryId = counterTuple.RepositoryId
+                        && workflowDto.StoragePoolId = counterTuple.StoragePoolId
+                        && workflowDto.ManifestAddress = counterTuple.ManifestAddress
 
-                        repairTargets.Add(
-                            $"ResumeManifestContributionWorkflow:{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}"
-                        )
-                        |> ignore
+                    let workflowReadable =
+                        workflowTargetMatches
+                        && not (String.IsNullOrWhiteSpace workflowDto.Class)
+                        && not (isNull (box workflowDto.Direction))
+                        && not (isNull workflowDto.Ranges)
+                        && not (isNull workflowDto.CompletedRanges)
+                        && not (isNull workflowDto.FailedRanges)
+                        && not (isNull (box workflowDto.LifecycleState))
+                        && workflowDto.StartOperationId.IsSome
+                        && workflowDto.LastOperationId.IsSome
+                        && workflowDto.Revision > 0L
+
+                    let workflowCompleted =
+                        workflowReadable
+                        && workflowDto.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
+                        && workflowDto.FailedRanges.Length = 0
+                        && workflowDto.CompletedRanges.Length = workflowDto.Ranges.Length
+                        && (workflowDto.CompletedRanges
+                            |> Array.forall (fun progress ->
+                                progress.RepositoryId = counterTuple.RepositoryId
+                                && progress.StoragePoolId = counterTuple.StoragePoolId
+                                && progress.ManifestAddress = counterTuple.ManifestAddress))
+                        && (workflowDto.Ranges
+                            |> Array.forall (fun range ->
+                                workflowDto.CompletedRanges
+                                |> Array.filter (fun progress -> progress.Range = range)
+                                |> Array.length
+                                |> (=) 1))
+
+                    if not workflowCompleted then
+                        let targetIdentity = $"{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}"
+
+                        if not workflowTargetMatches then
+                            evidenceGaps.Add($"Manifest contribution workflow for '{targetIdentity}' returned state for a different target.")
+                        elif not workflowReadable then
+                            evidenceGaps.Add($"Manifest contribution workflow for '{targetIdentity}' was absent or unreadable.")
+                        else
+                            evidenceGaps.Add($"Manifest contribution workflow for '{targetIdentity}' has unfinished, failed, or inconsistent ranges.")
+
+                            if workflowDto.LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress
+                               || workflowDto.FailedRanges.Length > 0 then
+                                repairTargets.Add($"ResumeManifestContributionWorkflow:{targetIdentity}")
+                                |> ignore
+
+                    let partitionEvidenceComplete =
+                        enumerationComplete
+                        && sourceStateComplete
+                        && workflowCompleted
 
                     let rebuiltCount =
-                        if sourceBacked then
+                        if sourceBacked && partitionEvidenceComplete then
                             let missingExpectedForTuple =
                                 expected
                                 |> Seq.sumBy (fun (KeyValue (identity, relationship)) ->
@@ -705,7 +757,11 @@ module ManifestContributionDiagnosis =
                             ManifestAddress = $"{counterTuple.ManifestAddress}"
                             StoredCount = Some counterDto.Count
                             RebuiltCount = rebuiltCount
-                            Completeness = if sourceBacked then "Complete" else "IncompleteRetain"
+                            Completeness =
+                                if sourceBacked && partitionEvidenceComplete then
+                                    "Complete"
+                                else
+                                    "IncompleteRetain"
                         }
                     )
 

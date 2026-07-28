@@ -75,6 +75,25 @@ type ManifestContributionDiagnosisServerTests() =
     /// Creates the shared counter tuple used by focused diagnosis tests.
     let counterTuple () = { RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress }
 
+    /// Creates a completed workflow snapshot that can support complete diagnosis evidence.
+    let completedWorkflow (target: CounterTuple) =
+        let operationId = ManifestContributionWorkflowOperationId "diagnosis-completed"
+
+        { ManifestContributionWorkflowDto.Default with
+            RepositoryId = target.RepositoryId
+            StoragePoolId = target.StoragePoolId
+            ManifestAddress = target.ManifestAddress
+            LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
+            StartOperationId = Some operationId
+            LastOperationId = Some operationId
+            Revision = 8L
+        }
+
+    /// Creates the exact manifest relationship named by the focused DirectoryVersion source.
+    let manifestRelationship id =
+        ExactRelationship.DirectoryVersionManifest
+            { RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress; DirectoryVersionId = id }
+
     /// Creates a valid exact read bound for focused tests.
     let readBound value =
         match ExactRelationshipReadBound.create value with
@@ -109,15 +128,7 @@ type ManifestContributionDiagnosisServerTests() =
                             Count = storedCount
                             Revision = 7L
                         }
-            GetWorkflow =
-                fun target _ ->
-                    Task.FromResult
-                        { ManifestContributionWorkflowDto.Default with
-                            RepositoryId = target.RepositoryId
-                            StoragePoolId = target.StoragePoolId
-                            ManifestAddress = target.ManifestAddress
-                            Revision = 8L
-                        }
+            GetWorkflow = fun target _ -> Task.FromResult(completedWorkflow target)
             GetRecentResult = fun _ _ _ -> Task.FromResult recentResult
         }
 
@@ -251,12 +262,30 @@ type ManifestContributionDiagnosisServerTests() =
                 }
 
             let baseDependencies =
-                dependencies Map.empty (fun () -> { Relationships = Array.empty; ContinuationToken = None }) (fun _ -> ExactRelationshipPresence.Absent) None 0L
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () ->
+                        {
+                            Relationships =
+                                [|
+                                    manifestRelationship directoryVersionId
+                                |]
+                            ContinuationToken = None
+                        })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
 
             let deps = { baseDependencies with GetWorkflow = fun _ _ -> Task.FromResult absentWorkflow }
 
             let! report =
-                diagnoseWith deps "2026-07-27T00:00:00Z" "diagnosis-test" CancellationToken.None (readBound 10) (DiagnosisSelector.CounterTuple target)
+                diagnoseWith
+                    deps
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
 
             let workflowFact =
                 report.ActorFacts
@@ -296,6 +325,9 @@ type ManifestContributionDiagnosisServerTests() =
 
             Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
             Assert.That(report.ReclamationPermitted, Is.False)
+            Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
+            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(report.EvidenceGaps, Has.Some.Contains("absent or unreadable"))
         }
 
     /// Verifies a readable source produces a concrete missing relationship and counter reconciliation target.
@@ -326,6 +358,162 @@ type ManifestContributionDiagnosisServerTests() =
             Assert.That(report.CountEvidence, Has.Length.EqualTo(1))
             Assert.That(report.CountEvidence[0].StoredCount, Is.EqualTo(Some 0L))
             Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(Some 1L))
+        }
+
+    /// Verifies only a readable, target-matching completed workflow can support complete diagnosis evidence.
+    [<Test>]
+    member _.WorkflowEvidenceMustBeReadableTargetMatchingAndCompleted() =
+        task {
+            let target = counterTuple ()
+            let relationship = manifestRelationship directoryVersionId
+            let range = { StoragePoolId = storagePoolId; ContentBlockAddress = finalizedManifest.Blocks[0].Address }
+            let operationId = ManifestContributionWorkflowOperationId "diagnosis-incomplete"
+
+            let unfinishedWorkflow =
+                { completedWorkflow target with
+                    Ranges = [| range |]
+                    CompletedRanges = Array.empty
+                    LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress
+                }
+
+            let failedWorkflow =
+                { completedWorkflow target with
+                    Ranges = [| range |]
+                    CompletedRanges = Array.empty
+                    FailedRanges =
+                        [|
+                            {
+                                OperationId = operationId
+                                RepositoryId = repositoryId
+                                StoragePoolId = storagePoolId
+                                ManifestAddress = manifestAddress
+                                Range = range
+                                Message = "focused failure"
+                            }
+                        |]
+                    LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress
+                }
+
+            let mismatchedWorkflow = { completedWorkflow target with RepositoryId = Guid.Parse("66666666-7340-4000-8000-666666666666") }
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () -> { Relationships = [| relationship |]; ContinuationToken = None })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            let! completeReport =
+                diagnoseWith
+                    baseDependencies
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(completeReport.Outcome, Is.EqualTo(DiagnosisOutcome.VerifiedComplete))
+            Assert.That(completeReport.CountEvidence[0].RebuiltCount, Is.EqualTo(Some 1L))
+
+            let verifyIncompleteWorkflow workflow =
+                task {
+                    let deps = { baseDependencies with GetWorkflow = fun _ _ -> Task.FromResult workflow }
+
+                    let! report =
+                        diagnoseWith
+                            deps
+                            "2026-07-27T00:00:00Z"
+                            "diagnosis-test"
+                            CancellationToken.None
+                            (readBound 10)
+                            (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+                    Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
+                    Assert.That(report.ReclamationPermitted, Is.False)
+                    Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
+                    Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
+                    Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+                }
+
+            do! verifyIncompleteWorkflow unfinishedWorkflow
+            do! verifyIncompleteWorkflow failedWorkflow
+            do! verifyIncompleteWorkflow mismatchedWorkflow
+        }
+
+    /// Verifies unreadable current source state cannot turn an observed relationship into stale-removal advice.
+    [<Test>]
+    member _.UnreadableObservedRelationshipRemainsUnknownInsteadOfStale() =
+        task {
+            let expectedRelationship = manifestRelationship directoryVersionId
+            let unreadableRelationship = manifestRelationship otherDirectoryVersionId
+
+            let deps =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () ->
+                        {
+                            Relationships =
+                                [|
+                                    expectedRelationship
+                                    unreadableRelationship
+                                |]
+                            ContinuationToken = None
+                        })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            let! report =
+                diagnoseWith
+                    deps
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
+            Assert.That(report.StaleRelationships, Is.Empty)
+            Assert.That(report.RepairTargets, Has.None.StartsWith("RemoveStaleExactRelationship:"))
+            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
+            Assert.That(report.EvidenceGaps, Has.Some.Contains("did not return readable current state"))
+        }
+
+    /// Verifies an incomplete exact-partition continuation chain cannot support counter reconciliation.
+    [<Test>]
+    member _.RepeatedContinuationKeepsRebuiltCountIncomplete() =
+        task {
+            let relationship = manifestRelationship directoryVersionId
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () -> { Relationships = [| relationship |]; ContinuationToken = None })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    0L
+
+            let deps =
+                { baseDependencies with
+                    EnumerateRelationships = fun _ _ _ _ -> Task.FromResult { Relationships = [| relationship |]; ContinuationToken = Some "repeated-token" }
+                }
+
+            let! report =
+                diagnoseWith
+                    deps
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
+            Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
+            Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
+            Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+            Assert.That(report.EvidenceGaps, Has.Some.Contains("repeated a continuation token"))
         }
 
     /// Verifies the cumulative relationship bound stops a report before it can imply complete evidence.
