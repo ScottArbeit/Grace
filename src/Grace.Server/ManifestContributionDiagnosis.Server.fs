@@ -95,7 +95,6 @@ module ManifestContributionDiagnosis =
             RepairTargets: string array
             UnknownFields: string array
             EvidenceGaps: string array
-            ReclamationPermitted: bool
             Outcome: DiagnosisOutcome
             ReportSha256: string
         }
@@ -219,7 +218,6 @@ module ManifestContributionDiagnosis =
             RepairTargets = Array.empty
             UnknownFields = unknownFields
             EvidenceGaps = Array.empty
-            ReclamationPermitted = false
             Outcome = outcome
             ReportSha256 = String.Empty
         }
@@ -618,24 +616,46 @@ module ManifestContributionDiagnosis =
                     let continuationTokens = HashSet<string>(StringComparer.Ordinal)
 
                     while hasMore do
-                        let! page = dependencies.EnumerateRelationships partition bound continuationToken cancellationToken
+                        let remainingRelationships = maximumRelationships - relationshipReads.Count
 
-                        for relationship in page.Relationships do
-                            let identity = noteRelationshipRead relationship
-                            observed.TryAdd(identity, relationship) |> ignore
+                        if remainingRelationships <= 0 then
+                            match continuationToken with
+                            | Some _ ->
+                                raise (
+                                    RelationshipBoundExceeded
+                                        $"Diagnosis exceeded MaxRelationships={maximumRelationships} before the next exact relationship page could be read."
+                                )
+                            | None ->
+                                evidenceGaps.Add(
+                                    "Exact relationship enumeration was not started because no remaining relationship allowance was available after source discovery."
+                                )
 
-                        match page.ContinuationToken with
-                        | Some token when
-                            not (String.IsNullOrWhiteSpace token)
-                            && continuationTokens.Add token
-                            ->
-                            continuationToken <- Some token
-                        | Some _ ->
-                            evidenceGaps.Add("Exact relationship enumeration repeated a continuation token before completing the manifest partition.")
+                                enumerationComplete <- false
+                                hasMore <- false
+                        else
+                            let pageBound =
+                                match ExactRelationshipReadBound.create remainingRelationships with
+                                | Ok remainingBound -> remainingBound
+                                | Error error -> invalidOp error
 
-                            enumerationComplete <- false
-                            hasMore <- false
-                        | None -> hasMore <- false
+                            let! page = dependencies.EnumerateRelationships partition pageBound continuationToken cancellationToken
+
+                            for relationship in page.Relationships do
+                                let identity = noteRelationshipRead relationship
+                                observed.TryAdd(identity, relationship) |> ignore
+
+                            match page.ContinuationToken with
+                            | Some token when
+                                not (String.IsNullOrWhiteSpace token)
+                                && continuationTokens.Add token
+                                ->
+                                continuationToken <- Some token
+                            | Some _ ->
+                                evidenceGaps.Add("Exact relationship enumeration repeated a continuation token before completing the manifest partition.")
+
+                                enumerationComplete <- false
+                                hasMore <- false
+                            | None -> hasMore <- false
 
                     let mutable validObservedCount = 0L
                     let mutable sourceStateComplete = true
@@ -873,14 +893,6 @@ module ManifestContributionDiagnosis =
                     && evidenceGaps.Count = 0
                     && countsMatch
 
-                let reclamationPermitted =
-                    verified
-                    && countEvidence.Count > 0
-                    && (countEvidence
-                        |> Seq.forall (fun evidence ->
-                            evidence.StoredCount = Some 0L
-                            && evidence.RebuiltCount = Some 0L))
-
                 return
                     {
                         SchemaVersion = "grace.manifest-contribution-diagnosis.v1"
@@ -899,7 +911,6 @@ module ManifestContributionDiagnosis =
                         RepairTargets = repairTargets |> Seq.sort |> Seq.toArray
                         UnknownFields = unknownFields |> Seq.sort |> Seq.toArray
                         EvidenceGaps = evidenceGaps.ToArray()
-                        ReclamationPermitted = reclamationPermitted
                         Outcome =
                             if verified then
                                 DiagnosisOutcome.VerifiedComplete

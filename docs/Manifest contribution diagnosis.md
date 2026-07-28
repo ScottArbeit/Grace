@@ -119,8 +119,8 @@ itself.
 Start with these fields:
 
 - `Outcome` gives the terminal result.
-- `ReclamationPermitted` is `true` only when source-backed evidence is complete and all relevant stored and rebuilt
-  counts are zero.
+- No diagnosis report field positively authorizes reclamation. The supported selectors cannot prove global absence;
+  `Outcome` classifies bounded evidence for investigation and repair only.
 - `EvidenceGaps` explains what Grace could not prove.
 - `UnknownFields` names report facts that cannot be complete for this selector.
 - `MissingRelationships` lists actor-supported relationships absent from the exact projection.
@@ -153,6 +153,9 @@ belong to the manifest contribution repair workflow tracked by Grace issue #735.
 `MaxRelationships` applies cumulatively to distinct exact relationships verified or enumerated by the request. If the
 diagnostic encounters another relationship after reaching the limit, the route rejects the request rather than
 returning a report that looks complete.
+
+If source discovery consumes the full allowance before exact enumeration starts, Grace does not issue an unbudgeted
+probe. The report remains `IncompleteRetain` and records the missing enumeration evidence.
 
 Increase the bound only when the selected target is understood and remains operationally safe. The maximum is 5000.
 The diagnostic has no repository-wide default scan.

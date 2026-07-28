@@ -222,9 +222,16 @@ type ManifestContributionDiagnosisServerTests() =
 
         let signed = signReport unsigned
         let serialized = JsonSerializer.Serialize(signed, Grace.Shared.Constants.JsonSerializerOptions)
+        use document = JsonDocument.Parse serialized
 
         Assert.That(signed.ReportSha256, Has.Length.EqualTo(64))
         Assert.That(verifySerializedReportSha256 serialized, Is.True)
+
+        Assert.That(
+            document.RootElement.TryGetProperty("ReclamationPermitted")
+            |> fst,
+            Is.False
+        )
 
     /// Verifies Decision A preserves bounded evidence but never invents completeness for a source-less tuple.
     [<Test>]
@@ -243,7 +250,6 @@ type ManifestContributionDiagnosisServerTests() =
                     (DiagnosisSelector.CounterTuple(counterTuple ()))
 
             Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
-            Assert.That(report.ReclamationPermitted, Is.False)
             Assert.That(report.UnknownFields, Does.Contain("MissingRelationships"))
             Assert.That(report.UnknownFields, Does.Contain("RebuiltCount"))
 
@@ -344,7 +350,6 @@ type ManifestContributionDiagnosisServerTests() =
             )
 
             Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
-            Assert.That(report.ReclamationPermitted, Is.False)
             Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
             Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
             Assert.That(report.EvidenceGaps, Has.Some.Contains("absent or unreadable"))
@@ -454,7 +459,6 @@ type ManifestContributionDiagnosisServerTests() =
                             (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
 
                     Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
-                    Assert.That(report.ReclamationPermitted, Is.False)
                     Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
                     Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
                     Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
@@ -944,6 +948,94 @@ type ManifestContributionDiagnosisServerTests() =
                     :> Task)
             )
             |> ignore
+        }
+
+    /// Verifies each exact-relationship page receives only the distinct allowance left after discovery and earlier pages.
+    [<Test>]
+    member _.EnumerationUsesRemainingRelationshipAllowanceAcrossPages() =
+        task {
+            let expectedRelationship = manifestRelationship directoryVersionId
+            let secondRelationship = manifestRelationship otherDirectoryVersionId
+            let thirdDirectoryVersionId = Guid.Parse("66666666-7340-4000-8000-666666666666")
+            let thirdRelationship = manifestRelationship thirdDirectoryVersionId
+            let requestedBounds = ResizeArray<int>()
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () -> { Relationships = Array.empty; ContinuationToken = None })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            let deps =
+                { baseDependencies with
+                    EnumerateRelationships =
+                        fun _ pageBound continuationToken _ ->
+                            requestedBounds.Add(ExactRelationshipReadBound.value pageBound)
+
+                            match continuationToken with
+                            | None ->
+                                Task.FromResult
+                                    {
+                                        Relationships =
+                                            [|
+                                                expectedRelationship
+                                                secondRelationship
+                                            |]
+                                        ContinuationToken = Some "next-page"
+                                    }
+                            | Some _ -> Task.FromResult { Relationships = [| thirdRelationship |]; ContinuationToken = None }
+                }
+
+            let! report =
+                diagnoseWith
+                    deps
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 3)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(requestedBounds.ToArray() = [| 2; 1 |], Is.True)
+            Assert.That(report.RelationshipsRead, Is.EqualTo(3))
+        }
+
+    /// Verifies an exact discovery bound is not exceeded by an unbudgeted enumeration probe.
+    [<Test>]
+    member _.EnumerationRetainsWithoutReadingWhenDiscoveryConsumesTheBound() =
+        task {
+            let mutable enumerationCalls = 0
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () -> { Relationships = Array.empty; ContinuationToken = None })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            let deps =
+                { baseDependencies with
+                    EnumerateRelationships =
+                        fun _ _ _ _ ->
+                            enumerationCalls <- enumerationCalls + 1
+                            Task.FromResult { Relationships = Array.empty; ContinuationToken = None }
+                }
+
+            let! report =
+                diagnoseWith
+                    deps
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 1)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(enumerationCalls, Is.Zero)
+            Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
+            Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
+            Assert.That(report.EvidenceGaps, Has.Some.Contains("no remaining relationship allowance"))
         }
 
     /// Verifies ephemeral Redis absence is explicit and does not remove durable actor evidence.
