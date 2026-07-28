@@ -267,6 +267,89 @@ module ManifestContributionRepair =
             String.Equals(fact.ActorType, actorType, StringComparison.Ordinal)
             && String.Equals(fact.ActorId, actorId, StringComparison.Ordinal))
 
+    /// Builds the deterministic command identity that lets a partial reconciliation resume from the current counter revision.
+    let internal counterRepairOperationId (counterTuple: CounterTuple) rebuiltCount currentRevision direction =
+        RepositoryContentCounterOperationId
+            $"manifest-repair:{counterTuple.RepositoryId:N}:{counterTuple.StoragePoolId}:{counterTuple.ManifestAddress}:target:{rebuiltCount}:revision:{currentRevision}:{direction}"
+
+    /// Captures the exact counter count and revision proven by one bounded diagnosis.
+    type private CounterProgressSnapshot = { Count: int64; Revision: int64; LastCompletedChange: RepositoryContentCounterCompletedChange option }
+
+    /// Reads counter progress only when complete reconstruction and actor snapshot evidence agree on the same signed target.
+    let private tryCounterProgressSnapshot (report: ManifestContributionDiagnosisReport) (counterTuple: CounterTuple) rebuiltCount =
+        let counterId = RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+        match actorFact "RepositoryContentCounter" counterId report,
+              report.CountEvidence
+              |> Array.tryFind (fun evidence ->
+                  String.Equals(evidence.RepositoryId, $"{counterTuple.RepositoryId:D}", StringComparison.Ordinal)
+                  && String.Equals(evidence.StoragePoolId, counterTuple.StoragePoolId, StringComparison.Ordinal)
+                  && String.Equals(evidence.ManifestAddress, counterTuple.ManifestAddress, StringComparison.Ordinal))
+            with
+        | Some counterFact, Some countEvidence when
+            String.Equals(countEvidence.Completeness, "Complete", StringComparison.Ordinal)
+            && countEvidence.RebuiltCount = Some rebuiltCount
+            ->
+            try
+                let counter = JsonSerializer.Deserialize<RepositoryContentCounterDto>(counterFact.SnapshotJson, Grace.Shared.Constants.JsonSerializerOptions)
+
+                if counter.RepositoryId = counterTuple.RepositoryId
+                   && counter.StoragePoolId = counterTuple.StoragePoolId
+                   && counter.ManifestAddress = counterTuple.ManifestAddress
+                   && counterFact.Revision = Some counter.Revision
+                   && countEvidence.StoredCount = Some counter.Count then
+                    Some { Count = counter.Count; Revision = counter.Revision; LastCompletedChange = counter.LastCompletedChange }
+                else
+                    None
+            with
+            | :? JsonException -> None
+        | _ -> None
+
+    /// Accepts a repeated counter action only after one exact revision and count step toward its unchanged signed target.
+    let private counterStepProgressed
+        (previousReport: ManifestContributionDiagnosisReport)
+        (currentReport: ManifestContributionDiagnosisReport)
+        (previousAction: RepairMutation)
+        (currentAction: RepairMutation)
+        =
+        match previousAction.Target, currentAction.Target with
+        | RepairMutationTarget.Counter (previousTuple, previousTarget), RepairMutationTarget.Counter (currentTuple, currentTarget) when
+            previousTuple = currentTuple
+            && previousTarget = currentTarget
+            && sourceFacts previousReport = sourceFacts currentReport
+            ->
+            match tryCounterProgressSnapshot previousReport previousTuple previousTarget, tryCounterProgressSnapshot currentReport currentTuple currentTarget
+                with
+            | Some previous, Some current ->
+                let expectedTransition =
+                    if previous.Count < previousTarget then
+                        Some(
+                            previous.Count + 1L,
+                            RepositoryContentCounterChangeOperation.Added,
+                            counterRepairOperationId previousTuple previousTarget previous.Revision "add"
+                        )
+                    elif previous.Count > previousTarget then
+                        Some(
+                            previous.Count - 1L,
+                            RepositoryContentCounterChangeOperation.Removed,
+                            counterRepairOperationId previousTuple previousTarget previous.Revision "remove"
+                        )
+                    else
+                        None
+
+                match expectedTransition, current.LastCompletedChange with
+                | Some (expectedCount, expectedOperation, expectedOperationId), Some completedChange ->
+                    current.Count = expectedCount
+                    && current.Revision = previous.Revision + 1L
+                    && completedChange.OperationId = expectedOperationId
+                    && completedChange.Operation = expectedOperation
+                    && completedChange.PreviousCount = previous.Count
+                    && completedChange.CurrentCount = current.Count
+                    && completedChange.Revision = current.Revision
+                | _ -> false
+            | _ -> false
+        | _ -> false
+
     /// Removes one stale exact relationship only while source, counter, and workflow snapshots still match the fresh diagnosis.
     let internal removeStaleRelationshipWith
         (dependencies: StaleRemovalDependencies)
@@ -373,11 +456,6 @@ module ManifestContributionRepair =
 
             return ()
         }
-
-    /// Builds the deterministic command identity that lets a partial reconciliation resume from the current counter revision.
-    let internal counterRepairOperationId (counterTuple: CounterTuple) rebuiltCount currentRevision direction =
-        RepositoryContentCounterOperationId
-            $"manifest-repair:{counterTuple.RepositoryId:N}:{counterTuple.StoragePoolId}:{counterTuple.ManifestAddress}:target:{rebuiltCount}:revision:{currentRevision}:{direction}"
 
     /// Describes the deterministic ManifestContributionWorkflow start that remains after a completed repair counter transition.
     type private CounterWorkflowReplay =
@@ -709,7 +787,7 @@ module ManifestContributionRepair =
                             |> set
 
                         let mutable completed: ManifestContributionRepairReport option = None
-                        let mutable previousPlan: (string * string) array option = None
+                        let mutable previousAttempt: (ManifestContributionDiagnosisReport * RepairMutation array) option = None
 
                         while completed.IsNone do
                             cancellationToken.ThrowIfCancellationRequested()
@@ -749,7 +827,7 @@ module ManifestContributionRepair =
                                         try
                                             do! dependencies.ApplyAction report current recoveryAction cancellationToken
                                             applied.Add recoveryAction
-                                            previousPlan <- None
+                                            previousAttempt <- None
                                         with
                                         | ex ->
                                             completed <-
@@ -793,7 +871,14 @@ module ManifestContributionRepair =
                                                     RepairOutcome.IncompleteRetain, "No allowed repair action remains, but current evidence is not complete."
 
                                             completed <- Some(result generatedAt report true proposed (applied.ToArray()) outcome message)
-                                        elif previousPlan = Some currentKeys then
+                                        elif previousAttempt
+                                             |> Option.exists (fun (previousReport, previousPlan) ->
+                                                 let previousKeys =
+                                                     previousPlan
+                                                     |> Array.map (fun action -> action.Action.Kind, action.Action.Identity)
+
+                                                 previousKeys = currentKeys
+                                                 && not (counterStepProgressed previousReport current previousPlan[0] currentPlan[0])) then
                                             completed <-
                                                 Some(
                                                     result
@@ -807,7 +892,7 @@ module ManifestContributionRepair =
                                                 )
                                         else
                                             let action = currentPlan[0]
-                                            previousPlan <- Some currentKeys
+                                            previousAttempt <- Some(current, currentPlan)
 
                                             try
                                                 do! dependencies.ApplyAction report current action cancellationToken

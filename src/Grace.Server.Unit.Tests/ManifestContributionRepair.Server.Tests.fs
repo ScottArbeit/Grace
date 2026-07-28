@@ -151,6 +151,233 @@ type ManifestContributionRepairServerTests() =
         }
         |> signReport
 
+    /// Proves one signed counter target converges through every deterministic unit revision without repeating its zero-crossing workflow.
+    let proveMultiStepCounterConvergence initialCount rebuiltCount expectedWorkflowDirection =
+        task {
+            let source = sourceWithoutManifest ()
+            let target = { RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress }
+            let identity = $"{repositoryId:D}|{storagePoolId}|{manifestAddress}"
+
+            let mutable counter =
+                { RepositoryContentCounterDto.Default with
+                    RepositoryId = repositoryId
+                    StoragePoolId = storagePoolId
+                    ManifestAddress = manifestAddress
+                    Count = initialCount
+                    Revision = 7L
+                }
+
+            let mutable workflow = completedWorkflow ()
+
+            let currentReport () =
+                let outcome, repairTargets =
+                    if counter.Count = rebuiltCount then
+                        DiagnosisOutcome.VerifiedComplete, Array.empty
+                    else
+                        DiagnosisOutcome.IncompleteRetain, [| $"ReconcileCounter:{identity}" |]
+
+                report outcome Array.empty Array.empty counter.Count rebuiltCount repairTargets
+                |> withCurrentActorFacts source counter workflow
+
+            let original = currentReport ()
+            let commandRevisions = ResizeArray<int64>()
+            let workflowStarts = ResizeArray<ManifestContributionDirection * int64>()
+
+            let reconciliationDependencies =
+                {
+                    GetCounter = fun _ -> Task.FromResult counter
+                    GetWorkflow = fun _ -> Task.FromResult workflow
+                    HandleCounter =
+                        fun command expectedRevision ->
+                            Assert.That(expectedRevision, Is.EqualTo(counter.Revision))
+                            commandRevisions.Add expectedRevision
+
+                            let operationId, operation, nextCount, intent =
+                                match command with
+                                | RepositoryContentCounterCommand.AddReference (operationId, _, _, _) ->
+                                    let nextCount = counter.Count + 1L
+
+                                    operationId,
+                                    RepositoryContentCounterChangeOperation.Added,
+                                    nextCount,
+                                    (if counter.Count = 0L then
+                                         Some(
+                                             RepositoryContentCounterIntent.IncrementManifestReferenceCount(
+                                                 repositoryId,
+                                                 storagePoolId,
+                                                 manifestAddress,
+                                                 counter.Revision + 1L
+                                             )
+                                         )
+                                     else
+                                         None)
+                                | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) ->
+                                    let nextCount = counter.Count - 1L
+
+                                    operationId,
+                                    RepositoryContentCounterChangeOperation.Removed,
+                                    nextCount,
+                                    (if nextCount = 0L then
+                                         Some(
+                                             RepositoryContentCounterIntent.DecrementManifestReferenceCount(
+                                                 repositoryId,
+                                                 storagePoolId,
+                                                 manifestAddress,
+                                                 counter.Revision + 1L
+                                             )
+                                         )
+                                     else
+                                         None)
+
+                            let previousCount = counter.Count
+                            let nextRevision = counter.Revision + 1L
+
+                            counter <-
+                                { counter with
+                                    Count = nextCount
+                                    Revision = nextRevision
+                                    LastCompletedChange =
+                                        Some
+                                            {
+                                                OperationId = operationId
+                                                Operation = operation
+                                                PreviousCount = previousCount
+                                                CurrentCount = nextCount
+                                                Revision = nextRevision
+                                            }
+                                }
+
+                            Task.FromResult
+                                {
+                                    Counter = counter
+                                    OperationId = operationId
+                                    Events = []
+                                    Intents = intent |> Option.toList
+                                    WasIdempotentReplay = false
+                                    Message = "repair step"
+                                }
+                    StartWorkflow =
+                        fun operationId _ direction ranges revision ->
+                            workflowStarts.Add(direction, revision)
+
+                            workflow <-
+                                { workflow with
+                                    Direction = direction
+                                    StartOperationId = Some operationId
+                                    LastOperationId = Some operationId
+                                    CompletedRanges =
+                                        ranges
+                                        |> Array.map (fun range ->
+                                            {
+                                                OperationId = operationId
+                                                RepositoryId = repositoryId
+                                                StoragePoolId = storagePoolId
+                                                ManifestAddress = manifestAddress
+                                                Range = range
+                                            })
+                                    CounterRevision = revision
+                                    Revision = workflow.Revision + 1L
+                                }
+
+                            Task.CompletedTask
+                }
+
+            let dependencies =
+                {
+                    DiagnoseCurrent = fun _ _ _ -> Task.FromResult(currentReport ())
+                    ApplyAction = fun signed current _ _ -> reconcileCounterStepWith reconciliationDependencies signed current target rebuiltCount :> Task
+                }
+
+            let! result = repairWith dependencies "2026-07-28T00:04:00Z" "repair-test" CancellationToken.None (bound 10) original true
+            let gap = int (abs (rebuiltCount - initialCount))
+
+            Assert.That(result.Outcome, Is.EqualTo(RepairOutcome.VerifiedComplete), result.Message)
+            Assert.That(counter.Count, Is.EqualTo(rebuiltCount))
+            Assert.That(result.AppliedActions.Length, Is.EqualTo(gap))
+
+            let expectedRevisions =
+                [|
+                    for offset in 0 .. gap - 1 -> 7L + int64 offset
+                |]
+
+            Assert.That(commandRevisions.ToArray() = expectedRevisions, Is.True)
+
+            let crossingRevision = if initialCount = 0L then 8L else 7L + int64 gap
+
+            Assert.That(
+                workflowStarts.ToArray() =
+                    [|
+                        expectedWorkflowDirection, crossingRevision
+                    |],
+                Is.True
+            )
+        }
+
+    /// Proves a repeated counter plan stops after evidence that is unchanged or is not one exact unit step toward the signed target.
+    let proveUnsafeCounterProgressRetains observedCount observedRevision includeUnrelatedCompletedChange =
+        task {
+            let source = sourceWithoutManifest ()
+            let workflow = completedWorkflow ()
+            let identity = $"{repositoryId:D}|{storagePoolId}|{manifestAddress}"
+
+            let initialCounter =
+                { RepositoryContentCounterDto.Default with
+                    RepositoryId = repositoryId
+                    StoragePoolId = storagePoolId
+                    ManifestAddress = manifestAddress
+                    Count = 1L
+                    Revision = 7L
+                }
+
+            let observedCounter =
+                { initialCounter with
+                    Count = observedCount
+                    Revision = observedRevision
+                    LastCompletedChange =
+                        if includeUnrelatedCompletedChange then
+                            Some
+                                {
+                                    OperationId = RepositoryContentCounterOperationId "unrelated-counter-operation"
+                                    Operation = RepositoryContentCounterChangeOperation.Added
+                                    PreviousCount = 1L
+                                    CurrentCount = observedCount
+                                    Revision = observedRevision
+                                }
+                        else
+                            None
+                }
+
+            let original =
+                report DiagnosisOutcome.IncompleteRetain Array.empty Array.empty 1L 4L [| $"ReconcileCounter:{identity}" |]
+                |> withCurrentActorFacts source initialCounter workflow
+
+            let observed =
+                report DiagnosisOutcome.IncompleteRetain Array.empty Array.empty observedCount 4L [| $"ReconcileCounter:{identity}" |]
+                |> withCurrentActorFacts source observedCounter workflow
+
+            let mutable diagnosisCalls = 0
+            let mutable mutationCalls = 0
+
+            let dependencies =
+                {
+                    DiagnoseCurrent =
+                        fun _ _ _ ->
+                            diagnosisCalls <- diagnosisCalls + 1
+                            Task.FromResult(if diagnosisCalls <= 2 then original else observed)
+                    ApplyAction =
+                        fun _ _ _ _ ->
+                            mutationCalls <- mutationCalls + 1
+                            Task.CompletedTask
+                }
+
+            let! result = repairWith dependencies "2026-07-28T00:05:00Z" "repair-test" CancellationToken.None (bound 10) original true
+
+            Assert.That(result.Outcome, Is.EqualTo(RepairOutcome.FailedRetain))
+            Assert.That(result.Message, Does.Contain("without changing"))
+            Assert.That(mutationCalls, Is.EqualTo(1))
+            Assert.That(diagnosisCalls, Is.EqualTo(3))
+        }
+
     /// Verifies request validation requires the diagnosis schema and both matching SHA checks.
     [<Test>]
     member _.RejectsWrongExpectedHashAndTamperedReport() =
@@ -527,6 +754,30 @@ type ManifestContributionRepairServerTests() =
             | RepositoryContentCounterCommand.AddReference (operationId, _, _, _) -> Assert.That($"{operationId}", Does.Contain("target:2:revision:7:add"))
             | _ -> Assert.Fail("A zero-to-one reconciliation step must use AddReference.")
         }
+
+    /// Verifies positive drift greater than one converges in one bounded execution.
+    [<Test>]
+    member _.RepairConvergesPositiveCounterDriftAcrossUnitRevisions() = proveMultiStepCounterConvergence 0L 3L ManifestContributionDirection.Increment
+
+    /// Verifies negative drift greater than one converges in one bounded execution.
+    [<Test>]
+    member _.RepairConvergesNegativeCounterDriftAcrossUnitRevisions() = proveMultiStepCounterConvergence 3L 0L ManifestContributionDirection.Decrement
+
+    /// Verifies a purported counter step that changes neither count nor revision does not spin.
+    [<Test>]
+    member _.RepairRejectsUnchangedCounterEvidenceAfterStep() = proveUnsafeCounterProgressRetains 1L 7L false
+
+    /// Verifies a purported counter step that moves away from the signed target does not continue.
+    [<Test>]
+    member _.RepairRejectsCounterMovementAwayFromTarget() = proveUnsafeCounterProgressRetains 0L 8L false
+
+    /// Verifies a purported counter step that overshoots the signed target does not continue.
+    [<Test>]
+    member _.RepairRejectsCounterOvershoot() = proveUnsafeCounterProgressRetains 5L 8L false
+
+    /// Verifies a unit step toward the target must belong to this repair's deterministic operation identity.
+    [<Test>]
+    member _.RepairRejectsUnrelatedCounterTransitionTowardTarget() = proveUnsafeCounterProgressRetains 2L 8L true
 
     /// Verifies a retry resumes only the deterministic workflow left by the repair's completed zero-crossing command.
     [<Test>]
