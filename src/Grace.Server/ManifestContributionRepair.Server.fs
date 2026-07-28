@@ -8,8 +8,11 @@ open Grace.Server.ApplicationContext
 open Grace.Server.ManifestContributionDiagnosis
 open Grace.Server.Services
 open Grace.Shared.Utilities
+open Grace.Types.Common
 open Grace.Types.DirectoryVersion
 open Grace.Types.ManifestContributionAccounting
+open Grace.Types.ManifestContributionWorkflow
+open Grace.Types.RepositoryContentCounter
 open Microsoft.AspNetCore.Http
 open System
 open System.Collections.Generic
@@ -33,13 +36,16 @@ module ManifestContributionRepair =
         | IncompleteRetain
         | FailedRetain
 
-    /// Preserves the typed target needed to apply one bounded repair action.
-    type RepairActionTarget =
+    /// Preserves the typed target used only inside the repair process.
+    type internal RepairMutationTarget =
         | Relationship of ExactRelationship
         | Counter of CounterTuple * rebuiltCount: int64
 
-    /// Describes one deterministic action in the order shared by dry run and execute.
-    type RepairAction = { Kind: string; Identity: string; Target: RepairActionTarget }
+    /// Describes one stable serialized action without leaking actor or F# union internals.
+    type RepairAction = { Kind: string; Identity: string }
+
+    /// Couples a wire-safe action description to its internal typed mutation target.
+    type internal RepairMutation = { Action: RepairAction; Target: RepairMutationTarget }
 
     /// Reports the exact initial plan, applied prefix, and retain-safe terminal result.
     type ManifestContributionRepairReport =
@@ -55,10 +61,33 @@ module ManifestContributionRepair =
         }
 
     /// Supplies bounded current diagnosis and one action callback to the repair convergence loop.
-    type RepairDependencies =
+    type internal RepairDependencies =
         {
             DiagnoseCurrent: DiagnosisSelector -> ExactRelationshipReadBound -> CancellationToken -> Task<ManifestContributionDiagnosisReport>
-            ApplyAction: ManifestContributionDiagnosisReport -> RepairAction -> CancellationToken -> Task
+            ApplyAction: ManifestContributionDiagnosisReport -> RepairMutation -> CancellationToken -> Task
+        }
+
+    /// Supplies immediate actor rereads for one destructive exact-relationship removal.
+    type internal StaleRemovalDependencies =
+        {
+            GetDirectoryVersion: DirectoryVersionId -> Task<DirectoryVersionDto>
+            GetCounter: CounterTuple -> Task<RepositoryContentCounterDto>
+            GetWorkflow: CounterTuple -> Task<ManifestContributionWorkflowDto>
+            EnsureAbsent: ExactRelationship -> CancellationToken -> Task<ExactRelationshipWriteOutcome>
+        }
+
+    /// Supplies current actor reads and existing counter/workflow operations for one bounded reconciliation step.
+    type internal CounterReconciliationDependencies =
+        {
+            GetCounter: CounterTuple -> Task<RepositoryContentCounterDto>
+            GetWorkflow: CounterTuple -> Task<ManifestContributionWorkflowDto>
+            HandleCounter: RepositoryContentCounterCommand -> Task<RepositoryContentCounterDecision>
+            StartWorkflow: ManifestContributionWorkflowOperationId
+                -> CounterTuple
+                -> ManifestContributionDirection
+                -> ManifestContributionWorkflowRange array
+                -> int64
+                -> Task
         }
 
     /// Converts the signed diagnosis target back into its bounded selector.
@@ -141,14 +170,15 @@ module ManifestContributionRepair =
         | _ -> Error "Complete count evidence contains an invalid counter target."
 
     /// Derives the only allowed deterministic action plan from structured diagnosis evidence.
-    let buildPlan (report: ManifestContributionDiagnosisReport) =
-        let actions = ResizeArray<RepairAction>()
+    let internal buildPlan (report: ManifestContributionDiagnosisReport) =
+        let actions = ResizeArray<RepairMutation>()
         let errors = ResizeArray<string>()
 
         let addRelationship kind identity =
             match parseRelationshipIdentity identity with
             | Error error -> errors.Add error
-            | Ok relationship -> actions.Add { Kind = kind relationship; Identity = identity; Target = RepairActionTarget.Relationship relationship }
+            | Ok relationship ->
+                actions.Add { Action = { Kind = kind relationship; Identity = identity }; Target = RepairMutationTarget.Relationship relationship }
 
         report.MissingRelationships
         |> Array.iter (
@@ -161,7 +191,7 @@ module ManifestContributionRepair =
         |> Array.iter (fun identity ->
             match parseRelationshipIdentity identity with
             | Ok (ExactRelationship.DirectoryVersionManifest _ as relationship) ->
-                actions.Add { Kind = "RemoveStaleExactRelationship"; Identity = identity; Target = RepairActionTarget.Relationship relationship }
+                actions.Add { Action = { Kind = "RemoveStaleExactRelationship"; Identity = identity }; Target = RepairMutationTarget.Relationship relationship }
             | Ok _ -> errors.Add $"Only an exact DirectoryVersion-manifest relationship can be removed as stale: '{identity}'."
             | Error error -> errors.Add error)
 
@@ -177,9 +207,8 @@ module ManifestContributionRepair =
                 | Ok counter ->
                     actions.Add
                         {
-                            Kind = "ReconcileCounter"
-                            Identity = $"{evidence.RepositoryId}|{evidence.StoragePoolId}|{evidence.ManifestAddress}"
-                            Target = RepairActionTarget.Counter(counter, rebuilt)
+                            Action = { Kind = "ReconcileCounter"; Identity = $"{evidence.RepositoryId}|{evidence.StoragePoolId}|{evidence.ManifestAddress}" }
+                            Target = RepairMutationTarget.Counter(counter, rebuilt)
                         }
             | Some stored, Some rebuilt when stored <> rebuilt -> errors.Add "Counter reconciliation requires complete rebuilt count evidence."
             | _ -> ())
@@ -192,11 +221,11 @@ module ManifestContributionRepair =
                 || target.StartsWith("ReconcileCounter:", StringComparison.Ordinal))
 
         let actionTarget action =
-            match action.Kind with
+            match action.Action.Kind with
             | "ResendDeterministicEvent"
-            | "GetOrAddExactRelationship" -> $"GetOrAddExactRelationship:{action.Identity}"
-            | "RemoveStaleExactRelationship" -> $"RemoveStaleExactRelationship:{action.Identity}"
-            | "ReconcileCounter" -> $"ReconcileCounter:{action.Identity}"
+            | "GetOrAddExactRelationship" -> $"GetOrAddExactRelationship:{action.Action.Identity}"
+            | "RemoveStaleExactRelationship" -> $"RemoveStaleExactRelationship:{action.Action.Identity}"
+            | "ReconcileCounter" -> $"ReconcileCounter:{action.Action.Identity}"
             | _ -> String.Empty
 
         let derivedTargets =
@@ -212,7 +241,7 @@ module ManifestContributionRepair =
             Error(String.Join(" ", errors))
         else
             let priority action =
-                match action.Kind with
+                match action.Action.Kind with
                 | "ResendDeterministicEvent" -> 0
                 | "GetOrAddExactRelationship" -> 1
                 | "RemoveStaleExactRelationship" -> 2
@@ -220,7 +249,7 @@ module ManifestContributionRepair =
                 | _ -> 4
 
             actions
-            |> Seq.sortBy (fun action -> priority action, action.Identity)
+            |> Seq.sortBy (fun action -> priority action, action.Action.Identity)
             |> Seq.toArray
             |> Ok
 
@@ -230,6 +259,330 @@ module ManifestContributionRepair =
         |> Array.filter (fun fact ->
             String.Equals(fact.ActorType, "Reference", StringComparison.Ordinal)
             || String.Equals(fact.ActorType, "DirectoryVersion", StringComparison.Ordinal))
+
+    /// Finds the exact actor snapshot recorded by the immediately preceding bounded diagnosis.
+    let private actorFact actorType actorId (report: ManifestContributionDiagnosisReport) =
+        report.ActorFacts
+        |> Array.tryFind (fun fact ->
+            String.Equals(fact.ActorType, actorType, StringComparison.Ordinal)
+            && String.Equals(fact.ActorId, actorId, StringComparison.Ordinal))
+
+    /// Removes one stale exact relationship only while source, counter, and workflow snapshots still match the fresh diagnosis.
+    let internal removeStaleRelationshipWith
+        (dependencies: StaleRemovalDependencies)
+        (report: ManifestContributionDiagnosisReport)
+        identity
+        (relationship: DirectoryVersionManifestRelationship)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            let counterTuple =
+                { RepositoryId = relationship.RepositoryId; StoragePoolId = relationship.StoragePoolId; ManifestAddress = relationship.ManifestAddress }
+
+            let counterId = RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+            let workflowId = ManifestContributionWorkflow.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+            let expectedTarget = $"RemoveStaleExactRelationship:{identity}"
+
+            if
+                not
+                    (
+                        report.StaleRelationships
+                        |> Array.contains identity
+                    )
+                || not (
+                    report.RepairTargets
+                    |> Array.contains expectedTarget
+                )
+            then
+                invalidOp "Fresh diagnosis did not authorize this exact stale relationship removal."
+
+            let countEvidence =
+                report.CountEvidence
+                |> Array.tryFind (fun evidence ->
+                    String.Equals(evidence.RepositoryId, $"{counterTuple.RepositoryId:D}", StringComparison.Ordinal)
+                    && String.Equals(evidence.StoragePoolId, counterTuple.StoragePoolId, StringComparison.Ordinal)
+                    && String.Equals(evidence.ManifestAddress, counterTuple.ManifestAddress, StringComparison.Ordinal))
+                |> Option.defaultWith (fun () -> invalidOp "Fresh diagnosis did not contain counter evidence for the stale relationship.")
+
+            if not (String.Equals(countEvidence.Completeness, "Complete", StringComparison.Ordinal))
+               || countEvidence.StoredCount.IsNone
+               || countEvidence.RebuiltCount.IsNone then
+                invalidOp "Stale relationship removal requires complete current counter reconstruction."
+
+            let! source = dependencies.GetDirectoryVersion relationship.DirectoryVersionId
+            let! counter = dependencies.GetCounter counterTuple
+            let! workflow = dependencies.GetWorkflow counterTuple
+
+            let sourceFact =
+                actorFact "DirectoryVersion" $"{relationship.DirectoryVersionId:D}" report
+                |> Option.defaultWith (fun () -> invalidOp "Fresh diagnosis did not retain the DirectoryVersion snapshot.")
+
+            let counterFact =
+                actorFact "RepositoryContentCounter" counterId report
+                |> Option.defaultWith (fun () -> invalidOp "Fresh diagnosis did not retain the repository counter snapshot.")
+
+            let workflowFact =
+                actorFact "ManifestContributionWorkflow" workflowId report
+                |> Option.defaultWith (fun () -> invalidOp "Fresh diagnosis did not retain the workflow snapshot.")
+
+            if
+                source.DirectoryVersion.DirectoryVersionId
+                <> relationship.DirectoryVersionId
+                || source.DirectoryVersion.RepositoryId
+                   <> relationship.RepositoryId
+                || not (String.Equals(sourceFact.SnapshotJson, actorSnapshotJson source, StringComparison.Ordinal))
+            then
+                invalidOp "DirectoryVersion source changed before stale relationship removal."
+
+            match directManifests source sourceFact.ActorId with
+            | Error error -> invalidOp $"DirectoryVersion manifests became unreadable before stale relationship removal: {error.Error}"
+            | Ok manifests when
+                manifests
+                |> Array.exists (fun manifest ->
+                    String.Equals(manifest.StoragePoolId, relationship.StoragePoolId, StringComparison.Ordinal)
+                    && String.Equals(manifest.ManifestAddress, relationship.ManifestAddress, StringComparison.Ordinal))
+                ->
+                invalidOp "DirectoryVersion source names the manifest again; stale relationship removal was retained."
+            | Ok _ -> ()
+
+            let counterMatches =
+                counter.RepositoryId = counterTuple.RepositoryId
+                && counter.StoragePoolId = counterTuple.StoragePoolId
+                && counter.ManifestAddress = counterTuple.ManifestAddress
+                && counterFact.Revision = Some counter.Revision
+                && String.Equals(counterFact.SnapshotJson, actorSnapshotJson counter, StringComparison.Ordinal)
+                && countEvidence.StoredCount = Some counter.Count
+
+            let workflowMatches =
+                workflow.RepositoryId = counterTuple.RepositoryId
+                && workflow.StoragePoolId = counterTuple.StoragePoolId
+                && workflow.ManifestAddress = counterTuple.ManifestAddress
+                && workflowFact.Revision = Some workflow.Revision
+                && String.Equals(workflowFact.SnapshotJson, workflowSnapshotJson workflow, StringComparison.Ordinal)
+                && workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
+                && workflow.FailedRanges.Length = 0
+                && workflow.CompletedRanges.Length = workflow.Ranges.Length
+                && workflow.CounterRevision <= counter.Revision
+
+            if not counterMatches || not workflowMatches then
+                invalidOp "Counter or workflow evidence changed before stale relationship removal."
+
+            let! _ = dependencies.EnsureAbsent (ExactRelationship.DirectoryVersionManifest relationship) cancellationToken
+
+            return ()
+        }
+
+    /// Builds the deterministic command identity that lets a partial reconciliation resume from the current counter revision.
+    let internal counterRepairOperationId (counterTuple: CounterTuple) rebuiltCount currentRevision direction =
+        RepositoryContentCounterOperationId
+            $"manifest-repair:{counterTuple.RepositoryId:N}:{counterTuple.StoragePoolId}:{counterTuple.ManifestAddress}:target:{rebuiltCount}:revision:{currentRevision}:{direction}"
+
+    /// Recognizes only the exact current actor evidence left by a repair counter transition whose workflow still needs replay.
+    let private tryResumableCounterMutation (report: ManifestContributionDiagnosisReport) (proposed: RepairMutation array) =
+        proposed
+        |> Array.tryPick (fun mutation ->
+            match mutation.Target with
+            | RepairMutationTarget.Counter (counterTuple, rebuiltCount) ->
+                let counterId = RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+                let workflowId = ManifestContributionWorkflow.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+                match actorFact "RepositoryContentCounter" counterId report, actorFact "ManifestContributionWorkflow" workflowId report with
+                | Some counterFact, Some workflowFact ->
+                    try
+                        let counter =
+                            JsonSerializer.Deserialize<RepositoryContentCounterDto>(counterFact.SnapshotJson, Grace.Shared.Constants.JsonSerializerOptions)
+
+                        match counter.LastCompletedChange with
+                        | Some change ->
+                            let directionName =
+                                match change.Operation with
+                                | RepositoryContentCounterChangeOperation.Added -> "add"
+                                | RepositoryContentCounterChangeOperation.Removed -> "remove"
+
+                            let expectedCounterOperation = counterRepairOperationId counterTuple rebuiltCount (change.Revision - 1L) directionName
+
+                            let expectedWorkflowOperation = $"{expectedCounterOperation}:workflow"
+                            use workflowDocument = JsonDocument.Parse(workflowFact.SnapshotJson)
+                            let root = workflowDocument.RootElement
+                            let startOperationId = root.GetProperty("StartOperationId").GetString()
+                            let lifecycleState = root.GetProperty("LifecycleState").GetString()
+                            let counterRevision = root.GetProperty("CounterRevision").GetInt64()
+
+                            if counter.Count = rebuiltCount
+                               && change.CurrentCount = rebuiltCount
+                               && change.OperationId = expectedCounterOperation
+                               && String.Equals(startOperationId, expectedWorkflowOperation, StringComparison.Ordinal)
+                               && not (String.Equals(lifecycleState, "Completed", StringComparison.Ordinal))
+                               && counterRevision = counter.Revision then
+                                Some mutation
+                            else
+                                None
+                        | None -> None
+                    with
+                    | :? JsonException -> None
+                | _ -> None
+            | _ -> None)
+
+    /// Applies exactly one freshly validated counter command and its intrinsic zero-crossing StoragePool workflow.
+    let internal reconcileCounterStepWith
+        (dependencies: CounterReconciliationDependencies)
+        (report: ManifestContributionDiagnosisReport)
+        (counterTuple: CounterTuple)
+        rebuiltCount
+        =
+        task {
+            let counterId = RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+            let workflowId = ManifestContributionWorkflow.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+            let! counter = dependencies.GetCounter counterTuple
+            let! workflow = dependencies.GetWorkflow counterTuple
+
+            let counterFact =
+                actorFact "RepositoryContentCounter" counterId report
+                |> Option.defaultWith (fun () -> invalidOp "Fresh diagnosis did not retain the repository counter snapshot.")
+
+            let workflowFact =
+                actorFact "ManifestContributionWorkflow" workflowId report
+                |> Option.defaultWith (fun () -> invalidOp "Fresh diagnosis did not retain the workflow snapshot.")
+
+            let snapshotsMatch =
+                counter.RepositoryId = counterTuple.RepositoryId
+                && counter.StoragePoolId = counterTuple.StoragePoolId
+                && counter.ManifestAddress = counterTuple.ManifestAddress
+                && counterFact.Revision = Some counter.Revision
+                && String.Equals(counterFact.SnapshotJson, actorSnapshotJson counter, StringComparison.Ordinal)
+                && workflow.RepositoryId = counterTuple.RepositoryId
+                && workflow.StoragePoolId = counterTuple.StoragePoolId
+                && workflow.ManifestAddress = counterTuple.ManifestAddress
+                && workflowFact.Revision = Some workflow.Revision
+                && String.Equals(workflowFact.SnapshotJson, workflowSnapshotJson workflow, StringComparison.Ordinal)
+
+            if not snapshotsMatch then
+                invalidOp "Counter or workflow evidence changed before reconciliation."
+
+            let resumableWorkflow =
+                counter.LastCompletedChange
+                |> Option.bind (fun change ->
+                    let directionName, direction =
+                        match change.Operation with
+                        | RepositoryContentCounterChangeOperation.Added -> "add", ManifestContributionDirection.Increment
+                        | RepositoryContentCounterChangeOperation.Removed -> "remove", ManifestContributionDirection.Decrement
+
+                    let expectedCounterOperation = counterRepairOperationId counterTuple rebuiltCount (change.Revision - 1L) directionName
+
+                    let expectedWorkflowOperation = ManifestContributionWorkflowOperationId $"{expectedCounterOperation}:workflow"
+
+                    if counter.Count = rebuiltCount
+                       && change.CurrentCount = rebuiltCount
+                       && change.OperationId = expectedCounterOperation
+                       && workflow.StartOperationId = Some expectedWorkflowOperation
+                       && workflow.CounterRevision = counter.Revision
+                       && workflow.LifecycleState
+                          <> ManifestContributionWorkflowLifecycleState.Completed
+                       && workflow.Ranges.Length > 0 then
+                        Some(expectedWorkflowOperation, direction)
+                    else
+                        None)
+
+            match resumableWorkflow with
+            | Some (operationId, direction) -> do! dependencies.StartWorkflow operationId counterTuple direction workflow.Ranges counter.Revision
+            | None ->
+                let countEvidence =
+                    report.CountEvidence
+                    |> Array.tryFind (fun evidence ->
+                        String.Equals(evidence.RepositoryId, $"{counterTuple.RepositoryId:D}", StringComparison.Ordinal)
+                        && String.Equals(evidence.StoragePoolId, counterTuple.StoragePoolId, StringComparison.Ordinal)
+                        && String.Equals(evidence.ManifestAddress, counterTuple.ManifestAddress, StringComparison.Ordinal))
+                    |> Option.defaultWith (fun () -> invalidOp "Fresh diagnosis did not contain the requested counter evidence.")
+
+                if not (String.Equals(countEvidence.Completeness, "Complete", StringComparison.Ordinal))
+                   || countEvidence.StoredCount.IsNone
+                   || countEvidence.RebuiltCount <> Some rebuiltCount then
+                    invalidOp "Counter reconciliation requires a fresh complete reconstruction for the same target count."
+
+                let counterMatches =
+                    counter.RepositoryId = counterTuple.RepositoryId
+                    && counter.StoragePoolId = counterTuple.StoragePoolId
+                    && counter.ManifestAddress = counterTuple.ManifestAddress
+                    && counterFact.Revision = Some counter.Revision
+                    && String.Equals(counterFact.SnapshotJson, actorSnapshotJson counter, StringComparison.Ordinal)
+                    && countEvidence.StoredCount = Some counter.Count
+
+                let workflowMatches =
+                    workflow.RepositoryId = counterTuple.RepositoryId
+                    && workflow.StoragePoolId = counterTuple.StoragePoolId
+                    && workflow.ManifestAddress = counterTuple.ManifestAddress
+                    && workflowFact.Revision = Some workflow.Revision
+                    && String.Equals(workflowFact.SnapshotJson, workflowSnapshotJson workflow, StringComparison.Ordinal)
+                    && workflow.Direction = ManifestContributionDirection.Increment
+                    && workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
+                    && workflow.Ranges.Length > 0
+                    && workflow.FailedRanges.Length = 0
+                    && workflow.CompletedRanges.Length = workflow.Ranges.Length
+                    && workflow.CounterRevision <= counter.Revision
+
+                if not counterMatches || not workflowMatches then
+                    invalidOp "Counter or workflow evidence changed before reconciliation."
+
+                if counter.Count = rebuiltCount then
+                    invalidOp "The repository manifest counter already matches the rebuilt count."
+
+                let direction, command =
+                    if counter.Count < rebuiltCount then
+                        let operationId = counterRepairOperationId counterTuple rebuiltCount counter.Revision "add"
+
+                        ManifestContributionDirection.Increment,
+                        RepositoryContentCounterCommand.AddReference(
+                            operationId,
+                            counterTuple.RepositoryId,
+                            counterTuple.StoragePoolId,
+                            counterTuple.ManifestAddress
+                        )
+                    else
+                        let operationId = counterRepairOperationId counterTuple rebuiltCount counter.Revision "remove"
+
+                        ManifestContributionDirection.Decrement,
+                        RepositoryContentCounterCommand.RemoveReference(
+                            operationId,
+                            counterTuple.RepositoryId,
+                            counterTuple.StoragePoolId,
+                            counterTuple.ManifestAddress
+                        )
+
+                let! decision = dependencies.HandleCounter command
+
+                let workflowRevision =
+                    decision.Intents
+                    |> List.tryPick (function
+                        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress, revision)
+                        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress, revision) when
+                            repositoryId = counterTuple.RepositoryId
+                            && storagePoolId = counterTuple.StoragePoolId
+                            && manifestAddress = counterTuple.ManifestAddress
+                            ->
+                            Some revision
+                        | _ -> None)
+
+                match workflowRevision with
+                | None -> ()
+                | Some revision ->
+                    let commandOperationId =
+                        match command with
+                        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _)
+                        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> operationId
+
+                    do!
+                        dependencies.StartWorkflow
+                            (ManifestContributionWorkflowOperationId $"{commandOperationId}:workflow")
+                            counterTuple
+                            direction
+                            workflow.Ranges
+                            revision
+        }
 
     /// Requires the supplied report to describe exactly the current bounded evidence before execute may start.
     let private initialEvidenceMatches (expected: ManifestContributionDiagnosisReport) (current: ManifestContributionDiagnosisReport) =
@@ -255,14 +608,18 @@ module ManifestContributionRepair =
             GeneratedAt = generatedAt
             DiagnosisReportSha256 = report.ReportSha256
             Execute = execute
-            ProposedActions = proposed
-            AppliedActions = applied
+            ProposedActions =
+                proposed
+                |> Array.map (fun mutation -> mutation.Action)
+            AppliedActions =
+                applied
+                |> Array.map (fun mutation -> mutation.Action)
             Outcome = outcome
             Message = message
         }
 
     /// Revalidates bounded evidence before every mutation and verifies current state after the applied prefix.
-    let repairWith
+    let internal repairWith
         (dependencies: RepairDependencies)
         generatedAt
         (correlationId: string)
@@ -279,7 +636,16 @@ module ManifestContributionRepair =
                 try
                     let! initialCurrent = dependencies.DiagnoseCurrent selector bound cancellationToken
 
-                    if not (initialEvidenceMatches report initialCurrent) then
+                    let resumableInitialCounter =
+                        execute
+                        && sourceFacts initialCurrent = sourceFacts report
+                        && (tryResumableCounterMutation initialCurrent proposed)
+                            .IsSome
+
+                    if
+                        not (initialEvidenceMatches report initialCurrent)
+                        && not resumableInitialCounter
+                    then
                         return
                             result
                                 generatedAt
@@ -310,11 +676,12 @@ module ManifestContributionRepair =
                                  else
                                      "Dry run produced the bounded ordered repair plan and performed zero writes.")
                     else
-                        let applied = ResizeArray<RepairAction>()
+                        let applied = ResizeArray<RepairMutation>()
+                        let attemptedWorkflowResumes = HashSet<string * string>()
 
                         let proposedKeys =
                             proposed
-                            |> Array.map (fun action -> action.Kind, action.Identity)
+                            |> Array.map (fun action -> action.Action.Kind, action.Action.Identity)
                             |> set
 
                         let mutable completed: ManifestContributionRepairReport option = None
@@ -338,36 +705,11 @@ module ManifestContributionRepair =
                                             "Current source evidence changed before a repair mutation."
                                     )
                             else
-                                match buildPlan current with
-                                | Error error ->
-                                    completed <- Some(result generatedAt report true proposed (applied.ToArray()) RepairOutcome.IncompleteRetain error)
-                                | Ok currentPlan ->
-                                    let currentKeys =
-                                        currentPlan
-                                        |> Array.map (fun action -> action.Kind, action.Identity)
+                                match tryResumableCounterMutation current proposed with
+                                | Some recoveryAction ->
+                                    let recoveryKey = recoveryAction.Action.Kind, recoveryAction.Action.Identity
 
-                                    if currentKeys
-                                       |> Array.exists (fun key -> not (proposedKeys.Contains key)) then
-                                        completed <-
-                                            Some(
-                                                result
-                                                    generatedAt
-                                                    report
-                                                    true
-                                                    proposed
-                                                    (applied.ToArray())
-                                                    RepairOutcome.IncompleteRetain
-                                                    "Current projection evidence requires an action that was absent from the validated report."
-                                            )
-                                    elif currentPlan.Length = 0 then
-                                        let outcome, message =
-                                            if current.Outcome = DiagnosisOutcome.VerifiedComplete then
-                                                RepairOutcome.VerifiedComplete, "Current post-repair verification is complete."
-                                            else
-                                                RepairOutcome.IncompleteRetain, "No allowed repair action remains, but current evidence is not complete."
-
-                                        completed <- Some(result generatedAt report true proposed (applied.ToArray()) outcome message)
-                                    elif previousPlan = Some currentKeys then
+                                    if not (attemptedWorkflowResumes.Add recoveryKey) then
                                         completed <-
                                             Some(
                                                 result
@@ -377,15 +719,13 @@ module ManifestContributionRepair =
                                                     proposed
                                                     (applied.ToArray())
                                                     RepairOutcome.FailedRetain
-                                                    "The previous repair action returned without changing the bounded current plan."
+                                                    "The deterministic counter workflow replay returned without changing current evidence."
                                             )
                                     else
-                                        let action = currentPlan[0]
-                                        previousPlan <- Some currentKeys
-
                                         try
-                                            do! dependencies.ApplyAction current action cancellationToken
-                                            applied.Add action
+                                            do! dependencies.ApplyAction current recoveryAction cancellationToken
+                                            applied.Add recoveryAction
+                                            previousPlan <- None
                                         with
                                         | ex ->
                                             completed <-
@@ -397,8 +737,70 @@ module ManifestContributionRepair =
                                                         proposed
                                                         (applied.ToArray())
                                                         RepairOutcome.FailedRetain
-                                                        $"Repair dependency failed after retaining current evidence: {ex.Message}"
+                                                        $"Repair dependency failed while resuming the deterministic counter workflow: {ex.Message}"
                                                 )
+                                | None ->
+                                    match buildPlan current with
+                                    | Error error ->
+                                        completed <- Some(result generatedAt report true proposed (applied.ToArray()) RepairOutcome.IncompleteRetain error)
+                                    | Ok currentPlan ->
+                                        let currentKeys =
+                                            currentPlan
+                                            |> Array.map (fun action -> action.Action.Kind, action.Action.Identity)
+
+                                        if currentKeys
+                                           |> Array.exists (fun key -> not (proposedKeys.Contains key)) then
+                                            completed <-
+                                                Some(
+                                                    result
+                                                        generatedAt
+                                                        report
+                                                        true
+                                                        proposed
+                                                        (applied.ToArray())
+                                                        RepairOutcome.IncompleteRetain
+                                                        "Current projection evidence requires an action that was absent from the validated report."
+                                                )
+                                        elif currentPlan.Length = 0 then
+                                            let outcome, message =
+                                                if current.Outcome = DiagnosisOutcome.VerifiedComplete then
+                                                    RepairOutcome.VerifiedComplete, "Current post-repair verification is complete."
+                                                else
+                                                    RepairOutcome.IncompleteRetain, "No allowed repair action remains, but current evidence is not complete."
+
+                                            completed <- Some(result generatedAt report true proposed (applied.ToArray()) outcome message)
+                                        elif previousPlan = Some currentKeys then
+                                            completed <-
+                                                Some(
+                                                    result
+                                                        generatedAt
+                                                        report
+                                                        true
+                                                        proposed
+                                                        (applied.ToArray())
+                                                        RepairOutcome.FailedRetain
+                                                        "The previous repair action returned without changing the bounded current plan."
+                                                )
+                                        else
+                                            let action = currentPlan[0]
+                                            previousPlan <- Some currentKeys
+
+                                            try
+                                                do! dependencies.ApplyAction current action cancellationToken
+                                                applied.Add action
+                                            with
+                                            | ex ->
+                                                completed <-
+                                                    Some(
+                                                        result
+                                                            generatedAt
+                                                            report
+                                                            true
+                                                            proposed
+                                                            (applied.ToArray())
+                                                            RepairOutcome.FailedRetain
+                                                            $"Repair dependency failed after retaining current evidence: {ex.Message}"
+                                                    )
 
                         return completed.Value
                 with
@@ -430,10 +832,10 @@ module ManifestContributionRepair =
         let correlationId = getCorrelationId context
         let metadata = createMetadata context
 
-        let applyAction _ action cancellationToken =
+        let applyAction currentReport action cancellationToken =
             task {
-                match action.Kind, action.Target with
-                | "ResendDeterministicEvent", RepairActionTarget.Relationship (ExactRelationship.DirectoryVersionManifest relationship) ->
+                match action.Action.Kind, action.Target with
+                | "ResendDeterministicEvent", RepairMutationTarget.Relationship (ExactRelationship.DirectoryVersionManifest relationship) ->
                     let actor = grainFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(relationship.DirectoryVersionId, correlationId)
 
                     let! current = actor.Get correlationId
@@ -456,14 +858,89 @@ module ManifestContributionRepair =
                             |> Option.defaultWith (fun () -> invalidOp "The direct manifest source changed before deterministic event resend.")
 
                     do! ManifestContributionAccounting.ensureDirectoryVersionManifest store relationship manifest metadata cancellationToken
-                | "GetOrAddExactRelationship", RepairActionTarget.Relationship relationship ->
+                | "GetOrAddExactRelationship", RepairMutationTarget.Relationship relationship ->
                     let! _ = store.EnsurePresentAsync(relationship, cancellationToken)
                     ()
-                | "RemoveStaleExactRelationship", RepairActionTarget.Relationship relationship ->
-                    let! _ = store.EnsureAbsentAsync(relationship, cancellationToken)
-                    ()
-                | "ReconcileCounter", RepairActionTarget.Counter _ ->
-                    invalidOp "Counter reconciliation requires a fresh complete diagnosis and is not admissible through this adapter."
+                | "RemoveStaleExactRelationship", RepairMutationTarget.Relationship (ExactRelationship.DirectoryVersionManifest relationship) ->
+                    let staleDependencies =
+                        {
+                            GetDirectoryVersion =
+                                fun directoryVersionId ->
+                                    let actor = grainFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(directoryVersionId, correlationId)
+
+                                    actor.Get correlationId
+                            GetCounter =
+                                fun counterTuple ->
+                                    let actor =
+                                        grainFactory.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
+                                            RepositoryContentCounter.primaryKey
+                                                counterTuple.RepositoryId
+                                                counterTuple.StoragePoolId
+                                                counterTuple.ManifestAddress,
+                                            correlationId
+                                        )
+
+                                    actor.Get correlationId
+                            GetWorkflow =
+                                fun counterTuple ->
+                                    let actor =
+                                        grainFactory.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
+                                            ManifestContributionWorkflow.primaryKey
+                                                counterTuple.RepositoryId
+                                                counterTuple.StoragePoolId
+                                                counterTuple.ManifestAddress,
+                                            correlationId
+                                        )
+
+                                    actor.Get correlationId
+                            EnsureAbsent = fun relationship cancellationToken -> store.EnsureAbsentAsync(relationship, cancellationToken)
+                        }
+
+                    do! removeStaleRelationshipWith staleDependencies currentReport action.Action.Identity relationship cancellationToken
+                | "ReconcileCounter", RepairMutationTarget.Counter (counterTuple, rebuiltCount) ->
+                    let counterActor =
+                        grainFactory.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
+                            RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress,
+                            correlationId
+                        )
+
+                    let workflowActor =
+                        grainFactory.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
+                            ManifestContributionWorkflow.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress,
+                            correlationId
+                        )
+
+                    let counterDependencies =
+                        {
+                            GetCounter = fun _ -> counterActor.Get correlationId
+                            GetWorkflow = fun _ -> workflowActor.Get correlationId
+                            HandleCounter =
+                                fun command ->
+                                    task {
+                                        match! counterActor.Handle command metadata with
+                                        | Ok value -> return value.ReturnValue
+                                        | Error error -> return invalidOp error.Error
+                                    }
+                            StartWorkflow =
+                                fun operationId target direction ranges counterRevision ->
+                                    task {
+                                        match!
+                                            workflowActor.Start
+                                                operationId
+                                                target.RepositoryId
+                                                target.StoragePoolId
+                                                target.ManifestAddress
+                                                direction
+                                                ranges
+                                                counterRevision
+                                                metadata
+                                            with
+                                        | Ok _ -> return ()
+                                        | Error error -> return invalidOp error.Error
+                                    }
+                        }
+
+                    do! reconcileCounterStepWith counterDependencies currentReport counterTuple rebuiltCount
                 | _ -> invalidOp "The validated repair plan contained an unsupported mutation."
             }
             :> Task
