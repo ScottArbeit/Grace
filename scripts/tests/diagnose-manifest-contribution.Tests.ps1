@@ -32,7 +32,7 @@ Assert-True -Condition ((Get-DiagnosisExitCode -Outcome 'failedRetain') -eq 3) -
 
 $unsignedJson = '{"SchemaVersion":"grace.manifest-contribution-diagnosis.v1","Outcome":"incompleteRetain"}'
 $unsignedBytes = [Text.Encoding]::UTF8.GetBytes($unsignedJson)
-$hash = [Convert]::ToHexStringLower([Security.Cryptography.SHA256]::HashData($unsignedBytes))
+$hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($unsignedBytes)).ToLowerInvariant()
 $signed = [Text.Json.Nodes.JsonNode]::Parse($unsignedJson)
 $signed['ReportSha256'] = $hash
 $signedJson = $signed.ToJsonString()

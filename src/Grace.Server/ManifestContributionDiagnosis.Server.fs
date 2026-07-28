@@ -327,6 +327,7 @@ module ManifestContributionDiagnosis =
             let unknownFields = HashSet<string>(StringComparer.Ordinal)
             let evidenceGaps = ResizeArray<string>()
             let manifestTargets = Dictionary<string, CounterTuple>(StringComparer.Ordinal)
+            let expectedWorkflowRanges = Dictionary<string, HashSet<ManifestContributionWorkflowRange>>(StringComparer.Ordinal)
             let directoryFacts = Dictionary<DirectoryVersionId, DirectoryVersionDto>()
             let relationshipReads = HashSet<string>(StringComparer.Ordinal)
             let mutable sourceBacked = false
@@ -395,6 +396,28 @@ module ManifestContributionDiagnosis =
                 manifestTargets.TryAdd(key, counterTuple)
                 |> ignore
 
+            /// Records the distinct ContentBlocks that current readable source state requires one manifest workflow to cover.
+            let addManifestSourceTarget repositoryId (manifest: FileManifest) =
+                let counterTuple = { RepositoryId = repositoryId; StoragePoolId = manifest.StoragePoolId; ManifestAddress = manifest.ManifestAddress }
+
+                addManifestTarget counterTuple
+
+                let key = RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress
+
+                let ranges =
+                    match expectedWorkflowRanges.TryGetValue key with
+                    | true, existing -> existing
+                    | _ ->
+                        let created = HashSet<ManifestContributionWorkflowRange>()
+                        expectedWorkflowRanges[key] <- created
+                        created
+
+                manifest.Blocks
+                |> Seq.distinctBy (fun block -> block.Address)
+                |> Seq.iter (fun block ->
+                    ranges.Add({ StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address })
+                    |> ignore)
+
             let readDirectoryVersion directoryVersionId =
                 task {
                     match directoryFacts.TryGetValue directoryVersionId with
@@ -441,8 +464,7 @@ module ManifestContributionDiagnosis =
 
                                         addExpected (ExactRelationship.DirectoryVersionManifest relationship)
 
-                                        addManifestTarget
-                                            { RepositoryId = repositoryId; StoragePoolId = manifest.StoragePoolId; ManifestAddress = manifest.ManifestAddress }
+                                        addManifestSourceTarget repositoryId manifest
 
                                 for childDirectoryVersionId in current.Directories |> Seq.distinct do
                                     addExpected (
@@ -527,26 +549,23 @@ module ManifestContributionDiagnosis =
                         | Error error ->
                             rootFailure <- Some $"Operation source DirectoryVersion '{directoryVersionId:D}' manifests could not be interpreted: {error.Error}"
                         | Ok manifests ->
-                            let matchingRelationship =
+                            let matchingManifest =
                                 manifests
-                                |> Array.map (fun manifest ->
-                                    {
-                                        RepositoryId = current.RepositoryId
-                                        StoragePoolId = manifest.StoragePoolId
-                                        ManifestAddress = manifest.ManifestAddress
-                                        DirectoryVersionId = directoryVersionId
-                                    })
-                                |> Array.tryFind (fun relationship -> operationIdentity action relationship = selectedOperationId)
+                                |> Array.tryFind (fun manifest ->
+                                    let relationship =
+                                        {
+                                            RepositoryId = current.RepositoryId
+                                            StoragePoolId = manifest.StoragePoolId
+                                            ManifestAddress = manifest.ManifestAddress
+                                            DirectoryVersionId = directoryVersionId
+                                        }
 
-                            match matchingRelationship with
+                                    operationIdentity action relationship = selectedOperationId)
+
+                            match matchingManifest with
                             | None -> rootFailure <- Some $"Operation id '{selectedOperationId}' cannot be supported by current source actor state."
-                            | Some relationship ->
-                                addManifestTarget
-                                    {
-                                        RepositoryId = relationship.RepositoryId
-                                        StoragePoolId = relationship.StoragePoolId
-                                        ManifestAddress = relationship.ManifestAddress
-                                    }
+                            | Some manifest ->
+                                addManifestSourceTarget current.RepositoryId manifest
 
                                 deterministicIdentities.Add $"{selectedOperationId}"
                                 |> ignore
@@ -650,9 +669,6 @@ module ManifestContributionDiagnosis =
                                         validObservedCount <- validObservedCount + 1L
                                     else
                                         stale.Add identity |> ignore
-
-                                        repairTargets.Add $"RemoveStaleExactRelationship:{identity}"
-                                        |> ignore
                                 | Error error ->
                                     sourceStateComplete <- false
 
@@ -669,6 +685,23 @@ module ManifestContributionDiagnosis =
                         (Some counterDto.Revision)
                         counterDto
 
+                    let counterTargetMatches =
+                        counterDto.RepositoryId = counterTuple.RepositoryId
+                        && counterDto.StoragePoolId = counterTuple.StoragePoolId
+                        && counterDto.ManifestAddress = counterTuple.ManifestAddress
+
+                    let counterReadable =
+                        counterTargetMatches
+                        && String.Equals(counterDto.Class, nameof RepositoryContentCounterDto, StringComparison.Ordinal)
+                        && counterDto.Revision > 0L
+
+                    if not counterReadable then
+                        let targetIdentity = $"{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}"
+
+                        evidenceGaps.Add(
+                            $"Repository content counter for '{targetIdentity}' was uninitialized, class-incompatible, or returned state for a different target."
+                        )
+
                     let! workflowDto = dependencies.GetWorkflow counterTuple correlationId
 
                     addWorkflowActorFact
@@ -684,32 +717,51 @@ module ManifestContributionDiagnosis =
 
                     let workflowReadable =
                         workflowTargetMatches
-                        && not (String.IsNullOrWhiteSpace workflowDto.Class)
+                        && String.Equals(workflowDto.Class, nameof ManifestContributionWorkflowDto, StringComparison.Ordinal)
                         && not (isNull (box workflowDto.Direction))
+                        && workflowDto.Direction = ManifestContributionDirection.Increment
                         && not (isNull workflowDto.Ranges)
                         && not (isNull workflowDto.CompletedRanges)
                         && not (isNull workflowDto.FailedRanges)
                         && not (isNull (box workflowDto.LifecycleState))
                         && workflowDto.StartOperationId.IsSome
                         && workflowDto.LastOperationId.IsSome
+                        && workflowDto.CounterRevision > 0L
                         && workflowDto.Revision > 0L
+
+                    let workflowRangesExact =
+                        match
+                            expectedWorkflowRanges.TryGetValue
+                                (RepositoryContentCounter.primaryKey counterTuple.RepositoryId counterTuple.StoragePoolId counterTuple.ManifestAddress)
+                            with
+                        | true, expectedRanges when expectedRanges.Count > 0 && workflowReadable ->
+                            let actualRanges = HashSet<ManifestContributionWorkflowRange>(workflowDto.Ranges)
+
+                            workflowDto.Ranges.Length = expectedRanges.Count
+                            && actualRanges.Count = workflowDto.Ranges.Length
+                            && actualRanges.SetEquals expectedRanges
+                        | _ -> false
 
                     let workflowCompleted =
                         workflowReadable
+                        && workflowRangesExact
                         && workflowDto.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
                         && workflowDto.FailedRanges.Length = 0
                         && workflowDto.CompletedRanges.Length = workflowDto.Ranges.Length
                         && (workflowDto.CompletedRanges
                             |> Array.forall (fun progress ->
-                                progress.RepositoryId = counterTuple.RepositoryId
+                                not (isNull (box progress))
+                                && not (isNull (box progress.Range))
+                                && progress.RepositoryId = counterTuple.RepositoryId
                                 && progress.StoragePoolId = counterTuple.StoragePoolId
                                 && progress.ManifestAddress = counterTuple.ManifestAddress))
-                        && (workflowDto.Ranges
-                            |> Array.forall (fun range ->
+                        && (let completedRanges =
                                 workflowDto.CompletedRanges
-                                |> Array.filter (fun progress -> progress.Range = range)
-                                |> Array.length
-                                |> (=) 1))
+                                |> Array.map (fun progress -> progress.Range)
+                                |> HashSet<ManifestContributionWorkflowRange>
+
+                            completedRanges.Count = workflowDto.CompletedRanges.Length
+                            && completedRanges.SetEquals workflowDto.Ranges)
 
                     if not workflowCompleted then
                         let targetIdentity = $"{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}"
@@ -719,17 +771,29 @@ module ManifestContributionDiagnosis =
                         elif not workflowReadable then
                             evidenceGaps.Add($"Manifest contribution workflow for '{targetIdentity}' was absent or unreadable.")
                         else
-                            evidenceGaps.Add($"Manifest contribution workflow for '{targetIdentity}' has unfinished, failed, or inconsistent ranges.")
-
-                            if workflowDto.LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress
-                               || workflowDto.FailedRanges.Length > 0 then
-                                repairTargets.Add($"ResumeManifestContributionWorkflow:{targetIdentity}")
-                                |> ignore
+                            evidenceGaps.Add(
+                                $"Manifest contribution workflow for '{targetIdentity}' has unfinished, failed, duplicate, or source-mismatched ranges."
+                            )
 
                     let partitionEvidenceComplete =
                         enumerationComplete
                         && sourceStateComplete
                         && workflowCompleted
+
+                    let completeEvidence = partitionEvidenceComplete && counterReadable
+
+                    if completeEvidence then
+                        for KeyValue (identity, relationship) in observed do
+                            match relationship with
+                            | ExactRelationship.DirectoryVersionManifest manifestRelationship when
+                                manifestRelationship.RepositoryId = counterTuple.RepositoryId
+                                && manifestRelationship.StoragePoolId = counterTuple.StoragePoolId
+                                && manifestRelationship.ManifestAddress = counterTuple.ManifestAddress
+                                && stale.Contains identity
+                                ->
+                                repairTargets.Add $"RemoveStaleExactRelationship:{identity}"
+                                |> ignore
+                            | _ -> ()
 
                     let rebuiltCount =
                         if sourceBacked && partitionEvidenceComplete then
@@ -755,18 +819,14 @@ module ManifestContributionDiagnosis =
                             RepositoryId = $"{counterTuple.RepositoryId:D}"
                             StoragePoolId = $"{counterTuple.StoragePoolId}"
                             ManifestAddress = $"{counterTuple.ManifestAddress}"
-                            StoredCount = Some counterDto.Count
+                            StoredCount = if counterReadable then Some counterDto.Count else None
                             RebuiltCount = rebuiltCount
-                            Completeness =
-                                if sourceBacked && partitionEvidenceComplete then
-                                    "Complete"
-                                else
-                                    "IncompleteRetain"
+                            Completeness = if sourceBacked && completeEvidence then "Complete" else "IncompleteRetain"
                         }
                     )
 
-                    match rebuiltCount with
-                    | Some rebuilt when rebuilt <> counterDto.Count ->
+                    match (if counterReadable then Some counterDto.Count else None), rebuiltCount with
+                    | Some stored, Some rebuilt when rebuilt <> stored ->
                         repairTargets.Add($"ReconcileCounter:{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}")
                         |> ignore
                     | _ -> ()

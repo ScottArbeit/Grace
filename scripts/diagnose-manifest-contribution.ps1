@@ -92,7 +92,7 @@ function Test-ReportSha256 {
         $document.AsObject().Remove('ReportSha256') | Out-Null
         $unsignedJson = $document.ToJsonString()
         $bytes = [Text.Encoding]::UTF8.GetBytes($unsignedJson)
-        $computedHash = [Convert]::ToHexStringLower([Security.Cryptography.SHA256]::HashData($bytes))
+        $computedHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 
         return [string]::Equals($reportedHash, $computedHash, [StringComparison]::OrdinalIgnoreCase)
     }

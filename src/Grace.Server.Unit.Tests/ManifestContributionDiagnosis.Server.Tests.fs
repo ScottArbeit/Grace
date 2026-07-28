@@ -38,13 +38,20 @@ type ManifestContributionDiagnosisServerTests() =
                 4L,
                 storagePoolId,
                 [
-                    ContentBlock.Create(ContentBlockAddress(String.replicate 64 "c"), 0L, 4L)
+                    ContentBlock.Create(ContentBlockAddress(String.replicate 64 "c"), 0L, 2L)
+                    ContentBlock.Create(ContentBlockAddress(String.replicate 64 "d"), 2L, 2L)
                 ]
             )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
     let manifestAddress = finalizedManifest.ManifestAddress
+
+    let workflowRanges =
+        finalizedManifest.Blocks
+        |> Seq.distinctBy (fun block -> block.Address)
+        |> Seq.map (fun block -> { StoragePoolId = storagePoolId; ContentBlockAddress = block.Address })
+        |> Seq.toArray
 
     /// Builds current DirectoryVersion state that directly names the test manifest.
     let directoryVersionDto id =
@@ -86,6 +93,18 @@ type ManifestContributionDiagnosisServerTests() =
             LifecycleState = ManifestContributionWorkflowLifecycleState.Completed
             StartOperationId = Some operationId
             LastOperationId = Some operationId
+            Ranges = workflowRanges
+            CompletedRanges =
+                workflowRanges
+                |> Array.map (fun range ->
+                    {
+                        OperationId = operationId
+                        RepositoryId = target.RepositoryId
+                        StoragePoolId = target.StoragePoolId
+                        ManifestAddress = target.ManifestAddress
+                        Range = range
+                    })
+            CounterRevision = 7L
             Revision = 8L
         }
 
@@ -395,6 +414,10 @@ type ManifestContributionDiagnosisServerTests() =
                 }
 
             let mismatchedWorkflow = { completedWorkflow target with RepositoryId = Guid.Parse("66666666-7340-4000-8000-666666666666") }
+            let classIncompatibleWorkflow = { completedWorkflow target with Class = "UnexpectedWorkflow" }
+
+            let directionIncompatibleWorkflow = { completedWorkflow target with Direction = ManifestContributionDirection.Decrement }
+            let revisionIncompatibleWorkflow = { completedWorkflow target with CounterRevision = 0L }
 
             let baseDependencies =
                 dependencies
@@ -434,11 +457,219 @@ type ManifestContributionDiagnosisServerTests() =
                     Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
                     Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
                     Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+                    Assert.That(report.RepairTargets, Has.None.StartsWith("ResumeManifestContributionWorkflow:"))
                 }
 
             do! verifyIncompleteWorkflow unfinishedWorkflow
             do! verifyIncompleteWorkflow failedWorkflow
             do! verifyIncompleteWorkflow mismatchedWorkflow
+            do! verifyIncompleteWorkflow classIncompatibleWorkflow
+            do! verifyIncompleteWorkflow directionIncompatibleWorkflow
+            do! verifyIncompleteWorkflow revisionIncompatibleWorkflow
+        }
+
+    /// Verifies stale relationship removal is advice only when the selected target's workflow and counter evidence are complete.
+    [<Test>]
+    member _.StaleRelationshipRemovalRequiresCompleteTargetEvidence() =
+        task {
+            let target = counterTuple ()
+            let expectedRelationship = manifestRelationship directoryVersionId
+            let staleRelationship = manifestRelationship otherDirectoryVersionId
+            let staleSource = directoryVersionDto otherDirectoryVersionId
+            staleSource.DirectoryVersion.Files.Clear()
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId
+                                  otherDirectoryVersionId, staleSource ])
+                    (fun () ->
+                        {
+                            Relationships =
+                                [|
+                                    expectedRelationship
+                                    staleRelationship
+                                |]
+                            ContinuationToken = None
+                        })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            let diagnose dependencies =
+                diagnoseWith
+                    dependencies
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            let! completeEvidenceReport = diagnose baseDependencies
+            Assert.That(completeEvidenceReport.StaleRelationships, Has.Length.EqualTo(1))
+            Assert.That(completeEvidenceReport.RepairTargets, Has.Some.StartsWith("RemoveStaleExactRelationship:"))
+
+            let incompleteWorkflow = { completedWorkflow target with Ranges = Array.empty; CompletedRanges = Array.empty }
+
+            let invalidCounter =
+                { RepositoryContentCounterDto.Default with
+                    RepositoryId = target.RepositoryId
+                    StoragePoolId = target.StoragePoolId
+                    ManifestAddress = target.ManifestAddress
+                    Count = 1L
+                    Revision = 0L
+                }
+
+            let! incompleteWorkflowReport = diagnose { baseDependencies with GetWorkflow = fun _ _ -> Task.FromResult incompleteWorkflow }
+
+            let! invalidCounterReport = diagnose { baseDependencies with GetCounter = fun _ _ -> Task.FromResult invalidCounter }
+
+            Assert.That(incompleteWorkflowReport.RepairTargets, Has.None.StartsWith("RemoveStaleExactRelationship:"))
+            Assert.That(invalidCounterReport.RepairTargets, Has.None.StartsWith("RemoveStaleExactRelationship:"))
+        }
+
+    /// Verifies completed workflow evidence exactly covers the distinct ContentBlocks in the current source manifest.
+    [<Test>]
+    member _.CompletedWorkflowMustExactlyCoverCurrentSourceManifestRanges() =
+        task {
+            let target = counterTuple ()
+            let relationship = manifestRelationship directoryVersionId
+            let operationId = ManifestContributionWorkflowOperationId "diagnosis-invalid-coverage"
+
+            let progress range =
+                {
+                    OperationId = operationId
+                    RepositoryId = target.RepositoryId
+                    StoragePoolId = target.StoragePoolId
+                    ManifestAddress = target.ManifestAddress
+                    Range = range
+                }
+
+            let unexpectedRange = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress(String.replicate 64 "e") }
+
+            let mismatchedRange = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress(String.replicate 64 "f") }
+
+            let completedWith ranges = { completedWorkflow target with Ranges = ranges; CompletedRanges = ranges |> Array.map progress }
+
+            let nullProgressWorkflow =
+                { completedWorkflow target with
+                    CompletedRanges = Array.create workflowRanges.Length (Unchecked.defaultof<ManifestContributionWorkflowRangeProgress>)
+                }
+
+            let invalidWorkflows =
+                [|
+                    completedWith Array.empty
+                    completedWith [| workflowRanges[0] |]
+                    completedWith [| workflowRanges[0]
+                                     workflowRanges[1]
+                                     unexpectedRange |]
+                    completedWith [| workflowRanges[0]
+                                     mismatchedRange |]
+                    completedWith [| workflowRanges[0]
+                                     workflowRanges[0] |]
+                    nullProgressWorkflow
+                |]
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () -> { Relationships = [| relationship |]; ContinuationToken = None })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            let! completeReport =
+                diagnoseWith
+                    baseDependencies
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(completeReport.Outcome, Is.EqualTo(DiagnosisOutcome.VerifiedComplete))
+
+            for invalidWorkflow in invalidWorkflows do
+                let deps = { baseDependencies with GetWorkflow = fun _ _ -> Task.FromResult invalidWorkflow }
+
+                let! report =
+                    diagnoseWith
+                        deps
+                        "2026-07-27T00:00:00Z"
+                        "diagnosis-test"
+                        CancellationToken.None
+                        (readBound 10)
+                        (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+                Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
+                Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(None))
+                Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+                Assert.That(report.RepairTargets, Has.None.StartsWith("ResumeManifestContributionWorkflow:"))
+        }
+
+    /// Verifies only an initialized, class-correct counter snapshot for the selected tuple contributes stored count evidence.
+    [<Test>]
+    member _.CounterSnapshotMustBeInitializedClassCorrectAndTargetMatching() =
+        task {
+            let target = counterTuple ()
+            let relationship = manifestRelationship directoryVersionId
+
+            let validCounter =
+                { RepositoryContentCounterDto.Default with
+                    RepositoryId = target.RepositoryId
+                    StoragePoolId = target.StoragePoolId
+                    ManifestAddress = target.ManifestAddress
+                    Count = 1L
+                    Revision = 7L
+                }
+
+            let baseDependencies =
+                dependencies
+                    (Map.ofList [ directoryVersionId, directoryVersionDto directoryVersionId ])
+                    (fun () -> { Relationships = [| relationship |]; ContinuationToken = None })
+                    (fun _ -> ExactRelationshipPresence.Present)
+                    None
+                    1L
+
+            let completeDependencies = { baseDependencies with GetCounter = fun _ _ -> Task.FromResult validCounter }
+
+            let! completeReport =
+                diagnoseWith
+                    completeDependencies
+                    "2026-07-27T00:00:00Z"
+                    "diagnosis-test"
+                    CancellationToken.None
+                    (readBound 10)
+                    (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+            Assert.That(completeReport.Outcome, Is.EqualTo(DiagnosisOutcome.VerifiedComplete))
+
+            let invalidCounters =
+                [|
+                    { validCounter with Revision = 0L; Count = 0L }
+                    { validCounter with Class = "UnexpectedCounter"; Count = 0L }
+                    { validCounter with RepositoryId = Guid.Parse("66666666-7340-4000-8000-666666666666"); Count = 0L }
+                    { validCounter with StoragePoolId = StoragePoolId "diagnosis:other"; Count = 0L }
+                    { validCounter with ManifestAddress = ManifestAddress(String.replicate 64 "a"); Count = 0L }
+                |]
+
+            for invalidCounter in invalidCounters do
+                let deps = { baseDependencies with GetCounter = fun _ _ -> Task.FromResult invalidCounter }
+
+                let! report =
+                    diagnoseWith
+                        deps
+                        "2026-07-27T00:00:00Z"
+                        "diagnosis-test"
+                        CancellationToken.None
+                        (readBound 10)
+                        (DiagnosisSelector.DirectoryVersionId(directoryVersionId, Some repositoryId))
+
+                Assert.That(report.Outcome, Is.EqualTo(DiagnosisOutcome.IncompleteRetain))
+                Assert.That(report.CountEvidence[0].StoredCount, Is.EqualTo(None))
+                Assert.That(report.CountEvidence[0].RebuiltCount, Is.EqualTo(Some 1L))
+                Assert.That(report.CountEvidence[0].Completeness, Is.EqualTo("IncompleteRetain"))
+                Assert.That(report.RepairTargets, Has.None.StartsWith("ReconcileCounter:"))
+                Assert.That(report.EvidenceGaps, Has.Some.Contains("counter"))
         }
 
     /// Verifies unreadable current source state cannot turn an observed relationship into stale-removal advice.
