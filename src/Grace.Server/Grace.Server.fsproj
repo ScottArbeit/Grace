@@ -104,6 +104,7 @@
                 <Compile Include="RepositoryCounterRecentResult.Server.fs" />
                 <Compile Include="ManifestContributionAccounting.Server.fs" />
                 <Compile Include="ManifestContributionDiagnosis.Server.fs" />
+                <Compile Include="ManifestContributionRepair.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="NormalFileMaterialization.Server.fs" />
