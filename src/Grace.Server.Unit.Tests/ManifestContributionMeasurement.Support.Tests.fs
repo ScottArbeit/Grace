@@ -241,6 +241,57 @@ other_metric_total 99 1785304963133
 
         Assert.That(actual, Is.EqualTo(3.0))
 
+    /// Verifies settlement failures never project as terminal manifest-accounting telemetry.
+    [<Test>]
+    member _.CompletedTelemetryProjectionRejectsSettlementFailures() =
+        let metrics =
+            """
+grace_manifest_contribution_messages_total{stage="settle",outcome="settlement_failed"} 1
+grace_manifest_contribution_processing_duration_milliseconds_count{stage="settle",outcome="settlement_failed"} 1
+"""
+
+        let messages =
+            ManifestContributionMeasurementSupport.sumCompletedOpenMetricsSamples (fun name -> name = "grace_manifest_contribution_messages_total") metrics
+
+        let durations =
+            ManifestContributionMeasurementSupport.sumCompletedOpenMetricsSamples
+                (fun name -> name = "grace_manifest_contribution_processing_duration_milliseconds_count")
+                metrics
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(messages, Is.Zero)
+                Assert.That(durations, Is.Zero))
+        )
+
+    /// Verifies completed projection isolates explicit outcomes, metric families, sample values, and optional timestamps.
+    [<Test>]
+    member _.CompletedTelemetryProjectionIncludesOnlyExplicitCompletedSeries() =
+        let metrics =
+            """
+grace_manifest_contribution_messages_total{stage="settle",outcome="completed"} 2 1785304963133
+grace_manifest_contribution_messages_total{stage="settle",outcome="settlement_failed"} 5 1785304963133
+grace_manifest_contribution_messages_total{stage="settle",completion="completed"} 7 1785304963133
+grace_manifest_contribution_processing_duration_milliseconds_count{stage="settle",outcome="completed"} 2 1785304963133
+grace_manifest_contribution_processing_duration_milliseconds_count{stage="settle",outcome="settlement_failed"} 5 1785304963133
+grace_manifest_contribution_processing_duration_milliseconds_sum{stage="settle",outcome="completed"} 41 1785304963133
+other_metric_total{outcome="completed"} 99 1785304963133
+"""
+
+        let messages =
+            ManifestContributionMeasurementSupport.sumCompletedOpenMetricsSamples (fun name -> name = "grace_manifest_contribution_messages_total") metrics
+
+        let durations =
+            ManifestContributionMeasurementSupport.sumCompletedOpenMetricsSamples
+                (fun name -> name = "grace_manifest_contribution_processing_duration_milliseconds_count")
+                metrics
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(messages, Is.EqualTo(2.0))
+                Assert.That(durations, Is.EqualTo(2.0)))
+        )
+
     /// Verifies an absence wait observes broker state before accepting its terminal predicate.
     [<Test>]
     member _.TerminalWaitObservesStateBeforeAcceptingAbsence() =

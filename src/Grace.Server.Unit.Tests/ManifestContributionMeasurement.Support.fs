@@ -353,8 +353,8 @@ module ManifestContributionMeasurementSupport =
             diagnostic.Substring(0, MaximumDiagnosticCharacters - suffix.Length)
             + suffix
 
-    /// Sums matching OpenMetrics sample values while ignoring the optional scrape timestamp field.
-    let sumOpenMetricsSamples (predicate: string -> bool) (metrics: string) : float =
+    /// Sums OpenMetrics sample values selected by metric name and complete sample line while ignoring the optional scrape timestamp.
+    let private sumOpenMetricsSamplesWhere (namePredicate: string -> bool) (linePredicate: string -> bool) (metrics: string) : float =
         metrics.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
         |> Array.choose (fun line ->
             if line.StartsWith("#", StringComparison.Ordinal) then
@@ -380,13 +380,32 @@ module ManifestContributionMeasurementSupport =
                     let mutable value = 0.0
 
                     if
-                        valueFields.Length > 0 && predicate sampleName
+                        valueFields.Length > 0
+                        && namePredicate sampleName
+                        && linePredicate line
                         && Double.TryParse(valueFields[0], NumberStyles.Float, CultureInfo.InvariantCulture, &value)
                     then
                         Some value
                     else
                         None)
         |> Array.sum
+
+    /// Sums matching OpenMetrics sample values while ignoring the optional scrape timestamp field.
+    let sumOpenMetricsSamples (predicate: string -> bool) (metrics: string) : float = sumOpenMetricsSamplesWhere predicate (fun _ -> true) metrics
+
+    /// Projects only samples whose explicit outcome label proves completed broker settlement.
+    let sumCompletedOpenMetricsSamples (predicate: string -> bool) (metrics: string) : float =
+        let hasCompletedOutcomeLabel (line: string) =
+            let labelStart = line.IndexOf('{')
+            let labelEnd = line.IndexOf('}')
+
+            if labelStart < 0 || labelEnd <= labelStart then
+                false
+            else
+                let labels = line.Substring(labelStart + 1, labelEnd - labelStart - 1)
+                Regex.IsMatch(labels, """(?:^|,)\s*outcome\s*=\s*"completed"\s*(?:,|$)""", RegexOptions.CultureInvariant)
+
+        sumOpenMetricsSamplesWhere predicate hasCompletedOutcomeLabel metrics
 
     /// Appends one UTF-8 no-BOM NDJSON record as a single locked write.
     let appendEvidenceRecord (path: string) (record: obj) : unit =

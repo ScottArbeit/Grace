@@ -520,9 +520,9 @@ module private ManifestContributionMeasurementRuntime =
 
             return
                 {
-                    Messages = metricSum (isMetric "grace_manifest_contribution_messages") filtered
+                    Messages = ManifestContributionMeasurementSupport.sumCompletedOpenMetricsSamples (isMetric "grace_manifest_contribution_messages") filtered
                     DurationCount =
-                        metricSum
+                        ManifestContributionMeasurementSupport.sumCompletedOpenMetricsSamples
                             (fun name ->
                                 name.StartsWith("grace_manifest_contribution_processing_duration", StringComparison.Ordinal)
                                 && name.EndsWith("_count", StringComparison.Ordinal))
