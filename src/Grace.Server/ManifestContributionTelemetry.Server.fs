@@ -144,16 +144,20 @@ module ManifestContributionTelemetry =
         messages.Add(1L, tags)
         processingDuration.Record(durationMilliseconds, tags)
 
-    /// Records one exact-relationship storage observation without relationship identifiers.
+    /// Records one exact-relationship write without relationship identifiers and excludes verification reads.
     let internal recordRelationship operation relationship outcome =
-        let tags =
-            [|
-                KeyValuePair<string, obj>("relationship_kind", relationshipKind relationship)
-                KeyValuePair<string, obj>("operation", relationshipOperationName operation)
-                KeyValuePair<string, obj>("outcome", outcome)
-            |]
+        match operation with
+        | ManifestContributionRelationshipOperation.Verify -> ()
+        | ManifestContributionRelationshipOperation.EnsurePresent
+        | ManifestContributionRelationshipOperation.EnsureAbsent ->
+            let tags =
+                [|
+                    KeyValuePair<string, obj>("relationship_kind", relationshipKind relationship)
+                    KeyValuePair<string, obj>("operation", relationshipOperationName operation)
+                    KeyValuePair<string, obj>("outcome", outcome)
+                |]
 
-        relationshipWrites.Add(1L, tags)
+            relationshipWrites.Add(1L, tags)
 
     /// Records one Redis accelerator result without its key or manifest identity.
     let internal recordRedisOperation operation outcome =

@@ -171,6 +171,145 @@ type ManifestContributionTelemetryServerTests() =
             Assert.That(measurements, Has.All.Matches<string * string * string>(fun (_, stage, outcome) -> stage = "settle" && outcome = "completed"))
         }
 
+    /// Proves VerifyAsync read observations never enter the relationship-writes counter while both write operations retain bounded outcomes.
+    [<Test>]
+    member _.VerifyAsyncReadDoesNotEmitRelationshipWritesAndEnsureOperationsDo() =
+        let measurements = ResizeArray<string * string>()
+        use listener = new MeterListener()
+
+        listener.InstrumentPublished <-
+            fun instrument meterListener ->
+                if instrument.Meter.Name = ManifestContributionTelemetry.InstrumentationName
+                   && instrument.Name = "grace.manifest_contribution.relationship.writes" then
+                    meterListener.EnableMeasurementEvents instrument
+
+        listener.SetMeasurementEventCallback<int64> (fun _ _ tags _ ->
+            let mutable operation = String.Empty
+            let mutable outcome = String.Empty
+
+            for tag in tags do
+                if tag.Key = "operation" then operation <- string tag.Value
+                elif tag.Key = "outcome" then outcome <- string tag.Value
+
+            measurements.Add(operation, outcome))
+
+        listener.Start()
+
+        let relationship =
+            ExactRelationship.ReferenceRoot
+                {
+                    RepositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+                    RootDirectoryVersionId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+                    ReferenceId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+                }
+
+        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.Verify relationship "present"
+        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.Verify relationship "absent"
+
+        Assert.That(measurements, Is.Empty, "VerifyAsync maps to Verify at the typed telemetry seam and must remain read-only.")
+
+        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.EnsurePresent relationship "changed"
+        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.EnsurePresent relationship "already_converged"
+        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.EnsureAbsent relationship "changed"
+        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.EnsureAbsent relationship "already_converged"
+
+        Assert.That(
+            measurements,
+            Is.EquivalentTo(
+                [|
+                    "ensure_present", "changed"
+                    "ensure_present", "already_converged"
+                    "ensure_absent", "changed"
+                    "ensure_absent", "already_converged"
+                |]
+            )
+        )
+
+    /// Proves the Redis instrument publishes only the typed Get and Set operation outcomes.
+    [<Test>]
+    member _.RedisOperationsEmitTypedGetAndSetOutcomes() =
+        let measurements = ResizeArray<string * string>()
+        use listener = new MeterListener()
+
+        listener.InstrumentPublished <-
+            fun instrument meterListener ->
+                if instrument.Meter.Name = ManifestContributionTelemetry.InstrumentationName
+                   && instrument.Name = "grace.manifest_contribution.redis.operations" then
+                    meterListener.EnableMeasurementEvents instrument
+
+        listener.SetMeasurementEventCallback<int64> (fun _ _ tags _ ->
+            let mutable operation = String.Empty
+            let mutable outcome = String.Empty
+
+            for tag in tags do
+                if tag.Key = "operation" then operation <- string tag.Value
+                elif tag.Key = "outcome" then outcome <- string tag.Value
+
+            measurements.Add(operation, outcome))
+
+        listener.Start()
+
+        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Get "hit"
+        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Get "miss"
+        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Set "confirmed"
+        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Set "unconfirmed"
+
+        Assert.That(
+            measurements,
+            Is.EquivalentTo(
+                [|
+                    "get", "hit"
+                    "get", "miss"
+                    "set", "confirmed"
+                    "set", "unconfirmed"
+                |]
+            )
+        )
+
+    /// Proves repair telemetry counts each applied action observation and emits nothing for an empty applied prefix.
+    [<Test>]
+    member _.RepairActionsCountAppliedObservationsAndIgnoreEmptyPrefixes() =
+        let measurements = ResizeArray<string * string>()
+        use listener = new MeterListener()
+
+        listener.InstrumentPublished <-
+            fun instrument meterListener ->
+                if instrument.Meter.Name = ManifestContributionTelemetry.InstrumentationName
+                   && instrument.Name = "grace.manifest_contribution.repair.actions" then
+                    meterListener.EnableMeasurementEvents instrument
+
+        listener.SetMeasurementEventCallback<int64> (fun _ _ tags _ ->
+            let mutable operation = String.Empty
+            let mutable outcome = String.Empty
+
+            for tag in tags do
+                if tag.Key = "operation" then operation <- string tag.Value
+                elif tag.Key = "outcome" then outcome <- string tag.Value
+
+            measurements.Add(operation, outcome))
+
+        listener.Start()
+
+        ManifestContributionTelemetry.recordRepairActions Array.empty "verified_complete"
+        Assert.That(measurements, Is.Empty)
+
+        ManifestContributionTelemetry.recordRepairActions
+            [|
+                "GetOrAddExactRelationship"
+                "ReconcileRepositoryContentCount"
+            |]
+            "verified_complete"
+
+        Assert.That(
+            measurements,
+            Is.EquivalentTo(
+                [|
+                    "GetOrAddExactRelationship", "verified_complete"
+                    "ReconcileRepositoryContentCount", "verified_complete"
+                |]
+            )
+        )
+
     /// Proves malformed and JSON-null payloads dead-letter once with fixed redacted evidence.
     [<TestCase("{not-json")>]
     [<TestCase("null")>]
