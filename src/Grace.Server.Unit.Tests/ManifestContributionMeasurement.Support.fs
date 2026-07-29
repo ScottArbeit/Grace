@@ -122,12 +122,17 @@ module ManifestContributionMeasurementContracts =
             DeadLetter
         |]
 
-    /// Lists exact terminal telemetry requirements for every state-producing scenario before the first server stop.
+    /// Counts each pre-stop branch-creation delivery and its explicit scenario Reference before the first server stop.
     let PreStopTerminalTelemetry: MeasurementTerminalTelemetryRequirement array =
         [|
-            { Scenario = Baseline.Scenario; ExpectedDeliveries = 2 }
-            { Scenario = HotManifest.Scenario; ExpectedDeliveries = 3 }
-            { Scenario = HighlySharedDirectoryVersion.Scenario; ExpectedDeliveries = 3 }
+            { Scenario = Baseline.Scenario; ExpectedDeliveries = Baseline.CreatedReferenceCount * 2 }
+            { Scenario = HotManifest.Scenario; ExpectedDeliveries = HotManifest.CreatedReferenceCount * 2 }
+            {
+                Scenario = HighlySharedDirectoryVersion.Scenario
+                ExpectedDeliveries =
+                    HighlySharedDirectoryVersion.CreatedReferenceCount
+                    * 2
+            }
         |]
 
 /// Provides pure classification and bounded evidence behavior used by the hosted measurement fixture.
@@ -458,6 +463,7 @@ type MeasurementEvidenceSink(rootDirectory: string) =
     let mutable sequence = 0
     let failures = ResizeArray<string>()
     let assertionsByScenario = Dictionary<string, ResizeArray<MeasurementAssertion>>(StringComparer.Ordinal)
+    let failedScenarios = HashSet<string>(StringComparer.Ordinal)
 
     do Directory.CreateDirectory(rootDirectory) |> ignore
 
@@ -471,6 +477,9 @@ type MeasurementEvidenceSink(rootDirectory: string) =
     member _.Sample(scenario: string, sampleType: string, correlationKey: string, measurements: (string * obj) seq) =
         sequence <- sequence + 1
         let values = Dictionary<string, obj>(StringComparer.Ordinal)
+
+        if sampleType.Equals("failure", StringComparison.Ordinal) then
+            failedScenarios.Add scenario |> ignore
 
         measurements
         |> Seq.iter (fun (name, value) -> values[name] <- value)
@@ -516,17 +525,20 @@ type MeasurementEvidenceSink(rootDirectory: string) =
         if not passed then
             failures.Add($"{scenario}/{assertionId}: expected {expected}; actual {actual}")
 
-    /// Writes a terminal summary whose success and count come from the scenario's recorded assertions.
+    /// Writes a terminal summary whose assertion truth cannot override an already recorded runtime failure.
     member _.Summary(scenario: string, startedAtUtc: DateTimeOffset, expectedAssertionCount: int, evidenceFiles: string array) =
         let recordedAssertions =
             match assertionsByScenario.TryGetValue scenario with
             | true, assertions -> assertions.ToArray()
             | false, _ -> Array.empty
 
+        let runtimeFailed = failedScenarios.Contains scenario
+
         let passed =
             recordedAssertions.Length = expectedAssertionCount
             && (recordedAssertions
                 |> Array.forall (fun assertion -> assertion.passed))
+            && not runtimeFailed
 
         let summary: ScenarioSummary =
             {
@@ -540,7 +552,9 @@ type MeasurementEvidenceSink(rootDirectory: string) =
 
         ManifestContributionMeasurementSupport.appendEvidenceRecord summariesPath summary
 
-        if not passed then
+        if runtimeFailed then
+            failures.Add($"{scenario}/summary: recorded runtime failure")
+        elif not passed then
             failures.Add($"{scenario}/summary: expected {expectedAssertionCount} passing assertions; actual {recordedAssertions.Length} recorded assertions")
 
     /// Fails the grouped fixture after every selected scenario has had an opportunity to preserve evidence.

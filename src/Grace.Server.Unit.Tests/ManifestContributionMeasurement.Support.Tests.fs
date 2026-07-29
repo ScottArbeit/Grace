@@ -412,9 +412,9 @@ other_metric_total{outcome="completed"} 99 1785304963133
             |> Array.map (fun requirement -> requirement.Scenario, requirement.ExpectedDeliveries),
             Is.EqualTo<(string * int) array>(
                 [|
-                    "Baseline", 2
-                    "HotManifest", 3
-                    "HighlySharedDirectoryVersion", 3
+                    "Baseline", 4
+                    "HotManifest", 6
+                    "HighlySharedDirectoryVersion", 6
                 |]
             )
         )
@@ -521,6 +521,44 @@ other_metric_total{outcome="completed"} 99 1785304963133
                     Assert.That(assertion.GetProperty("passed").GetBoolean(), Is.False)
                     Assert.That(summary.GetProperty("passed").GetBoolean(), Is.False)
                     Assert.That(summary.GetProperty("assertionCount").GetInt32(), Is.EqualTo(1)))
+            )
+        finally
+            if Directory.Exists root then Directory.Delete(root, true)
+
+    /// Verifies a recorded runtime failure overrides otherwise passing assertions in both the artifact and grouped ledger.
+    [<Test>]
+    member _.ScenarioSummaryRejectsRecordedRuntimeFailure() =
+        let root = Path.Combine(Path.GetTempPath(), "grace-server-unit-tests", $"mca-runtime-failure-summary-{Guid.NewGuid():N}")
+
+        try
+            let sink = MeasurementEvidenceSink root
+            sink.Assertion("Regression", "passing-assertion", "Passing assertion", true, true, true, [||])
+
+            sink.Sample(
+                "Regression",
+                "failure",
+                "Regression",
+                [
+                    ("diagnostic", box "terminal telemetry timed out")
+                ]
+            )
+
+            sink.Summary("Regression", DateTimeOffset.UtcNow, 1, [||])
+
+            let summary =
+                ManifestContributionMeasurementSupport.readEvidenceRecords (Path.Combine(root, "summaries.ndjson"))
+                |> Array.exactlyOne
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(summary.GetProperty("passed").GetBoolean(), Is.False)
+
+                    Assert.That(
+                        Action(fun () -> sink.FailIfNeeded(Array.empty)),
+                        Throws
+                            .TypeOf<AssertionException>()
+                            .With.Message.Contains("Regression/summary: recorded runtime failure")
+                    ))
             )
         finally
             if Directory.Exists root then Directory.Delete(root, true)
