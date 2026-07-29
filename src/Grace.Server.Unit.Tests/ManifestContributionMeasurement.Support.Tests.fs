@@ -351,6 +351,52 @@ other_metric_total 99 1785304963133
     member _.DuplicateBacklogContractDeclaresSixAssertions() =
         Assert.That(ManifestContributionMeasurementContracts.DuplicateBacklogRecovery.ExpectedAssertionCount, Is.EqualTo(6))
 
+    /// Verifies every scenario before the first server stop owns an exact terminal telemetry requirement.
+    [<Test>]
+    member _.PreStopScenariosRequireExactTerminalTelemetry() =
+        let requirements = ManifestContributionMeasurementContracts.PreStopTerminalTelemetry
+
+        Assert.That(
+            requirements
+            |> Array.map (fun requirement -> requirement.Scenario, requirement.ExpectedDeliveries),
+            Is.EqualTo<(string * int) array>(
+                [|
+                    "Baseline", 2
+                    "HotManifest", 3
+                    "HighlySharedDirectoryVersion", 3
+                |]
+            )
+        )
+
+        Assert.DoesNotThrow(
+            Action (fun () ->
+                ManifestContributionMeasurementSupport.requirePreStopTerminalTelemetry
+                    ManifestContributionMeasurementContracts.All
+                    ManifestContributionMeasurementContracts.DuplicateBacklogRecovery
+                    requirements)
+        )
+
+        let missingHotManifest =
+            requirements
+            |> Array.filter (fun requirement ->
+                requirement.Scenario
+                <> ManifestContributionMeasurementContracts.HotManifest.Scenario)
+
+        Assert.That(
+            Action (fun () ->
+                ManifestContributionMeasurementSupport.requirePreStopTerminalTelemetry
+                    ManifestContributionMeasurementContracts.All
+                    ManifestContributionMeasurementContracts.DuplicateBacklogRecovery
+                    missingHotManifest),
+            Throws
+                .TypeOf<InvalidOperationException>()
+                .With
+                .Message
+                .EqualTo(
+                    "Pre-stop terminal telemetry inventory mismatch: expected [Baseline, HotManifest, HighlySharedDirectoryVersion]; actual [Baseline, HighlySharedDirectoryVersion]."
+                )
+        )
+
     /// Verifies canonical metadata order matches execution, with Repair before terminal DeadLetter.
     [<Test>]
     member _.ScenarioContractsPreserveExecutionOrder() =

@@ -700,6 +700,12 @@ type ManifestContributionMeasurementAspireTests() =
             let evidence = MeasurementEvidenceSink evidenceRoot
 
             let scenarioContracts = ManifestContributionMeasurementContracts.All
+            let preStopTerminalTelemetry = ManifestContributionMeasurementContracts.PreStopTerminalTelemetry
+
+            ManifestContributionMeasurementSupport.requirePreStopTerminalTelemetry
+                scenarioContracts
+                ManifestContributionMeasurementContracts.DuplicateBacklogRecovery
+                preStopTerminalTelemetry
 
             let scenarios =
                 scenarioContracts
@@ -756,8 +762,43 @@ type ManifestContributionMeasurementAspireTests() =
                     let scenario = contract.Scenario
                     let startedAt = DateTimeOffset.UtcNow
 
+                    let terminalTelemetryRequirement =
+                        preStopTerminalTelemetry
+                        |> Array.tryFind (fun requirement -> requirement.Scenario.Equals(scenario, StringComparison.Ordinal))
+
                     try
+                        let! terminalTelemetryBefore =
+                            match terminalTelemetryRequirement with
+                            | Some _ ->
+                                task {
+                                    let! metrics =
+                                        ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory $"{scenario}-terminal-before"
+
+                                    return Some metrics
+                                }
+                            | None -> Task.FromResult None
+
                         do! operation ()
+
+                        match terminalTelemetryRequirement, terminalTelemetryBefore with
+                        | Some requirement, Some metricsBefore ->
+                            let! _ =
+                                ManifestContributionMeasurementRuntime.waitForMetricsAsync
+                                    state
+                                    evidence.RootDirectory
+                                    $"{scenario}-terminal-after"
+                                    (fun current ->
+                                        ManifestContributionMeasurementSupport.hasExactTelemetryDelta
+                                            (float requirement.ExpectedDeliveries)
+                                            metricsBefore.Messages
+                                            metricsBefore.DurationCount
+                                            current.Messages
+                                            current.DurationCount)
+
+                            ()
+                        | None, None -> ()
+                        | _ -> invalidOp $"Scenario '{scenario}' has inconsistent terminal telemetry configuration."
+
                         evidence.Summary(scenario, startedAt, contract.ExpectedAssertionCount, [| evidence.SamplesPath |])
                     with
                     | ex ->
@@ -770,6 +811,8 @@ type ManifestContributionMeasurementAspireTests() =
                         evidence.Sample(scenario, "failure", scenario, [ ("diagnostic", box diagnostic) ])
                         evidence.Summary(scenario, startedAt, contract.ExpectedAssertionCount, [| evidence.SamplesPath |])
                         runtimeFailures.Add($"{scenario}: {ex.GetType().Name}: {ex.Message}")
+
+                        if terminalTelemetryRequirement.IsSome then return raise ex
                 }
 
             do!

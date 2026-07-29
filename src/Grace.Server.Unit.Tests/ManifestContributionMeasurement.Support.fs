@@ -67,6 +67,9 @@ type MeasurementRun =
 /// Declares the assertion and identity cardinalities one runtime scenario must contribute.
 type MeasurementScenarioContract = { Scenario: string; ExpectedAssertionCount: int; CreatedReferenceCount: int; DistinctDirectoryVersionCount: int }
 
+/// Declares the exact terminal message and duration telemetry one pre-stop scenario must publish.
+type MeasurementTerminalTelemetryRequirement = { Scenario: string; ExpectedDeliveries: int }
+
 /// Reports whether collected runtime identities satisfy the grouped scenario contract.
 type MeasurementIdentityIsolation =
     {
@@ -117,6 +120,14 @@ module ManifestContributionMeasurementContracts =
             ServerRestartRecovery
             Repair
             DeadLetter
+        |]
+
+    /// Lists exact terminal telemetry requirements for every state-producing scenario before the first server stop.
+    let PreStopTerminalTelemetry: MeasurementTerminalTelemetryRequirement array =
+        [|
+            { Scenario = Baseline.Scenario; ExpectedDeliveries = 2 }
+            { Scenario = HotManifest.Scenario; ExpectedDeliveries = 3 }
+            { Scenario = HighlySharedDirectoryVersion.Scenario; ExpectedDeliveries = 3 }
         |]
 
 /// Provides pure classification and bounded evidence behavior used by the hosted measurement fixture.
@@ -220,6 +231,35 @@ module ManifestContributionMeasurementSupport =
     let requireScenarioExecutionComplete (contracts: MeasurementScenarioContract array) (executedCount: int) : unit =
         if executedCount <> contracts.Length then
             raise (InvalidOperationException($"Scenario execution ended after {executedCount} entries; canonical contract requires {contracts.Length}."))
+
+    /// Rejects a lifecycle boundary whose preceding scenario inventory lacks an exact terminal telemetry requirement.
+    let requirePreStopTerminalTelemetry
+        (contracts: MeasurementScenarioContract array)
+        (stopBoundary: MeasurementScenarioContract)
+        (requirements: MeasurementTerminalTelemetryRequirement array)
+        : unit
+        =
+        let expectedScenarios =
+            contracts
+            |> Array.takeWhile (fun contract -> not (contract.Scenario.Equals(stopBoundary.Scenario, StringComparison.Ordinal)))
+            |> Array.map (fun contract -> contract.Scenario)
+
+        let actualScenarios =
+            requirements
+            |> Array.map (fun requirement -> requirement.Scenario)
+
+        if expectedScenarios <> actualScenarios then
+            let expectedText = String.Join(", ", expectedScenarios)
+            let actualText = String.Join(", ", actualScenarios)
+
+            raise (InvalidOperationException($"Pre-stop terminal telemetry inventory mismatch: expected [{expectedText}]; actual [{actualText}]."))
+
+        requirements
+        |> Array.iter (fun requirement ->
+            if requirement.ExpectedDeliveries <= 0 then
+                raise (
+                    InvalidOperationException($"Pre-stop terminal telemetry requirement '{requirement.Scenario}' must declare a positive exact delivery count.")
+                ))
 
     /// Polls until a terminal observation is reached or the bounded wait expires.
     let waitForTerminalStateAsync
