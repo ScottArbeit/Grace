@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="ManifestContributionMeasurement.Support.fs" />
+    <Compile Include="..\Grace.Server.Unit.Tests\ManifestContributionMeasurement.Support.fs" Link="ManifestContributionMeasurement.Support.fs" />
     <Compile Include="AspireTestHost.fs" />
     <Compile Include="AspireTestHost.Diagnostics.Tests.fs" />
     <Compile Include="OperationalFactsPublisher.AppHost.Tests.fs" />

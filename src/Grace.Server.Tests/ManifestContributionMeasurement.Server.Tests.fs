@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Azure.Messaging.ServiceBus
+open Azure.Storage.Blobs
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
@@ -15,7 +16,6 @@ open Grace.Types.RepositoryContentCounter
 open Microsoft.Azure.Cosmos
 open NUnit.Framework
 open System
-open System.Collections.Generic
 open System.Diagnostics
 open System.Globalization
 open System.IO
@@ -40,77 +40,6 @@ type private MeasurementManifestState =
 /// Carries cumulative server metrics exported through the authenticated Prometheus seam.
 type private MeasurementMetrics =
     { Messages: float; DurationCount: float; RelationshipWrites: float; RedisOperations: float; RepairActions: float; EvidenceFile: string }
-
-/// Writes typed, bounded evidence while retaining all failed assertion identifiers for one grouped run.
-type private MeasurementEvidenceSink(rootDirectory: string) =
-    let samplesPath = Path.Combine(rootDirectory, "samples.ndjson")
-    let assertionsPath = Path.Combine(rootDirectory, "assertions.ndjson")
-    let summariesPath = Path.Combine(rootDirectory, "summaries.ndjson")
-    let mutable sequence = 0
-    let failures = ResizeArray<string>()
-
-    do Directory.CreateDirectory(rootDirectory) |> ignore
-
-    /// Returns the directory that preserves every raw artifact for this run.
-    member _.RootDirectory = rootDirectory
-
-    /// Returns the typed sample stream path.
-    member _.SamplesPath = samplesPath
-
-    /// Appends one typed sample with a monotonic sequence number.
-    member _.Sample(scenario: string, sampleType: string, correlationKey: string, measurements: (string * obj) seq) =
-        sequence <- sequence + 1
-        let values = Dictionary<string, obj>(StringComparer.Ordinal)
-
-        measurements |> Seq.iter (fun (name, value) -> values[name] <- value)
-
-        let sample: MeasurementSample =
-            { schemaVersion = "1.0"
-              scenario = scenario
-              sampleType = sampleType
-              sequence = sequence
-              timestampUtc = DateTimeOffset.UtcNow
-              correlationKey = correlationKey
-              measurements = values }
-
-        ManifestContributionMeasurementSupport.appendEvidenceRecord samplesPath sample
-
-    /// Records one assertion without allowing a response label or log line to stand in for the actual value.
-    member _.Assertion(scenario: string, assertionId: string, description: string, expected: obj, actual: obj, passed: bool, evidenceFiles: string array) =
-        let assertion: MeasurementAssertion =
-            { assertionId = assertionId
-              scenario = scenario
-              description = description
-              expected = string expected
-              actual = string actual
-              passed = passed
-              evidenceFiles = evidenceFiles }
-
-        ManifestContributionMeasurementSupport.appendEvidenceRecord assertionsPath assertion
-
-        if not passed then
-            failures.Add($"{scenario}/{assertionId}: expected {expected}; actual {actual}")
-
-    /// Writes the terminal summary for one scenario.
-    member _.Summary(scenario: string, startedAtUtc: DateTimeOffset, passed: bool, assertionCount: int, evidenceFiles: string array) =
-        let summary: ScenarioSummary =
-            { scenario = scenario
-              startedAtUtc = startedAtUtc
-              completedAtUtc = DateTimeOffset.UtcNow
-              passed = passed
-              assertionCount = assertionCount
-              evidenceFiles = evidenceFiles }
-
-        ManifestContributionMeasurementSupport.appendEvidenceRecord summariesPath summary
-
-    /// Fails the grouped fixture after every selected scenario has had an opportunity to preserve evidence.
-    member _.FailIfNeeded(runtimeFailures: string array) =
-        let allFailures = Seq.append failures runtimeFailures |> Seq.distinct |> Seq.toArray
-
-        if allFailures.Length > 0 then
-            let bounded = allFailures |> Array.truncate 20 |> String.concat Environment.NewLine
-
-            Assert.Fail($"Manifest contribution measurement scenarios failed. Artifacts={rootDirectory}{Environment.NewLine}{bounded}")
 
 /// Implements deterministic runtime operations through production HTTP, broker, actor, and exact-relationship seams.
 module private ManifestContributionMeasurementRuntime =
@@ -162,6 +91,32 @@ module private ManifestContributionMeasurementRuntime =
                 Assert.Fail($"HTTP {int response.StatusCode} {response.StatusCode}: {boundedBody}")
 
             return body
+        }
+
+    /// Creates an isolated repository and returns the server-generated default branch used only by the grouped measurement fixture.
+    let createDedicatedRepositoryAsync (state: TestHostState) =
+        task {
+            let repositoryId = $"{Guid.NewGuid()}"
+            let parameters = Parameters.Repository.CreateRepositoryParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.RepositoryName <- $"mca-runtime-{Guid.NewGuid():N}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = state.Client.PostAsync("/repository/create", createJsonContent parameters)
+            let! body = requireSuccessAsync response
+            let returnValue = deserialize<GraceReturnValue<string>> body
+            let defaultBranchId = Common.requireGuidProperty (nameof BranchId) returnValue.Properties[nameof BranchId]
+            let storageConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
+
+            if not (String.IsNullOrWhiteSpace storageConnectionString) then
+                let serviceClient = BlobServiceClient(storageConnectionString)
+                let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
+                let! _ = containerClient.CreateIfNotExistsAsync()
+                ()
+
+            return repositoryId, $"{defaultBranchId}"
         }
 
     /// Creates deterministic bytes so repeated local runs retain reproducible content without sharing addresses across assets.
@@ -591,28 +546,21 @@ module private ManifestContributionMeasurementRuntime =
     /// Waits for the server subscription to expose or settle an exact finite message set.
     let waitForActiveMessageSetAsync (state: TestHostState) (expectedIds: Set<string>) (shouldBePresent: bool) =
         task {
-            let stopwatch = Stopwatch.StartNew()
-            let mutable matched = Set.empty
+            let isTerminal matched = if shouldBePresent then matched = expectedIds else matched.IsEmpty
 
-            while stopwatch.Elapsed < scenarioTimeout
-                  && (if shouldBePresent then matched <> expectedIds else not matched.IsEmpty) do
-                let! current = peekActiveMessageIdsAsync state expectedIds
-                matched <- current
+            try
+                let! _ =
+                    ManifestContributionMeasurementSupport.waitForTerminalStateAsync
+                        scenarioTimeout
+                        (TimeSpan.FromMilliseconds 250.0)
+                        (fun () -> peekActiveMessageIdsAsync state expectedIds)
+                        isTerminal
 
-                if (if shouldBePresent then matched <> expectedIds else not matched.IsEmpty) then
-                    do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
-
-            let passed = if shouldBePresent then matched = expectedIds else matched.IsEmpty
-
-            if not passed then
+                return ()
+            with :? TimeoutException as ex ->
                 let expectedText = String.Join(",", expectedIds)
-                let matchedText = String.Join(",", matched)
 
-                raise (
-                    TimeoutException(
-                        $"Timed out waiting for active message set. ExpectedPresent={shouldBePresent}; Expected={expectedText}; Matched={matchedText}"
-                    )
-                )
+                raise (TimeoutException($"Timed out waiting for active message set. ExpectedPresent={shouldBePresent}; Expected={expectedText}.", ex))
         }
 
     /// Sends one valid unrelated Grace event with a deterministic broker identity.
@@ -757,8 +705,7 @@ type ManifestContributionMeasurementAspireTests() =
 
             ManifestContributionMeasurementSupport.appendEvidenceRecord (Path.Combine(evidenceRoot, "run.ndjson")) run
 
-            let repositoryId = repositoryIds[2]
-            let defaultBranchId = repositoryDefaultBranchIds[2]
+            let! repositoryId, defaultBranchId = ManifestContributionMeasurementRuntime.createDedicatedRepositoryAsync state
             let! defaultBranch = BranchServerTestHelpers.getBranchAsync repositoryId defaultBranchId
             let runtimeFailures = ResizeArray<string>()
             let stableJson value = JsonSerializer.Serialize(value, Constants.JsonSerializerOptions)
@@ -777,7 +724,7 @@ type ManifestContributionMeasurementAspireTests() =
 
                     try
                         do! operation ()
-                        evidence.Summary(scenario, startedAt, true, assertionCount, [| evidence.SamplesPath |])
+                        evidence.Summary(scenario, startedAt, assertionCount, [| evidence.SamplesPath |])
                     with ex ->
                         let diagnostic =
                             ManifestContributionMeasurementSupport.formatBoundedDiagnostic
@@ -786,7 +733,7 @@ type ManifestContributionMeasurementAspireTests() =
                                 [ ex.StackTrace ]
 
                         evidence.Sample(scenario, "failure", scenario, [ ("diagnostic", box diagnostic) ])
-                        evidence.Summary(scenario, startedAt, false, assertionCount, [| evidence.SamplesPath |])
+                        evidence.Summary(scenario, startedAt, assertionCount, [| evidence.SamplesPath |])
                         runtimeFailures.Add($"{scenario}: {ex.GetType().Name}: {ex.Message}")
                 }
 

@@ -7,6 +7,7 @@ open System.IO
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
+open System.Threading.Tasks
 
 /// Carries the stable result fields returned by an Aspire resource command.
 type ResourceCommandObservation = { Success: bool; Canceled: bool; Message: string }
@@ -71,6 +72,30 @@ module ManifestContributionMeasurementSupport =
     let commandRequiresHealthyResource (commandName: string) : bool =
         commandName.Equals("resource-start", StringComparison.OrdinalIgnoreCase)
         || commandName.Equals("resource-restart", StringComparison.OrdinalIgnoreCase)
+
+    /// Polls until a terminal observation is reached or the bounded wait expires.
+    let waitForTerminalStateAsync
+        (timeout: TimeSpan)
+        (pollInterval: TimeSpan)
+        (observeAsync: unit -> Task<'state>)
+        (isTerminal: 'state -> bool)
+        : Task<'state>
+        =
+        task {
+            let stopwatch = Diagnostics.Stopwatch.StartNew()
+            let! initialObservation = observeAsync ()
+            let mutable current = initialObservation
+
+            while stopwatch.Elapsed < timeout && not (isTerminal current) do
+                do! Task.Delay pollInterval
+                let! nextObservation = observeAsync ()
+                current <- nextObservation
+
+            if not (isTerminal current) then
+                raise (TimeoutException("Timed out waiting for terminal observed state."))
+
+            return current
+        }
 
     /// Replaces recognized credential values while retaining non-secret endpoint and state context.
     let private redactDiagnosticSecrets (diagnostic: string) =
@@ -164,3 +189,96 @@ module ManifestContributionMeasurementSupport =
             with :? JsonException as ex ->
                 raise (InvalidDataException($"Evidence record {index + 1} is not valid JSON.", ex)))
         |> Seq.toArray
+
+/// Writes typed, bounded evidence while retaining all failed assertion identifiers for one grouped run.
+type MeasurementEvidenceSink(rootDirectory: string) =
+    let samplesPath = Path.Combine(rootDirectory, "samples.ndjson")
+    let assertionsPath = Path.Combine(rootDirectory, "assertions.ndjson")
+    let summariesPath = Path.Combine(rootDirectory, "summaries.ndjson")
+    let mutable sequence = 0
+    let failures = ResizeArray<string>()
+    let assertionsByScenario = Dictionary<string, ResizeArray<MeasurementAssertion>>(StringComparer.Ordinal)
+
+    do Directory.CreateDirectory(rootDirectory) |> ignore
+
+    /// Returns the directory that preserves every raw artifact for this run.
+    member _.RootDirectory = rootDirectory
+
+    /// Returns the typed sample stream path.
+    member _.SamplesPath = samplesPath
+
+    /// Appends one typed sample with a monotonic sequence number.
+    member _.Sample(scenario: string, sampleType: string, correlationKey: string, measurements: (string * obj) seq) =
+        sequence <- sequence + 1
+        let values = Dictionary<string, obj>(StringComparer.Ordinal)
+
+        measurements |> Seq.iter (fun (name, value) -> values[name] <- value)
+
+        let sample: MeasurementSample =
+            { schemaVersion = "1.0"
+              scenario = scenario
+              sampleType = sampleType
+              sequence = sequence
+              timestampUtc = DateTimeOffset.UtcNow
+              correlationKey = correlationKey
+              measurements = values }
+
+        ManifestContributionMeasurementSupport.appendEvidenceRecord samplesPath sample
+
+    /// Records one assertion without allowing a response label or log line to stand in for the actual value.
+    member _.Assertion(scenario: string, assertionId: string, description: string, expected: obj, actual: obj, passed: bool, evidenceFiles: string array) =
+        let assertion: MeasurementAssertion =
+            { assertionId = assertionId
+              scenario = scenario
+              description = description
+              expected = string expected
+              actual = string actual
+              passed = passed
+              evidenceFiles = evidenceFiles }
+
+        ManifestContributionMeasurementSupport.appendEvidenceRecord assertionsPath assertion
+
+        let scenarioAssertions =
+            match assertionsByScenario.TryGetValue scenario with
+            | true, existing -> existing
+            | false, _ ->
+                let created = ResizeArray<MeasurementAssertion>()
+                assertionsByScenario[scenario] <- created
+                created
+
+        scenarioAssertions.Add assertion
+
+        if not passed then
+            failures.Add($"{scenario}/{assertionId}: expected {expected}; actual {actual}")
+
+    /// Writes a terminal summary whose success and count come from the scenario's recorded assertions.
+    member _.Summary(scenario: string, startedAtUtc: DateTimeOffset, expectedAssertionCount: int, evidenceFiles: string array) =
+        let recordedAssertions =
+            match assertionsByScenario.TryGetValue scenario with
+            | true, assertions -> assertions.ToArray()
+            | false, _ -> Array.empty
+
+        let passed =
+            recordedAssertions.Length = expectedAssertionCount
+            && (recordedAssertions |> Array.forall (fun assertion -> assertion.passed))
+
+        let summary: ScenarioSummary =
+            { scenario = scenario
+              startedAtUtc = startedAtUtc
+              completedAtUtc = DateTimeOffset.UtcNow
+              passed = passed
+              assertionCount = recordedAssertions.Length
+              evidenceFiles = evidenceFiles }
+
+        ManifestContributionMeasurementSupport.appendEvidenceRecord summariesPath summary
+
+        if not passed then
+            failures.Add($"{scenario}/summary: expected {expectedAssertionCount} passing assertions; actual {recordedAssertions.Length} recorded assertions")
+
+    /// Fails the grouped fixture after every selected scenario has had an opportunity to preserve evidence.
+    member _.FailIfNeeded(runtimeFailures: string array) =
+        let allFailures = Seq.append failures runtimeFailures |> Seq.distinct |> Seq.toArray
+
+        if allFailures.Length > 0 then
+            let bounded = allFailures |> Array.truncate 20 |> String.concat Environment.NewLine
+            NUnit.Framework.Assert.Fail($"Manifest contribution measurement scenarios failed. Artifacts={rootDirectory}{Environment.NewLine}{bounded}")
