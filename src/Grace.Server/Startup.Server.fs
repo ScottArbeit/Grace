@@ -1885,6 +1885,7 @@ module Application =
                         .AddAspNetCoreInstrumentation()
                         .AddMeter("Microsoft.AspNetCore.Hosting")
                         .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
+                        .AddMeter(ManifestContributionTelemetry.InstrumentationName)
                         .AddPrometheusExporter(fun prometheusOptions -> prometheusOptions.ScrapeEndpointPath <- "/metrics")
                     |> ignore
 
@@ -1901,6 +1902,7 @@ module Application =
                         .AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
                         .AddSource(graceServerAppId)
+                        .AddSource(ManifestContributionTelemetry.InstrumentationName)
                     |> ignore
 
                     if

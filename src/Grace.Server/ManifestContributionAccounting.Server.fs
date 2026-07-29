@@ -56,9 +56,17 @@ module ManifestContributionAccounting =
                     try
                         let! _ = container.CreateItemAsync(document, PartitionKey key.PartitionKey, cancellationToken = cancellationToken)
 
+                        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.EnsurePresent relationship "changed"
+
                         return ExactRelationshipWriteOutcome.Changed
                     with
-                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict -> return ExactRelationshipWriteOutcome.AlreadyConverged
+                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.Conflict ->
+                        ManifestContributionTelemetry.recordRelationship
+                            ManifestContributionRelationshipOperation.EnsurePresent
+                            relationship
+                            "already_converged"
+
+                        return ExactRelationshipWriteOutcome.AlreadyConverged
                 }
 
             member _.EnsureAbsentAsync(relationship, cancellationToken) =
@@ -73,9 +81,14 @@ module ManifestContributionAccounting =
                                 cancellationToken = cancellationToken
                             )
 
+                        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.EnsureAbsent relationship "changed"
+
                         return ExactRelationshipWriteOutcome.Changed
                     with
-                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> return ExactRelationshipWriteOutcome.AlreadyConverged
+                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound ->
+                        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.EnsureAbsent relationship "already_converged"
+
+                        return ExactRelationshipWriteOutcome.AlreadyConverged
                 }
 
             member _.EnumerateAsync(partition, bound, continuationToken, cancellationToken) =
@@ -128,9 +141,14 @@ module ManifestContributionAccounting =
                         let! _ =
                             container.ReadItemAsync<ExactRelationshipDocument>(key.ItemId, PartitionKey key.PartitionKey, cancellationToken = cancellationToken)
 
+                        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.Verify relationship "present"
+
                         return ExactRelationshipPresence.Present
                     with
-                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> return ExactRelationshipPresence.Absent
+                    | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound ->
+                        ManifestContributionTelemetry.recordRelationship ManifestContributionRelationshipOperation.Verify relationship "absent"
+
+                        return ExactRelationshipPresence.Absent
                 }
 
     /// Provides current actor reads and exact mutation effects to the provider-neutral convergence loop.

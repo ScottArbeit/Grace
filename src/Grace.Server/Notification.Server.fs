@@ -31,6 +31,7 @@ open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
 open System
 open System.Collections.Generic
+open System.Diagnostics
 open System.Linq
 open System.Text.Json
 open System.Text.RegularExpressions
@@ -429,6 +430,131 @@ module Notification =
 
     /// Contains Grace Server subscriber behavior and supporting helpers.
     module Subscriber =
+
+        /// Carries only delivery metadata needed for structured diagnostics and activity correlation.
+        type GraceEventMessageMetadata = { MessageId: string; CorrelationId: string; DeliveryCount: int }
+
+        /// Supplies the parse, handler, and broker settlement effects for one testable delivery.
+        type GraceEventSettlementDependencies =
+            {
+                Parse: BinaryData -> Result<GraceEvent, string>
+                Handle: GraceEvent -> CancellationToken -> Task
+                Complete: CancellationToken -> Task
+                Abandon: CancellationToken -> Task
+                DeadLetter: string -> string -> CancellationToken -> Task
+            }
+
+        /// Provides fixed bounded dead-letter evidence without retaining message payload or parser details.
+        [<Literal>]
+        let internal MalformedGraceEventDescription = "The Service Bus message body is not a supported GraceEvent."
+
+        /// Records one processor SDK callback with structured broker context and no custom delay or retry.
+        let internal handleProcessorErrorWith (logger: ILogger) (error: Exception) errorSource entityPath fullyQualifiedNamespace identifier =
+            logger.LogError(
+                error,
+                "Grace pub-sub processor fault. ErrorSource: {ErrorSource}; EntityPath: {EntityPath}; FullyQualifiedNamespace: {FullyQualifiedNamespace}; Identifier: {Identifier}.",
+                errorSource,
+                entityPath,
+                fullyQualifiedNamespace,
+                identifier
+            )
+
+            Task.CompletedTask
+
+        /// Processes one Service Bus delivery through exactly one truthful settlement intent.
+        let internal processGraceEventWith
+            (dependencies: GraceEventSettlementDependencies)
+            (metadata: GraceEventMessageMetadata)
+            (body: BinaryData)
+            (cancellationToken: CancellationToken)
+            =
+            task {
+                cancellationToken.ThrowIfCancellationRequested()
+                use activity = ManifestContributionTelemetry.startMessageActivity metadata.MessageId metadata.CorrelationId metadata.DeliveryCount
+
+                let stopwatch = Stopwatch.StartNew()
+
+                match dependencies.Parse body with
+                | Error _ ->
+                    try
+                        do! dependencies.DeadLetter "MalformedGraceEvent" MalformedGraceEventDescription cancellationToken
+                        stopwatch.Stop()
+
+                        ManifestContributionTelemetry.recordMessage
+                            ManifestContributionProcessingStage.Parse
+                            ManifestContributionMessageOutcome.DeadLettered
+                            stopwatch.Elapsed.TotalMilliseconds
+                    with
+                    | ex ->
+                        stopwatch.Stop()
+
+                        ManifestContributionTelemetry.recordMessage
+                            ManifestContributionProcessingStage.Settle
+                            ManifestContributionMessageOutcome.SettlementFailed
+                            stopwatch.Elapsed.TotalMilliseconds
+
+                        return raise ex
+                | Ok graceEvent ->
+                    let! handlerError =
+                        task {
+                            try
+                                do! dependencies.Handle graceEvent cancellationToken
+                                cancellationToken.ThrowIfCancellationRequested()
+                                return None
+                            with
+                            | :? OperationCanceledException as ex ->
+                                stopwatch.Stop()
+
+                                ManifestContributionTelemetry.recordMessage
+                                    ManifestContributionProcessingStage.Handle
+                                    ManifestContributionMessageOutcome.SettlementFailed
+                                    stopwatch.Elapsed.TotalMilliseconds
+
+                                return raise ex
+                            | ex -> return Some ex
+                        }
+
+                    match handlerError with
+                    | None ->
+                        try
+                            do! dependencies.Complete cancellationToken
+                            stopwatch.Stop()
+
+                            ManifestContributionTelemetry.recordMessage
+                                ManifestContributionProcessingStage.Settle
+                                ManifestContributionMessageOutcome.Completed
+                                stopwatch.Elapsed.TotalMilliseconds
+                        with
+                        | ex ->
+                            stopwatch.Stop()
+
+                            ManifestContributionTelemetry.recordMessage
+                                ManifestContributionProcessingStage.Settle
+                                ManifestContributionMessageOutcome.SettlementFailed
+                                stopwatch.Elapsed.TotalMilliseconds
+
+                            return raise ex
+                    | Some _ ->
+                        try
+                            do! dependencies.Abandon cancellationToken
+                            stopwatch.Stop()
+
+                            ManifestContributionTelemetry.recordMessage
+                                ManifestContributionProcessingStage.Handle
+                                ManifestContributionMessageOutcome.Abandoned
+                                stopwatch.Elapsed.TotalMilliseconds
+                        with
+                        | ex ->
+                            stopwatch.Stop()
+
+                            ManifestContributionTelemetry.recordMessage
+                                ManifestContributionProcessingStage.Settle
+                                ManifestContributionMessageOutcome.SettlementFailed
+                                stopwatch.Elapsed.TotalMilliseconds
+
+                            return raise ex
+            }
+
         /// Gets the ReferenceDto for the given ReferenceId.
         let getReferenceDto referenceId repositoryId correlationId =
             task {
@@ -910,6 +1036,8 @@ module Notification =
                                                   referenceType,
                                                   referenceText,
                                                   links) ->
+                        ManifestContributionTelemetry.enrichReferenceActivity $"{referenceId:D}" $"{repositoryId:D}" $"{directoryId:D}" $"{referenceType}"
+
                         /// Emits the same-branch notification after Reference replay and branch recomputation complete.
                         let emitCurrentBranchReference branchName =
                             task {
@@ -1271,38 +1399,68 @@ module Notification =
 
             /// Coordinates handle processor error processing for Grace Server.
             let handleProcessorError (args: ProcessErrorEventArgs) =
-                task {
-                    //subscriptionLog.LogError(
-                    //    args.Exception,
-                    //    "Grace pub-sub processor fault. ErrorSource: {ErrorSource}; EntityPath: {EntityPath}.",
-                    //    args.ErrorSource,
-                    //    args.EntityPath
-                    //)
-
-                    subscriptionLog.LogWarning("Azure Service Bus not ready; pausing for five seconds to retry.")
-                    do! Task.Delay(TimeSpan.FromSeconds(5.0))
-                }
-                :> Task
+                handleProcessorErrorWith subscriptionLog args.Exception args.ErrorSource args.EntityPath args.FullyQualifiedNamespace args.Identifier
 
             /// Coordinates process grace event processing for Grace Server.
             let processGraceEvent (args: ProcessMessageEventArgs) =
                 task {
-                    try
-                        use bodyStream = args.Message.Body.ToStream()
-                        let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
+                    /// Parses one body without exposing payload or serializer diagnostics to settlement evidence.
+                    let parse (body: BinaryData) =
+                        try
+                            use bodyStream = body.ToStream()
+                            let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
 
-                        do! handleEvent graceEvent
-                        do! args.CompleteMessageAsync(args.Message, args.CancellationToken)
+                            if isNull (box graceEvent) then
+                                Error "GraceEvent JSON must not be null."
+                            else
+                                Ok graceEvent
+                        with
+                        | :? JsonException -> Error "The message body is not valid GraceEvent JSON."
+                        | :? NotSupportedException -> Error "The message body is not a supported GraceEvent."
+
+                    let dependencies =
+                        {
+                            Parse = parse
+                            Handle =
+                                fun graceEvent cancellationToken ->
+                                    task {
+                                        try
+                                            cancellationToken.ThrowIfCancellationRequested()
+                                            do! handleEvent graceEvent
+                                        with
+                                        | :? OperationCanceledException as ex -> return raise ex
+                                        | ex ->
+                                            subscriptionLog.LogError(
+                                                ex,
+                                                "GraceEvent handler failed for message {MessageId} (CorrelationId: {CorrelationId}); abandoning for broker retry.",
+                                                args.Message.MessageId,
+                                                args.Message.CorrelationId
+                                            )
+
+                                            return raise ex
+                                    }
+                                    :> Task
+                            Complete = fun cancellationToken -> args.CompleteMessageAsync(args.Message, cancellationToken)
+                            Abandon = fun cancellationToken -> args.AbandonMessageAsync(args.Message, cancellationToken = cancellationToken)
+                            DeadLetter =
+                                fun reason description cancellationToken -> args.DeadLetterMessageAsync(args.Message, reason, description, cancellationToken)
+                        }
+
+                    let metadata =
+                        { MessageId = args.Message.MessageId; CorrelationId = args.Message.CorrelationId; DeliveryCount = args.Message.DeliveryCount }
+
+                    try
+                        do! processGraceEventWith dependencies metadata args.Message.Body args.CancellationToken
                     with
                     | ex ->
                         subscriptionLog.LogError(
                             ex,
-                            "Failed to process GraceEvent message {MessageId} (CorrelationId: {CorrelationId}).",
+                            "GraceEvent settlement failed or was cancelled for message {MessageId} (CorrelationId: {CorrelationId}); no replacement settlement was attempted.",
                             args.Message.MessageId,
                             args.Message.CorrelationId
                         )
 
-                        do! args.AbandonMessageAsync(args.Message, cancellationToken = args.CancellationToken)
+                        return raise ex
                 }
 
             /// Implements start azure service bus processor for the server request pipeline.
