@@ -629,7 +629,7 @@ module private ManifestContributionMeasurementRuntime =
                 client.CreateReceiver(
                     state.ServiceBusTopic,
                     state.ServiceBusTestSubscription,
-                    ServiceBusReceiverOptions(SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock)
+                    ServiceBusReceiverOptions(SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete)
                 )
 
             use _deadLetterReceiver = deadLetterReceiver
@@ -640,15 +640,10 @@ module private ManifestContributionMeasurementRuntime =
                 let! message = deadLetterReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1.0))
 
                 if not (isNull message) then
-                    if message.MessageId = messageId then
-                        found <- Some message
-                    else
-                        do! deadLetterReceiver.CompleteMessageAsync(message)
+                    if message.MessageId = messageId then found <- Some message
 
             match found with
-            | Some message ->
-                do! deadLetterReceiver.CompleteMessageAsync(message)
-                return message.DeliveryCount, message.DeadLetterReason
+            | Some message -> return message.DeliveryCount, message.DeadLetterReason
             | None -> return raise (TimeoutException($"Message '{messageId}' did not reach the isolated test subscription DLQ."))
         }
 
@@ -689,7 +684,7 @@ module private ManifestContributionMeasurementRuntime =
         }
 
 /// Proves all supported manifest-accounting runtime scenarios in one serial shared Aspire session.
-[<TestFixture; NonParallelizable>]
+[<TestFixture; NonParallelizable; Order(2)>]
 type ManifestContributionMeasurementAspireTests() =
 
     /// Executes the complete local Product V1 measurement matrix without making Azure performance or availability claims.
@@ -909,7 +904,17 @@ type ManifestContributionMeasurementAspireTests() =
                         stopwatch.Stop()
                         baselineWitnesses <- witnesses
                         baselineStates <- states.ToArray()
-                        let! metricsAfter = ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory "baseline-after"
+                        let expectedDeliveries = float witnesses.Length
+
+                        let! metricsAfter =
+                            ManifestContributionMeasurementRuntime.waitForMetricsAsync state evidence.RootDirectory "baseline-after" (fun current ->
+                                ManifestContributionMeasurementSupport.hasExactTelemetryDelta
+                                    expectedDeliveries
+                                    metricsBefore.Messages
+                                    metricsBefore.DurationCount
+                                    current.Messages
+                                    current.DurationCount)
+
                         let messageDelta = metricsAfter.Messages - metricsBefore.Messages
 
                         let durationDelta =
@@ -920,9 +925,9 @@ type ManifestContributionMeasurementAspireTests() =
                             scenario,
                             "baseline-message-telemetry",
                             "Manifest message telemetry matches the two valid Reference-created deliveries.",
-                            float witnesses.Length,
+                            expectedDeliveries,
                             messageDelta,
-                            (messageDelta = float witnesses.Length),
+                            (messageDelta = expectedDeliveries),
                             [|
                                 metricsBefore.EvidenceFile
                                 metricsAfter.EvidenceFile
@@ -933,9 +938,9 @@ type ManifestContributionMeasurementAspireTests() =
                             scenario,
                             "baseline-duration-telemetry",
                             "Manifest duration telemetry count matches the two valid Reference-created deliveries.",
-                            float witnesses.Length,
+                            expectedDeliveries,
                             durationDelta,
-                            (durationDelta = float witnesses.Length),
+                            (durationDelta = expectedDeliveries),
                             [|
                                 metricsBefore.EvidenceFile
                                 metricsAfter.EvidenceFile
@@ -1193,12 +1198,10 @@ type ManifestContributionMeasurementAspireTests() =
                             |> Array.append [| unrelatedMessageId |]
                             |> Set.ofArray
 
-                        let mutable serverStopped = false
                         let stopwatch = Stopwatch.StartNew()
 
                         try
                             do! AspireTestHost.stopResourceAsync state "grace-server" scenario
-                            serverStopped <- true
                             let mutable index = 0
 
                             while index < baselineWitnesses.Length do
@@ -1208,13 +1211,10 @@ type ManifestContributionMeasurementAspireTests() =
                             do! ManifestContributionMeasurementRuntime.sendUnrelatedGraceEventAsync state unrelatedMessageId
                             do! ManifestContributionMeasurementRuntime.waitForActiveMessageSetAsync state messageIds true
                             do! AspireTestHost.startResourceAsync state "grace-server" scenario
-                            serverStopped <- false
                             do! ManifestContributionMeasurementRuntime.waitForActiveMessageSetAsync state messageIds false
                         with
                         | ex ->
-                            if serverStopped then
-                                do! AspireTestHost.startResourceAsync state "grace-server" $"{scenario}-recovery"
-
+                            do! AspireTestHost.ensureResourceRunningAsync state "grace-server" $"{scenario}-recovery"
                             return raise ex
 
                         stopwatch.Stop()
@@ -1313,10 +1313,20 @@ type ManifestContributionMeasurementAspireTests() =
                             |> Option.defaultWith (fun () -> invalidOp "HotManifest asset is required for Redis restart.")
 
                         let! before = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 3L
-                        do! AspireTestHost.restartResourceAsync state "redis" scenario
+
+                        try
+                            do! AspireTestHost.restartResourceAsync state "redis" scenario
+                        with
+                        | ex ->
+                            do! AspireTestHost.ensureResourceRunningAsync state "redis" $"{scenario}-recovery"
+                            return raise ex
+
                         let root = ManifestContributionMeasurementRuntime.createManifestRoot repositoryId scenario 0 asset
                         do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root ]
                         let! branch = BranchServerTestHelpers.createBranchAsync repositoryId defaultBranch $"{branchPrefix}-redis"
+
+                        let! metricsBeforeReference =
+                            ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory "redis-before-reference"
 
                         let! witnesses =
                             ManifestContributionMeasurementRuntime.createReferencesAsync state repositoryId [| string branch.BranchId |] [| root |] scenario
@@ -1324,6 +1334,15 @@ type ManifestContributionMeasurementAspireTests() =
                         recordScenarioIdentities witnesses [| root |]
 
                         let! after = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 4L
+
+                        let! metricsAfterReference =
+                            ManifestContributionMeasurementRuntime.waitForMetricsAsync state evidence.RootDirectory "redis-after-reference" (fun current ->
+                                ManifestContributionMeasurementSupport.hasExactTelemetryDelta
+                                    1.0
+                                    metricsBeforeReference.Messages
+                                    metricsBeforeReference.DurationCount
+                                    current.Messages
+                                    current.DurationCount)
 
                         let activeCountsText =
                             "["
@@ -1379,6 +1398,16 @@ type ManifestContributionMeasurementAspireTests() =
                                 ("logicalCountAfter", box after.Counter.ReferenceCount)
                                 ("physicalActiveCounts", box after.ActiveManifestCounts)
                                 ("workflowCount", box after.Workflows.Length)
+                                ("messageTelemetryDelta",
+                                 box (
+                                     metricsAfterReference.Messages
+                                     - metricsBeforeReference.Messages
+                                 ))
+                                ("durationTelemetryDelta",
+                                 box (
+                                     metricsAfterReference.DurationCount
+                                     - metricsBeforeReference.DurationCount
+                                 ))
                             ]
                         )
                     })
@@ -1401,8 +1430,31 @@ type ManifestContributionMeasurementAspireTests() =
 
                         let! before = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 1L
                         let beforeJson = stableJson before
-                        do! AspireTestHost.restartGraceServerAsync state scenario
+
+                        try
+                            do! AspireTestHost.restartGraceServerAsync state scenario
+                        with
+                        | ex ->
+                            do! AspireTestHost.ensureResourceRunningAsync state "grace-server" $"{scenario}-recovery"
+                            return raise ex
+
+                        let! metricsBeforeReplay =
+                            ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory "server-restart-before-replay"
+
                         do! ManifestContributionMeasurementRuntime.replayReferenceAsync state sharedWitnesses[0]
+
+                        let! metricsAfterReplay =
+                            ManifestContributionMeasurementRuntime.waitForMetricsAsync
+                                state
+                                evidence.RootDirectory
+                                "server-restart-after-replay"
+                                (fun current ->
+                                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta
+                                        1.0
+                                        metricsBeforeReplay.Messages
+                                        metricsBeforeReplay.DurationCount
+                                        current.Messages
+                                        current.DurationCount)
 
                         let relationship =
                             ExactRelationship.ReferenceRoot
@@ -1423,7 +1475,10 @@ type ManifestContributionMeasurementAspireTests() =
                             true,
                             exactPresent,
                             exactPresent,
-                            [||]
+                            [|
+                                metricsBeforeReplay.EvidenceFile
+                                metricsAfterReplay.EvidenceFile
+                            |]
                         )
 
                         evidence.Assertion(
@@ -1433,7 +1488,10 @@ type ManifestContributionMeasurementAspireTests() =
                             before.Counter.ReferenceCount,
                             after.Counter.ReferenceCount,
                             (before.Counter.ReferenceCount = after.Counter.ReferenceCount),
-                            [||]
+                            [|
+                                metricsBeforeReplay.EvidenceFile
+                                metricsAfterReplay.EvidenceFile
+                            |]
                         )
 
                         evidence.Assertion(
@@ -1464,55 +1522,16 @@ type ManifestContributionMeasurementAspireTests() =
                                 ("preRestartSnapshotComparisonOnly", box beforeJson)
                                 ("freshPostRestartState", box (stableJson after))
                                 ("exactReadRequestCharge", box requestCharge)
-                            ]
-                        )
-                    })
-
-            do!
-                runScenario ManifestContributionMeasurementContracts.DeadLetter (fun () ->
-                    task {
-                        let scenario = ManifestContributionMeasurementContracts.DeadLetter.Scenario
-                        let messageId = $"mca-08b-dlq-{Guid.NewGuid():N}"
-                        let! deliveryCount, reason = ManifestContributionMeasurementRuntime.proveDeadLetterAsync state messageId
-
-                        evidence.Assertion(
-                            scenario,
-                            "dlq-delivery-count",
-                            "The isolated test subscription dead-letters on the delivery after configured max delivery 10.",
-                            11,
-                            deliveryCount,
-                            (deliveryCount = 11),
-                            [||]
-                        )
-
-                        evidence.Assertion(
-                            scenario,
-                            "dlq-reason",
-                            "Broker supplies a terminal dead-letter reason.",
-                            "non-empty",
-                            reason,
-                            not (String.IsNullOrWhiteSpace reason),
-                            [||]
-                        )
-
-                        evidence.Assertion(
-                            scenario,
-                            "dlq-production-fault-seam",
-                            "The DLQ witness is a valid unrelated Grace event, not a broken production manifest handler.",
-                            "test subscription PeekLock",
-                            "test subscription PeekLock",
-                            true,
-                            [||]
-                        )
-
-                        evidence.Sample(
-                            scenario,
-                            "broker-dlq",
-                            messageId,
-                            [
-                                ("deliveryCount", box deliveryCount)
-                                ("deadLetterReason", box reason)
-                                ("subscription", box state.ServiceBusTestSubscription)
+                                ("replayMessageTelemetryDelta",
+                                 box (
+                                     metricsAfterReplay.Messages
+                                     - metricsBeforeReplay.Messages
+                                 ))
+                                ("replayDurationTelemetryDelta",
+                                 box (
+                                     metricsAfterReplay.DurationCount
+                                     - metricsBeforeReplay.DurationCount
+                                 ))
                             ]
                         )
                     })
@@ -1712,6 +1731,55 @@ type ManifestContributionMeasurementAspireTests() =
                                      - metricsAfterDryRun.Messages
                                  ))
                                 ("exactRelationshipRequestCharge", box (deleteCharge + exactCharge))
+                            ]
+                        )
+                    })
+
+            do!
+                runScenario ManifestContributionMeasurementContracts.DeadLetter (fun () ->
+                    task {
+                        let scenario = ManifestContributionMeasurementContracts.DeadLetter.Scenario
+                        let messageId = $"mca-08b-dlq-{Guid.NewGuid():N}"
+                        let! deliveryCount, reason = ManifestContributionMeasurementRuntime.proveDeadLetterAsync state messageId
+
+                        evidence.Assertion(
+                            scenario,
+                            "dlq-delivery-count",
+                            "The isolated test subscription dead-letters on the delivery after configured max delivery 10.",
+                            11,
+                            deliveryCount,
+                            (deliveryCount = 11),
+                            [||]
+                        )
+
+                        evidence.Assertion(
+                            scenario,
+                            "dlq-reason",
+                            "Broker supplies a terminal dead-letter reason.",
+                            "non-empty",
+                            reason,
+                            not (String.IsNullOrWhiteSpace reason),
+                            [||]
+                        )
+
+                        evidence.Assertion(
+                            scenario,
+                            "dlq-production-fault-seam",
+                            "The DLQ witness is a valid unrelated Grace event, not a broken production manifest handler.",
+                            "test subscription PeekLock",
+                            "test subscription PeekLock",
+                            true,
+                            [||]
+                        )
+
+                        evidence.Sample(
+                            scenario,
+                            "broker-dlq",
+                            messageId,
+                            [
+                                ("deliveryCount", box deliveryCount)
+                                ("deadLetterReason", box reason)
+                                ("subscription", box state.ServiceBusTestSubscription)
                             ]
                         )
                     })

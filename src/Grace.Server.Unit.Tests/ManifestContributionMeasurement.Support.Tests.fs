@@ -37,6 +37,18 @@ type ManifestContributionMeasurementSupportTests() =
                 Assert.That(ManifestContributionMeasurementSupport.commandRequiresHealthyResource "custom-command", Is.False))
         )
 
+    /// Verifies only an explicitly healthy Aspire snapshot can bypass resource-start recovery.
+    [<Test>]
+    member _.ResourceRecoveryRequiresExplicitHealthySnapshot() =
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(ManifestContributionMeasurementSupport.isHealthyResourceStatus "Healthy", Is.True)
+                Assert.That(ManifestContributionMeasurementSupport.isHealthyResourceStatus " healthy ", Is.True)
+                Assert.That(ManifestContributionMeasurementSupport.isHealthyResourceStatus "Unhealthy", Is.False)
+                Assert.That(ManifestContributionMeasurementSupport.isHealthyResourceStatus "Stopped", Is.False)
+                Assert.That(ManifestContributionMeasurementSupport.isHealthyResourceStatus String.Empty, Is.False))
+        )
+
     /// Verifies command failures retain bounded actionable state without leaking connection-string credentials.
     [<Test>]
     member _.ResourceCommandDiagnosticsAreBoundedAndRedacted() =
@@ -166,6 +178,73 @@ other_metric_total 99 1785304963133
                     Assert.That(observations, Is.Empty, "The wait must consume non-terminal observations before returning."))
             )
         }
+
+    /// Verifies baseline telemetry is terminal only after both exact delivery observations are exported.
+    [<Test>]
+    member _.BaselineTerminalTelemetryRequiresExactMessageAndDurationDeltas() =
+        let baselineMessages = 10.0
+        let baselineDurations = 10.0
+        let expectedDeliveries = 2.0
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(
+                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta expectedDeliveries baselineMessages baselineDurations 12.0 11.0,
+                    Is.False,
+                    "A message-only terminal observation must not end the baseline wait."
+                )
+
+                Assert.That(
+                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta expectedDeliveries baselineMessages baselineDurations 11.0 12.0,
+                    Is.False,
+                    "A duration-only terminal observation must not end the baseline wait."
+                )
+
+                Assert.That(
+                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta expectedDeliveries baselineMessages baselineDurations 12.0 12.0,
+                    Is.True
+                )
+
+                Assert.That(
+                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta expectedDeliveries baselineMessages baselineDurations 13.0 12.0,
+                    Is.False,
+                    "Unrelated extra message telemetry must not satisfy the exact scenario delta."
+                ))
+        )
+
+    /// Verifies unchanged pre-replay telemetry cannot prove server-restart replay settlement.
+    [<Test>]
+    member _.ServerRestartReplaySettlementRequiresFreshExactTelemetryDelta() =
+        let postRestartMessages = 0.0
+        let postRestartDurations = 0.0
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(
+                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta
+                        1.0
+                        postRestartMessages
+                        postRestartDurations
+                        postRestartMessages
+                        postRestartDurations,
+                    Is.False,
+                    "The unchanged post-restart baseline must not stand in for replay settlement."
+                )
+
+                Assert.That(
+                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta 1.0 postRestartMessages postRestartDurations 1.0 0.0,
+                    Is.False,
+                    "Partial telemetry publication must not prove replay settlement."
+                )
+
+                Assert.That(ManifestContributionMeasurementSupport.hasExactTelemetryDelta 1.0 postRestartMessages postRestartDurations 1.0 1.0, Is.True)
+
+                Assert.That(
+                    ManifestContributionMeasurementSupport.hasExactTelemetryDelta 1.0 postRestartMessages postRestartDurations 2.0 2.0,
+                    Is.False,
+                    "A prior delivery settling beside the replay must not satisfy the exact replay predicate."
+                ))
+        )
 
     /// Verifies the centralized duplicate backlog contract declares all six recorded assertions.
     [<Test>]

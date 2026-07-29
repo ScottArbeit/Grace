@@ -1414,72 +1414,127 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
+    /// Proves a running resource through Aspire health and Grace.Server HTTP readiness when applicable.
+    let private proveResourceRunningAsync
+        (state: TestHostState)
+        (notificationService: ResourceNotificationService)
+        (resourceName: string)
+        (context: string)
+        (ct: CancellationToken)
+        =
+        task {
+            let progressContext =
+                if resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
+                    Some(normalizeRestartContext context)
+                else
+                    None
+
+            do! waitForResourceHealthyWithProgressContextAsync notificationService state.App resourceName ct progressContext
+
+            if resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
+                do! waitForGraceServerHttpReadyAsync state.Client ct
+                logProgress $"Grace.Server HTTP readiness recovered during '{normalizeRestartContext context}'."
+        }
+
+    /// Executes one built-in Aspire resource command while the caller owns the shared lifecycle lock.
+    let private executeResourceCommandUnderLockAsync (state: TestHostState) (resourceName: string) (commandName: string) (context: string) =
+        task {
+            let normalizedContext = normalizeRestartContext context
+            Console.WriteLine($"Executing Aspire resource command '{commandName}' for '{resourceName}' during {normalizedContext}...")
+            let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+            use cts = new CancellationTokenSource(defaultWaitTimeout)
+
+            try
+                let! result = commandService.ExecuteCommandAsync(resourceName, commandName, cts.Token)
+
+                match
+                    ManifestContributionMeasurementSupport.classifyResourceCommand
+                        { Success = result.Success; Canceled = result.Canceled; Message = result.Message }
+                    with
+                | ResourceCommandOutcome.Completed -> ()
+                | ResourceCommandOutcome.Canceled message ->
+                    raise (OperationCanceledException($"Resource command '{commandName}' was canceled: {message}", cts.Token))
+                | ResourceCommandOutcome.Failed message -> raise (InvalidOperationException($"Resource command '{commandName}' failed: {message}"))
+
+                if ManifestContributionMeasurementSupport.commandRequiresHealthyResource commandName then
+                    let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                    do! proveResourceRunningAsync state notificationService resourceName normalizedContext cts.Token
+
+                Console.WriteLine($"Aspire resource command '{commandName}' completed for '{resourceName}' during {normalizedContext}.")
+            with
+            | ex ->
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                let resourceState = describeResourceState notificationService resourceName
+
+                let! logLines =
+                    task {
+                        try
+                            return! getResourceLogsAsync state.App resourceName
+                        with
+                        | logException ->
+                            return
+                                [
+                                    $"Resource log capture failed: {logException.GetType().Name}: {logException.Message}"
+                                ]
+                    }
+
+                let diagnostic =
+                    ManifestContributionMeasurementSupport.formatBoundedDiagnostic
+                        $"{normalizedContext}; command={commandName}; error={ex.GetType().Name}: {ex.Message}"
+                        resourceState
+                        logLines
+
+                raise (InvalidOperationException(diagnostic, ex))
+        }
+
     /// Executes one built-in Aspire resource command and proves any running result through resource health.
     let executeResourceCommandAsync (state: TestHostState) (resourceName: string) (commandName: string) (context: string) =
         task {
             do! sharedStateLock.WaitAsync()
 
             try
-                let normalizedContext = normalizeRestartContext context
-                Console.WriteLine($"Executing Aspire resource command '{commandName}' for '{resourceName}' during {normalizedContext}...")
-                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
-                use cts = new CancellationTokenSource(defaultWaitTimeout)
+                do! executeResourceCommandUnderLockAsync state resourceName commandName context
+            finally
+                sharedStateLock.Release() |> ignore
+        }
 
-                try
-                    let! result = commandService.ExecuteCommandAsync(resourceName, commandName, cts.Token)
+    /// Ensures a shared Aspire resource is running even when a prior command changed state before reporting failure.
+    let ensureResourceRunningAsync (state: TestHostState) (resourceName: string) (context: string) =
+        task {
+            do! sharedStateLock.WaitAsync()
 
-                    match
-                        ManifestContributionMeasurementSupport.classifyResourceCommand
-                            { Success = result.Success; Canceled = result.Canceled; Message = result.Message }
+            try
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                let mutable resourceEvent = Unchecked.defaultof<ResourceEvent>
+
+                let isHealthy =
+                    notificationService.TryGetCurrentState(resourceName, &resourceEvent)
+                    && ManifestContributionMeasurementSupport.isHealthyResourceStatus (string resourceEvent.Snapshot.HealthStatus)
+
+                if isHealthy then
+                    use readinessCts = new CancellationTokenSource(defaultWaitTimeout)
+                    do! proveResourceRunningAsync state notificationService resourceName context readinessCts.Token
+                else
+                    try
+                        do! executeResourceCommandUnderLockAsync state resourceName KnownResourceCommands.StartCommand context
+                    with
+                    | commandException ->
+                        use readinessCts = new CancellationTokenSource(defaultWaitTimeout)
+
+                        try
+                            do! proveResourceRunningAsync state notificationService resourceName context readinessCts.Token
+
+                            logProgress
+                                $"Resource '{resourceName}' recovered during '{normalizeRestartContext context}' despite the built-in start result: {commandException.Message}"
                         with
-                    | ResourceCommandOutcome.Completed -> ()
-                    | ResourceCommandOutcome.Canceled message ->
-                        raise (OperationCanceledException($"Resource command '{commandName}' was canceled: {message}", cts.Token))
-                    | ResourceCommandOutcome.Failed message -> raise (InvalidOperationException($"Resource command '{commandName}' failed: {message}"))
-
-                    if ManifestContributionMeasurementSupport.commandRequiresHealthyResource commandName then
-                        let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
-
-                        let progressContext =
-                            if
-                                resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase)
-                                && commandName.Equals(KnownResourceCommands.RestartCommand, StringComparison.OrdinalIgnoreCase)
-                            then
-                                Some normalizedContext
-                            else
-                                None
-
-                        do! waitForResourceHealthyWithProgressContextAsync notificationService state.App resourceName cts.Token progressContext
-
-                        if resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
-                            do! waitForGraceServerHttpReadyAsync state.Client cts.Token
-                            logProgress $"Grace.Server HTTP readiness recovered after '{commandName}' during '{normalizedContext}'."
-
-                    Console.WriteLine($"Aspire resource command '{commandName}' completed for '{resourceName}' during {normalizedContext}.")
-                with
-                | ex ->
-                    let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
-                    let resourceState = describeResourceState notificationService resourceName
-
-                    let! logLines =
-                        task {
-                            try
-                                return! getResourceLogsAsync state.App resourceName
-                            with
-                            | logException ->
-                                return
-                                    [
-                                        $"Resource log capture failed: {logException.GetType().Name}: {logException.Message}"
-                                    ]
-                        }
-
-                    let diagnostic =
-                        ManifestContributionMeasurementSupport.formatBoundedDiagnostic
-                            $"{normalizedContext}; command={commandName}; error={ex.GetType().Name}: {ex.Message}"
-                            resourceState
-                            logLines
-
-                    raise (InvalidOperationException(diagnostic, ex))
+                        | readinessException ->
+                            return
+                                raise (
+                                    InvalidOperationException(
+                                        $"Resource '{resourceName}' could not be recovered during '{normalizeRestartContext context}'.",
+                                        AggregateException(commandException, readinessException)
+                                    )
+                                )
             finally
                 sharedStateLock.Release() |> ignore
         }

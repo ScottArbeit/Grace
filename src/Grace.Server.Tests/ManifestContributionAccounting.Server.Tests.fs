@@ -85,7 +85,7 @@ module private ManifestContributionAccountingAspireTestHelpers =
         }
 
 /// Proves the internal bounded repair route against one shared Aspire host.
-[<NonParallelizable>]
+[<NonParallelizable; Order(1)>]
 type ManifestContributionRepairAspireTests() =
 
     /// Verifies the internal repair route rejects a wrong digest and preserves an incomplete empty plan as retain-safe.
@@ -94,15 +94,14 @@ type ManifestContributionRepairAspireTests() =
         task {
             let! state = AspireTestHost.startAsync testUserId
             let repositoryId = repositoryIds[2]
-            let branchId = repositoryDefaultBranchIds[2]
-            let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let missingManifestAddress = $"{Guid.NewGuid():N}{Guid.NewGuid():N}"
 
             let diagnosisRequest =
                 {| ReferenceId = String.Empty
-                   DirectoryVersionId = $"{branch.LatestReference.DirectoryId}"
+                   DirectoryVersionId = String.Empty
                    RepositoryId = repositoryId
-                   StoragePoolId = String.Empty
-                   ManifestAddress = String.Empty
+                   StoragePoolId = "default"
+                   ManifestAddress = missingManifestAddress
                    RepositoryContentCounterOperationId = String.Empty
                    MaxRelationships = 100 |}
 

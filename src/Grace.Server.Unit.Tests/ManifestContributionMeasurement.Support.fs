@@ -152,6 +152,13 @@ module ManifestContributionMeasurementSupport =
         commandName.Equals("resource-start", StringComparison.OrdinalIgnoreCase)
         || commandName.Equals("resource-restart", StringComparison.OrdinalIgnoreCase)
 
+    /// Treats only Aspire's explicit healthy snapshot as safe to reuse without a recovery start.
+    let isHealthyResourceStatus (healthStatus: string) : bool =
+        not (String.IsNullOrWhiteSpace healthStatus)
+        && healthStatus
+            .Trim()
+            .Equals("Healthy", StringComparison.OrdinalIgnoreCase)
+
     /// Polls until a terminal observation is reached or the bounded wait expires.
     let waitForTerminalStateAsync
         (timeout: TimeSpan)
@@ -176,6 +183,18 @@ module ManifestContributionMeasurementSupport =
 
             return current
         }
+
+    /// Requires both cumulative telemetry counters to advance by the exact scenario-owned delivery count.
+    let hasExactTelemetryDelta
+        (expectedDeliveries: float)
+        (baselineMessages: float)
+        (baselineDurations: float)
+        (currentMessages: float)
+        (currentDurations: float)
+        : bool
+        =
+        currentMessages - baselineMessages = expectedDeliveries
+        && currentDurations - baselineDurations = expectedDeliveries
 
     /// Compares collected identities with the distinct cardinalities required by all scenario contracts.
     let evaluateIdentityIsolation
