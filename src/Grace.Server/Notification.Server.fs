@@ -444,6 +444,13 @@ module Notification =
                 DeadLetter: string -> string -> CancellationToken -> Task
             }
 
+        /// Distinguishes an unknown explicit settlement outcome from failures that occurred before settlement began.
+        type internal GraceEventSettlementFailureException(operation: string, innerException: Exception) =
+            inherit Exception($"GraceEvent {operation} settlement outcome is unknown.", innerException)
+
+            /// Names the one bounded settlement operation whose result is unknown.
+            member _.Operation = operation
+
         /// Provides fixed bounded dead-letter evidence without retaining message payload or parser details.
         [<Literal>]
         let internal MalformedGraceEventDescription = "The Service Bus message body is not a supported GraceEvent."
@@ -461,6 +468,28 @@ module Notification =
 
             Task.CompletedTask
 
+        /// Completes the production processor callback after an unknown explicit settlement so the SDK cannot auto-abandon it.
+        let internal runProcessorMessageCallbackWith (logger: ILogger) (metadata: GraceEventMessageMetadata) (processDelivery: unit -> Task) =
+            task {
+                try
+                    do! processDelivery ()
+                with
+                | :? GraceEventSettlementFailureException as ex ->
+                    logger.LogError(
+                        ex,
+                        "GraceEvent {SettlementOperation} settlement failed for message {MessageId} (CorrelationId: {CorrelationId}); the processor callback completed without throwing so the SDK cannot attempt automatic abandonment.",
+                        ex.Operation,
+                        metadata.MessageId,
+                        metadata.CorrelationId
+                    )
+            }
+
+        /// Identifies deliveries whose valid Reference-created event enters manifest contribution accounting.
+        let internal isManifestContributionAccountingDelivery =
+            function
+            | GraceEvent.ReferenceEvent { Event = ReferenceEventType.Created _ } -> true
+            | _ -> false
+
         /// Processes one Service Bus delivery through exactly one truthful settlement intent.
         let internal processGraceEventWith
             (dependencies: GraceEventSettlementDependencies)
@@ -470,31 +499,30 @@ module Notification =
             =
             task {
                 cancellationToken.ThrowIfCancellationRequested()
-                use activity = ManifestContributionTelemetry.startMessageActivity metadata.MessageId metadata.CorrelationId metadata.DeliveryCount
-
                 let stopwatch = Stopwatch.StartNew()
 
                 match dependencies.Parse body with
                 | Error _ ->
+                    cancellationToken.ThrowIfCancellationRequested()
+
                     try
                         do! dependencies.DeadLetter "MalformedGraceEvent" MalformedGraceEventDescription cancellationToken
-                        stopwatch.Stop()
-
-                        ManifestContributionTelemetry.recordMessage
-                            ManifestContributionProcessingStage.Parse
-                            ManifestContributionMessageOutcome.DeadLettered
-                            stopwatch.Elapsed.TotalMilliseconds
                     with
-                    | ex ->
-                        stopwatch.Stop()
-
-                        ManifestContributionTelemetry.recordMessage
-                            ManifestContributionProcessingStage.Settle
-                            ManifestContributionMessageOutcome.SettlementFailed
-                            stopwatch.Elapsed.TotalMilliseconds
-
-                        return raise ex
+                    | ex -> return raise (GraceEventSettlementFailureException("dead-letter", ex))
                 | Ok graceEvent ->
+                    let isManifestAccountingDelivery = isManifestContributionAccountingDelivery graceEvent
+
+                    use activity =
+                        if isManifestAccountingDelivery then
+                            ManifestContributionTelemetry.startMessageActivity metadata.MessageId metadata.CorrelationId metadata.DeliveryCount
+                        else
+                            null
+
+                    let recordMessage stage outcome =
+                        if isManifestAccountingDelivery then
+                            stopwatch.Stop()
+                            ManifestContributionTelemetry.recordMessage stage outcome stopwatch.Elapsed.TotalMilliseconds
+
                     let! handlerError =
                         task {
                             try
@@ -502,57 +530,33 @@ module Notification =
                                 cancellationToken.ThrowIfCancellationRequested()
                                 return None
                             with
-                            | :? OperationCanceledException as ex ->
-                                stopwatch.Stop()
-
-                                ManifestContributionTelemetry.recordMessage
-                                    ManifestContributionProcessingStage.Handle
-                                    ManifestContributionMessageOutcome.SettlementFailed
-                                    stopwatch.Elapsed.TotalMilliseconds
-
-                                return raise ex
+                            | :? OperationCanceledException as ex -> return raise ex
                             | ex -> return Some ex
                         }
 
                     match handlerError with
                     | None ->
+                        cancellationToken.ThrowIfCancellationRequested()
+
                         try
                             do! dependencies.Complete cancellationToken
-                            stopwatch.Stop()
-
-                            ManifestContributionTelemetry.recordMessage
-                                ManifestContributionProcessingStage.Settle
-                                ManifestContributionMessageOutcome.Completed
-                                stopwatch.Elapsed.TotalMilliseconds
                         with
                         | ex ->
-                            stopwatch.Stop()
+                            recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.SettlementFailed
+                            return raise (GraceEventSettlementFailureException("complete", ex))
 
-                            ManifestContributionTelemetry.recordMessage
-                                ManifestContributionProcessingStage.Settle
-                                ManifestContributionMessageOutcome.SettlementFailed
-                                stopwatch.Elapsed.TotalMilliseconds
-
-                            return raise ex
+                        recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.Completed
                     | Some _ ->
+                        cancellationToken.ThrowIfCancellationRequested()
+
                         try
                             do! dependencies.Abandon cancellationToken
-                            stopwatch.Stop()
-
-                            ManifestContributionTelemetry.recordMessage
-                                ManifestContributionProcessingStage.Handle
-                                ManifestContributionMessageOutcome.Abandoned
-                                stopwatch.Elapsed.TotalMilliseconds
                         with
                         | ex ->
-                            stopwatch.Stop()
+                            recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.SettlementFailed
+                            return raise (GraceEventSettlementFailureException("abandon", ex))
 
-                            ManifestContributionTelemetry.recordMessage
-                                ManifestContributionProcessingStage.Settle
-                                ManifestContributionMessageOutcome.SettlementFailed
-                                stopwatch.Elapsed.TotalMilliseconds
-
-                            return raise ex
+                        recordMessage ManifestContributionProcessingStage.Handle ManifestContributionMessageOutcome.Abandoned
             }
 
         /// Gets the ReferenceDto for the given ReferenceId.
@@ -1449,18 +1453,9 @@ module Notification =
                     let metadata =
                         { MessageId = args.Message.MessageId; CorrelationId = args.Message.CorrelationId; DeliveryCount = args.Message.DeliveryCount }
 
-                    try
-                        do! processGraceEventWith dependencies metadata args.Message.Body args.CancellationToken
-                    with
-                    | ex ->
-                        subscriptionLog.LogError(
-                            ex,
-                            "GraceEvent settlement failed or was cancelled for message {MessageId} (CorrelationId: {CorrelationId}); no replacement settlement was attempted.",
-                            args.Message.MessageId,
-                            args.Message.CorrelationId
-                        )
-
-                        return raise ex
+                    do!
+                        runProcessorMessageCallbackWith subscriptionLog metadata (fun () ->
+                            processGraceEventWith dependencies metadata args.Message.Body args.CancellationToken)
                 }
 
             /// Implements start azure service bus processor for the server request pipeline.
