@@ -523,9 +523,9 @@ type ManifestContributionRepairServerTests() =
             Assert.That(diagnosisCalls, Is.EqualTo(2))
         }
 
-    /// Verifies a missing parent projection is written only after the current parent still names the exact child.
+    /// Verifies a missing parent projection is written only after both current endpoints still establish the exact child edge.
     [<Test>]
-    member _.MissingParentRelationshipUsesGetOrAddAfterImmediateParentReread() =
+    member _.MissingParentRelationshipUsesGetOrAddAfterImmediateEndpointRereads() =
         task {
             let root = directoryVersionDto rootDirectoryVersionId [ childDirectoryVersionId ] false
 
@@ -563,10 +563,17 @@ type ManifestContributionRepairServerTests() =
                     GetDirectoryVersion =
                         fun id ->
                             calls.Add $"read:{id:D}"
-                            Task.FromResult root
+
+                            if id = rootDirectoryVersionId then
+                                Task.FromResult root
+                            elif id = childDirectoryVersionId then
+                                Task.FromResult child
+                            else
+                                Task.FromException<DirectoryVersionDto>(InvalidOperationException($"Unexpected DirectoryVersion read: {id:D}"))
                     GetOrAdd =
-                        fun _ _ ->
+                        fun exact _ ->
                             calls.Add "write"
+                            Assert.That(exact, Is.EqualTo(parentRelationship))
                             Task.FromResult ExactRelationshipWriteOutcome.Changed
                 }
 
@@ -577,11 +584,98 @@ type ManifestContributionRepairServerTests() =
                 Is.EqualTo(
                     [|
                         $"read:{rootDirectoryVersionId:D}"
+                        $"read:{childDirectoryVersionId:D}"
                         "write"
                     |]
                     :> obj
                 )
             )
+        }
+
+    /// Verifies either endpoint changing after diagnosis retains ParentChild repair without a projection write.
+    [<Test>]
+    member _.MissingParentRelationshipRejectsChangedEndpointsBeforeGetOrAdd() =
+        task {
+            let root = directoryVersionDto rootDirectoryVersionId [ childDirectoryVersionId ] false
+
+            let child = directoryVersionDto childDirectoryVersionId Array.empty true
+
+            let relationships =
+                HashSet<ExactRelationship>(
+                    [
+                        manifestRelationship childDirectoryVersionId
+                    ]
+                )
+
+            let counter = logicalCounter 1L 7L
+
+            let diagnosisDependencies =
+                diagnosisDependencies
+                    ReferenceDto.Default
+                    (Map.ofList [ rootDirectoryVersionId, root
+                                  childDirectoryVersionId, child ])
+                    relationships
+                    (fun () -> counter)
+
+            let! report = diagnose diagnosisDependencies (DiagnosisSelector.DirectoryVersionId(rootDirectoryVersionId, None))
+
+            let wrongRepository = directoryVersionDto childDirectoryVersionId Array.empty true
+            wrongRepository.DirectoryVersion.RepositoryId <- Guid.Parse("99999999-7350-4000-8000-999999999999")
+
+            let wrongId = directoryVersionDto staleDirectoryVersionId Array.empty true
+            let parentWithoutChild = directoryVersionDto rootDirectoryVersionId Array.empty false
+
+            let changedEndpoints: (string * DirectoryVersionDto * (unit -> Task<DirectoryVersionDto>) * int) array =
+                [|
+                    "parent source changed", parentWithoutChild, (fun () -> Task.FromResult child), 0
+                    "child cleared", root, (fun () -> Task.FromResult DirectoryVersionDto.Default), 1
+                    "child unreadable", root, (fun () -> Task.FromException<DirectoryVersionDto>(InvalidOperationException("cleared"))), 1
+                    "child wrong repository", root, (fun () -> Task.FromResult wrongRepository), 1
+                    "child wrong id", root, (fun () -> Task.FromResult wrongId), 1
+                |]
+
+            let mutable scenarioIndex = 0
+
+            while scenarioIndex < changedEndpoints.Length do
+                let label, currentParent, readChild, expectedChildReads = changedEndpoints[scenarioIndex]
+                let mutable writes = 0
+                let mutable childReads = 0
+
+                let missingDependencies =
+                    {
+                        GetReference = fun _ -> Task.FromException<ReferenceDto>(InvalidOperationException())
+                        RepublishReferenceCreated = fun _ -> Task.FromException(InvalidOperationException())
+                        GetDirectoryVersion =
+                            fun id ->
+                                if id = rootDirectoryVersionId then
+                                    Task.FromResult currentParent
+                                elif id = childDirectoryVersionId then
+                                    childReads <- childReads + 1
+                                    readChild ()
+                                else
+                                    Task.FromException<DirectoryVersionDto>(InvalidOperationException($"Unexpected DirectoryVersion read: {id:D}"))
+                        GetOrAdd =
+                            fun _ _ ->
+                                writes <- writes + 1
+                                Task.FromResult ExactRelationshipWriteOutcome.Changed
+                    }
+
+                let repairDependencies =
+                    {
+                        DiagnoseCurrent = fun _ _ _ -> Task.FromResult report
+                        ApplyAction =
+                            fun _ currentReport mutation cancellationToken ->
+                                repairMissingRelationshipWith missingDependencies currentReport mutation cancellationToken
+                    }
+
+                let! repaired =
+                    repairWith repairDependencies "2026-07-28T12:00:40Z" $"corr-endpoint-{scenarioIndex}" CancellationToken.None (readBound 20) report true
+
+                Assert.That(repaired.Outcome, Is.EqualTo(RepairOutcome.FailedRetain), label)
+                Assert.That(repaired.AppliedActions, Is.Empty, label)
+                Assert.That(childReads, Is.EqualTo(expectedChildReads), label)
+                Assert.That(writes, Is.Zero, label)
+                scenarioIndex <- scenarioIndex + 1
         }
 
     /// Verifies stale removal requires immediate source absence and unchanged signed counter/workflow facts.

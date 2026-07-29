@@ -415,6 +415,14 @@ module ManifestContributionRepair =
                 then
                     invalidOp "Parent DirectoryVersion source changed before exact relationship repair."
 
+                let! currentChild = dependencies.GetDirectoryVersion relationship.ChildDirectoryVersionId
+
+                if currentChild.DirectoryVersion.DirectoryVersionId
+                   <> relationship.ChildDirectoryVersionId
+                   || currentChild.DirectoryVersion.RepositoryId
+                      <> relationship.RepositoryId then
+                    invalidOp "Child DirectoryVersion source changed before exact relationship repair."
+
                 cancellationToken.ThrowIfCancellationRequested()
                 let! _ = dependencies.GetOrAdd exact cancellationToken
 
