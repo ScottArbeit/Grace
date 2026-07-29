@@ -24,7 +24,7 @@ type AspireTestHostDiagnosticsTests() =
                 "Endpoint=sb://localhost:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=service-bus-secret;UseDevelopmentEmulator=true;"
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(cosmos, Does.Contain("AccountEndpoint=https://localhost:8081/"))
                 Assert.That(cosmos, Does.Contain("AccountKey=***"))
                 Assert.That(cosmos, Does.Not.Contain("cosmos-secret"))
@@ -40,17 +40,19 @@ type AspireTestHostDiagnosticsTests() =
     [<Test>]
     member _.FormatEnvDiagnosticsUsesSelectedRedactedValuesOnly() =
         let env =
-            [ Constants.EnvironmentVariables.GraceLogDirectory, "C:\\Temp\\GraceLogs"
-              Constants.EnvironmentVariables.AzureCosmosDBConnectionString, "AccountEndpoint=https://localhost:8081/;AccountKey=cosmos-secret;"
-              Constants.EnvironmentVariables.AzureStorageConnectionString, "DefaultEndpointsProtocol=http;AccountName=grace;AccountKey=storage-secret;"
-              Constants.EnvironmentVariables.AzureServiceBusConnectionString, "Endpoint=sb://localhost:5672;SharedAccessKey=service-bus-secret;"
-              "unrelated_secret", "must-not-appear" ]
+            [
+                Constants.EnvironmentVariables.GraceLogDirectory, "C:\\Temp\\GraceLogs"
+                Constants.EnvironmentVariables.AzureCosmosDBConnectionString, "AccountEndpoint=https://localhost:8081/;AccountKey=cosmos-secret;"
+                Constants.EnvironmentVariables.AzureStorageConnectionString, "DefaultEndpointsProtocol=http;AccountName=grace;AccountKey=storage-secret;"
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString, "Endpoint=sb://localhost:5672;SharedAccessKey=service-bus-secret;"
+                "unrelated_secret", "must-not-appear"
+            ]
             |> Map.ofList
 
         let diagnostics = AspireTestHost.FixtureDiagnostics.formatEnvDiagnostics env
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(diagnostics, Does.Contain($"{Constants.EnvironmentVariables.GraceLogDirectory}=C:\\Temp\\GraceLogs"))
 
                 Assert.That(
@@ -81,23 +83,27 @@ type AspireTestHostDiagnosticsTests() =
     [<Test>]
     member _.MissingStartupKeysNameRequiredCosmosStorageAndServiceBusSources() =
         let env =
-            [ Constants.EnvironmentVariables.AzureCosmosDBConnectionString, "AccountEndpoint=https://localhost:8081/;AccountKey=cosmos-secret;"
-              Constants.EnvironmentVariables.AzureCosmosDBDatabaseName, "grace-dev"
-              Constants.EnvironmentVariables.AzureStorageConnectionString, "DefaultEndpointsProtocol=http;AccountName=grace;AccountKey=storage-secret;"
-              Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream" ]
+            [
+                Constants.EnvironmentVariables.AzureCosmosDBConnectionString, "AccountEndpoint=https://localhost:8081/;AccountKey=cosmos-secret;"
+                Constants.EnvironmentVariables.AzureCosmosDBDatabaseName, "grace-dev"
+                Constants.EnvironmentVariables.AzureStorageConnectionString, "DefaultEndpointsProtocol=http;AccountName=grace;AccountKey=storage-secret;"
+                Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream"
+            ]
             |> Map.ofList
 
         let missing = AspireTestHost.FixtureDiagnostics.getMissingStartupKeys false env
         let diagnostics = AspireTestHost.FixtureDiagnostics.formatEnvDiagnostics env
 
         let expectedMissing =
-            [| Constants.EnvironmentVariables.AzureCosmosDBContainerName
-               Constants.EnvironmentVariables.AzureServiceBusConnectionString
-               Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
-               Constants.EnvironmentVariables.AzureServiceBusSubscription |]
+            [|
+                Constants.EnvironmentVariables.AzureCosmosDBContainerName
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                Constants.EnvironmentVariables.AzureServiceBusSubscription
+            |]
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(String.Join("|", missing), Is.EqualTo(String.Join("|", expectedMissing)))
                 Assert.That(diagnostics, Does.Contain("AccountKey=***"))
                 Assert.That(diagnostics, Does.Not.Contain("cosmos-secret"))
@@ -110,7 +116,7 @@ type AspireTestHostDiagnosticsTests() =
         let message = AspireTestHost.FixtureDiagnostics.serviceBusSkipModeMessage
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(message, Does.Contain("GRACE_TEST_SKIP_SERVICEBUS=1"))
                 Assert.That(message, Does.Contain("unsupported for Grace.Server.Tests"))
                 Assert.That(message, Does.Contain("Owner Created event")))
@@ -123,7 +129,7 @@ type AspireTestHostDiagnosticsTests() =
         let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "azurite" None
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(startMessage, Is.EqualTo("waiting for resource 'azurite' to become healthy."))
                 Assert.That(healthyMessage, Is.EqualTo("resource 'azurite' is healthy."))
                 Assert.That(startMessage, Does.Not.Contain("restart"))
@@ -138,7 +144,7 @@ type AspireTestHostDiagnosticsTests() =
         let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "grace-server" (Some context)
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(startMessage, Does.Contain("intentional Grace.Server restart"))
                 Assert.That(startMessage, Does.Contain(context))
                 Assert.That(startMessage, Does.Contain("waiting for resource 'grace-server' to become healthy"))
@@ -153,7 +159,7 @@ type AspireTestHostDiagnosticsTests() =
         let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "servicebus-emulator" (Some "RestartDurability")
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(startMessage, Is.EqualTo("waiting for resource 'servicebus-emulator' to become healthy."))
                 Assert.That(healthyMessage, Is.EqualTo("resource 'servicebus-emulator' is healthy."))
                 Assert.That(startMessage, Does.Not.Contain("Grace.Server restart"))

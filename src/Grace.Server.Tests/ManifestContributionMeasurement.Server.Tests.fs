@@ -16,6 +16,7 @@ open Grace.Types.RepositoryContentCounter
 open Microsoft.Azure.Cosmos
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.Diagnostics
 open System.Globalization
 open System.IO
@@ -31,42 +32,36 @@ type private MeasurementManifestAsset = { Block: ContentBlockFormat.EncodedConte
 
 /// Retains the production-created envelope required for deterministic replay scenarios.
 type private MeasurementReferenceWitness =
-    { ReferenceId: ReferenceId; RootDirectoryVersionId: DirectoryVersionId; Body: string; MessageId: string; CorrelationId: string }
+    {
+        ReferenceId: ReferenceId
+        RootDirectoryVersionId: DirectoryVersionId
+        Body: string
+        MessageId: string
+        CorrelationId: string
+    }
 
 /// Captures current durable accounting state for one repository manifest.
 type private MeasurementManifestState =
-    { Counter: RepositoryContentCounterDto; Workflows: ManifestContributionWorkflowDto array; ActiveManifestCounts: int array; ActorBytes: int }
+    {
+        Counter: RepositoryContentCounterDto
+        Workflows: ManifestContributionWorkflowDto array
+        ActiveManifestCounts: int array
+        ActorBytes: int
+    }
 
 /// Carries cumulative server metrics exported through the authenticated Prometheus seam.
 type private MeasurementMetrics =
-    { Messages: float; DurationCount: float; RelationshipWrites: float; RedisOperations: float; RepairActions: float; EvidenceFile: string }
+    {
+        Messages: float
+        DurationCount: float
+        RelationshipWrites: float
+        RedisOperations: float
+        RepairActions: float
+        EvidenceFile: string
+    }
 
 /// Implements deterministic runtime operations through production HTTP, broker, actor, and exact-relationship seams.
 module private ManifestContributionMeasurementRuntime =
-
-    [<Literal>]
-    let BaselineScenario = "Baseline"
-
-    [<Literal>]
-    let HotManifestScenario = "HotManifest"
-
-    [<Literal>]
-    let HighlySharedScenario = "HighlySharedDirectoryVersion"
-
-    [<Literal>]
-    let DuplicateScenario = "DuplicateBacklogRecovery"
-
-    [<Literal>]
-    let RedisScenario = "RedisRestart"
-
-    [<Literal>]
-    let ServerRestartScenario = "ServerRestartRecovery"
-
-    [<Literal>]
-    let DeadLetterScenario = "DeadLetter"
-
-    [<Literal>]
-    let RepairScenario = "Repair"
 
     let private scenarioTimeout = TimeSpan.FromSeconds(45.0)
 
@@ -80,10 +75,8 @@ module private ManifestContributionMeasurementRuntime =
 
             if not response.IsSuccessStatusCode then
                 let boundedBody =
-                    if
-                        body.Length
-                        <= ManifestContributionMeasurementSupport.MaximumDiagnosticCharacters
-                    then
+                    if body.Length
+                       <= ManifestContributionMeasurementSupport.MaximumDiagnosticCharacters then
                         body
                     else
                         body.Substring(0, ManifestContributionMeasurementSupport.MaximumDiagnosticCharacters)
@@ -250,19 +243,20 @@ module private ManifestContributionMeasurementRuntime =
                         match graceEvent with
                         | GraceEvent.ReferenceEvent referenceEvent ->
                             match referenceEvent.Event with
-                            | Reference.ReferenceEventType.Created(referenceId, _, _, _, _, directoryVersionId, _, _, _, _, _) when
+                            | Reference.ReferenceEventType.Created (referenceId, _, _, _, _, directoryVersionId, _, _, _, _, _) when
                                 expectedReferenceIds.Contains referenceId
                                 ->
-                                witnesses[referenceId] <-
-                                    { ReferenceId = referenceId
-                                      RootDirectoryVersionId = directoryVersionId
-                                      Body = message.Body.ToString()
-                                      MessageId = message.MessageId
-                                      CorrelationId = message.CorrelationId }
+                                witnesses[referenceId] <- {
+                                                              ReferenceId = referenceId
+                                                              RootDirectoryVersionId = directoryVersionId
+                                                              Body = message.Body.ToString()
+                                                              MessageId = message.MessageId
+                                                              CorrelationId = message.CorrelationId
+                                                          }
                             | _ -> ()
                         | _ -> ()
-                    with :? JsonException ->
-                        ()
+                    with
+                    | :? JsonException -> ()
 
             if witnesses.Count <> expectedReferenceIds.Count then
                 let missing =
@@ -308,7 +302,9 @@ module private ManifestContributionMeasurementRuntime =
             use client = AspireTestHost.createCosmosClient state
             let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
 
-            let query = QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType").WithParameter("@grainType", grainType)
+            let query =
+                QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType")
+                    .WithParameter("@grainType", grainType)
 
             use iterator = container.GetItemQueryIterator<Dictionary<string, JsonElement>>(query)
             let results = ResizeArray<'T>()
@@ -319,7 +315,7 @@ module private ManifestContributionMeasurementRuntime =
                 let mutable documentIndex = 0
 
                 while documentIndex < documents.Length do
-                    match documents[documentIndex].TryGetValue "State" with
+                    match documents[ documentIndex ].TryGetValue "State" with
                     | true, stateValue -> results.Add(JsonSerializer.Deserialize<'T>(stateValue.GetRawText(), Constants.JsonSerializerOptions))
                     | _ -> ()
 
@@ -366,11 +362,12 @@ module private ManifestContributionMeasurementRuntime =
                 |> Array.choose (fun candidate ->
                     candidate.Metadata
                     |> Option.bind (fun metadata ->
-                        if
-                            metadata.StoragePoolId = asset.Manifest.StoragePoolId
-                            && metadata.ContentBlockAddress = asset.Block.Address
-                        then
-                            Some(metadata.Ranges |> Array.map (fun range -> range.ActiveManifestCount))
+                        if metadata.StoragePoolId = asset.Manifest.StoragePoolId
+                           && metadata.ContentBlockAddress = asset.Block.Address then
+                            Some(
+                                metadata.Ranges
+                                |> Array.map (fun range -> range.ActiveManifestCount)
+                            )
                         else
                             None))
                 |> Array.collect id
@@ -380,10 +377,12 @@ module private ManifestContributionMeasurementRuntime =
                 |> Option.map (fun foundCounter ->
                     let actorJson = stableJson {| counter = foundCounter; workflows = matchingWorkflows; activeCounts = activeCounts |}
 
-                    { Counter = foundCounter
-                      Workflows = matchingWorkflows
-                      ActiveManifestCounts = activeCounts
-                      ActorBytes = Encoding.UTF8.GetByteCount actorJson })
+                    {
+                        Counter = foundCounter
+                        Workflows = matchingWorkflows
+                        ActiveManifestCounts = activeCounts
+                        ActorBytes = Encoding.UTF8.GetByteCount actorJson
+                    })
         }
 
     /// Waits on current actor snapshots rather than elapsed time and returns a fresh final read.
@@ -392,7 +391,8 @@ module private ManifestContributionMeasurementRuntime =
             let stopwatch = Stopwatch.StartNew()
             let mutable result: MeasurementManifestState option = None
 
-            while result.IsNone && stopwatch.Elapsed < scenarioTimeout do
+            while result.IsNone
+                  && stopwatch.Elapsed < scenarioTimeout do
                 let! candidate = tryReadManifestStateAsync state repositoryId asset
 
                 result <-
@@ -404,7 +404,8 @@ module private ManifestContributionMeasurementRuntime =
                                workflow.Direction = ManifestContributionDirection.Increment
                                && workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.Completed)
                         && current.ActiveManifestCounts.Length > 0
-                        && current.ActiveManifestCounts |> Array.forall (fun count -> count = 1))
+                        && current.ActiveManifestCounts
+                           |> Array.forall (fun count -> count = 1))
 
                 if result.IsNone then do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
 
@@ -429,7 +430,9 @@ module private ManifestContributionMeasurementRuntime =
     /// Reads one exact relationship directly and returns current presence plus Cosmos request charge.
     let readExactRelationshipAsync state relationship =
         task {
-            let key = ExactRelationshipKey.create relationship |> Result.defaultWith invalidOp
+            let key =
+                ExactRelationshipKey.create relationship
+                |> Result.defaultWith invalidOp
 
             use client = AspireTestHost.createCosmosClient state
             let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
@@ -438,8 +441,8 @@ module private ManifestContributionMeasurementRuntime =
                 let! response = container.ReadItemAsync<JsonElement>(key.ItemId, PartitionKey key.PartitionKey, cancellationToken = CancellationToken.None)
 
                 return true, response.RequestCharge
-            with :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound ->
-                return false, ex.RequestCharge
+            with
+            | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> return false, ex.RequestCharge
         }
 
     /// Reads item identities from one exact-relationship partition with a finite measurement bound.
@@ -463,7 +466,7 @@ module private ManifestContributionMeasurementRuntime =
                 let mutable index = 0
 
                 while index < documents.Length do
-                    ids.Add(documents[index].GetProperty("id").GetString())
+                    ids.Add(documents[ index ].GetProperty("id").GetString())
                     index <- index + 1
 
             return ids.ToArray(), requestCharge
@@ -472,7 +475,9 @@ module private ManifestContributionMeasurementRuntime =
     /// Deletes only the selected exact relationship and verifies the absence through a fresh read.
     let deleteExactRelationshipAsync state relationship =
         task {
-            let key = ExactRelationshipKey.create relationship |> Result.defaultWith invalidOp
+            let key =
+                ExactRelationshipKey.create relationship
+                |> Result.defaultWith invalidOp
 
             use client = AspireTestHost.createCosmosClient state
             let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
@@ -514,18 +519,28 @@ module private ManifestContributionMeasurementRuntime =
             let isMetric (prefix: string) (name: string) = name.StartsWith(prefix, StringComparison.Ordinal)
 
             return
-                { Messages = metricSum (isMetric "grace_manifest_contribution_messages") filtered
-                  DurationCount =
-                    metricSum
-                        (fun name ->
-                            name.StartsWith("grace_manifest_contribution_processing_duration", StringComparison.Ordinal)
-                            && name.EndsWith("_count", StringComparison.Ordinal))
-                        filtered
-                  RelationshipWrites = metricSum (isMetric "grace_manifest_contribution_relationship_writes") filtered
-                  RedisOperations = metricSum (isMetric "grace_manifest_contribution_redis_operations") filtered
-                  RepairActions = metricSum (isMetric "grace_manifest_contribution_repair_actions") filtered
-                  EvidenceFile = evidenceFile }
+                {
+                    Messages = metricSum (isMetric "grace_manifest_contribution_messages") filtered
+                    DurationCount =
+                        metricSum
+                            (fun name ->
+                                name.StartsWith("grace_manifest_contribution_processing_duration", StringComparison.Ordinal)
+                                && name.EndsWith("_count", StringComparison.Ordinal))
+                            filtered
+                    RelationshipWrites = metricSum (isMetric "grace_manifest_contribution_relationship_writes") filtered
+                    RedisOperations = metricSum (isMetric "grace_manifest_contribution_redis_operations") filtered
+                    RepairActions = metricSum (isMetric "grace_manifest_contribution_repair_actions") filtered
+                    EvidenceFile = evidenceFile
+                }
         }
+
+    /// Waits until cumulative manifest telemetry satisfies the scenario's terminal expectation.
+    let waitForMetricsAsync state evidenceRoot label isTerminal =
+        ManifestContributionMeasurementSupport.waitForTerminalStateAsync
+            scenarioTimeout
+            (TimeSpan.FromMilliseconds 250.0)
+            (fun () -> readMetricsAsync state evidenceRoot label)
+            isTerminal
 
     /// Peeks the current active server subscription for the selected deterministic message identifiers.
     let private peekActiveMessageIdsAsync state expectedIds =
@@ -557,7 +572,8 @@ module private ManifestContributionMeasurementRuntime =
                         isTerminal
 
                 return ()
-            with :? TimeoutException as ex ->
+            with
+            | :? TimeoutException as ex ->
                 let expectedText = String.Join(",", expectedIds)
 
                 raise (TimeoutException($"Timed out waiting for active message set. ExpectedPresent={shouldBePresent}; Expected={expectedText}.", ex))
@@ -595,7 +611,8 @@ module private ManifestContributionMeasurementRuntime =
             let stopwatch = Stopwatch.StartNew()
             let mutable highestDelivery = 0
 
-            while highestDelivery < 10 && stopwatch.Elapsed < scenarioTimeout do
+            while highestDelivery < 10
+                  && stopwatch.Elapsed < scenarioTimeout do
                 let! message = receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1.0))
 
                 if not (isNull message) then
@@ -618,7 +635,8 @@ module private ManifestContributionMeasurementRuntime =
             use _deadLetterReceiver = deadLetterReceiver
             let mutable found: ServiceBusReceivedMessage option = None
 
-            while found.IsNone && stopwatch.Elapsed < scenarioTimeout do
+            while found.IsNone
+                  && stopwatch.Elapsed < scenarioTimeout do
                 let! message = deadLetterReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1.0))
 
                 if not (isNull message) then
@@ -638,13 +656,15 @@ module private ManifestContributionMeasurementRuntime =
     let diagnoseReferenceAsync (state: TestHostState) (repositoryId: string) (referenceId: ReferenceId) =
         task {
             let request =
-                {| ReferenceId = string referenceId
-                   DirectoryVersionId = String.Empty
-                   RepositoryId = repositoryId
-                   StoragePoolId = String.Empty
-                   ManifestAddress = String.Empty
-                   RepositoryContentCounterOperationId = String.Empty
-                   MaxRelationships = 100 |}
+                {|
+                    ReferenceId = string referenceId
+                    DirectoryVersionId = String.Empty
+                    RepositoryId = repositoryId
+                    StoragePoolId = String.Empty
+                    ManifestAddress = String.Empty
+                    RepositoryContentCounterOperationId = String.Empty
+                    MaxRelationships = 100
+                |}
 
             let! response = state.Client.PostAsync("/admin/manifest-contribution/diagnose", createJsonContent request)
             let! json = requireSuccessAsync response
@@ -656,7 +676,11 @@ module private ManifestContributionMeasurementRuntime =
         task {
             use report = JsonDocument.Parse reportJson
 
-            let reportSha = report.RootElement.GetProperty("ReportSha256").GetString()
+            let reportSha =
+                report
+                    .RootElement
+                    .GetProperty("ReportSha256")
+                    .GetString()
 
             let request = {| ReportJson = reportJson; ExpectedReportSha256 = reportSha; Execute = execute |}
             let! response = state.Client.PostAsync("/admin/manifest-contribution/repair", createJsonContent request)
@@ -680,28 +704,28 @@ type ManifestContributionMeasurementAspireTests() =
 
             let evidence = MeasurementEvidenceSink evidenceRoot
 
+            let scenarioContracts = ManifestContributionMeasurementContracts.All
+
             let scenarios =
-                [| ManifestContributionMeasurementRuntime.BaselineScenario
-                   ManifestContributionMeasurementRuntime.HotManifestScenario
-                   ManifestContributionMeasurementRuntime.HighlySharedScenario
-                   ManifestContributionMeasurementRuntime.DuplicateScenario
-                   ManifestContributionMeasurementRuntime.RedisScenario
-                   ManifestContributionMeasurementRuntime.ServerRestartScenario
-                   ManifestContributionMeasurementRuntime.DeadLetterScenario
-                   ManifestContributionMeasurementRuntime.RepairScenario |]
+                scenarioContracts
+                |> Array.map (fun contract -> contract.Scenario)
 
             let run: MeasurementRun =
-                { schemaVersion = "1.0"
-                  runId = runId
-                  environment = "local Aspire emulators; no Azure performance or availability claim"
-                  startedAtUtc = DateTimeOffset.UtcNow
-                  scenarios = scenarios
-                  unmeasured =
-                    [| "total Orleans actor persistence RU"
-                       "Azure partition heat or throttling"
-                       "cross-region failover or availability"
-                       "production SLOs"
-                       "lock-expiry behavior requiring a minute-long handler" |] }
+                {
+                    schemaVersion = "1.0"
+                    runId = runId
+                    environment = "local Aspire emulators; no Azure performance or availability claim"
+                    startedAtUtc = DateTimeOffset.UtcNow
+                    scenarios = scenarios
+                    unmeasured =
+                        [|
+                            "total Orleans actor persistence RU"
+                            "Azure partition heat or throttling"
+                            "cross-region failover or availability"
+                            "production SLOs"
+                            "lock-expiry behavior requiring a minute-long handler"
+                        |]
+                }
 
             ManifestContributionMeasurementSupport.appendEvidenceRecord (Path.Combine(evidenceRoot, "run.ndjson")) run
 
@@ -717,15 +741,28 @@ type ManifestContributionMeasurementAspireTests() =
             let mutable sharedAsset: MeasurementManifestAsset option = None
             let mutable sharedRoot: DirectoryVersion option = None
             let mutable sharedWitnesses: MeasurementReferenceWitness array = Array.empty
+            let collectedReferenceIdentities = ResizeArray<string>()
+            let collectedDirectoryVersionIdentities = ResizeArray<string>()
 
-            let runScenario scenario assertionCount operation =
+            /// Retains the actual production identities created by one scenario for the final isolation proof.
+            let recordScenarioIdentities (witnesses: MeasurementReferenceWitness array) (roots: DirectoryVersion array) =
+                witnesses
+                |> Array.iter (fun witness -> collectedReferenceIdentities.Add(string witness.ReferenceId))
+
+                roots
+                |> Array.iter (fun root -> collectedDirectoryVersionIdentities.Add(string root.DirectoryVersionId))
+
+            /// Runs one declared scenario and derives its summary contract from the centralized declaration.
+            let runScenario (contract: MeasurementScenarioContract) operation =
                 task {
+                    let scenario = contract.Scenario
                     let startedAt = DateTimeOffset.UtcNow
 
                     try
                         do! operation ()
-                        evidence.Summary(scenario, startedAt, assertionCount, [| evidence.SamplesPath |])
-                    with ex ->
+                        evidence.Summary(scenario, startedAt, contract.ExpectedAssertionCount, [| evidence.SamplesPath |])
+                    with
+                    | ex ->
                         let diagnostic =
                             ManifestContributionMeasurementSupport.formatBoundedDiagnostic
                                 $"scenario={scenario}; error={ex.GetType().Name}: {ex.Message}"
@@ -733,19 +770,21 @@ type ManifestContributionMeasurementAspireTests() =
                                 [ ex.StackTrace ]
 
                         evidence.Sample(scenario, "failure", scenario, [ ("diagnostic", box diagnostic) ])
-                        evidence.Summary(scenario, startedAt, assertionCount, [| evidence.SamplesPath |])
+                        evidence.Summary(scenario, startedAt, contract.ExpectedAssertionCount, [| evidence.SamplesPath |])
                         runtimeFailures.Add($"{scenario}: {ex.GetType().Name}: {ex.Message}")
                 }
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.BaselineScenario 12 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.Baseline (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.BaselineScenario
+                        let scenario = ManifestContributionMeasurementContracts.Baseline.Scenario
                         let stopwatch = Stopwatch.StartNew()
                         let firstAssetTask = ManifestContributionMeasurementRuntime.createManifestAssetAsync repositoryId 11
                         let secondAssetTask = ManifestContributionMeasurementRuntime.createManifestAssetAsync repositoryId 29
 
-                        let! assets = Task.WhenAll [| firstAssetTask; secondAssetTask |]
+                        let! assets =
+                            Task.WhenAll [| firstAssetTask
+                                            secondAssetTask |]
 
                         let roots =
                             assets
@@ -755,14 +794,20 @@ type ManifestContributionMeasurementAspireTests() =
 
                         let! branches =
                             Task.WhenAll(
-                                [| BranchServerTestHelpers.createBranchAsync repositoryId defaultBranch $"{branchPrefix}-baseline-0"
-                                   BranchServerTestHelpers.createBranchAsync repositoryId defaultBranch $"{branchPrefix}-baseline-1" |]
+                                [|
+                                    BranchServerTestHelpers.createBranchAsync repositoryId defaultBranch $"{branchPrefix}-baseline-0"
+                                    BranchServerTestHelpers.createBranchAsync repositoryId defaultBranch $"{branchPrefix}-baseline-1"
+                                |]
                             )
 
-                        let branchIds = branches |> Array.map (fun branch -> string branch.BranchId)
+                        let branchIds =
+                            branches
+                            |> Array.map (fun branch -> string branch.BranchId)
+
                         let! metricsBefore = ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory "baseline-before"
 
                         let! witnesses = ManifestContributionMeasurementRuntime.createReferencesAsync state repositoryId branchIds roots scenario
+                        recordScenarioIdentities witnesses roots
 
                         let states = ResizeArray<MeasurementManifestAsset * MeasurementManifestState>()
                         let mutable index = 0
@@ -772,16 +817,20 @@ type ManifestContributionMeasurementAspireTests() =
 
                             let referenceRelationship =
                                 ExactRelationship.ReferenceRoot
-                                    { RepositoryId = Guid.Parse repositoryId
-                                      RootDirectoryVersionId = roots[index].DirectoryVersionId
-                                      ReferenceId = witnesses[index].ReferenceId }
+                                    {
+                                        RepositoryId = Guid.Parse repositoryId
+                                        RootDirectoryVersionId = roots[index].DirectoryVersionId
+                                        ReferenceId = witnesses[index].ReferenceId
+                                    }
 
                             let manifestRelationship =
                                 ExactRelationship.DirectoryVersionManifest
-                                    { RepositoryId = Guid.Parse repositoryId
-                                      StoragePoolId = assets[index].Manifest.StoragePoolId
-                                      ManifestAddress = assets[index].Manifest.ManifestAddress
-                                      DirectoryVersionId = roots[index].DirectoryVersionId }
+                                    {
+                                        RepositoryId = Guid.Parse repositoryId
+                                        StoragePoolId = assets[index].Manifest.StoragePoolId
+                                        ManifestAddress = assets[index].Manifest.ManifestAddress
+                                        DirectoryVersionId = roots[index].DirectoryVersionId
+                                    }
 
                             let! referencePresent, referenceCharge =
                                 ManifestContributionMeasurementRuntime.readExactRelationshipAsync state referenceRelationship
@@ -823,8 +872,11 @@ type ManifestContributionMeasurementAspireTests() =
                                 $"baseline-{index}-physical",
                                 "Distinct baseline manifest activates its ContentBlock once.",
                                 "[1]",
-                                "[" + String.Join(",", current.ActiveManifestCounts) + "]",
-                                (current.ActiveManifestCounts |> Array.forall ((=) 1)),
+                                "["
+                                + String.Join(",", current.ActiveManifestCounts)
+                                + "]",
+                                (current.ActiveManifestCounts
+                                 |> Array.forall ((=) 1)),
                                 [||]
                             )
 
@@ -842,11 +894,13 @@ type ManifestContributionMeasurementAspireTests() =
                                 scenario,
                                 "manifest-final-state",
                                 string witnesses[index].ReferenceId,
-                                [ ("logicalCount", box current.Counter.ReferenceCount)
-                                  ("physicalActiveCounts", box current.ActiveManifestCounts)
-                                  ("workflowCount", box current.Workflows.Length)
-                                  ("actorSerializedBytes", box current.ActorBytes)
-                                  ("exactReadRequestCharge", box (referenceCharge + manifestCharge)) ]
+                                [
+                                    ("logicalCount", box current.Counter.ReferenceCount)
+                                    ("physicalActiveCounts", box current.ActiveManifestCounts)
+                                    ("workflowCount", box current.Workflows.Length)
+                                    ("actorSerializedBytes", box current.ActorBytes)
+                                    ("exactReadRequestCharge", box (referenceCharge + manifestCharge))
+                                ]
                             )
 
                             states.Add(assets[index], current)
@@ -857,7 +911,10 @@ type ManifestContributionMeasurementAspireTests() =
                         baselineStates <- states.ToArray()
                         let! metricsAfter = ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory "baseline-after"
                         let messageDelta = metricsAfter.Messages - metricsBefore.Messages
-                        let durationDelta = metricsAfter.DurationCount - metricsBefore.DurationCount
+
+                        let durationDelta =
+                            metricsAfter.DurationCount
+                            - metricsBefore.DurationCount
 
                         evidence.Assertion(
                             scenario,
@@ -866,7 +923,10 @@ type ManifestContributionMeasurementAspireTests() =
                             float witnesses.Length,
                             messageDelta,
                             (messageDelta = float witnesses.Length),
-                            [| metricsBefore.EvidenceFile; metricsAfter.EvidenceFile |]
+                            [|
+                                metricsBefore.EvidenceFile
+                                metricsAfter.EvidenceFile
+                            |]
                         )
 
                         evidence.Assertion(
@@ -876,23 +936,28 @@ type ManifestContributionMeasurementAspireTests() =
                             float witnesses.Length,
                             durationDelta,
                             (durationDelta = float witnesses.Length),
-                            [| metricsBefore.EvidenceFile; metricsAfter.EvidenceFile |]
+                            [|
+                                metricsBefore.EvidenceFile
+                                metricsAfter.EvidenceFile
+                            |]
                         )
 
                         evidence.Sample(
                             scenario,
                             "throughput",
                             runId,
-                            [ ("referenceCount", box witnesses.Length)
-                              ("concurrency", box 2)
-                              ("elapsedMilliseconds", box stopwatch.Elapsed.TotalMilliseconds) ]
+                            [
+                                ("referenceCount", box witnesses.Length)
+                                ("concurrency", box 2)
+                                ("elapsedMilliseconds", box stopwatch.Elapsed.TotalMilliseconds)
+                            ]
                         )
                     })
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.HotManifestScenario 5 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.HotManifest (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.HotManifestScenario
+                        let scenario = ManifestContributionMeasurementContracts.HotManifest.Scenario
                         let! asset = ManifestContributionMeasurementRuntime.createManifestAssetAsync repositoryId 47
 
                         let roots = Array.init 3 (fun index -> ManifestContributionMeasurementRuntime.createManifestRoot repositoryId scenario index asset)
@@ -908,9 +973,12 @@ type ManifestContributionMeasurementAspireTests() =
                             ManifestContributionMeasurementRuntime.createReferencesAsync
                                 state
                                 repositoryId
-                                (branches |> Array.map (fun branch -> string branch.BranchId))
+                                (branches
+                                 |> Array.map (fun branch -> string branch.BranchId))
                                 roots
                                 scenario
+
+                        recordScenarioIdentities witnesses roots
 
                         let! current = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset (int64 roots.Length)
 
@@ -924,7 +992,10 @@ type ManifestContributionMeasurementAspireTests() =
                             |> Array.filter (fun itemId -> itemId.StartsWith("directory-version-manifest:", StringComparison.Ordinal))
                             |> Array.length
 
-                        let activeCountsText = "[" + String.Join(",", current.ActiveManifestCounts) + "]"
+                        let activeCountsText =
+                            "["
+                            + String.Join(",", current.ActiveManifestCounts)
+                            + "]"
 
                         evidence.Assertion(
                             scenario,
@@ -952,7 +1023,8 @@ type ManifestContributionMeasurementAspireTests() =
                             "Shared physical ContentBlock remains active once.",
                             "[1]",
                             activeCountsText,
-                            (current.ActiveManifestCounts |> Array.forall ((=) 1)),
+                            (current.ActiveManifestCounts
+                             |> Array.forall ((=) 1)),
                             [||]
                         )
 
@@ -980,11 +1052,13 @@ type ManifestContributionMeasurementAspireTests() =
                             scenario,
                             "manifest-final-state",
                             string asset.Manifest.ManifestAddress,
-                            [ ("directoryVersionManifestRelationships", box directoryManifestCount)
-                              ("logicalCount", box current.Counter.ReferenceCount)
-                              ("physicalActiveCounts", box current.ActiveManifestCounts)
-                              ("workflowCount", box current.Workflows.Length)
-                              ("manifestPartitionRequestCharge", box requestCharge) ]
+                            [
+                                ("directoryVersionManifestRelationships", box directoryManifestCount)
+                                ("logicalCount", box current.Counter.ReferenceCount)
+                                ("physicalActiveCounts", box current.ActiveManifestCounts)
+                                ("workflowCount", box current.Workflows.Length)
+                                ("manifestPartitionRequestCharge", box requestCharge)
+                            ]
                         )
 
                         hotAsset <- Some asset
@@ -993,9 +1067,9 @@ type ManifestContributionMeasurementAspireTests() =
                     })
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.HighlySharedScenario 4 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.HighlySharedDirectoryVersion (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.HighlySharedScenario
+                        let scenario = ManifestContributionMeasurementContracts.HighlySharedDirectoryVersion.Scenario
                         let! asset = ManifestContributionMeasurementRuntime.createManifestAssetAsync repositoryId 71
                         let root = ManifestContributionMeasurementRuntime.createManifestRoot repositoryId scenario 0 asset
                         do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root ]
@@ -1008,9 +1082,12 @@ type ManifestContributionMeasurementAspireTests() =
                             ManifestContributionMeasurementRuntime.createReferencesAsync
                                 state
                                 repositoryId
-                                (branches |> Array.map (fun branch -> string branch.BranchId))
+                                (branches
+                                 |> Array.map (fun branch -> string branch.BranchId))
                                 (Array.create 3 root)
                                 scenario
+
+                        recordScenarioIdentities witnesses [| root |]
 
                         let! current = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 1L
 
@@ -1034,7 +1111,10 @@ type ManifestContributionMeasurementAspireTests() =
                             |> Array.filter (fun itemId -> itemId.StartsWith("directory-version-manifest:", StringComparison.Ordinal))
                             |> Array.length
 
-                        let activeCountsText = "[" + String.Join(",", current.ActiveManifestCounts) + "]"
+                        let activeCountsText =
+                            "["
+                            + String.Join(",", current.ActiveManifestCounts)
+                            + "]"
 
                         evidence.Assertion(
                             scenario,
@@ -1072,7 +1152,8 @@ type ManifestContributionMeasurementAspireTests() =
                             "Shared physical ContentBlock remains active once.",
                             "[1]",
                             activeCountsText,
-                            (current.ActiveManifestCounts |> Array.forall ((=) 1)),
+                            (current.ActiveManifestCounts
+                             |> Array.forall ((=) 1)),
                             [||]
                         )
 
@@ -1080,11 +1161,13 @@ type ManifestContributionMeasurementAspireTests() =
                             scenario,
                             "manifest-final-state",
                             string asset.Manifest.ManifestAddress,
-                            [ ("referenceRootRelationships", box referenceCount)
-                              ("directoryVersionManifestRelationships", box manifestCount)
-                              ("logicalCount", box current.Counter.ReferenceCount)
-                              ("physicalActiveCounts", box current.ActiveManifestCounts)
-                              ("partitionRequestCharge", box (incomingCharge + manifestCharge)) ]
+                            [
+                                ("referenceRootRelationships", box referenceCount)
+                                ("directoryVersionManifestRelationships", box manifestCount)
+                                ("logicalCount", box current.Counter.ReferenceCount)
+                                ("physicalActiveCounts", box current.ActiveManifestCounts)
+                                ("partitionRequestCharge", box (incomingCharge + manifestCharge))
+                            ]
                         )
 
                         sharedAsset <- Some asset
@@ -1093,11 +1176,12 @@ type ManifestContributionMeasurementAspireTests() =
                     })
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.DuplicateScenario 5 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.DuplicateBacklogRecovery (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.DuplicateScenario
+                        let scenario = ManifestContributionMeasurementContracts.DuplicateBacklogRecovery.Scenario
 
-                        if baselineWitnesses.Length = 0 || baselineStates.Length = 0 then
+                        if baselineWitnesses.Length = 0
+                           || baselineStates.Length = 0 then
                             invalidOp "Baseline witnesses are required for duplicate backlog recovery."
 
                         let beforeStateJson = baselineStates |> Array.map (snd >> stableJson)
@@ -1126,7 +1210,8 @@ type ManifestContributionMeasurementAspireTests() =
                             do! AspireTestHost.startResourceAsync state "grace-server" scenario
                             serverStopped <- false
                             do! ManifestContributionMeasurementRuntime.waitForActiveMessageSetAsync state messageIds false
-                        with ex ->
+                        with
+                        | ex ->
                             if serverStopped then
                                 do! AspireTestHost.startResourceAsync state "grace-server" $"{scenario}-recovery"
 
@@ -1151,7 +1236,11 @@ type ManifestContributionMeasurementAspireTests() =
 
                             index <- index + 1
 
-                        let! metrics = ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory "duplicate"
+                        let! metrics =
+                            ManifestContributionMeasurementRuntime.waitForMetricsAsync state evidence.RootDirectory "duplicate" (fun current ->
+                                current.Messages >= float baselineWitnesses.Length
+                                && current.DurationCount
+                                   >= float baselineWitnesses.Length)
 
                         evidence.Assertion(
                             scenario,
@@ -1194,25 +1283,30 @@ type ManifestContributionMeasurementAspireTests() =
                             beforeVerifyMetrics.RelationshipWrites,
                             afterVerifyMetrics.RelationshipWrites,
                             (beforeVerifyMetrics.RelationshipWrites = afterVerifyMetrics.RelationshipWrites),
-                            [| beforeVerifyMetrics.EvidenceFile; afterVerifyMetrics.EvidenceFile |]
+                            [|
+                                beforeVerifyMetrics.EvidenceFile
+                                afterVerifyMetrics.EvidenceFile
+                            |]
                         )
 
                         evidence.Sample(
                             scenario,
                             "backlog-drain",
                             runId,
-                            [ ("duplicateMessages", box baselineWitnesses.Length)
-                              ("unrelatedMessages", box 1)
-                              ("drainMilliseconds", box stopwatch.Elapsed.TotalMilliseconds)
-                              ("messageTelemetry", box metrics.Messages)
-                              ("durationTelemetryCount", box metrics.DurationCount) ]
+                            [
+                                ("duplicateMessages", box baselineWitnesses.Length)
+                                ("unrelatedMessages", box 1)
+                                ("drainMilliseconds", box stopwatch.Elapsed.TotalMilliseconds)
+                                ("messageTelemetry", box metrics.Messages)
+                                ("durationTelemetryCount", box metrics.DurationCount)
+                            ]
                         )
                     })
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.RedisScenario 4 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.RedisRestart (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.RedisScenario
+                        let scenario = ManifestContributionMeasurementContracts.RedisRestart.Scenario
 
                         let asset =
                             hotAsset
@@ -1227,9 +1321,14 @@ type ManifestContributionMeasurementAspireTests() =
                         let! witnesses =
                             ManifestContributionMeasurementRuntime.createReferencesAsync state repositoryId [| string branch.BranchId |] [| root |] scenario
 
+                        recordScenarioIdentities witnesses [| root |]
+
                         let! after = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 4L
 
-                        let activeCountsText = "[" + String.Join(",", after.ActiveManifestCounts) + "]"
+                        let activeCountsText =
+                            "["
+                            + String.Join(",", after.ActiveManifestCounts)
+                            + "]"
 
                         evidence.Assertion(
                             scenario,
@@ -1275,17 +1374,19 @@ type ManifestContributionMeasurementAspireTests() =
                             scenario,
                             "post-restart-state",
                             string asset.Manifest.ManifestAddress,
-                            [ ("logicalCountBefore", box before.Counter.ReferenceCount)
-                              ("logicalCountAfter", box after.Counter.ReferenceCount)
-                              ("physicalActiveCounts", box after.ActiveManifestCounts)
-                              ("workflowCount", box after.Workflows.Length) ]
+                            [
+                                ("logicalCountBefore", box before.Counter.ReferenceCount)
+                                ("logicalCountAfter", box after.Counter.ReferenceCount)
+                                ("physicalActiveCounts", box after.ActiveManifestCounts)
+                                ("workflowCount", box after.Workflows.Length)
+                            ]
                         )
                     })
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.ServerRestartScenario 4 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.ServerRestartRecovery (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.ServerRestartScenario
+                        let scenario = ManifestContributionMeasurementContracts.ServerRestartRecovery.Scenario
 
                         let asset =
                             sharedAsset
@@ -1305,9 +1406,11 @@ type ManifestContributionMeasurementAspireTests() =
 
                         let relationship =
                             ExactRelationship.ReferenceRoot
-                                { RepositoryId = Guid.Parse repositoryId
-                                  RootDirectoryVersionId = root.DirectoryVersionId
-                                  ReferenceId = sharedWitnesses[0].ReferenceId }
+                                {
+                                    RepositoryId = Guid.Parse repositoryId
+                                    RootDirectoryVersionId = root.DirectoryVersionId
+                                    ReferenceId = sharedWitnesses[0].ReferenceId
+                                }
 
                         do! AspireTestHost.waitForExactRelationshipAsync state relationship
                         let! after = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 1L
@@ -1357,16 +1460,18 @@ type ManifestContributionMeasurementAspireTests() =
                             scenario,
                             "post-restart-state",
                             string sharedWitnesses[0].ReferenceId,
-                            [ ("preRestartSnapshotComparisonOnly", box beforeJson)
-                              ("freshPostRestartState", box (stableJson after))
-                              ("exactReadRequestCharge", box requestCharge) ]
+                            [
+                                ("preRestartSnapshotComparisonOnly", box beforeJson)
+                                ("freshPostRestartState", box (stableJson after))
+                                ("exactReadRequestCharge", box requestCharge)
+                            ]
                         )
                     })
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.DeadLetterScenario 3 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.DeadLetter (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.DeadLetterScenario
+                        let scenario = ManifestContributionMeasurementContracts.DeadLetter.Scenario
                         let messageId = $"mca-08b-dlq-{Guid.NewGuid():N}"
                         let! deliveryCount, reason = ManifestContributionMeasurementRuntime.proveDeadLetterAsync state messageId
 
@@ -1404,16 +1509,18 @@ type ManifestContributionMeasurementAspireTests() =
                             scenario,
                             "broker-dlq",
                             messageId,
-                            [ ("deliveryCount", box deliveryCount)
-                              ("deadLetterReason", box reason)
-                              ("subscription", box state.ServiceBusTestSubscription) ]
+                            [
+                                ("deliveryCount", box deliveryCount)
+                                ("deadLetterReason", box reason)
+                                ("subscription", box state.ServiceBusTestSubscription)
+                            ]
                         )
                     })
 
             do!
-                runScenario ManifestContributionMeasurementRuntime.RepairScenario 10 (fun () ->
+                runScenario ManifestContributionMeasurementContracts.Repair (fun () ->
                     task {
-                        let scenario = ManifestContributionMeasurementRuntime.RepairScenario
+                        let scenario = ManifestContributionMeasurementContracts.Repair.Scenario
                         let! asset = ManifestContributionMeasurementRuntime.createManifestAssetAsync repositoryId 103
                         let root = ManifestContributionMeasurementRuntime.createManifestRoot repositoryId scenario 0 asset
                         do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root ]
@@ -1421,6 +1528,8 @@ type ManifestContributionMeasurementAspireTests() =
 
                         let! witnesses =
                             ManifestContributionMeasurementRuntime.createReferencesAsync state repositoryId [| string branch.BranchId |] [| root |] scenario
+
+                        recordScenarioIdentities witnesses [| root |]
 
                         let witness = witnesses[0]
                         let! before = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 1L
@@ -1440,9 +1549,15 @@ type ManifestContributionMeasurementAspireTests() =
 
                         let dryRoot = dryRun.RootElement
 
-                        let proposedCount = dryRoot.GetProperty("ProposedActions").GetArrayLength()
+                        let proposedCount =
+                            dryRoot
+                                .GetProperty("ProposedActions")
+                                .GetArrayLength()
 
-                        let dryAppliedCount = dryRoot.GetProperty("AppliedActions").GetArrayLength()
+                        let dryAppliedCount =
+                            dryRoot
+                                .GetProperty("AppliedActions")
+                                .GetArrayLength()
 
                         evidence.Assertion(
                             scenario,
@@ -1471,17 +1586,31 @@ type ManifestContributionMeasurementAspireTests() =
                             metricsBeforeDiagnosis.RelationshipWrites,
                             metricsAfterDryRun.RelationshipWrites,
                             (metricsBeforeDiagnosis.RelationshipWrites = metricsAfterDryRun.RelationshipWrites),
-                            [| metricsBeforeDiagnosis.EvidenceFile; metricsAfterDryRun.EvidenceFile |]
+                            [|
+                                metricsBeforeDiagnosis.EvidenceFile
+                                metricsAfterDryRun.EvidenceFile
+                            |]
                         )
 
                         use! execute = ManifestContributionMeasurementRuntime.repairAsync state reportJson true
 
-                        let appliedCount = execute.RootElement.GetProperty("AppliedActions").GetArrayLength()
+                        let appliedCount =
+                            execute
+                                .RootElement
+                                .GetProperty("AppliedActions")
+                                .GetArrayLength()
 
                         do! AspireTestHost.waitForExactRelationshipAsync state relationship
                         let! exactPresent, exactCharge = ManifestContributionMeasurementRuntime.readExactRelationshipAsync state relationship
                         let! after = ManifestContributionMeasurementRuntime.waitForManifestStateAsync state repositoryId asset 1L
-                        let! metricsAfterExecute = ManifestContributionMeasurementRuntime.readMetricsAsync state evidence.RootDirectory "repair-after-execute"
+
+                        let! metricsAfterExecute =
+                            ManifestContributionMeasurementRuntime.waitForMetricsAsync state evidence.RootDirectory "repair-after-execute" (fun metrics ->
+                                metrics.RepairActions
+                                - metricsAfterDryRun.RepairActions
+                                >= 1.0
+                                && metrics.Messages - metricsAfterDryRun.Messages
+                                   >= 1.0)
 
                         evidence.Assertion(
                             scenario,
@@ -1538,9 +1667,14 @@ type ManifestContributionMeasurementAspireTests() =
                             "repair-action-telemetry",
                             "Execute records exactly one applied repair action.",
                             1.0,
-                            metricsAfterExecute.RepairActions - metricsAfterDryRun.RepairActions,
-                            (metricsAfterExecute.RepairActions - metricsAfterDryRun.RepairActions = 1.0),
-                            [| metricsAfterDryRun.EvidenceFile; metricsAfterExecute.EvidenceFile |]
+                            metricsAfterExecute.RepairActions
+                            - metricsAfterDryRun.RepairActions,
+                            (metricsAfterExecute.RepairActions
+                             - metricsAfterDryRun.RepairActions = 1.0),
+                            [|
+                                metricsAfterDryRun.EvidenceFile
+                                metricsAfterExecute.EvidenceFile
+                            |]
                         )
 
                         evidence.Assertion(
@@ -1548,26 +1682,47 @@ type ManifestContributionMeasurementAspireTests() =
                             "repair-message-telemetry",
                             "Execute republishes exactly one valid Reference-created delivery.",
                             1.0,
-                            metricsAfterExecute.Messages - metricsAfterDryRun.Messages,
-                            (metricsAfterExecute.Messages - metricsAfterDryRun.Messages = 1.0),
-                            [| metricsAfterDryRun.EvidenceFile; metricsAfterExecute.EvidenceFile |]
+                            metricsAfterExecute.Messages
+                            - metricsAfterDryRun.Messages,
+                            (metricsAfterExecute.Messages
+                             - metricsAfterDryRun.Messages = 1.0),
+                            [|
+                                metricsAfterDryRun.EvidenceFile
+                                metricsAfterExecute.EvidenceFile
+                            |]
                         )
 
                         evidence.Sample(
                             scenario,
                             "repair-final-state",
                             string witness.ReferenceId,
-                            [ ("proposedActions", box proposedCount)
-                              ("appliedActions", box appliedCount)
-                              ("logicalCount", box after.Counter.ReferenceCount)
-                              ("physicalActiveCounts", box after.ActiveManifestCounts)
-                              ("repairTelemetryDelta", box (metricsAfterExecute.RepairActions - metricsAfterDryRun.RepairActions))
-                              ("messageTelemetryDelta", box (metricsAfterExecute.Messages - metricsAfterDryRun.Messages))
-                              ("exactRelationshipRequestCharge", box (deleteCharge + exactCharge)) ]
+                            [
+                                ("proposedActions", box proposedCount)
+                                ("appliedActions", box appliedCount)
+                                ("logicalCount", box after.Counter.ReferenceCount)
+                                ("physicalActiveCounts", box after.ActiveManifestCounts)
+                                ("repairTelemetryDelta",
+                                 box (
+                                     metricsAfterExecute.RepairActions
+                                     - metricsAfterDryRun.RepairActions
+                                 ))
+                                ("messageTelemetryDelta",
+                                 box (
+                                     metricsAfterExecute.Messages
+                                     - metricsAfterDryRun.Messages
+                                 ))
+                                ("exactRelationshipRequestCharge", box (deleteCharge + exactCharge))
+                            ]
                         )
                     })
 
             let parsedSamples = ManifestContributionMeasurementSupport.readEvidenceRecords evidence.SamplesPath
+
+            let isolation =
+                ManifestContributionMeasurementSupport.evaluateIdentityIsolation
+                    scenarioContracts
+                    collectedReferenceIdentities
+                    collectedDirectoryVersionIdentities
 
             evidence.Assertion(
                 "Run",
@@ -1583,9 +1738,9 @@ type ManifestContributionMeasurementAspireTests() =
                 "Run",
                 "scenario-isolation",
                 "Each scenario uses unique Reference and DirectoryVersion identities.",
-                true,
-                true,
-                true,
+                $"references={isolation.ExpectedReferenceCount}; directoryVersions={isolation.ExpectedDirectoryVersionCount}",
+                $"references={isolation.ActualDistinctReferenceCount}; directoryVersions={isolation.ActualDistinctDirectoryVersionCount}",
+                isolation.Passed,
                 [| evidence.SamplesPath |]
             )
 
@@ -1596,7 +1751,9 @@ type ManifestContributionMeasurementAspireTests() =
                 true,
                 (run.unmeasured.Length = 5),
                 (run.unmeasured.Length = 5),
-                [| Path.Combine(evidenceRoot, "run.ndjson") |]
+                [|
+                    Path.Combine(evidenceRoot, "run.ndjson")
+                |]
             )
 
             evidence.FailIfNeeded(runtimeFailures.ToArray())

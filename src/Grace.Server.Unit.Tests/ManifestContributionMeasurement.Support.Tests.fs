@@ -20,7 +20,7 @@ type ManifestContributionMeasurementSupportTests() =
         let failed = ManifestContributionMeasurementSupport.classifyResourceCommand { Success = false; Canceled = false; Message = String.Empty }
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(completed, Is.EqualTo(ResourceCommandOutcome.Completed))
                 Assert.That(canceled, Is.EqualTo(ResourceCommandOutcome.Canceled "operator canceled"))
                 Assert.That(failed, Is.EqualTo(ResourceCommandOutcome.Failed "Resource command failed without details.")))
@@ -30,7 +30,7 @@ type ManifestContributionMeasurementSupportTests() =
     [<Test>]
     member _.ResourceCommandReadinessMatchesBuiltInCommandSemantics() =
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(ManifestContributionMeasurementSupport.commandRequiresHealthyResource "resource-start", Is.True)
                 Assert.That(ManifestContributionMeasurementSupport.commandRequiresHealthyResource "resource-restart", Is.True)
                 Assert.That(ManifestContributionMeasurementSupport.commandRequiresHealthyResource "resource-stop", Is.False)
@@ -43,14 +43,20 @@ type ManifestContributionMeasurementSupportTests() =
         let secret = "service-bus-secret"
 
         let logs =
-            [ $"Endpoint=sb://localhost:5672;SharedAccessKey={secret};UseDevelopmentEmulator=true;"
-              String('x', ManifestContributionMeasurementSupport.MaximumDiagnosticCharacters * 2) ]
+            [
+                $"Endpoint=sb://localhost:5672;SharedAccessKey={secret};UseDevelopmentEmulator=true;"
+                String(
+                    'x',
+                    ManifestContributionMeasurementSupport.MaximumDiagnosticCharacters
+                    * 2
+                )
+            ]
 
         let diagnostic =
             ManifestContributionMeasurementSupport.formatBoundedDiagnostic "redis restart" "State=Failed; AccountKey=cosmos-secret; Password=sql-secret" logs
 
         Assert.Multiple(
-            Action(fun () ->
+            Action (fun () ->
                 Assert.That(diagnostic.Length, Is.LessThanOrEqualTo(ManifestContributionMeasurementSupport.MaximumDiagnosticCharacters))
                 Assert.That(diagnostic, Does.Contain("redis restart"))
                 Assert.That(diagnostic, Does.Contain("State=Failed"))
@@ -72,26 +78,34 @@ type ManifestContributionMeasurementSupportTests() =
             measurements["logicalCount"] <- 3L
 
             let sample: MeasurementSample =
-                { schemaVersion = "1.0"
-                  scenario = "HotManifest"
-                  sampleType = "final-state"
-                  sequence = 1
-                  timestampUtc = DateTimeOffset.Parse("2026-07-28T12:00:00Z")
-                  correlationKey = "hot-manifest"
-                  measurements = measurements }
+                {
+                    schemaVersion = "1.0"
+                    scenario = "HotManifest"
+                    sampleType = "final-state"
+                    sequence = 1
+                    timestampUtc = DateTimeOffset.Parse("2026-07-28T12:00:00Z")
+                    correlationKey = "hot-manifest"
+                    measurements = measurements
+                }
 
             ManifestContributionMeasurementSupport.appendEvidenceRecord path sample
             let bytes = File.ReadAllBytes path
             let records = ManifestContributionMeasurementSupport.readEvidenceRecords path
 
             Assert.Multiple(
-                Action(fun () ->
+                Action (fun () ->
                     Assert.That(bytes, Has.Length.GreaterThan(0))
                     Assert.That(bytes[0], Is.Not.EqualTo(0xEFuy), "UTF-8 evidence must not begin with a BOM.")
                     Assert.That(records, Has.Length.EqualTo(1))
-                    Assert.That(records[0].GetProperty("scenario").GetString(), Is.EqualTo("HotManifest"))
+                    Assert.That(records[ 0 ].GetProperty("scenario").GetString(), Is.EqualTo("HotManifest"))
 
-                    Assert.That(records[0].GetProperty("measurements").GetProperty("logicalCount").GetInt64(), Is.EqualTo(3L)))
+                    Assert.That(
+                        records[0]
+                            .GetProperty("measurements")
+                            .GetProperty("logicalCount")
+                            .GetInt64(),
+                        Is.EqualTo(3L)
+                    ))
             )
 
             let oversized = {| payload = String('z', ManifestContributionMeasurementSupport.MaximumEvidenceRecordBytes) |}
@@ -128,11 +142,35 @@ other_metric_total 99 1785304963133
             let! result = ManifestContributionMeasurementSupport.waitForTerminalStateAsync (TimeSpan.FromSeconds 1.0) TimeSpan.Zero observeAsync Set.isEmpty
 
             Assert.Multiple(
-                Action(fun () ->
+                Action (fun () ->
                     Assert.That(result, Is.Empty)
                     Assert.That(observations, Is.EqualTo(1), "Absence must be proven by at least one broker observation."))
             )
         }
+
+    /// Verifies a terminal wait continues until expected telemetry is observed.
+    [<Test>]
+    member _.TerminalWaitRequiresExpectedTelemetry() =
+        task {
+            let observations = Queue<int>([ 0; 1; 2 ])
+
+            let observeAsync () = Task.FromResult(observations.Dequeue())
+
+            let! result =
+                ManifestContributionMeasurementSupport.waitForTerminalStateAsync (TimeSpan.FromSeconds 1.0) TimeSpan.Zero observeAsync (fun telemetryCount ->
+                    telemetryCount >= 2)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(result, Is.EqualTo(2))
+                    Assert.That(observations, Is.Empty, "The wait must consume non-terminal observations before returning."))
+            )
+        }
+
+    /// Verifies the centralized duplicate backlog contract declares all six recorded assertions.
+    [<Test>]
+    member _.DuplicateBacklogContractDeclaresSixAssertions() =
+        Assert.That(ManifestContributionMeasurementContracts.DuplicateBacklogRecovery.ExpectedAssertionCount, Is.EqualTo(6))
 
     /// Verifies a scenario summary cannot report success after one of its recorded assertions failed.
     [<Test>]
@@ -153,10 +191,56 @@ other_metric_total 99 1785304963133
                 |> Array.exactlyOne
 
             Assert.Multiple(
-                Action(fun () ->
+                Action (fun () ->
                     Assert.That(assertion.GetProperty("passed").GetBoolean(), Is.False)
                     Assert.That(summary.GetProperty("passed").GetBoolean(), Is.False)
                     Assert.That(summary.GetProperty("assertionCount").GetInt32(), Is.EqualTo(1)))
             )
         finally
             if Directory.Exists root then Directory.Delete(root, true)
+
+    /// Verifies a scenario summary cannot pass when a declared assertion was never recorded.
+    [<Test>]
+    member _.ScenarioSummaryRejectsMissingAssertions() =
+        let root = Path.Combine(Path.GetTempPath(), "grace-server-unit-tests", $"mca-missing-summary-{Guid.NewGuid():N}")
+
+        try
+            let sink = MeasurementEvidenceSink root
+            sink.Assertion("Regression", "only-assertion", "Only recorded assertion", true, true, true, [||])
+            sink.Summary("Regression", DateTimeOffset.UtcNow, 2, [||])
+
+            let summary =
+                ManifestContributionMeasurementSupport.readEvidenceRecords (Path.Combine(root, "summaries.ndjson"))
+                |> Array.exactlyOne
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(summary.GetProperty("passed").GetBoolean(), Is.False)
+                    Assert.That(summary.GetProperty("assertionCount").GetInt32(), Is.EqualTo(1)))
+            )
+        finally
+            if Directory.Exists root then Directory.Delete(root, true)
+
+    /// Verifies repeated collected identities cannot satisfy the grouped scenario isolation contract.
+    [<Test>]
+    member _.ScenarioIsolationRequiresRealDistinctIdentities() =
+        let contracts =
+            [|
+                { Scenario = "First"; ExpectedAssertionCount = 1; CreatedReferenceCount = 2; DistinctDirectoryVersionCount = 1 }
+                { Scenario = "Second"; ExpectedAssertionCount = 1; CreatedReferenceCount = 1; DistinctDirectoryVersionCount = 1 }
+            |]
+
+        let isolation = ManifestContributionMeasurementSupport.evaluateIdentityIsolation contracts [ "ref-1"; "ref-2"; "ref-2" ] [ "dir-1"; "dir-2" ]
+
+        let distinctIsolation = ManifestContributionMeasurementSupport.evaluateIdentityIsolation contracts [ "ref-1"; "ref-2"; "ref-3" ] [ "dir-1"; "dir-2" ]
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(isolation.ExpectedReferenceCount, Is.EqualTo(3))
+                Assert.That(isolation.ActualDistinctReferenceCount, Is.EqualTo(2))
+                Assert.That(isolation.ExpectedDirectoryVersionCount, Is.EqualTo(2))
+                Assert.That(isolation.ActualDistinctDirectoryVersionCount, Is.EqualTo(2))
+                Assert.That(isolation.Passed, Is.False)
+                Assert.That(distinctIsolation.ActualDistinctReferenceCount, Is.EqualTo(3))
+                Assert.That(distinctIsolation.Passed, Is.True))
+        )
