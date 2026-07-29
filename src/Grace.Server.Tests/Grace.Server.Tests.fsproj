@@ -14,6 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="ManifestContributionMeasurement.Support.fs" />
     <Compile Include="AspireTestHost.fs" />
     <Compile Include="AspireTestHost.Diagnostics.Tests.fs" />
     <Compile Include="OperationalFactsPublisher.AppHost.Tests.fs" />
@@ -37,6 +38,7 @@
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
     <Compile Include="RestartDurability.Server.Tests.fs" />
     <Compile Include="ManifestContributionAccounting.Server.Tests.fs" />
+    <Compile Include="ManifestContributionMeasurement.Server.Tests.fs" />
     <Compile Include="RepositoryCounterRecentResult.Integration.Server.Tests.fs" />
     <Compile Include="Policy.Server.Tests.fs" />
     <Compile Include="Queue.Integration.Server.Tests.fs" />

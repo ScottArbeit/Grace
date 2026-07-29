@@ -1414,43 +1414,87 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
-    /// Restarts Grace.Server with a scenario label for deliberate restart diagnostics.
-    let restartGraceServerAsync (state: TestHostState) (restartContext: string) =
+    /// Executes one built-in Aspire resource command and proves any running result through resource health.
+    let executeResourceCommandAsync (state: TestHostState) (resourceName: string) (commandName: string) (context: string) =
         task {
             do! sharedStateLock.WaitAsync()
 
             try
-                let normalizedRestartContext = normalizeRestartContext restartContext
-                Console.WriteLine($"Restarting Grace.Server Aspire project resource for {normalizedRestartContext}...")
+                let normalizedContext = normalizeRestartContext context
+                Console.WriteLine($"Executing Aspire resource command '{commandName}' for '{resourceName}' during {normalizedContext}...")
                 let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
                 use cts = new CancellationTokenSource(defaultWaitTimeout)
 
-                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+                try
+                    let! result = commandService.ExecuteCommandAsync(resourceName, commandName, cts.Token)
 
-                if not result.Success then
-                    let errorMessage =
-                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
-                        elif result.Canceled then "Restart command was canceled."
-                        else "Restart command failed without details."
+                    match
+                        ManifestContributionMeasurementSupport.classifyResourceCommand
+                            { Success = result.Success; Canceled = result.Canceled; Message = result.Message }
+                        with
+                    | ResourceCommandOutcome.Completed -> ()
+                    | ResourceCommandOutcome.Canceled message ->
+                        raise (OperationCanceledException($"Resource command '{commandName}' was canceled: {message}", cts.Token))
+                    | ResourceCommandOutcome.Failed message -> raise (InvalidOperationException($"Resource command '{commandName}' failed: {message}"))
 
-                    raise (InvalidOperationException($"Grace.Server restart failed during {normalizedRestartContext}: {errorMessage}"))
+                    if ManifestContributionMeasurementSupport.commandRequiresHealthyResource commandName then
+                        let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
 
-                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                        let progressContext =
+                            if
+                                resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase)
+                                && commandName.Equals(KnownResourceCommands.RestartCommand, StringComparison.OrdinalIgnoreCase)
+                            then
+                                Some normalizedContext
+                            else
+                                None
 
-                do!
-                    waitForResourceHealthyWithProgressContextAsync
-                        notificationService
-                        state.App
-                        graceServerResourceName
-                        cts.Token
-                        (Some normalizedRestartContext)
+                        do! waitForResourceHealthyWithProgressContextAsync notificationService state.App resourceName cts.Token progressContext
 
-                do! waitForGraceServerHttpReadyAsync state.Client cts.Token
-                logProgress $"Grace.Server HTTP readiness recovered after intentional restart '{normalizedRestartContext}'."
-                Console.WriteLine($"Grace.Server Aspire project resource restart completed for {normalizedRestartContext}.")
+                        if resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
+                            do! waitForGraceServerHttpReadyAsync state.Client cts.Token
+                            logProgress $"Grace.Server HTTP readiness recovered after '{commandName}' during '{normalizedContext}'."
+
+                    Console.WriteLine($"Aspire resource command '{commandName}' completed for '{resourceName}' during {normalizedContext}.")
+                with
+                | ex ->
+                    let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                    let resourceState = describeResourceState notificationService resourceName
+
+                    let! logLines =
+                        task {
+                            try
+                                return! getResourceLogsAsync state.App resourceName
+                            with
+                            | logException ->
+                                return
+                                    [
+                                        $"Resource log capture failed: {logException.GetType().Name}: {logException.Message}"
+                                    ]
+                        }
+
+                    let diagnostic =
+                        ManifestContributionMeasurementSupport.formatBoundedDiagnostic
+                            $"{normalizedContext}; command={commandName}; error={ex.GetType().Name}: {ex.Message}"
+                            resourceState
+                            logLines
+
+                    raise (InvalidOperationException(diagnostic, ex))
             finally
                 sharedStateLock.Release() |> ignore
         }
+
+    /// Stops one Aspire resource and returns only after the built-in stop command completes.
+    let stopResourceAsync state resourceName context = executeResourceCommandAsync state resourceName KnownResourceCommands.StopCommand context
+
+    /// Starts one Aspire resource and returns only after it reports healthy.
+    let startResourceAsync state resourceName context = executeResourceCommandAsync state resourceName KnownResourceCommands.StartCommand context
+
+    /// Restarts one Aspire resource and returns only after it reports healthy.
+    let restartResourceAsync state resourceName context = executeResourceCommandAsync state resourceName KnownResourceCommands.RestartCommand context
+
+    /// Restarts Grace.Server with a scenario label for deliberate restart diagnostics.
+    let restartGraceServerAsync (state: TestHostState) (restartContext: string) = restartResourceAsync state graceServerResourceName restartContext
 
     /// Builds a deterministic service bus receiver for integration setup fixture for the server integration aspire Test Host assertions.
     let private createServiceBusReceiver (state: TestHostState) =
