@@ -28,6 +28,37 @@ open System.Threading.Tasks
 /// Provides bounded, read-only manifest contribution evidence for Grace operators.
 module ManifestContributionDiagnosis =
 
+    /// Serializes one actor DTO exactly as diagnosis records it for later bounded reread comparison.
+    let internal actorSnapshotJson snapshot = JsonSerializer.Serialize(snapshot, Constants.JsonSerializerOptions)
+
+    /// Serializes every workflow field while representing uninitialized union values as explicit JSON null.
+    let internal workflowSnapshotJson (snapshot: ManifestContributionWorkflowDto) =
+        let unionName value = if isNull (box value) then null else $"{value}"
+
+        let optionalIdentity value =
+            match value with
+            | Some identity -> $"{identity}"
+            | None -> null
+
+        JsonSerializer.Serialize(
+            {|
+                Class = snapshot.Class
+                RepositoryId = snapshot.RepositoryId
+                StoragePoolId = snapshot.StoragePoolId
+                ManifestAddress = snapshot.ManifestAddress
+                Direction = unionName snapshot.Direction
+                Ranges = snapshot.Ranges
+                CompletedRanges = snapshot.CompletedRanges
+                FailedRanges = snapshot.FailedRanges
+                LifecycleState = unionName snapshot.LifecycleState
+                StartOperationId = optionalIdentity snapshot.StartOperationId
+                LastOperationId = optionalIdentity snapshot.LastOperationId
+                CounterRevision = snapshot.CounterRevision
+                Revision = snapshot.Revision
+            |},
+            Constants.JsonSerializerOptions
+        )
+
     /// Carries the internal operator request without adding a public Grace contract.
     [<AllowNullLiteral>]
     type DiagnoseManifestContributionParameters() =
@@ -269,7 +300,7 @@ module ManifestContributionDiagnosis =
         | DiagnosisSelector.OperationId operationId -> DiagnosisTarget.Operation $"{operationId}"
 
     /// Returns the direct manifests that current DirectoryVersion actor state authoritatively names.
-    let private directManifests directoryVersionDto correlationId =
+    let internal directManifests directoryVersionDto correlationId =
         DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersionDto.DirectoryVersion correlationId
         |> Result.map (fun references ->
             references
@@ -337,39 +368,11 @@ module ManifestContributionDiagnosis =
                 actorFacts.Add({ ActorType = actorType; ActorId = actorId; Revision = revision; SnapshotJson = snapshotJson })
 
             /// Serializes and records one actor snapshot whose contract is safe for the shared JSON options.
-            let addActorFact actorType actorId revision snapshot =
-                addActorFactJson actorType actorId revision (JsonSerializer.Serialize(snapshot, Constants.JsonSerializerOptions))
+            let addActorFact actorType actorId revision snapshot = addActorFactJson actorType actorId revision (actorSnapshotJson snapshot)
 
             /// Preserves every workflow field while representing an uninitialized enum-like union as explicit JSON null.
             let addWorkflowActorFact actorType actorId revision (snapshot: ManifestContributionWorkflowDto) =
-                let unionName value = if isNull (box value) then null else $"{value}"
-
-                let optionalIdentity value =
-                    match value with
-                    | Some identity -> $"{identity}"
-                    | None -> null
-
-                let snapshotJson =
-                    JsonSerializer.Serialize(
-                        {|
-                            Class = snapshot.Class
-                            RepositoryId = snapshot.RepositoryId
-                            StoragePoolId = snapshot.StoragePoolId
-                            ManifestAddress = snapshot.ManifestAddress
-                            Direction = unionName snapshot.Direction
-                            Ranges = snapshot.Ranges
-                            CompletedRanges = snapshot.CompletedRanges
-                            FailedRanges = snapshot.FailedRanges
-                            LifecycleState = unionName snapshot.LifecycleState
-                            StartOperationId = optionalIdentity snapshot.StartOperationId
-                            LastOperationId = optionalIdentity snapshot.LastOperationId
-                            CounterRevision = snapshot.CounterRevision
-                            Revision = snapshot.Revision
-                        |},
-                        Constants.JsonSerializerOptions
-                    )
-
-                addActorFactJson actorType actorId revision snapshotJson
+                addActorFactJson actorType actorId revision (workflowSnapshotJson snapshot)
 
             let noteRelationshipRead relationship =
                 let identity = relationshipIdentity relationship
@@ -600,8 +603,14 @@ module ManifestContributionDiagnosis =
                     | ExactRelationshipPresence.Absent ->
                         missing.Add identity |> ignore
 
-                        repairTargets.Add $"GetOrAddExactRelationship:{identity}"
-                        |> ignore
+                        let action =
+                            match relationship with
+                            | ExactRelationship.ReferenceRoot _ -> Some "RepublishReferenceCreated"
+                            | ExactRelationship.ParentChild _ -> Some "GetOrAddExactRelationship"
+                            | ExactRelationship.DirectoryVersionManifest _ -> None
+
+                        action
+                        |> Option.iter (fun value -> repairTargets.Add $"{value}:{identity}" |> ignore)
 
                 let countEvidence = ResizeArray<ManifestCountEvidence>()
 
@@ -814,6 +823,19 @@ module ManifestContributionDiagnosis =
 
                     let completeEvidence = partitionEvidenceComplete && counterReadable
 
+                    if sourceBacked && completeEvidence then
+                        for KeyValue (identity, relationship) in expected do
+                            match relationship with
+                            | ExactRelationship.DirectoryVersionManifest manifestRelationship when
+                                manifestRelationship.RepositoryId = counterTuple.RepositoryId
+                                && manifestRelationship.StoragePoolId = counterTuple.StoragePoolId
+                                && manifestRelationship.ManifestAddress = counterTuple.ManifestAddress
+                                && missing.Contains identity
+                                ->
+                                repairTargets.Add $"GetOrAddExactRelationship:{identity}"
+                                |> ignore
+                            | _ -> ()
+
                     if completeEvidence then
                         for KeyValue (identity, relationship) in observed do
                             match relationship with
@@ -859,7 +881,9 @@ module ManifestContributionDiagnosis =
 
                     match (if counterReadable then Some counterDto.Count else None), rebuiltCount with
                     | Some stored, Some rebuilt when rebuilt <> stored ->
-                        repairTargets.Add($"ReconcileCounter:{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}")
+                        repairTargets.Add(
+                            $"ReconcileRepositoryContentCount:{counterTuple.RepositoryId:D}|{counterTuple.StoragePoolId}|{counterTuple.ManifestAddress}"
+                        )
                         |> ignore
                     | _ -> ()
 
@@ -931,7 +955,7 @@ module ManifestContributionDiagnosis =
         }
 
     /// Creates production read dependencies without exposing a mutation-capable service to the diagnosis core.
-    let private productionDependencies (context: HttpContext) =
+    let internal productionDependencies (context: HttpContext) =
         let store = ManifestContributionAccounting.CosmosExactRelationshipStore(cosmosContainer) :> IExactRelationshipStore
 
         let recentResults = context.RequestServices.GetRequiredService<IRepositoryCounterRecentResult>()

@@ -44,6 +44,11 @@ module RepositoryContentCounter =
     let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
+    /// Builds the stable identity for one exact positive logical count replacement.
+    let repairOperationId (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) expectedRevision rebuiltCount =
+        RepositoryContentCounterOperationId
+            $"manifest-logical-repair:{repositoryId:N}:{storagePoolId}:{manifestAddress}:revision:{expectedRevision}:count:{rebuiltCount}"
+
     /// Maps a RepositoryContentCounter command case to the operation name used in idempotency and diagnostics.
     let commandName command =
         match command with
@@ -220,7 +225,106 @@ module RepositoryContentCounter =
     /// Validates a RepositoryContentCounter command and derives the events needed for a state transition.
     let decideCommand events counter command metadata = decideCommandForKey None events counter command metadata
 
-    /// Resolves Redis replay, bounded persistence, and safe removal gating for one counter command.
+    /// Validates and decides one atomic positive logical count replacement without normal accounting events or intents.
+    let decideRepairForKey
+        (expectedPrimaryKey: string option)
+        (counter: RepositoryContentCounterDto)
+        (command: RepositoryContentCounterRepairCommand)
+        (metadata: EventMetadata)
+        =
+        let expectedOperationId =
+            repairOperationId command.RepositoryId command.StoragePoolId command.ManifestAddress command.ExpectedRevision command.RebuiltCount
+
+        let completedReplay =
+            counter.LastCompletedChange
+            |> Option.filter (fun change ->
+                change.OperationId = command.OperationId
+                && change.CurrentCount = command.RebuiltCount
+                && change.Revision = command.ExpectedRevision + 1L
+                && counter.Count = command.RebuiltCount
+                && counter.Revision = change.Revision)
+
+        if String.IsNullOrWhiteSpace command.OperationId then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair requires a non-empty operation id.")
+        elif command.OperationId <> expectedOperationId then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair operation id is not deterministic for the requested transition.")
+        elif command.RepositoryId = RepositoryId.Empty
+             || String.IsNullOrWhiteSpace command.StoragePoolId
+             || String.IsNullOrWhiteSpace command.ManifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair requires an exact repository, StoragePool, and manifest target.")
+        elif command.ExpectedRevision < 0L then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair expected revision must not be negative.")
+        elif command.RebuiltCount <= 0L then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair rebuilt count must be positive.")
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey command.RepositoryId command.StoragePoolId command.ManifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair target does not match the grain key.")
+        elif counter.RepositoryId = RepositoryId.Empty
+             || targetMismatch counter command.RepositoryId command.StoragePoolId command.ManifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter repair target does not match the initialized counter.")
+        else
+            match completedReplay with
+            | Some _ ->
+                Ok
+                    {
+                        Counter = counter
+                        OperationId = command.OperationId
+                        Events = []
+                        Intents = []
+                        WasIdempotentReplay = true
+                        Message = "Repository content logical count repair replayed."
+                    }
+            | None when counter.Revision <> command.ExpectedRevision ->
+                Error(
+                    graceError
+                        metadata.CorrelationId
+                        $"RepositoryContentCounter repair expected revision {command.ExpectedRevision}, but current revision is {counter.Revision}."
+                )
+            | None when counter.Count = command.RebuiltCount ->
+                Error(graceError metadata.CorrelationId "RepositoryContentCounter logical count already matches the rebuilt count.")
+            | None ->
+                let operation =
+                    if command.RebuiltCount > counter.Count then
+                        RepositoryContentCounterChangeOperation.Added
+                    else
+                        RepositoryContentCounterChangeOperation.Removed
+
+                let repaired =
+                    { counter with
+                        Count = command.RebuiltCount
+                        Revision = counter.Revision + 1L
+                        LastCompletedChange =
+                            Some
+                                {
+                                    OperationId = command.OperationId
+                                    Operation = operation
+                                    PreviousCount = counter.Count
+                                    CurrentCount = command.RebuiltCount
+                                    Revision = counter.Revision + 1L
+                                }
+                    }
+
+                Ok
+                    {
+                        Counter = repaired
+                        OperationId = command.OperationId
+                        Events = []
+                        Intents = []
+                        WasIdempotentReplay = false
+                        Message = "Repository content logical count repaired."
+                    }
+
+    /// Persists at most one snapshot for an accepted repair-only logical count replacement.
+    let handlePositiveCountRepair (persistSnapshot: RepositoryContentCounterDto -> Task) expectedPrimaryKey counter command metadata =
+        task {
+            match decideRepairForKey expectedPrimaryKey counter command metadata with
+            | Error error -> return Error error
+            | Ok decision when decision.WasIdempotentReplay -> return Ok decision
+            | Ok decision ->
+                do! persistSnapshot decision.Counter
+                return Ok decision
+        }
+
+    /// Resolves Redis replay, bounded persistence, and safe removal gating for one normal counter command.
     let handleWithRecentResult
         (recentResult: IRepositoryCounterRecentResult)
         (persistSnapshot: RepositoryContentCounterDto -> Task)
@@ -385,4 +489,23 @@ module RepositoryContentCounter =
                         )
 
                         return Error error
+                }
+
+            /// Applies one repair-only positive logical count replacement without normal contribution intents.
+            member this.ReconcilePositiveCount command metadata =
+                task {
+                    this.correlationId <- metadata.CorrelationId
+                    RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, "ReconcilePositiveCount")
+
+                    match! handlePositiveCountRepair this.ApplySnapshot (Some(this.GetPrimaryKeyString())) counter command metadata with
+                    | Ok decision ->
+                        let returnValue =
+                            (GraceReturnValue.Create decision metadata.CorrelationId)
+                                .enhance(nameof RepositoryId, decision.Counter.RepositoryId)
+                                .enhance(nameof StoragePoolId, decision.Counter.StoragePoolId)
+                                .enhance(nameof ManifestAddress, decision.Counter.ManifestAddress)
+                                .enhance (nameof ReferenceCount, decision.Counter.ReferenceCount)
+
+                        return Ok returnValue
+                    | Error error -> return Error error
                 }

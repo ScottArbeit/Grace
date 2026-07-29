@@ -473,7 +473,13 @@ module ManifestContributionAccounting =
         :> Task
 
     /// Ensures one direct manifest relationship using current durable counter and exact relationship state.
-    let private ensureDirectoryVersionManifest (store: IExactRelationshipStore) relationship manifest metadata cancellationToken =
+    let internal ensureDirectoryVersionManifest
+        (store: IExactRelationshipStore)
+        (relationship: DirectoryVersionManifestRelationship)
+        (manifest: FileManifest)
+        metadata
+        cancellationToken
+        =
         let exactRelationship = ExactRelationship.DirectoryVersionManifest relationship
 
         ensureDirectoryVersionManifestWith

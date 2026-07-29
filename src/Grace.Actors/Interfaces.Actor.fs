@@ -340,6 +340,9 @@ module Interfaces =
         /// Converges the existing automatic physical-deletion reminder for this Reference when its type is eligible.
         abstract member EnsureAutomaticPhysicalDeletionReminderAsync: correlationId: CorrelationId -> Task
 
+        /// Republishes this actor's persisted Created event through its original deterministic broker envelope.
+        abstract member RepublishCreated: correlationId: CorrelationId -> Task<GraceResult<ReferenceDto>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ReferenceDto>>
 
@@ -771,6 +774,10 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
+        /// Atomically replaces a proven positive logical count without emitting physical contribution intents.
+        abstract member ReconcilePositiveCount:
+            command: RepositoryContentCounterRepairCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
     /// Defines the operations for the ManifestContributionWorkflow actor.
     [<Interface>]

@@ -47,6 +47,7 @@
     <Compile Include="Reminder.Actor.Tests.fs" />
     <Compile Include="ManifestContributionAccounting.Server.Tests.fs" />
     <Compile Include="ManifestContributionDiagnosis.Server.Tests.fs" />
+    <Compile Include="ManifestContributionRepair.Server.Tests.fs" />
     <Compile Include="RepositoryCounterRecentResult.Server.Tests.fs" />
     <Compile Include="Reference.Actor.Tests.fs" />
     <Compile Include="SaveBoundary.Actor.Tests.fs" />

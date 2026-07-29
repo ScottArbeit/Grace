@@ -56,6 +56,18 @@ module RepositoryContentCounter =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterCommand>()
 
+    /// Carries one repair-only positive logical count replacement guarded by an exact actor revision.
+    [<GenerateSerializer>]
+    type RepositoryContentCounterRepairCommand =
+        {
+            OperationId: RepositoryContentCounterOperationId
+            RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
+            ManifestAddress: ManifestAddress
+            ExpectedRevision: int64
+            RebuiltCount: ReferenceCount
+        }
+
     /// Represents repository content counter event type.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterEventType =

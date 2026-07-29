@@ -756,6 +756,51 @@ module Reference =
                 }
                 :> Task
 
+            /// Republishes the original persisted Created event without rewriting Reference state.
+            member this.RepublishCreated correlationId =
+                task {
+                    this.correlationId <- correlationId
+
+                    match state.State
+                          |> Seq.tryFind (fun referenceEvent ->
+                              match referenceEvent.Event with
+                              | ReferenceEventType.Created _ -> true
+                              | _ -> false)
+                        with
+                    | None ->
+                        return
+                            Error(
+                                (GraceError.Create (getErrorMessage ReferenceError.FailedWhileApplyingEvent) correlationId)
+                                    .enhance ("IsRetryable", "true")
+                            )
+                    | Some createdEvent ->
+                        try
+                            do! publishReferenceCreatedGraceEvent createdEvent
+
+                            return
+                                Ok(
+                                    (GraceReturnValue.Create referenceDto correlationId)
+                                        .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                                        .enhance(nameof BranchId, referenceDto.BranchId)
+                                        .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                                        .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                                        .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                                        .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName createdEvent.Event)
+                                )
+                        with
+                        | ex ->
+                            return
+                                Error(
+                                    (GraceError.CreateWithException ex (getErrorMessage ReferenceError.FailedWhileApplyingEvent) correlationId)
+                                        .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                                        .enhance(nameof BranchId, referenceDto.BranchId)
+                                        .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                                        .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                                        .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                                        .enhance ("IsRetryable", "true")
+                                )
+                }
+
             /// Reports whether this Reference actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
