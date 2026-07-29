@@ -490,6 +490,16 @@ module Notification =
             | GraceEvent.ReferenceEvent { Event = ReferenceEventType.Created _ } -> true
             | _ -> false
 
+        /// Adds parsed Reference-created identity to the current manifest-accounting activity before handling begins.
+        let private enrichManifestContributionActivity graceEvent =
+            match graceEvent with
+            | GraceEvent.ReferenceEvent referenceEvent ->
+                match referenceEvent.Event with
+                | ReferenceEventType.Created (referenceId, _, _, repositoryId, _, directoryVersionId, _, _, referenceType, _, _) ->
+                    ManifestContributionTelemetry.enrichReferenceActivity $"{referenceId:D}" $"{repositoryId:D}" $"{directoryVersionId:D}" $"{referenceType}"
+                | _ -> ()
+            | _ -> ()
+
         /// Processes one Service Bus delivery through exactly one truthful settlement intent.
         let internal processGraceEventWith
             (dependencies: GraceEventSettlementDependencies)
@@ -517,6 +527,8 @@ module Notification =
                             ManifestContributionTelemetry.startMessageActivity metadata.MessageId metadata.CorrelationId metadata.DeliveryCount
                         else
                             null
+
+                    enrichManifestContributionActivity graceEvent
 
                     let recordMessage stage outcome =
                         if isManifestAccountingDelivery then
@@ -1040,8 +1052,6 @@ module Notification =
                                                   referenceType,
                                                   referenceText,
                                                   links) ->
-                        ManifestContributionTelemetry.enrichReferenceActivity $"{referenceId:D}" $"{repositoryId:D}" $"{directoryId:D}" $"{referenceType}"
-
                         /// Emits the same-branch notification after Reference replay and branch recomputation complete.
                         let emitCurrentBranchReference branchName =
                             task {

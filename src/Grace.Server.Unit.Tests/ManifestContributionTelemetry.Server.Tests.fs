@@ -252,6 +252,50 @@ type ManifestContributionTelemetryServerTests() =
             Assert.That(calls.ToArray(), Is.EqualTo([| "handle"; "abandon" |] :> obj))
         }
 
+    /// Proves Reference-created activity identity is available at the point where handling fails.
+    [<Test>]
+    member _.ReferenceCreatedActivityIsEnrichedBeforeHandlerFailure() =
+        task {
+            let calls = ResizeArray<string>()
+            let observedTags = Dictionary<string, obj>(StringComparer.Ordinal)
+            use listener = new ActivityListener()
+            listener.ShouldListenTo <- fun source -> source.Name = ManifestContributionTelemetry.InstrumentationName
+            listener.Sample <- fun _ -> ActivitySamplingResult.AllDataAndRecorded
+            ActivitySource.AddActivityListener listener
+
+            let seam =
+                dependencies
+                    (fun _ -> Ok validEvent)
+                    (fun _ _ ->
+                        calls.Add "handle"
+
+                        if not (isNull Activity.Current) then
+                            for tag in Activity.Current.TagObjects do
+                                observedTags[tag.Key] <- tag.Value
+
+                        Task.FromException(InvalidOperationException("handler failed")))
+                    (fun _ ->
+                        calls.Add "complete"
+                        Task.CompletedTask)
+                    (fun _ ->
+                        calls.Add "abandon"
+                        Task.CompletedTask)
+                    (fun _ _ _ ->
+                        calls.Add "dead-letter"
+                        Task.CompletedTask)
+
+            do! Subscriber.processGraceEventWith seam metadata (BinaryData.FromString("{}")) CancellationToken.None
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(calls.ToArray(), Is.EqualTo([| "handle"; "abandon" |] :> obj))
+                    Assert.That(observedTags["grace.reference.id"], Is.EqualTo("11111111-1111-1111-1111-111111111111"))
+                    Assert.That(observedTags["grace.repository.id"], Is.EqualTo("44444444-4444-4444-4444-444444444444"))
+                    Assert.That(observedTags["grace.directory_version.id"], Is.EqualTo("66666666-6666-6666-6666-666666666666"))
+                    Assert.That(observedTags["grace.reference.type"], Is.EqualTo("ReferenceType.Commit")))
+            )
+        }
+
     /// Proves cancellation during handling propagates without a replacement settlement.
     [<Test>]
     member _.CancellationDuringHandlingPropagatesWithoutSettlement() =
