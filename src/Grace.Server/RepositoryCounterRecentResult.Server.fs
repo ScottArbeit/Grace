@@ -103,9 +103,13 @@ module RepositoryCounterRecentResult =
     /// Represents an intentionally absent Redis configuration as cache misses and ignored best-effort writes.
     type UnavailableRepositoryCounterRecentResult() =
         interface IRepositoryCounterRecentResult with
-            member _.TryGetAsync(_, _, _, _, _) = Task.FromResult<RepositoryContentCounterCompletedChange option>(None)
+            member _.TryGetAsync(_, _, _, _, _) =
+                ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Get "miss"
+                Task.FromResult<RepositoryContentCounterCompletedChange option>(None)
 
-            member _.TrySetAsync(_, _, _, _, _) = Task.FromResult false
+            member _.TrySetAsync(_, _, _, _, _) =
+                ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Set "unconfirmed"
+                Task.FromResult false
 
     /// Uses one lazy StackExchange.Redis connection with native reconnect, readiness proof, bounded commands, and structured failure evidence.
     type RedisRepositoryCounterRecentResult(host: string, port: int, log: ILogger) =
@@ -130,14 +134,8 @@ module RepositoryCounterRecentResult =
                 return database
             }
 
-        let logBoundaryFailure operation cacheKey fallback (error: Exception) =
-            log.LogWarning(
-                error,
-                "Redis repository counter recent-result {Operation} failed for cache key {CacheKey}; using nonauthoritative fallback {Fallback}.",
-                operation,
-                cacheKey,
-                fallback
-            )
+        let logBoundaryFailure operation fallback (error: Exception) =
+            log.LogWarning(error, "Redis repository counter recent-result {Operation} failed; using nonauthoritative fallback {Fallback}.", operation, fallback)
 
         /// Creates the Redis accelerator with a no-op logger for focused callers that intentionally omit structured diagnostics.
         new(host: string, port: int) = new RedisRepositoryCounterRecentResult(host, port, NullLogger.Instance)
@@ -155,13 +153,17 @@ module RepositoryCounterRecentResult =
                                 .StringGetAsync(cacheKey)
                                 .WaitAsync(commandTimeout, cancellationToken)
 
-                        return if value.IsNullOrEmpty then None else tryDeserialize (string value)
+                        let result = if value.IsNullOrEmpty then None else tryDeserialize (string value)
+                        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Get (if result.IsSome then "hit" else "miss")
+                        return result
                     with
                     | :? RedisException as error ->
-                        logBoundaryFailure "GET" cacheKey "cache-miss" error
+                        logBoundaryFailure "GET" "cache-miss" error
+                        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Get "miss"
                         return None
                     | :? TimeoutException as error ->
-                        logBoundaryFailure "GET" cacheKey "cache-miss" error
+                        logBoundaryFailure "GET" "cache-miss" error
+                        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Get "miss"
                         return None
                 }
 
@@ -172,16 +174,24 @@ module RepositoryCounterRecentResult =
                     try
                         let! database = database cancellationToken
 
-                        return!
+                        let! confirmed =
                             database
                                 .StringSetAsync(cacheKey, serialize change, expiry)
                                 .WaitAsync(commandTimeout, cancellationToken)
+
+                        ManifestContributionTelemetry.recordRedisOperation
+                            ManifestContributionRedisOperation.Set
+                            (if confirmed then "confirmed" else "unconfirmed")
+
+                        return confirmed
                     with
                     | :? RedisException as error ->
-                        logBoundaryFailure "SET" cacheKey "unconfirmed-write" error
+                        logBoundaryFailure "SET" "unconfirmed-write" error
+                        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Set "unconfirmed"
                         return false
                     | :? TimeoutException as error ->
-                        logBoundaryFailure "SET" cacheKey "unconfirmed-write" error
+                        logBoundaryFailure "SET" "unconfirmed-write" error
+                        ManifestContributionTelemetry.recordRedisOperation ManifestContributionRedisOperation.Set "unconfirmed"
                         return false
                 }
 

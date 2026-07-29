@@ -893,7 +893,19 @@ module ManifestContributionRepair =
                                 $"Repair failed after preserving the confirmed applied prefix; run a fresh diagnosis: {ex.Message}"
                         )
 
-                return terminal.Value
+                let completed = terminal.Value
+
+                let terminalOutcome =
+                    match completed.Outcome with
+                    | RepairOutcome.VerifiedComplete -> "verified_complete"
+                    | RepairOutcome.IncompleteRetain -> "incomplete_retain"
+                    | RepairOutcome.FailedRetain -> "failed_retain"
+
+                completed.AppliedActions
+                |> Array.map (fun action -> action.Kind)
+                |> fun actionKinds -> ManifestContributionTelemetry.recordRepairActions actionKinds terminalOutcome
+
+                return completed
         }
 
     /// Creates the production bounded reads and the five approved repair-only mutations.
