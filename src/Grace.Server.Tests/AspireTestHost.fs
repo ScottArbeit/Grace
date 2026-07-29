@@ -1511,30 +1511,35 @@ module AspireTestHost =
                     notificationService.TryGetCurrentState(resourceName, &resourceEvent)
                     && ManifestContributionMeasurementSupport.isHealthyResourceStatus (string resourceEvent.Snapshot.HealthStatus)
 
-                if isHealthy then
-                    use readinessCts = new CancellationTokenSource(defaultWaitTimeout)
-                    do! proveResourceRunningAsync state notificationService resourceName context readinessCts.Token
-                else
-                    try
-                        do! executeResourceCommandUnderLockAsync state resourceName KnownResourceCommands.StartCommand context
-                    with
-                    | commandException ->
+                let proveReadinessAsync () =
+                    task {
                         use readinessCts = new CancellationTokenSource(defaultWaitTimeout)
+                        do! proveResourceRunningAsync state notificationService resourceName context readinessCts.Token
+                    }
 
-                        try
-                            do! proveResourceRunningAsync state notificationService resourceName context readinessCts.Token
+                let recoverAsync () = executeResourceCommandUnderLockAsync state resourceName KnownResourceCommands.StartCommand context
 
-                            logProgress
-                                $"Resource '{resourceName}' recovered during '{normalizeRestartContext context}' despite the built-in start result: {commandException.Message}"
-                        with
-                        | readinessException ->
-                            return
-                                raise (
-                                    InvalidOperationException(
-                                        $"Resource '{resourceName}' could not be recovered during '{normalizeRestartContext context}'.",
-                                        AggregateException(commandException, readinessException)
-                                    )
-                                )
+                let mutable recoveryWarning: Exception option = None
+
+                try
+                    let! warning = ManifestContributionMeasurementSupport.recoverResourceReadinessAsync isHealthy proveReadinessAsync recoverAsync
+
+                    recoveryWarning <- warning
+                with
+                | recoveryException ->
+                    raise (
+                        InvalidOperationException(
+                            $"Resource '{resourceName}' could not be recovered during '{normalizeRestartContext context}'.",
+                            recoveryException
+                        )
+                    )
+
+                match recoveryWarning with
+                | Some commandException ->
+                    logProgress
+                        $"Resource '{resourceName}' recovered during '{normalizeRestartContext context}' despite the built-in start result: {commandException.Message}"
+                | None when not isHealthy -> logProgress $"Resource '{resourceName}' recovered during '{normalizeRestartContext context}'."
+                | None -> ()
             finally
                 sharedStateLock.Release() |> ignore
         }

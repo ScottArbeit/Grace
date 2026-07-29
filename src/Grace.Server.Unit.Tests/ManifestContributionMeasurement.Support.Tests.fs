@@ -49,6 +49,106 @@ type ManifestContributionMeasurementSupportTests() =
                 Assert.That(ManifestContributionMeasurementSupport.isHealthyResourceStatus String.Empty, Is.False))
         )
 
+    /// Verifies stale Healthy state cannot bypass bounded recovery after resource-specific readiness fails.
+    [<Test>]
+    member _.StaleHealthyReadinessFailureRoutesThroughRecovery() =
+        task {
+            let observations = ResizeArray<string>()
+            let mutable readinessAttempt = 0
+
+            let proveReadinessAsync () =
+                task {
+                    readinessAttempt <- readinessAttempt + 1
+                    observations.Add($"readiness-{readinessAttempt}")
+
+                    if readinessAttempt = 1 then raise (TimeoutException("stale Healthy readiness"))
+                }
+
+            let recoverAsync () = task { observations.Add("recover") }
+
+            let! recoveryWarning = ManifestContributionMeasurementSupport.recoverResourceReadinessAsync true proveReadinessAsync recoverAsync
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(
+                        observations.ToArray(),
+                        Is.EqualTo<string array>(
+                            [|
+                                "readiness-1"
+                                "recover"
+                                "readiness-2"
+                            |]
+                        ),
+                        "A stale Healthy snapshot must recover and then prove readiness again."
+                    )
+
+                    Assert.That(recoveryWarning, Is.EqualTo<Exception option>(None)))
+            )
+        }
+
+    /// Verifies a failed start result can recover when fresh readiness succeeds and remains observable.
+    [<Test>]
+    member _.FreshReadinessCanRecoverAfterFailedStartResult() =
+        task {
+            let mutable readinessAttempt = 0
+
+            let proveReadinessAsync () =
+                task {
+                    readinessAttempt <- readinessAttempt + 1
+
+                    if readinessAttempt = 1 then raise (TimeoutException("stale Healthy readiness"))
+                }
+
+            let recoverAsync () = task { raise (InvalidOperationException("start reported failure")) }
+
+            let! recoveryWarning = ManifestContributionMeasurementSupport.recoverResourceReadinessAsync true proveReadinessAsync recoverAsync
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(readinessAttempt, Is.EqualTo(2))
+
+                    Assert.That(
+                        recoveryWarning
+                        |> Option.map (fun warning -> warning.Message),
+                        Is.EqualTo<string option>(Some "start reported failure")
+                    ))
+            )
+        }
+
+    /// Verifies failed recovery retains the initial, command, and final readiness diagnostics.
+    [<Test>]
+    member _.ResourceRecoveryFailureRetainsAllDiagnostics() =
+        task {
+            let mutable readinessAttempt = 0
+
+            let proveReadinessAsync () =
+                task {
+                    readinessAttempt <- readinessAttempt + 1
+
+                    if readinessAttempt = 1 then
+                        raise (TimeoutException("initial stale readiness"))
+                    else
+                        raise (TimeoutException("final readiness failure"))
+                }
+
+            let recoverAsync () = task { raise (InvalidOperationException("bounded start failure")) }
+
+            let failure =
+                Assert.ThrowsAsync<AggregateException>(
+                    Func<Task>(fun () -> ManifestContributionMeasurementSupport.recoverResourceReadinessAsync true proveReadinessAsync recoverAsync)
+                )
+
+            let diagnostic = failure.ToString()
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(diagnostic, Does.Contain("initial stale readiness"))
+                    Assert.That(diagnostic, Does.Contain("bounded start failure"))
+                    Assert.That(diagnostic, Does.Contain("final readiness failure"))
+                    Assert.That(readinessAttempt, Is.EqualTo(2)))
+            )
+        }
+
     /// Verifies command failures retain bounded actionable state without leaking connection-string credentials.
     [<Test>]
     member _.ResourceCommandDiagnosticsAreBoundedAndRedacted() =
@@ -250,6 +350,56 @@ other_metric_total 99 1785304963133
     [<Test>]
     member _.DuplicateBacklogContractDeclaresSixAssertions() =
         Assert.That(ManifestContributionMeasurementContracts.DuplicateBacklogRecovery.ExpectedAssertionCount, Is.EqualTo(6))
+
+    /// Verifies canonical metadata order matches execution, with Repair before terminal DeadLetter.
+    [<Test>]
+    member _.ScenarioContractsPreserveExecutionOrder() =
+        let contracts = ManifestContributionMeasurementContracts.All
+
+        let names =
+            contracts
+            |> Array.map (fun contract -> contract.Scenario)
+
+        Assert.That(
+            names,
+            Is.EqualTo<string array>(
+                [|
+                    "Baseline"
+                    "HotManifest"
+                    "HighlySharedDirectoryVersion"
+                    "DuplicateBacklogRecovery"
+                    "RedisRestart"
+                    "ServerRestartRecovery"
+                    "Repair"
+                    "DeadLetter"
+                |]
+            )
+        )
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.DoesNotThrow(
+                    Action (fun () ->
+                        ManifestContributionMeasurementSupport.requireScenarioExecutionOrder contracts 6 ManifestContributionMeasurementContracts.Repair)
+                )
+
+                Assert.DoesNotThrow(Action(fun () -> ManifestContributionMeasurementSupport.requireScenarioExecutionComplete contracts contracts.Length))
+
+                Assert.That(
+                    Action (fun () ->
+                        ManifestContributionMeasurementSupport.requireScenarioExecutionOrder contracts 6 ManifestContributionMeasurementContracts.DeadLetter),
+                    Throws
+                        .TypeOf<InvalidOperationException>()
+                        .With.Message.EqualTo("Scenario execution order mismatch at index 6: expected 'Repair' but received 'DeadLetter'.")
+                )
+
+                Assert.That(
+                    Action(fun () -> ManifestContributionMeasurementSupport.requireScenarioExecutionComplete contracts (contracts.Length - 1)),
+                    Throws
+                        .TypeOf<InvalidOperationException>()
+                        .With.Message.EqualTo("Scenario execution ended after 7 entries; canonical contract requires 8.")
+                ))
+        )
 
     /// Verifies a scenario summary cannot report success after one of its recorded assertions failed.
     [<Test>]

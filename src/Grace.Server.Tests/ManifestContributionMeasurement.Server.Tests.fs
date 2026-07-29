@@ -738,6 +738,7 @@ type ManifestContributionMeasurementAspireTests() =
             let mutable sharedWitnesses: MeasurementReferenceWitness array = Array.empty
             let collectedReferenceIdentities = ResizeArray<string>()
             let collectedDirectoryVersionIdentities = ResizeArray<string>()
+            let mutable scenarioExecutionIndex = 0
 
             /// Retains the actual production identities created by one scenario for the final isolation proof.
             let recordScenarioIdentities (witnesses: MeasurementReferenceWitness array) (roots: DirectoryVersion array) =
@@ -750,6 +751,8 @@ type ManifestContributionMeasurementAspireTests() =
             /// Runs one declared scenario and derives its summary contract from the centralized declaration.
             let runScenario (contract: MeasurementScenarioContract) operation =
                 task {
+                    ManifestContributionMeasurementSupport.requireScenarioExecutionOrder scenarioContracts scenarioExecutionIndex contract
+                    scenarioExecutionIndex <- scenarioExecutionIndex + 1
                     let scenario = contract.Scenario
                     let startedAt = DateTimeOffset.UtcNow
 
@@ -1784,6 +1787,7 @@ type ManifestContributionMeasurementAspireTests() =
                         )
                     })
 
+            ManifestContributionMeasurementSupport.requireScenarioExecutionComplete scenarioContracts scenarioExecutionIndex
             let parsedSamples = ManifestContributionMeasurementSupport.readEvidenceRecords evidence.SamplesPath
 
             let isolation =

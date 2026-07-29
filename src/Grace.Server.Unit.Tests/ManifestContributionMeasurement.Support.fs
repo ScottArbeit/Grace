@@ -115,8 +115,8 @@ module ManifestContributionMeasurementContracts =
             DuplicateBacklogRecovery
             RedisRestart
             ServerRestartRecovery
-            DeadLetter
             Repair
+            DeadLetter
         |]
 
 /// Provides pure classification and bounded evidence behavior used by the hosted measurement fixture.
@@ -158,6 +158,68 @@ module ManifestContributionMeasurementSupport =
         && healthStatus
             .Trim()
             .Equals("Healthy", StringComparison.OrdinalIgnoreCase)
+
+    /// Routes failed readiness through bounded recovery and returns any command failure superseded by a fresh proof.
+    let recoverResourceReadinessAsync
+        (snapshotHealthy: bool)
+        (proveReadinessAsync: unit -> Task<unit>)
+        (recoverAsync: unit -> Task<unit>)
+        : Task<Exception option>
+        =
+        task {
+            let failures = ResizeArray<Exception>()
+            let mutable recoveryRequired = not snapshotHealthy
+            let mutable recoveryWarning: Exception option = None
+
+            if snapshotHealthy then
+                try
+                    do! proveReadinessAsync ()
+                with
+                | readinessException ->
+                    failures.Add readinessException
+                    recoveryRequired <- true
+
+            if recoveryRequired then
+                try
+                    do! recoverAsync ()
+                with
+                | recoveryException ->
+                    failures.Add recoveryException
+                    recoveryWarning <- Some recoveryException
+
+                try
+                    do! proveReadinessAsync ()
+                with
+                | readinessException ->
+                    failures.Add readinessException
+                    raise (AggregateException("Resource recovery did not restore readiness.", failures))
+
+            return recoveryWarning
+        }
+
+    /// Rejects runtime scenario execution that diverges from the canonical metadata and summary order.
+    let requireScenarioExecutionOrder (contracts: MeasurementScenarioContract array) (executionIndex: int) (actual: MeasurementScenarioContract) : unit =
+        if executionIndex < 0
+           || executionIndex >= contracts.Length then
+            raise (
+                InvalidOperationException(
+                    $"Scenario '{actual.Scenario}' executed at index {executionIndex}, outside the canonical contract length {contracts.Length}."
+                )
+            )
+
+        let expected = contracts[executionIndex]
+
+        if not (expected.Scenario.Equals(actual.Scenario, StringComparison.Ordinal)) then
+            raise (
+                InvalidOperationException(
+                    $"Scenario execution order mismatch at index {executionIndex}: expected '{expected.Scenario}' but received '{actual.Scenario}'."
+                )
+            )
+
+    /// Rejects a runtime fixture that completed before every canonical scenario produced its terminal summary.
+    let requireScenarioExecutionComplete (contracts: MeasurementScenarioContract array) (executedCount: int) : unit =
+        if executedCount <> contracts.Length then
+            raise (InvalidOperationException($"Scenario execution ended after {executedCount} entries; canonical contract requires {contracts.Length}."))
 
     /// Polls until a terminal observation is reached or the bounded wait expires.
     let waitForTerminalStateAsync
