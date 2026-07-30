@@ -1404,6 +1404,39 @@ module AspireTestHost =
                 sharedStateLock.Release() |> ignore
         }
 
+    /// Starts a fresh host owned only by an explicitly selected measurement fixture.
+    let startIsolatedAsync (bootstrapUserId: string) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                if sharedState.IsSome then
+                    invalidOp "An isolated Aspire measurement host cannot start after the shared integration host."
+            finally
+                sharedStateLock.Release() |> ignore
+
+            return! startNewHostAsync bootstrapUserId
+        }
+
+    /// Disposes a fixture-owned host and removes its local containers while preserving every cleanup failure.
+    let stopIsolatedAsync (state: TestHostState) =
+        task {
+            let failures = ResizeArray<Exception>()
+
+            try
+                do! state.App.DisposeAsync().AsTask()
+            with
+            | ex -> failures.Add ex
+
+            try
+                do! cleanupDockerContainersAsync ()
+            with
+            | ex -> failures.Add ex
+
+            if failures.Count > 0 then
+                raise (AggregateException("The isolated Aspire measurement host did not clean up completely.", failures))
+        }
+
     /// Defines stop behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let stopAsync (app: DistributedApplication option) =
         task {

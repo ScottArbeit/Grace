@@ -1,0 +1,412 @@
+namespace Grace.Server.Tests.Measurement
+
+open System
+open System.Collections.Generic
+open System.Globalization
+open System.IO
+open System.Text
+open System.Text.Json
+open System.Text.RegularExpressions
+
+/// Captures the immutable metadata that identifies one hosted measurement execution.
+[<CLIMutable>]
+type MeasurementRun =
+    {
+        RecordType: string
+        RunId: string
+        CommitSha: string
+        Worktree: string
+        WorktreeState: string
+        Command: string
+        EvidenceDirectory: string
+        Scenarios: string array
+        StartedAt: string
+    }
+
+    /// Builds run metadata from the scenario plan that will actually execute.
+    static member Create(runId, commitSha, worktree, worktreeState, command, evidenceDirectory, executedScenarioPlan) =
+        {
+            RecordType = nameof MeasurementRun
+            RunId = runId
+            CommitSha = commitSha
+            Worktree = worktree
+            WorktreeState = worktreeState
+            Command = command
+            EvidenceDirectory = evidenceDirectory
+            Scenarios = Array.copy executedScenarioPlan
+            StartedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        }
+
+/// Captures one typed metric or durable-state observation used by a scenario assertion.
+[<CLIMutable>]
+type MeasurementSample =
+    {
+        RecordType: string
+        RunId: string
+        ScenarioId: string
+        SampleId: string
+        Name: string
+        Value: int64
+        Labels: Dictionary<string, string>
+        ObservedAt: string
+    }
+
+    /// Builds a bounded sample without accepting an outcome decision from the caller.
+    static member Create(runId, scenarioId, sampleId, name, value, labels: IDictionary<string, string>) =
+        {
+            RecordType = nameof MeasurementSample
+            RunId = runId
+            ScenarioId = scenarioId
+            SampleId = sampleId
+            Name = name
+            Value = value
+            Labels = Dictionary<string, string>(labels, StringComparer.Ordinal)
+            ObservedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        }
+
+/// Captures one named proof result that contributes to a derived scenario outcome.
+[<CLIMutable>]
+type MeasurementAssertion =
+    {
+        RecordType: string
+        RunId: string
+        ScenarioId: string
+        AssertionId: string
+        Passed: bool
+        Detail: string
+        ObservedAt: string
+    }
+
+    /// Builds one assertion record while leaving terminal outcome derivation to ScenarioSummary.
+    static member Create(runId, scenarioId, assertionId, passed, detail) =
+        {
+            RecordType = nameof MeasurementAssertion
+            RunId = runId
+            ScenarioId = scenarioId
+            AssertionId = assertionId
+            Passed = passed
+            Detail = detail
+            ObservedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        }
+
+/// Captures the derived terminal result for one executed or skipped scenario.
+[<CLIMutable>]
+type ScenarioSummary =
+    {
+        RecordType: string
+        RunId: string
+        ScenarioId: string
+        Outcome: string
+        RequiredAssertionIds: string array
+        RequiredAssertionCount: int
+        PassedAssertionCount: int
+        FailedAssertionIds: string array
+        RuntimeFailures: string array
+        CompletedAt: string
+    }
+
+/// Defines the only Baseline assertion identities permitted to produce a passing summary.
+module Baseline =
+
+    /// Lists the exact assertion identities required by the MCA Baseline tracer.
+    let requiredAssertionIds =
+        [|
+            "baseline.setup-deliveries-completed"
+            "baseline.stimulus-deliveries-completed"
+            "baseline.reference-root-set"
+            "baseline.manifest-relationship-set"
+            "baseline.logical-counts"
+            "baseline.workflow-counts"
+            "baseline.physical-active-counts"
+            "baseline.message-delta"
+            "baseline.duration-delta"
+            "baseline.identity-isolation"
+            "baseline.evidence-integrity"
+        |]
+
+/// Derives a scenario outcome from exact assertion identities and the runtime-failure ledger.
+module ScenarioSummary =
+
+    /// Derives Passed, Failed, or Skipped without accepting a caller-supplied success value.
+    let derive runId scenarioId (requiredAssertionIds: string array) (assertions: MeasurementAssertion array) runtimeFailures prerequisiteSkipped =
+        let required = HashSet<string>(requiredAssertionIds, StringComparer.Ordinal)
+
+        let observedIds =
+            assertions
+            |> Array.map (fun assertion -> assertion.AssertionId)
+
+        let observed = HashSet<string>(observedIds, StringComparer.Ordinal)
+        let duplicates = observedIds.Length <> observed.Count
+        let requiredHasDuplicates = requiredAssertionIds.Length <> required.Count
+
+        let identitiesMatch =
+            not requiredHasDuplicates
+            && not duplicates
+            && required.SetEquals observed
+            && assertions
+               |> Array.forall (fun assertion ->
+                   assertion.RunId.Equals(runId, StringComparison.Ordinal)
+                   && assertion.ScenarioId.Equals(scenarioId, StringComparison.Ordinal))
+
+        let allPassed =
+            assertions
+            |> Array.forall (fun assertion -> assertion.Passed)
+
+        let passedAssertionCount =
+            assertions
+            |> Array.filter (fun assertion ->
+                assertion.Passed
+                && required.Contains assertion.AssertionId)
+            |> Array.map (fun assertion -> assertion.AssertionId)
+            |> fun assertionIds -> HashSet<string>(assertionIds, StringComparer.Ordinal)
+            |> fun assertionIds -> assertionIds.Count
+
+        let failedAssertionIds =
+            requiredAssertionIds
+            |> Array.filter (fun requiredId ->
+                assertions
+                |> Array.exists (fun assertion ->
+                    assertion.AssertionId.Equals(requiredId, StringComparison.Ordinal)
+                    && assertion.Passed)
+                |> not)
+
+        let cleanSkip =
+            prerequisiteSkipped
+            && Array.isEmpty assertions
+            && Array.isEmpty runtimeFailures
+
+        let outcome =
+            if cleanSkip then
+                "Skipped"
+            elif identitiesMatch
+                 && allPassed
+                 && Array.isEmpty runtimeFailures
+                 && not prerequisiteSkipped then
+                "Passed"
+            else
+                "Failed"
+
+        {
+            RecordType = nameof ScenarioSummary
+            RunId = runId
+            ScenarioId = scenarioId
+            Outcome = outcome
+            RequiredAssertionIds = Array.copy requiredAssertionIds
+            RequiredAssertionCount = requiredAssertionIds.Length
+            PassedAssertionCount = passedAssertionCount
+            FailedAssertionIds = failedAssertionIds
+            RuntimeFailures = Array.copy runtimeFailures
+            CompletedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        }
+
+/// Reports whether exact cumulative settlement metrics are complete, still pending, or invalid.
+type DeltaEvaluation =
+    | Complete of messageDelta: int64 * durationDelta: int64
+    | Pending
+    | Invalid of reason: string
+
+/// Parses only the two exact production OpenMetrics settlement samples used by the Baseline witness.
+module OpenMetrics =
+
+    [<Literal>]
+    let private messageMetricName = "grace_manifest_contribution_messages_total"
+
+    [<Literal>]
+    let private durationMetricName = "grace_manifest_contribution_processing_duration_milliseconds_count"
+
+    let private requiredLabels =
+        dict [ "otel_scope_name", "Grace.ManifestContributionAccounting"
+               "stage", "settle"
+               "outcome", "completed" ]
+
+    let private samplePattern =
+        Regex("^(?<name>[A-Za-z_:][A-Za-z0-9_:]*)(?:\\{(?<labels>.*)\\})?\\s+(?<value>[^\\s]+)(?:\\s+.*)?$", RegexOptions.CultureInvariant)
+
+    let private labelPattern = Regex("(?:^|,)\\s*(?<key>[A-Za-z_][A-Za-z0-9_]*)=\"(?<value>(?:\\\\.|[^\"])*)\"\\s*(?=,|$)", RegexOptions.CultureInvariant)
+
+    /// Unescapes one OpenMetrics label value after the label grammar has bounded it.
+    let private unescapeLabelValue (value: string) =
+        value
+            .Replace("\\\"", "\"")
+            .Replace("\\\\", "\\")
+            .Replace("\\n", "\n")
+
+    /// Parses a complete label list and rejects duplicate or unparsed fragments.
+    let private tryParseLabels (text: string) =
+        let labels = Dictionary<string, string>(StringComparer.Ordinal)
+        let matches = labelPattern.Matches(text)
+        let mutable valid = true
+        let mutable consumed = 0
+
+        for labelMatch in matches |> Seq.cast<Match> do
+            let separatorLength =
+                let prefix = text.Substring(consumed, labelMatch.Index - consumed)
+
+                if String.IsNullOrWhiteSpace prefix
+                   || prefix.Trim() = "," then
+                    prefix.Length
+                else
+                    -1
+
+            if separatorLength < 0 then valid <- false
+
+            let key = labelMatch.Groups["key"].Value
+            let value = unescapeLabelValue labelMatch.Groups["value"].Value
+
+            if not (labels.TryAdd(key, value)) then valid <- false
+
+            consumed <- labelMatch.Index + labelMatch.Length
+
+        if text.Substring(consumed).Trim().Length > 0 then valid <- false
+
+        if valid then Some labels else None
+
+    /// Parses an exact nonnegative integer sample value.
+    let private tryParseValue (text: string) =
+        let mutable value = 0M
+
+        if Decimal.TryParse(
+            text,
+            NumberStyles.AllowLeadingSign
+            ||| NumberStyles.AllowDecimalPoint
+            ||| NumberStyles.AllowExponent,
+            CultureInfo.InvariantCulture,
+            &value
+           )
+           && value >= 0M
+           && value = Decimal.Truncate value
+           && value <= decimal Int64.MaxValue then
+            Some(int64 value)
+        else
+            None
+
+    /// Requires exactly one matching completed-settlement series for each production metric.
+    let private parseCompletedSettlementSamples (scrape: string) =
+        let values = Dictionary<string, ResizeArray<int64>>(StringComparer.Ordinal)
+        values[messageMetricName] <- ResizeArray<int64>()
+        values[durationMetricName] <- ResizeArray<int64>()
+        let errors = ResizeArray<string>()
+
+        scrape.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+        |> Array.iter (fun rawLine ->
+            let line = rawLine.Trim()
+
+            if not (line.StartsWith("#", StringComparison.Ordinal)) then
+                let sampleMatch = samplePattern.Match(line)
+
+                if sampleMatch.Success then
+                    let metricName = sampleMatch.Groups["name"].Value
+
+                    if values.ContainsKey metricName then
+                        match tryParseLabels sampleMatch.Groups["labels"].Value, tryParseValue sampleMatch.Groups["value"].Value with
+                        | Some labels, Some value ->
+                            let labelsMatch =
+                                labels.Count = requiredLabels.Count
+                                && requiredLabels
+                                   |> Seq.forall (fun pair ->
+                                       match labels.TryGetValue pair.Key with
+                                       | true, actual -> actual.Equals(pair.Value, StringComparison.Ordinal)
+                                       | _ -> false)
+
+                            if labelsMatch then
+                                values[ metricName ].Add value
+                            else
+                                errors.Add($"{metricName} contained a non-completed-settlement label set.")
+                        | _ -> errors.Add($"{metricName} was malformed.")
+                elif
+                    line.StartsWith(messageMetricName, StringComparison.Ordinal)
+                    || line.StartsWith(durationMetricName, StringComparison.Ordinal)
+                then
+                    errors.Add("An exact settlement metric line was malformed."))
+
+        if errors.Count > 0 then
+            Error(String.Join("; ", errors))
+        elif values[messageMetricName].Count <> 1 then
+            Error($"{messageMetricName} required exactly one sample but found {values[messageMetricName].Count}.")
+        elif values[durationMetricName].Count <> 1 then
+            Error($"{durationMetricName} required exactly one sample but found {values[durationMetricName].Count}.")
+        else
+            Ok(values[messageMetricName][0], values[durationMetricName][0])
+
+    /// Evaluates exact cumulative equality while allowing only unchanged or partial deltas to keep waiting.
+    let evaluateCompletedSettlementDelta expectedDelta baselineScrape observedScrape =
+        match parseCompletedSettlementSamples baselineScrape, parseCompletedSettlementSamples observedScrape with
+        | Error error, _ -> Invalid($"Invalid baseline scrape: {error}")
+        | _, Error error -> Invalid($"Invalid observed scrape: {error}")
+        | Ok (baselineMessages, baselineDurations), Ok (observedMessages, observedDurations) ->
+            let messageDelta = observedMessages - baselineMessages
+            let durationDelta = observedDurations - baselineDurations
+
+            if messageDelta < 0L || durationDelta < 0L then
+                Invalid("A completed settlement metric reset below its baseline.")
+            elif messageDelta > expectedDelta
+                 || durationDelta > expectedDelta then
+                Invalid($"Completed settlement metrics overshot the exact delta {expectedDelta}: messages={messageDelta}, durations={durationDelta}.")
+            elif messageDelta = expectedDelta
+                 && durationDelta = expectedDelta then
+                Complete(messageDelta, durationDelta)
+            else
+                Pending
+
+/// Validates that every observed Reference-created producer identity is classified exactly once.
+module ProducerInventory =
+
+    /// Returns bounded errors for missing, duplicate, or unclassified message identities.
+    let validate (expectedMessageIds: string array) (observedMessageIds: string array) =
+        let errors = ResizeArray<string>()
+        let expected = HashSet<string>(expectedMessageIds, StringComparer.Ordinal)
+        let observed = HashSet<string>(observedMessageIds, StringComparer.Ordinal)
+
+        if expected.Count <> expectedMessageIds.Length then
+            errors.Add("Expected producer inventory contains duplicate identities.")
+
+        if observed.Count <> observedMessageIds.Length then
+            errors.Add("Observed producer inventory contains duplicate deliveries.")
+
+        expected
+        |> Seq.filter (observed.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Missing expected Reference-created envelope '{messageId}'."))
+
+        observed
+        |> Seq.filter (expected.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Unclassified Reference-created envelope '{messageId}'."))
+
+        errors.ToArray()
+
+/// Writes bounded complete records to one retained UTF-8-without-BOM NDJSON evidence file.
+type EvidenceWriter(directory: string, maximumRecordBytes: int) =
+    let syncRoot = obj ()
+    let utf8 = UTF8Encoding(false)
+    let path = Path.Combine(directory, "evidence.ndjson")
+    let serializerOptions = JsonSerializerOptions(PropertyNamingPolicy = null, WriteIndented = false)
+
+    do
+        if String.IsNullOrWhiteSpace directory then
+            invalidArg (nameof directory) "An evidence directory is required."
+
+        if maximumRecordBytes <= 0 then
+            invalidArg (nameof maximumRecordBytes) "The maximum record size must be positive."
+
+        Directory.CreateDirectory(directory) |> ignore
+        use stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read)
+        stream.Flush(true)
+
+    /// Gets the retained NDJSON evidence path.
+    member _.Path = path
+
+    /// Appends one complete bounded JSON line under the writer's single-record lock.
+    member _.Append<'T>(record: 'T) =
+        let jsonBytes = JsonSerializer.SerializeToUtf8Bytes(record, serializerOptions)
+
+        if jsonBytes.Length > maximumRecordBytes then
+            raise (InvalidDataException($"Evidence record size {jsonBytes.Length} exceeds the maximum {maximumRecordBytes} bytes."))
+
+        let lineBytes = Array.append jsonBytes [| byte '\n' |]
+
+        lock syncRoot (fun () ->
+            use stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)
+            stream.Write(lineBytes, 0, lineBytes.Length)
+            stream.Flush(true))
+
+    interface IDisposable with
+        member _.Dispose() = ()
