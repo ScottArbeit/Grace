@@ -4,9 +4,127 @@ open System
 open System.Collections.Generic
 open System.Globalization
 open System.IO
+open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
+
+/// Projects unbounded diagnostic sources into deterministic, inspectable evidence fields.
+module BoundedEvidence =
+
+    [<Literal>]
+    let private WorktreeStatePreviewCharacters = 4096
+
+    [<Literal>]
+    let private RuntimeFailurePreviewCharacters = 3072
+
+    [<Literal>]
+    let private RuntimeFailureRetainedEntries = 8
+
+    /// Computes the lowercase SHA-256 identity for a diagnostic byte sequence.
+    let private sha256Bytes (bytes: byte array) =
+        bytes
+        |> SHA256.HashData
+        |> Convert.ToHexString
+        |> fun digest -> digest.ToLowerInvariant()
+
+    /// Converts diagnostic text to printable JSON-safe ASCII without obscuring its source digest.
+    let private printableAscii (value: string) =
+        let builder = StringBuilder(value.Length)
+
+        value
+        |> Seq.iter (fun character ->
+            let printable =
+                match character with
+                | '\r'
+                | '\n'
+                | '\t' -> ' '
+                | '"' -> '\''
+                | '\\' -> '/'
+                | value when value >= ' ' && value <= '~' -> value
+                | _ -> '?'
+
+            builder.Append printable |> ignore)
+
+        builder.ToString()
+
+    /// Retains deterministic head and tail diagnostics inside the supplied character budget.
+    let private boundedPreview maximumCharacters (value: string) =
+        if maximumCharacters <= 0 then
+            invalidArg (nameof maximumCharacters) "A positive diagnostic preview limit is required."
+
+        if value.Length <= maximumCharacters then
+            printableAscii value
+        else
+            let mutable omittedMarker = " ... omittedChars=0 ... "
+            let mutable markerStable = false
+
+            while not markerStable do
+                let retainedCharacters = maximumCharacters - omittedMarker.Length
+                let nextMarker = $" ... omittedChars={value.Length - retainedCharacters} ... "
+                markerStable <- nextMarker.Equals(omittedMarker, StringComparison.Ordinal)
+                omittedMarker <- nextMarker
+
+            let retainedCharacters = maximumCharacters - omittedMarker.Length
+            let headCharacters = retainedCharacters / 2
+            let tailCharacters = retainedCharacters - headCharacters
+            let head = value.Substring(0, headCharacters)
+            let tail = value.Substring(value.Length - tailCharacters, tailCharacters)
+            printableAscii $"{head}{omittedMarker}{tail}"
+
+    /// Summarizes one diagnostic with its original size, digest, and bounded head/tail preview.
+    let private summarize maximumPreviewCharacters (value: string) =
+        let source = if isNull value then String.Empty else value
+        let bytes = Encoding.UTF8.GetBytes source
+        let truncated = source.Length > maximumPreviewCharacters
+
+        $"sourceChars={source.Length}; sourceUtf8Bytes={bytes.Length}; sha256={sha256Bytes bytes}; truncated={truncated.ToString().ToLowerInvariant()}; preview={boundedPreview maximumPreviewCharacters source}"
+
+    /// Represents raw Git porcelain state without allowing path count to exceed one run record.
+    let worktreeState value =
+        if String.IsNullOrWhiteSpace value then
+            "clean"
+        else
+            let pathEntryCount =
+                value
+                    .Split(
+                        [| '\r'; '\n' |],
+                        StringSplitOptions.RemoveEmptyEntries
+                    )
+                    .Length
+
+            $"pathEntryCount={pathEntryCount}; {summarize WorktreeStatePreviewCharacters value}"
+
+    /// Represents a nonempty failure ledger with bounded first/last entries and a digest of the complete ledger.
+    let runtimeFailures (failures: string array) =
+        if Array.isEmpty failures then
+            Array.empty
+        else
+            let retainedPerSide = RuntimeFailureRetainedEntries / 2
+
+            let retainedIndexes =
+                if failures.Length <= RuntimeFailureRetainedEntries then
+                    [| 0 .. failures.Length - 1 |]
+                else
+                    Array.append [| 0 .. retainedPerSide - 1 |] [|
+                        failures.Length - retainedPerSide .. failures.Length - 1
+                    |]
+
+            let ledgerBytes = JsonSerializer.SerializeToUtf8Bytes failures
+
+            let totalFailureBytes =
+                failures
+                |> Array.sumBy (fun failure -> if isNull failure then 0L else int64 (Encoding.UTF8.GetByteCount failure))
+
+            let ledger =
+                retainedIndexes
+                |> Array.map (fun index -> $"failureIndex={index}; {summarize RuntimeFailurePreviewCharacters failures[index]}")
+
+            Array.append
+                [|
+                    $"failureCount={failures.Length}; retainedCount={retainedIndexes.Length}; omittedCount={failures.Length - retainedIndexes.Length}; sourceUtf8Bytes={totalFailureBytes}; sha256={sha256Bytes ledgerBytes}"
+                |]
+                ledger
 
 /// Captures the immutable metadata that identifies one hosted measurement execution.
 [<CLIMutable>]
@@ -30,7 +148,7 @@ type MeasurementRun =
             RunId = runId
             CommitSha = commitSha
             Worktree = worktree
-            WorktreeState = worktreeState
+            WorktreeState = BoundedEvidence.worktreeState worktreeState
             Command = command
             EvidenceDirectory = evidenceDirectory
             Scenarios = Array.copy executedScenarioPlan
@@ -195,7 +313,7 @@ module ScenarioSummary =
             RequiredAssertionCount = requiredAssertionIds.Length
             PassedAssertionCount = passedAssertionCount
             FailedAssertionIds = failedAssertionIds
-            RuntimeFailures = Array.copy runtimeFailures
+            RuntimeFailures = BoundedEvidence.runtimeFailures runtimeFailures
             CompletedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
         }
 

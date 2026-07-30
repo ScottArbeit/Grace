@@ -5,6 +5,8 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.IO
+open System.Security.Cryptography
+open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 
@@ -36,6 +38,12 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
 
     /// Creates one passing assertion with the supplied identifier.
     let passingAssertion assertionId = MeasurementAssertion.Create("run-1", "baseline", assertionId, true, "proved")
+
+    /// Computes the independently expected digest for one retained diagnostic source.
+    let sha256 (value: string) =
+        let bytes = Encoding.UTF8.GetBytes value
+        let digest = SHA256.HashData bytes
+        Convert.ToHexString(digest).ToLowerInvariant()
 
     /// Verifies the Baseline assertion contract is an exact stable set.
     [<Test>]
@@ -191,6 +199,63 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
         let run = MeasurementRun.Create("run-1", "commit", "worktree", "clean", "command", "evidence", plan)
 
         Assert.That(run.Scenarios = plan, Is.True)
+
+    /// Verifies large worktree metadata remains writable while retaining a bounded preview and source digest.
+    [<Test>]
+    member _.LargeWorktreeStateProducesBoundedTruthfulRunMetadata() =
+        let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-measurement-{Guid.NewGuid():N}")
+
+        let worktreeState =
+            Array.init 2048 (fun index -> $"?? untracked-{index:D4}-{String('x', 48)}.txt")
+            |> String.concat Environment.NewLine
+
+        try
+            use writer = new EvidenceWriter(directory, 65536)
+
+            let run = MeasurementRun.Create("run-1", "commit", "worktree", worktreeState, "command", directory, [| "baseline" |])
+
+            writer.Append run
+
+            let line = File.ReadAllText(writer.Path).TrimEnd()
+            Assert.That(Encoding.UTF8.GetByteCount(line), Is.LessThanOrEqualTo(65536))
+            Assert.That(run.WorktreeState, Does.Contain("pathEntryCount=2048"))
+            Assert.That(run.WorktreeState, Does.Contain($"sourceUtf8Bytes={Encoding.UTF8.GetByteCount worktreeState}"))
+            Assert.That(run.WorktreeState, Does.Contain($"sha256={sha256 worktreeState}"))
+            Assert.That(run.WorktreeState, Does.Contain("untracked-0000"))
+            Assert.That(run.WorktreeState, Does.Contain("untracked-2047"))
+            Assert.That(run.WorktreeState, Does.Not.Contain("untracked-1024"))
+        finally
+            if Directory.Exists directory then Directory.Delete(directory, true)
+
+    /// Verifies log-heavy failures retain terminal truth and bounded diagnostics in a writable summary.
+    [<Test>]
+    member _.LargeRuntimeFailureLedgerProducesBoundedTruthfulTerminalSummary() =
+        let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-measurement-{Guid.NewGuid():N}")
+
+        let failures =
+            Array.init 64 (fun index ->
+                let phase = if index = 63 then "cleanup" else "startup"
+                $"{phase}-failure-{index:D3}:{String(char (int 'a' + index % 26), 32768)}")
+
+        let assertions = requiredAssertionIds |> Array.map passingAssertion
+
+        try
+            use writer = new EvidenceWriter(directory, 65536)
+            let summary = ScenarioSummary.derive "run-1" "baseline" requiredAssertionIds assertions failures false
+            writer.Append summary
+
+            let line = File.ReadAllText(writer.Path).TrimEnd()
+            Assert.That(Encoding.UTF8.GetByteCount(line), Is.LessThanOrEqualTo(65536))
+            Assert.That(summary.Outcome, Is.EqualTo("Failed"))
+            Assert.That(summary.RuntimeFailures, Is.Not.Empty)
+            Assert.That(summary.RuntimeFailures[0], Does.Contain("failureCount=64"))
+            Assert.That(String.concat " " summary.RuntimeFailures, Does.Contain($"sha256={sha256 failures[0]}"))
+            Assert.That(String.concat " " summary.RuntimeFailures, Does.Contain($"sha256={sha256 failures[63]}"))
+            Assert.That(String.concat " " summary.RuntimeFailures, Does.Contain("startup-failure-000"))
+            Assert.That(String.concat " " summary.RuntimeFailures, Does.Contain("cleanup-failure-063"))
+            Assert.That(summary.RuntimeFailures.Length, Is.LessThan(failures.Length))
+        finally
+            if Directory.Exists directory then Directory.Delete(directory, true)
 
     /// Verifies concurrent records remain individually bounded UTF-8 NDJSON values without a BOM.
     [<Test>]
