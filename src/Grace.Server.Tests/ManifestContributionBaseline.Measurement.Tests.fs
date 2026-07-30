@@ -369,7 +369,7 @@ module private BaselineRuntime =
         task {
             let correlationId = generateCorrelationId ()
             let sessionId = Guid.NewGuid()
-            let scope = $"/mca-baseline/{sessionId:N}/asset-{index}.bin"
+            let scope = $"baseline-{index}.bin"
             let bytes = createPayload index
             let block = encodeBlock bytes
             let initialManifest = createManifest (StoragePoolId Constants.DefaultStoragePoolId) bytes block
