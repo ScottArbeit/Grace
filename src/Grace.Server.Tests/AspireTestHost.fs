@@ -254,7 +254,56 @@ module AspireTestHost =
         }
 
     /// Captures process result values used by the test suite.
-    type private ProcessResult = { ExitCode: int option; StdOut: string; StdErr: string; TimedOut: bool; Error: string option }
+    type internal ProcessResult = { ExitCode: int option; StdOut: string; StdErr: string; TimedOut: bool; Error: string option }
+
+    /// Formats a failed process result with its bounded diagnostics.
+    let private formatProcessFailure (label: string) (result: ProcessResult) =
+        if result.TimedOut then
+            $"{label} timed out."
+        else
+            let exitCode =
+                result.ExitCode
+                |> Option.map string
+                |> Option.defaultValue "<unknown>"
+
+            let details =
+                [
+                    if not (String.IsNullOrWhiteSpace result.StdOut) then
+                        $"stdout:{Environment.NewLine}{result.StdOut.TrimEnd()}"
+                    if not (String.IsNullOrWhiteSpace result.StdErr) then
+                        $"stderr:{Environment.NewLine}{result.StdErr.TrimEnd()}"
+                ]
+                |> String.concat Environment.NewLine
+
+            match result.Error with
+            | Some errorMessage -> $"{label} failed: {errorMessage}"
+            | None when not (String.IsNullOrWhiteSpace details) -> $"{label} exited with {exitCode}.{Environment.NewLine}{details}"
+            | None -> $"{label} exited with {exitCode}."
+
+    /// Preserves fixture lifecycle and command failures for focused no-Aspire regression proof.
+    module internal FixtureLifecycle =
+
+        /// Rejects any process result that does not prove a successful command exit.
+        let requireProcessSuccess label result = if result.ExitCode <> Some 0 then invalidOp (formatProcessFailure label result)
+
+        /// Attempts application disposal and Docker cleanup before reporting all lifecycle failures.
+        let cleanupAsync (disposeAsync: unit -> Task<unit>) (cleanupDockerAsync: unit -> Task<unit>) =
+            task {
+                let failures = ResizeArray<Exception>()
+
+                try
+                    do! disposeAsync ()
+                with
+                | ex -> failures.Add ex
+
+                try
+                    do! cleanupDockerAsync ()
+                with
+                | ex -> failures.Add ex
+
+                if failures.Count > 0 then
+                    raise (AggregateException("The isolated Aspire measurement host did not clean up completely.", failures))
+            }
 
     /// Runs process with the configured test context.
     let private runProcessAsync (fileName: string) (arguments: string) (timeout: TimeSpan) =
@@ -338,34 +387,35 @@ module AspireTestHost =
                     ]
 
                 let! listResult = runProcessAsync "docker" "ps -a --format \"{{.Names}}\"" (TimeSpan.FromSeconds(20.0))
+                FixtureLifecycle.requireProcessSuccess "Docker cleanup list" listResult
 
-                if listResult.ExitCode = Some 0 then
-                    let names =
-                        listResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
-                        |> Array.toList
+                let names =
+                    listResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+                    |> Array.toList
 
-                    /// Defines matches prefix behavior for the surrounding tests used by the server integration aspire Test Host scenario.
-                    let matchesPrefix (name: string) =
-                        containerPrefixes
-                        |> List.exists (fun prefix ->
-                            name.Equals(prefix, StringComparison.OrdinalIgnoreCase)
-                            || name.StartsWith(prefix + "-", StringComparison.OrdinalIgnoreCase))
+                /// Matches only Aspire container names owned by the Grace integration fixture.
+                let matchesPrefix (name: string) =
+                    containerPrefixes
+                    |> List.exists (fun prefix ->
+                        name.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith(prefix + "-", StringComparison.OrdinalIgnoreCase))
 
-                    for name in names do
-                        if matchesPrefix name then
-                            let! result = runProcessAsync "docker" $"rm -f {name}" (TimeSpan.FromSeconds(20.0))
+                let failures = ResizeArray<Exception>()
 
-                            if result.ExitCode = Some 0 then
-                                if not (String.IsNullOrWhiteSpace result.StdOut) then
-                                    Console.WriteLine($"Docker cleanup: removed {name}.")
-                            else if result.Error.IsSome then
-                                Console.WriteLine($"Docker cleanup ({name}): {result.Error.Value}")
-                            else if not (String.IsNullOrWhiteSpace result.StdErr) then
-                                Console.WriteLine($"Docker cleanup ({name}) stderr: {result.StdErr.Trim()}")
-                else if listResult.Error.IsSome then
-                    Console.WriteLine($"Docker cleanup list failed: {listResult.Error.Value}")
-                else if not (String.IsNullOrWhiteSpace listResult.StdErr) then
-                    Console.WriteLine($"Docker cleanup list stderr: {listResult.StdErr.Trim()}")
+                for name in names do
+                    if matchesPrefix name then
+                        let! result = runProcessAsync "docker" $"rm -f {name}" (TimeSpan.FromSeconds(20.0))
+
+                        try
+                            FixtureLifecycle.requireProcessSuccess $"Docker cleanup ({name})" result
+
+                            if not (String.IsNullOrWhiteSpace result.StdOut) then
+                                Console.WriteLine($"Docker cleanup: removed {name}.")
+                        with
+                        | ex -> failures.Add ex
+
+                if failures.Count > 0 then
+                    raise (AggregateException("One or more Grace integration containers could not be removed.", failures))
         }
 
     /// Formats log tail for diagnostics.
@@ -404,30 +454,6 @@ module AspireTestHost =
             let! snapshots = Task.WhenAll(tasks)
             return snapshots |> String.concat Environment.NewLine
         }
-
-    /// Formats process failure for diagnostics.
-    let private formatProcessFailure (label: string) (result: ProcessResult) =
-        if result.TimedOut then
-            $"{label} timed out."
-        else
-            let exitCode =
-                result.ExitCode
-                |> Option.map string
-                |> Option.defaultValue "<unknown>"
-
-            let details =
-                [
-                    if not (String.IsNullOrWhiteSpace result.StdOut) then
-                        $"stdout:{Environment.NewLine}{result.StdOut.TrimEnd()}"
-                    if not (String.IsNullOrWhiteSpace result.StdErr) then
-                        $"stderr:{Environment.NewLine}{result.StdErr.TrimEnd()}"
-                ]
-                |> String.concat Environment.NewLine
-
-            match result.Error with
-            | Some errorMessage -> $"{label} failed: {errorMessage}"
-            | None when not (String.IsNullOrWhiteSpace details) -> $"{label} exited with {exitCode}.{Environment.NewLine}{details}"
-            | None -> $"{label} exited with {exitCode}."
 
     /// Tries to resolve get docker diagnostics without failing the caller.
     let private tryGetDockerDiagnosticsAsync () =
@@ -1048,6 +1074,8 @@ module AspireTestHost =
 
     /// Defines start new host behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private startNewHostAsync (bootstrapUserId: string) =
+        let mutable appToCleanup: DistributedApplication option = None
+
         task {
             logProgress "Aspire setup starting."
 
@@ -1076,6 +1104,7 @@ module AspireTestHost =
             logProgress "building Aspire AppHost."
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let! app = builder.BuildAsync()
+            appToCleanup <- Some app
             logProgress "starting Aspire AppHost resources."
             do! app.StartAsync()
             logProgress "Aspire AppHost started; waiting for resources."
@@ -1384,6 +1413,28 @@ module AspireTestHost =
 
             return state
         }
+        |> fun startupTask ->
+            task {
+                try
+                    return! startupTask
+                with
+                | startupFailure ->
+                    match appToCleanup with
+                    | None -> return raise startupFailure
+                    | Some app ->
+                        try
+                            do! FixtureLifecycle.cleanupAsync (fun () -> task { do! app.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
+                        with
+                        | cleanupFailure ->
+                            raise (
+                                AggregateException(
+                                    "Aspire test-host startup failed and its isolated resources did not clean up completely.",
+                                    [| startupFailure; cleanupFailure |]
+                                )
+                            )
+
+                        return raise startupFailure
+            }
 
     /// Defines start behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let startAsync (bootstrapUserId: string) =
@@ -1420,22 +1471,7 @@ module AspireTestHost =
 
     /// Disposes a fixture-owned host and removes its local containers while preserving every cleanup failure.
     let stopIsolatedAsync (state: TestHostState) =
-        task {
-            let failures = ResizeArray<Exception>()
-
-            try
-                do! state.App.DisposeAsync().AsTask()
-            with
-            | ex -> failures.Add ex
-
-            try
-                do! cleanupDockerContainersAsync ()
-            with
-            | ex -> failures.Add ex
-
-            if failures.Count > 0 then
-                raise (AggregateException("The isolated Aspire measurement host did not clean up completely.", failures))
-        }
+        FixtureLifecycle.cleanupAsync (fun () -> task { do! state.App.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
 
     /// Defines stop behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let stopAsync (app: DistributedApplication option) =

@@ -70,28 +70,34 @@ module private BaselineRuntime =
         | value when not (String.IsNullOrWhiteSpace value) -> value.Trim()
         | _ -> invalidOp $"The explicit Baseline witness requires {name}."
 
-    /// Runs one Git query against the selected worktree and requires a successful result.
-    let runGit worktree arguments =
-        let startInfo = ProcessStartInfo("git")
-        startInfo.WorkingDirectory <- worktree
-        startInfo.RedirectStandardOutput <- true
-        startInfo.RedirectStandardError <- true
-        startInfo.UseShellExecute <- false
-        startInfo.ArgumentList.Add("-C")
-        startInfo.ArgumentList.Add(worktree)
+    /// Runs one Git query while concurrently draining both redirected streams.
+    let runGitAsync worktree arguments =
+        task {
+            let startInfo = ProcessStartInfo("git")
+            startInfo.WorkingDirectory <- worktree
+            startInfo.RedirectStandardOutput <- true
+            startInfo.RedirectStandardError <- true
+            startInfo.UseShellExecute <- false
+            startInfo.ArgumentList.Add("-C")
+            startInfo.ArgumentList.Add(worktree)
 
-        arguments |> Array.iter startInfo.ArgumentList.Add
+            arguments |> Array.iter startInfo.ArgumentList.Add
 
-        use gitProcess = Process.Start startInfo
-        gitProcess.WaitForExit()
-        let output = gitProcess.StandardOutput.ReadToEnd().Trim()
-        let error = gitProcess.StandardError.ReadToEnd().Trim()
+            use gitProcess = Process.Start startInfo
+            let outputTask = gitProcess.StandardOutput.ReadToEndAsync()
+            let errorTask = gitProcess.StandardError.ReadToEndAsync()
+            do! gitProcess.WaitForExitAsync()
+            let! output = outputTask
+            let! error = errorTask
+            let output = output.Trim()
+            let error = error.Trim()
 
-        if gitProcess.ExitCode <> 0 then
-            let argumentText = String.Join(" ", arguments)
-            invalidOp $"git {argumentText} failed: {error}"
+            if gitProcess.ExitCode <> 0 then
+                let argumentText = String.Join(" ", arguments)
+                invalidOp $"git {argumentText} failed: {error}"
 
-        output
+            return output
+        }
 
     /// Requires an HTTP success response and returns its body for typed inspection.
     let requireOkAsync description (response: HttpResponseMessage) =
@@ -740,6 +746,39 @@ module private BaselineRuntime =
                   with
                   | :? JsonException -> false)
 
+/// Covers redirected Git process output without starting the Aspire fixture.
+[<TestFixture>]
+type GitProcessDrainageTests() =
+
+    /// Verifies a status result larger than a process pipe is drained without deadlock or omission.
+    [<Test>]
+    member _.``large redirected status output is drained concurrently``() =
+        task {
+            let directory = Path.Combine(Path.GetTempPath(), $"grace-git-drainage-{Guid.NewGuid():N}")
+            Directory.CreateDirectory(directory) |> ignore
+
+            try
+                let! _ = BaselineRuntime.runGitAsync directory [| "init"; "--quiet" |]
+                let fileCount = 2048
+
+                Array.init fileCount (fun index -> Path.Combine(directory, $"untracked-{index:D4}-{String('x', 48)}.txt"))
+                |> Array.iter (fun path -> File.WriteAllText(path, "x"))
+
+                let! status =
+                    BaselineRuntime.runGitAsync
+                        directory
+                        [|
+                            "status"
+                            "--porcelain=v1"
+                            "--untracked-files=all"
+                        |]
+
+                let paths = status.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+                Assert.That(paths, Has.Length.EqualTo(fileCount))
+            finally
+                Directory.Delete(directory, true)
+        }
+
 /// Proves one reproducible Baseline evidence packet in a fresh explicitly selected test process.
 [<NonParallelizable>]
 type ManifestContributionBaselineMeasurementTests() =
@@ -761,10 +800,10 @@ type ManifestContributionBaselineMeasurementTests() =
                 |> Path.GetFullPath
 
             let evidenceDirectory = Path.Combine(evidenceRoot, runId)
-            let commitSha = BaselineRuntime.runGit worktree [| "rev-parse"; "HEAD" |]
+            let! commitSha = BaselineRuntime.runGitAsync worktree [| "rev-parse"; "HEAD" |]
 
-            let status =
-                BaselineRuntime.runGit
+            let! status =
+                BaselineRuntime.runGitAsync
                     worktree
                     [|
                         "status"
