@@ -33,8 +33,8 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
-/// Carries one distinct manifest, root, branch, and explicit Save identity through the Baseline tracer.
-type private BaselineAsset =
+/// Carries one manifest, root, branch, and explicit Save identity through the shared selected-process measurement runtime.
+type internal BaselineAsset =
     {
         BlockAddress: ContentBlockAddress
         Manifest: FileManifest
@@ -45,7 +45,7 @@ type private BaselineAsset =
     }
 
 /// Captures each independent durable convergence result without treating one state store as broker evidence.
-type private DurableStatus =
+type internal DurableStatus =
     {
         ReferenceRoots: bool
         ManifestRelationships: bool
@@ -55,8 +55,8 @@ type private DurableStatus =
         Detail: string
     }
 
-/// Implements the one explicit fixture-owned Baseline measurement runtime.
-module private BaselineRuntime =
+/// Implements the shared fixture-owned selected-process measurement runtime introduced by the Baseline tracer.
+module internal BaselineRuntime =
 
     [<Literal>]
     let SelectedTopologyCount = 3
@@ -597,6 +597,33 @@ module private BaselineRuntime =
                 return true
             with
             | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> return false
+        }
+
+    /// Enumerates one complete exact-relationship partition through its canonical identity.
+    let readExactRelationshipsAsync state partition =
+        task {
+            let partitionKey =
+                ExactRelationshipKey.createPartitionKey partition
+                |> Result.defaultWith invalidOp
+
+            use client = AspireTestHost.createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            let options = QueryRequestOptions(PartitionKey = Nullable(PartitionKey partitionKey), MaxItemCount = Nullable 100)
+
+            use iterator = container.GetItemQueryIterator<JsonElement>(QueryDefinition("SELECT c.id, c.PartitionKey FROM c"), requestOptions = options)
+
+            let relationships = ResizeArray<ExactRelationship>()
+
+            while iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync()
+
+                page
+                |> Seq.iter (fun document ->
+                    ExactRelationshipKey.tryParse
+                        { PartitionKey = document.GetProperty("PartitionKey").GetString(); ItemId = document.GetProperty("id").GetString() }
+                    |> Result.iter relationships.Add)
+
+            return relationships.ToArray()
         }
 
     /// Captures all five independent durable assertions at one point in time.

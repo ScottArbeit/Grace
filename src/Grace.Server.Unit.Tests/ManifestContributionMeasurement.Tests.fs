@@ -634,3 +634,244 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
             Assert.That(File.ReadAllText(writer.Path), Is.Empty)
         finally
             if Directory.Exists directory then Directory.Delete(directory, true)
+
+/// Proves the exact HotManifest and HighlyShared topology contracts without starting Aspire.
+[<Parallelizable(ParallelScope.All)>]
+type ManifestContributionTopologyCardinalityTests() =
+
+    let hotRequiredAssertionIds =
+        [|
+            "hot-manifest.setup-deliveries-completed"
+            "hot-manifest.stimulus-deliveries-completed"
+            "hot-manifest.reference-root-cardinality"
+            "hot-manifest.manifest-relationship-cardinality"
+            "hot-manifest.logical-count"
+            "hot-manifest.workflow-count"
+            "hot-manifest.physical-active-count"
+            "hot-manifest.message-delta"
+            "hot-manifest.duration-delta"
+            "hot-manifest.identity-isolation"
+            "hot-manifest.evidence-integrity"
+        |]
+
+    let highlySharedRequiredAssertionIds =
+        [|
+            "highly-shared.setup-deliveries-completed"
+            "highly-shared.stimulus-deliveries-completed"
+            "highly-shared.reference-root-cardinality"
+            "highly-shared.manifest-relationship-cardinality"
+            "highly-shared.logical-count"
+            "highly-shared.workflow-count"
+            "highly-shared.physical-active-count"
+            "highly-shared.message-delta"
+            "highly-shared.duration-delta"
+            "highly-shared.identity-isolation"
+            "highly-shared.evidence-integrity"
+        |]
+
+    /// Builds one declared topology with three setup and stimulus deliveries.
+    let expectation scenarioId requiredAssertionIds referenceRootIds manifestRelationshipIds logicalCount =
+        {
+            ScenarioId = scenarioId
+            RepositoryId = $"{scenarioId}-repository"
+            RequiredAssertionIds = requiredAssertionIds
+            DeclaredIdentityIds =
+                [|
+                    $"{scenarioId}-repository"
+                    $"{scenarioId}-branch-1"
+                    $"{scenarioId}-branch-2"
+                    $"{scenarioId}-branch-3"
+                    $"{scenarioId}-rebase-1"
+                    $"{scenarioId}-rebase-2"
+                    $"{scenarioId}-rebase-3"
+                    $"{scenarioId}-save-1"
+                    $"{scenarioId}-save-2"
+                    $"{scenarioId}-save-3"
+                |]
+            SetupMessageIds =
+                [|
+                    $"{scenarioId}-rebase-1"
+                    $"{scenarioId}-rebase-2"
+                    $"{scenarioId}-rebase-3"
+                |]
+            StimulusMessageIds =
+                [|
+                    $"{scenarioId}-save-1"
+                    $"{scenarioId}-save-2"
+                    $"{scenarioId}-save-3"
+                |]
+            ReferenceRootRelationshipIds = referenceRootIds
+            ManifestRelationshipIds = manifestRelationshipIds
+            LogicalCount = logicalCount
+            WorkflowCount = 1L
+            PhysicalActiveCount = 1L
+        }
+
+    let hotExpectation =
+        expectation
+            "hot-manifest"
+            hotRequiredAssertionIds
+            [|
+                "hot-root-1"
+                "hot-root-2"
+                "hot-root-3"
+            |]
+            [|
+                "hot-manifest-1"
+                "hot-manifest-2"
+                "hot-manifest-3"
+            |]
+            3L
+
+    let highlySharedExpectation =
+        expectation
+            "highly-shared"
+            highlySharedRequiredAssertionIds
+            [|
+                "shared-root-1"
+                "shared-root-2"
+                "shared-root-3"
+            |]
+            [| "shared-manifest-1" |]
+            1L
+
+    /// Builds one exact completed observation from its declared topology.
+    let exactObservation expected =
+        {
+            SetupObservedMessageIds = Array.copy expected.SetupMessageIds
+            SetupSettledBeforeStimulusBaseline = true
+            StimulusObservedMessageIds = Array.copy expected.StimulusMessageIds
+            ReferenceRootRelationshipIds = Array.copy expected.ReferenceRootRelationshipIds
+            ManifestRelationshipIds = Array.copy expected.ManifestRelationshipIds
+            LogicalCount = expected.LogicalCount
+            WorkflowCount = expected.WorkflowCount
+            PhysicalActiveCount = expected.PhysicalActiveCount
+            MessageDelta = int64 expected.StimulusMessageIds.Length
+            DurationDelta = int64 expected.StimulusMessageIds.Length
+        }
+
+    /// Verifies both topology assertion contracts are exact and stable.
+    [<Test>]
+    member _.RequiredAssertionIdentifiersAreExact() =
+        Assert.That(HotManifest.requiredAssertionIds = hotRequiredAssertionIds, Is.True)
+        Assert.That(HighlySharedDirectoryVersion.requiredAssertionIds = highlySharedRequiredAssertionIds, Is.True)
+
+    /// Verifies each supported topology accepts only its exact declared graph and completed delivery counts.
+    [<Test>]
+    member _.ExactTopologyCardinalitiesPass() =
+        [|
+            hotExpectation
+            highlySharedExpectation
+        |]
+        |> Array.iter (fun expected ->
+            let result = TopologyCardinality.evaluate expected (exactObservation expected)
+            Assert.That(result.AllPassed, Is.True, expected.ScenarioId))
+
+    /// Verifies missing and surplus relationship cardinalities cannot pass either topology.
+    [<Test>]
+    member _.IncorrectRelationshipCardinalitiesFail() =
+        [|
+            hotExpectation
+            highlySharedExpectation
+        |]
+        |> Array.iter (fun expected ->
+            let observation = exactObservation expected
+
+            let missingReferenceRoot =
+                { observation with
+                    ReferenceRootRelationshipIds =
+                        observation.ReferenceRootRelationshipIds
+                        |> Array.skip 1
+                }
+
+            let surplusManifest = { observation with ManifestRelationshipIds = Array.append observation.ManifestRelationshipIds [| "unexpected-manifest" |] }
+
+            Assert.That(
+                (TopologyCardinality.evaluate expected missingReferenceRoot)
+                    .ReferenceRootCardinality,
+                Is.False,
+                expected.ScenarioId
+            )
+
+            Assert.That(
+                (TopologyCardinality.evaluate expected surplusManifest)
+                    .ManifestRelationshipCardinality,
+                Is.False,
+                expected.ScenarioId
+            ))
+
+    /// Verifies repeated producer or relationship identities cannot satisfy an exact set by count alone.
+    [<Test>]
+    member _.RepeatedIdentityFails() =
+        let observation = exactObservation hotExpectation
+
+        let repeatedStimulus =
+            { observation with
+                StimulusObservedMessageIds =
+                    [|
+                        observation.StimulusObservedMessageIds[0]
+                        observation.StimulusObservedMessageIds[0]
+                        observation.StimulusObservedMessageIds[2]
+                    |]
+            }
+
+        let repeatedRelationship =
+            { observation with
+                ReferenceRootRelationshipIds =
+                    [|
+                        observation.ReferenceRootRelationshipIds[0]
+                        observation.ReferenceRootRelationshipIds[0]
+                        observation.ReferenceRootRelationshipIds[2]
+                    |]
+            }
+
+        Assert.That(
+            (TopologyCardinality.evaluate hotExpectation repeatedStimulus)
+                .StimulusDeliveriesCompleted,
+            Is.False
+        )
+
+        Assert.That(
+            (TopologyCardinality.evaluate hotExpectation repeatedRelationship)
+                .ReferenceRootCardinality,
+            Is.False
+        )
+
+    /// Verifies two scenarios cannot share a repository or any declared production identity.
+    [<Test>]
+    member _.CrossScenarioIdentityCollisionFails() =
+        let colliding =
+            { highlySharedExpectation with
+                DeclaredIdentityIds =
+                    [|
+                        yield! highlySharedExpectation.DeclaredIdentityIds
+                        hotExpectation.DeclaredIdentityIds[1]
+                    |]
+            }
+
+        Assert.That(
+            TopologyCardinality.validateScenarioIsolation [| hotExpectation
+                                                             colliding |],
+            Is.Not.Empty
+        )
+
+    /// Verifies a stimulus baseline captured before setup settlement cannot satisfy the setup barrier.
+    [<Test>]
+    member _.SetupAfterStimulusBaselineFails() =
+        let observation = { exactObservation hotExpectation with SetupSettledBeforeStimulusBaseline = false }
+
+        Assert.That(
+            (TopologyCardinality.evaluate hotExpectation observation)
+                .SetupDeliveriesCompleted,
+            Is.False
+        )
+
+    /// Verifies stimulus message or duration overshoot fails exact cumulative equality.
+    [<Test>]
+    member _.StimulusOvershootFails() =
+        let observation = { exactObservation highlySharedExpectation with MessageDelta = 4L; DurationDelta = 4L }
+
+        let result = TopologyCardinality.evaluate highlySharedExpectation observation
+        Assert.That(result.StimulusDeliveriesCompleted, Is.False)
+        Assert.That(result.MessageDelta, Is.False)
+        Assert.That(result.DurationDelta, Is.False)
