@@ -46,7 +46,7 @@ Use these installed or sibling skills when the task needs a specialized workflow
 | Canonical specification creation, update, lifecycle audit, traceability, and Plan-ready handoff | Installed `specification` skill plus [specification-profile.md](references/specification-profile.md) |
 | Open product/domain/architecture decisions, capability pruning, focused owner interview, or multi-session design map | Installed `design-readiness` skill plus [specification-profile.md](references/specification-profile.md) |
 | Implementation plans, spec-to-plan compilation, issues, implementation orchestration, review budgets, merge, and cleanup | Installed `dev-process` skill plus [workflow.md](references/workflow.md) |
-| Repeated Codex Code Review Bot findings, review/fix loop monitoring, stabilization ledgers, hard-stop review thresholds | [code-review-stabilizer](../code-review-stabilizer/SKILL.md) |
+| Repeated review-subagent findings, review/fix loop monitoring, stabilization ledgers, hard-stop review thresholds | [code-review-stabilizer](../code-review-stabilizer/SKILL.md) |
 
 ## Grace Defaults
 
@@ -59,7 +59,7 @@ Use these installed or sibling skills when the task needs a specialized workflow
 - For non-trivial epic plans, identify an early tracer-bullet vertical slice before broad parallelization, then use its
   evidence to refine child issues, owned paths, validation profiles, and parallelization boundaries.
 - For tracked coding issues, write existing issue-detail fields as review-prevention guidance and require worker
-  handoffs to include bot-prevention self-review evidence before the pull request review loop.
+  handoffs to include review-prevention self-review evidence before the pull request review loop.
 - When implementing an epic, always use the `epic/<parent-issue>-<slug>` integration branch mode described in
   `references/workflow.md`. Route sub-issue pull requests to that epic branch; do not use direct-to-`main` epic slices.
 - Coordinate across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.SDK`, `Grace.CLI`, and tests

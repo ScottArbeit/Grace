@@ -1,10 +1,10 @@
 ---
 name: code-review-stabilizer
 description: >-
-  Detects repeated automated code-review/fix loops and forces a deeper invariant-ledger stabilization pass before
-  more review requests. Use during Grace issue/PR orchestration when Codex or another reviewer repeatedly finds
-  substantive adjacent defects, especially in storage, actors, persistence, retries, concurrency, authorization,
-  public contracts, or other high-risk code.
+  Detects repeated current-head review/fix loops and forces a deeper invariant-ledger stabilization pass before
+  more review sessions. Use during Grace issue/PR orchestration when fresh review subagents repeatedly find substantive
+  adjacent defects, especially in storage, actors, persistence, retries, concurrency, authorization, public contracts,
+  or other high-risk code.
 argument-hint: "Issue/PR number, reviewer name, or review-cycle concern"
 ---
 
@@ -20,7 +20,7 @@ normal fix-and-review iteration, name the missing invariants, prove them, and on
 
 Count a **substantive review cycle** as:
 
-1. A reviewer, usually Codex Code Review, reports one or more behavior, correctness, security, durability, concurrency,
+1. A fresh current-head review subagent reports one or more behavior, correctness, security, durability, concurrency,
    contract, or maintainability findings.
 1. A worker pushes a fix commit or fix series.
 1. The next review reports another substantive finding on the new head.
@@ -53,16 +53,14 @@ A fourth substantive cycle is always a hard stop, even outside high-risk areas.
 
 ### Review-session threshold
 
-Count each completed Codex Code Review Bot pass on a distinct PR head as a **review session**, including no-issues
-outcomes, top-level findings, inline review-thread findings, or mixed stale and fresh comments. A manual missed-ack
-trigger that causes the bot to review the same head also counts as a session. Do not count repeated status checks, CI
-reruns, or unresolved stale threads without a new completed bot pass.
+Count each completed fresh review-subagent pass on a distinct PR head as a **review session**, including no-issues
+outcomes and passes with findings. Do not count repeated status checks, CI reruns, or an abandoned review that did not
+produce a verdict.
 
-If a Grace PR has more than three Codex Code Review Bot review sessions, pause before assigning another routine fix
-worker even when fewer than three sessions count as substantive cycles. Build the review timeline, separate stale,
-duplicate, invalid, deferred, and no-issue sessions from fresh findings, then decide whether the issue is missing
-invariants, needs a named future-leaf deferral, or requires a structural stabilization ledger before the next review
-request.
+If a Grace PR has more than three completed review-subagent sessions, pause before assigning another routine fix worker
+even when fewer than three sessions count as substantive cycles. Build the review timeline, separate invalid, deferred,
+and no-issue sessions from fresh findings, then decide whether the issue is missing invariants, needs a named future-leaf
+deferral, or requires a structural stabilization ledger before the next review session.
 
 ## Immediate stop signals
 
@@ -245,15 +243,11 @@ Use these examples as patterns, not fixed text.
 
 ## Review request after stabilization
 
-When the stabilization pass is complete, resume the normal Grace PR review loop. Do not bypass the manual trigger lock:
-wait for Codex Code Review Bot on the pushed head, and use the documented missed-ack guard only when the bot has not
-acknowledged the current head. If a manual missed-ack trigger is allowed, use language like:
-
-```markdown
-@codex review this PR against the Review stabilization ledger posted above. Please focus on whether every ledger
-invariant is implemented and proven, whether any status-map item is overstated, and whether any adjacent edge case in
-the same invariant family remains untested. Do not limit the review to the latest patch.
-```
+When the stabilization pass is complete, resume the normal Grace PR review loop. Start one fresh review subagent for
+the pushed head with `model: gpt-5.6-terra`, `reasoning_effort: medium`, and `fork_turns: none`. Give it the complete PR
+context, require it to read `dev-process/CODE_REVIEW.md`, and ask it to review the full diff against the stabilization
+ledger rather than limiting its review to the latest patch. Run that review concurrently with the required PR checks,
+then wait for both results on the same head.
 
 ## Orchestrator responsibilities
 
@@ -279,7 +273,7 @@ When this skill is invoked, produce one or more of:
 - a review-cycle analysis table
 - a stabilization ledger suitable for posting to the issue and PR
 - a worker resume prompt
-- a Codex review request prompt
+- a fresh review-subagent prompt
 - a self-review checklist
 - proposed issue/PR body updates
 

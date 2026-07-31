@@ -87,7 +87,7 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
   tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue
   implementable from its body alone without hidden project context. Write the gate as review-prevention guidance that
-  predicts likely Codex Code Review Bot findings without adding new issue-template ceremony.
+  predicts likely current-head review findings without adding new issue-template ceremony.
 
 - Before turning a product spec or implementation plan into tracked work, record decision closure. Name product
   decisions that are accepted, recommended, deferred, or waived; include the recommended default when the plan makes a
@@ -129,21 +129,24 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   separate files.
 - Before the completion review gate, update against the required base, inspect ahead/behind, the scoped diff, unexpected
   deletions, and relevant conflict resolutions, then rerun focused proof if they affect the slice. Push and require
-  current GitHub `Validate` plus Codex Code Review Bot state for that revision.
+  current GitHub `Validate` plus a fresh review-subagent verdict for that revision.
 - Commit after each completed slice; push one or more completed local commits as a coherent, reviewable checkpoint.
 - When acting as the main implementation orchestrator, delegate each coding task and each fix task to a fresh worker
   subagent. The main orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the
   worker, or commit code changes locally. If an earlier worker thread is lost, compacted away, leaves uncommitted work,
   or cannot be resumed, assign the continuation to a fresh worker subagent with the existing worktree/branch context
   and required validation. The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status,
-  docs/process updates, Codex Code Review Bot monitoring, and final integration evidence. Follow the required bot-review
-  loop in `docs/Development process.md`.
-- Apply the `dev-process` issue-level execution budget before every subagent or Aspire start. Grace defaults are four
-  subagent starts and three Aspire starts, cumulative across branches, PRs, replacements, compactions, and model
-  changes. Record usage in the issue and PR `Review Status`.
+  docs/process updates, fresh review-subagent sessions, and final integration evidence. Follow the required review loop
+  in `docs/Development process.md`.
+- Apply the `dev-process` issue-level execution budget before every implementation or fix subagent start. Grace
+  defaults to four worker starts, cumulative across branches, PRs, replacements, compactions, and model changes. Record
+  usage in the issue and PR `Review Status`.
+- Aspire starts are uncapped for Grace and do not count against the worker-start budget. Start or restart Aspire as
+  often as needed for in-scope diagnosis and proof, record each run and outcome, and avoid overlapping instances unless
+  the accepted scenario requires concurrency.
 - The active worker owns local implementation and validation failures. Do not fan out one issue/head. At the limit or
-  any stop condition, preserve state, update GitHub, and return to the owner; no further worker, runtime start, or
-  replacement is authorized without an explicit new numbered limit.
+  any stop condition, preserve state, update GitHub, and return to the owner; no further worker or replacement is
+  authorized without an explicit new numbered worker limit.
 - When assigning a worker subagent, include an explicit status protocol in the prompt. For Grace work, ask the worker to
   create or update a temp status file outside the repo, for example
   `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with `phase`, `lastUpdate`, `changedFiles`, `validation`,
@@ -159,29 +162,28 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   resolution, labels, checklists, or merge/cleanup state. The orchestrator owns those GitHub coordination updates and
   may schedule the next independent worker from the handoff before finishing wrap-up for the previous worker when the
   dependency graph and write sets allow it.
-- Before handoff, require the worker to run a bot-prevention self-review over the actual diff, fix likely Codex Code
-  Review Bot findings it discovers, and report first-pass review readiness with residual risks in the handoff.
-- If a PR reaches three substantive Codex review cycles, or two cycles on the same invariant family, stop ordinary
+- Before handoff, require the worker to run a review-prevention self-review over the actual diff using the declared
+  quality contract, fix likely findings it discovers, and report first-pass review readiness with residual risks.
+- If a PR reaches three substantive review cycles, or two cycles on the same invariant family, stop ordinary
   review-fix churn. Mine the originating issue and review findings, name the invariant family, post or update a
   stabilization ledger, and update active/future sibling issues or agent guidance before requesting another normal review.
   Treat repeated review findings as a planning defect until proven otherwise.
 
 - After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
-  ready-for-review pull request. Keep it open while the step is still in progress so Codex Code Review Bot findings,
-  fixes, validation evidence, and final no-issues bot state can be recorded on the pull request instead of only on the
-  issue.
-- For Grace PR code review, do not spawn local review-only subagents by default. Monitor Codex Code Review Bot: 👀 on
-  the PR body means it saw the latest commit and is reviewing; 👍🏻 means it found no issues; a bot PR comment or
-  inline pull-request-review comment contains findings that must be assigned to a fresh fix subagent. Do not rely on
-  top-level PR comments alone; inspect review comments attached to the bot review before merging. For high-risk slices,
-  the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that is cheaper than a
-  likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
-- For Grace PR review-fix routing, wait for Codex Code Review Bot to finish on the latest head before deciding the
-  next fix action set. A fresh finding is one that belongs to the completed bot review for the current head commit, or
-  is repeated after that review completes. Review threads from earlier review passes are stale when a newer head exists,
-  even if GitHub still maps the thread onto the current diff. Do not assign workers, make code changes, or post fix
-  evidence for stale findings; close them only as stale when the maintainer directs that disposition, and say that no
-  code change addressed them.
+  ready-for-review pull request. Keep it open while the step is still in progress so review findings, fixes, validation
+  evidence, and the final current-head verdict can be recorded on the pull request instead of only on the issue.
+- For every Grace PR head, start exactly one fresh review subagent with model `gpt-5.6-terra`, reasoning effort
+  `medium`, and `fork_turns: none`. Give it the full issue, PR, worktree, branch, base, head SHA, validation, and
+  quality-contract context, and require it to read and follow the installed `dev-process/CODE_REVIEW.md`.
+- Start the review subagent after the current head is pushed and run it concurrently with required PR checks. Wait for
+  both the review verdict and the checks. A result from either gate becomes stale when the head changes; restart both
+  gates for the new head.
+- The review subagent is read-only. It returns the structured verdict, findings, accepted risks, deferred hardening,
+  proof gaps, and merge-readiness evidence required by `CODE_REVIEW.md`; the orchestrator records the result in the PR.
+- For Grace PR review-fix routing, wait for the current-head review subagent to finish before deciding the action set.
+  A fresh finding belongs to that completed review on the exact head. Findings from earlier heads are stale unless the
+  current review repeats them. Route valid fix-now findings to a fresh implementation/fix subagent; do not make code
+  changes from the orchestrator role.
 - For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
   assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
   reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
@@ -190,7 +192,7 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - Do not defer a finding to a future leaf issue when it challenges the current leaf's trust contract. If later leaves
   consume a fact, authority signal, persisted field, status flag, or trust predicate produced by the current leaf, the
   current leaf owns making that surface reliable before merge.
-- Track substantive Codex Code Review Bot cycles. A substantive cycle is a latest-head behavior, correctness,
+- Track substantive review cycles. A substantive cycle is a latest-head behavior, correctness,
   concurrency, recovery, durability, authority, contract, or maintainability finding, followed by a worker fix, followed
   by another substantive latest-head finding. Do not count duplicate findings, stale resolved threads, formatting-only
   comments, administrative comments, CI flakes, invalid findings, or maintainer-accepted deferrals.
@@ -201,21 +203,17 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - Start the stabilization pass after two substantive cycles for high-risk surfaces, including Watch state, IPC/status
   contracts, branch-switch safety, local working-tree mutation, runtime timers, storage, actors, retries,
   idempotency, authorization, public contracts, persisted shapes, concurrency, recovery, or side-effect ordering.
-- If a pull request has more than three Codex Code Review Bot review sessions even without three counted substantive
+- If a pull request has more than three completed review-subagent sessions even without three counted substantive
   cycles, pause before assigning another routine fix worker. Audit the review timeline, separate stale/duplicate/invalid
   sessions from fresh findings, and decide whether the issue needs a missing invariant, sibling-issue deferral, or
   structural stabilization ledger before the next review request.
 - Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
   fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
-  review surface. After a fix worker pushes, reply to and resolve only the fresh findings it addressed, update
-  `Review Status`, then wait for Codex Code Review Bot to finish on the new head before assigning another fix worker.
-- Never manually trigger Codex Code Review Bot while 👀 is present for the current pull request head. A manual trigger is
-  allowed only through the documented missed-ack exception after verifying that no 👀, no 👍🏻, no bot review, and no bot
-  comment exists for the current head commit.
-- After each fix subagent completes a bot-requested fix and hands off, the orchestrator replies to the Codex Code Review
-  Bot comment with the outcome, fix commit, and validation evidence, resolves the GitHub conversation, updates the PR
-  body's `Review Status` section, includes the required prevention line from `docs/Development process.md`, and waits
-  for the next bot review on the new head commit.
+  review surface. After a fix worker pushes, record only the fresh findings it addressed, update `Review Status`, then
+  start a new fresh review subagent and required checks for the new head.
+- After each fix subagent completes a review-requested fix and hands off, the orchestrator records the outcome, fix
+  commit, validation evidence, finding disposition, and required prevention line in the PR before starting the new-head
+  gates.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup

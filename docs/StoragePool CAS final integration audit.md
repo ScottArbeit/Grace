@@ -44,7 +44,7 @@ classify, grandfather, or read through old CAS formats or old object-key paths.
   - Run `git diff --check`.
   - No F# tests are added because this slice records evidence and does not change runtime behavior.
 - Adversarial cases:
-  - Stale branch, stale generated artifacts, or stale CI/bot evidence reused from an older head.
+  - Stale branch, stale generated artifacts, or stale CI/review evidence reused from an older head.
   - Address-only content-block authorization after `StoragePoolId` became part of the durable
     identity.
   - Route drift from pool A to pool B causing save, download, annotation, or cleanup to trust the
@@ -228,17 +228,17 @@ Status: no blocking stale behavior found in static audit.
 - No production migration, old-path reader, import, or grandfathering work is accepted for this
   slice.
 
-### CI And Bot Freshness
+### CI And Review Freshness
 
 Status: orchestrator-owned after this child PR opens.
 
 - This worker can prove local branch freshness, static evidence, generated freshness checks, docs
   lint, and whitespace checks for the #434 commit.
-- The orchestrator must open the #434 pull request to `epic/424-storagepool-cas`, wait for CI and
-  Codex Code Review Bot on the latest #434 head, and record the result on the pull request.
+- The orchestrator must open the #434 pull request to `epic/424-storagepool-cas`, run a fresh review subagent
+  concurrently with CI on the latest #434 head, wait for both, and record the results on the pull request.
 - After #434 merges, the orchestrator must open the final CAS integration pull request from
-  `epic/424-storagepool-cas` to `epic/343-blake3-sha256-version-hashes`, wait for CI and Codex Code
-  Review Bot on that latest head, and only then update PR #396 handoff evidence.
+  `epic/424-storagepool-cas` to `epic/343-blake3-sha256-version-hashes`, run a fresh review subagent concurrently with
+  CI on that latest head, wait for both, and only then update PR #396 handoff evidence.
 
 ### Cleanup And Handoff
 
@@ -251,7 +251,7 @@ Status: ready for orchestrator handoff after #434 validation and review.
 - The final CAS integration PR should use non-closing `Part of #343` or equivalent wording and
   should not auto-merge PR #396.
 - PR #396 body must be updated after CAS lands on #343 with the final CAS integration PR, generated
-  freshness, CI, latest Codex Code Review Bot state, and residual-risk evidence.
+  freshness, CI, latest review-subagent verdict, and residual-risk evidence.
 - Child branch and worktree cleanup remains orchestrator-owned.
 
 ## Explicit Waivers
@@ -260,7 +260,7 @@ Status: ready for orchestrator handoff after #434 validation and review.
   This document is the tracked final proof artifact.
 - `pwsh ./scripts/validate.ps1 -Full` is waived for this child PR because it changes only authored
   audit documentation. The final CAS integration PR and PR #396 should carry the broader CI and
-  bot evidence after the branch merges forward.
+  review evidence after the branch merges forward.
 - Production migration, import, grandfathering, compatibility readers, and old-path preservation are
   not applicable. Grace has no production users or production data.
 - OpenAPI Generator matrix Markdown under `sdk/generated/matrix/openapi-generator/**` remains
@@ -271,7 +271,7 @@ Status: ready for orchestrator handoff after #434 validation and review.
 ## Residual Risks
 
 - PR #396 is not ready for maintainer merge until the final CAS integration pull request lands on
-  #343 and PR #396 receives fresh CI plus Codex Code Review Bot evidence on its new head.
+  #343 and PR #396 receives fresh CI plus a fresh review-subagent verdict on its new head.
 - The final CAS integration pull request may still find merge or generated freshness drift when
   `epic/424-storagepool-cas` is compared against the then-current #343 branch.
 - OpenAPI Generator raw clients remain accepted as proof artifacts behind facades, not stable SDK

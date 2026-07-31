@@ -246,4 +246,4 @@ Issue #340 acceptance was audited against `Doctor.CLI.fs`, `CommandOutputContrac
 | Use current final validation, not stale sub-issue evidence. | Implemented | Validation for this slice is recorded in the PR handoff. |
 | `--repair`, support bundles, cloud probes, and Aspire diagnostics. | Deferred | Explicit v1 boundaries; no current implementation. |
 | Full production-release candidate review and merge state. | Out of scope | Owned by the orchestrator after this branch is pushed. |
-| Hosted CI and Codex Code Review Bot result on the final epic PR. | Residual risk | Orchestrator-owned after PR creation/update. |
+| Hosted CI and a fresh review-subagent verdict on the final epic PR head. | Residual risk | Orchestrator-owned after PR creation/update. |

@@ -97,14 +97,16 @@ validation.
 ## Review Status
 
 - Current head SHA:
-- Codex Code Review Bot state for current head:
-- Manual trigger decision:
-- Manual trigger lock:
-- Detailed review/fix comments:
+- Fresh review subagent: `gpt-5.6-terra`, `reasoning_effort: medium`, `fork_turns: none`
+- `dev-process/CODE_REVIEW.md` followed:
+- Review verdict for current head:
+- Required PR checks for current head:
+- [ ] Review and required checks both completed successfully for the same head SHA.
+- Finding dispositions and detailed review/fix comments:
 
 ## Review/fix prevention
 
-For each Codex Code Review Bot or GitHub review finding fixed in this PR, include:
+For each fresh review-subagent or GitHub review finding fixed in this PR, include:
 
 - Root-cause class:
 - Current issue, sibling issues, template, or agent docs update needed:
