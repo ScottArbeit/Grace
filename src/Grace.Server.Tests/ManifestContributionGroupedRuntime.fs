@@ -11,6 +11,7 @@ module internal ManifestContributionGroupedRuntime =
     let mutable private groupedState: TestHostState option = None
     let mutable private groupedBootstrapUserId: string option = None
     let private repositories = Dictionary<string, string>(StringComparer.Ordinal)
+    let private assetIndexOffsets = Dictionary<string, int>(StringComparer.Ordinal)
 
     /// Starts the single grouped Aspire session before any accepted leaf scenario executes.
     let beginSessionAsync bootstrapUserId =
@@ -20,6 +21,7 @@ module internal ManifestContributionGroupedRuntime =
 
             let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
             repositories.Clear()
+            assetIndexOffsets.Clear()
             groupedState <- Some state
             groupedBootstrapUserId <- Some bootstrapUserId
             state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
@@ -65,8 +67,22 @@ module internal ManifestContributionGroupedRuntime =
 
         state.Client.DefaultRequestHeaders.Add("x-grace-user-id", selectedUserId)
 
-    /// Records the scenario-local Repository identity exposed by an accepted leaf fixture.
-    let registerRepository scenarioId repositoryId = repositories[scenarioId] <- string repositoryId
+    /// Records the scenario-local Repository identity and reserves its grouped physical-asset namespace.
+    let registerRepository scenarioId repositoryId =
+        let repositoryKey = string repositoryId
+        repositories[scenarioId] <- repositoryKey
+
+        if
+            groupedState.IsSome
+            && not (assetIndexOffsets.ContainsKey repositoryKey)
+        then
+            assetIndexOffsets[repositoryKey] <- (assetIndexOffsets.Count + 1) * 10_000
+
+    /// Keeps deterministic leaf asset indexes unchanged outside grouped execution and disjoint within it.
+    let selectAssetIndex repositoryId index =
+        match assetIndexOffsets.TryGetValue(string repositoryId) with
+        | true, offset when groupedState.IsSome -> offset + index
+        | _ -> index
 
     /// Returns the exact scenario-to-Repository registrations accumulated by the active grouped session.
     let registeredRepositories () =

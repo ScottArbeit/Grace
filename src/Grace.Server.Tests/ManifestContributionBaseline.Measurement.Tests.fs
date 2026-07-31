@@ -411,6 +411,7 @@ module internal BaselineRuntime =
     /// Creates and finalizes one distinct manifest-backed asset.
     let createManifestAssetAsync (state: TestHostState) (ownerId: Guid) (organizationId: Guid) (repositoryId: Guid) index =
         task {
+            let index = ManifestContributionGroupedRuntime.selectAssetIndex repositoryId index
             let correlationId = generateCorrelationId ()
             let sessionId = Guid.NewGuid()
             let scope = $"baseline-{index}.bin"
