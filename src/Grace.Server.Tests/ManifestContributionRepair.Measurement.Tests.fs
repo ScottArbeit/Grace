@@ -447,7 +447,7 @@ type ManifestContributionRepairMeasurementTests() =
                     (dryRunErrors.Length = 0
                      && manifestAfterDryRun
                      && stableAfterDryRun = stableBefore)
-                    $"errors={dryRunDetail}; manifestPresent={manifestAfterDryRun}; stable={stableAfterDryRun = stableBefore}"
+                    $"outcome={dryRun.Outcome}; errors={dryRunDetail}; manifestPresent={manifestAfterDryRun}; stable={stableAfterDryRun = stableBefore}"
 
                 let! executeBaseline = BaselineRuntime.scrapeMetricsAsync state
                 let executeCorrelationId = $"repair-execute-{Guid.NewGuid():N}"
@@ -524,7 +524,9 @@ type ManifestContributionRepairMeasurementTests() =
                     && not (String.Equals(executeCorrelationId, string explicitReferenceId, StringComparison.OrdinalIgnoreCase))
                     && executeErrors.Length = 0
 
-                recordAssertion "repair.execute-one-action" executeActionPassed (String.Join("; ", executeErrors))
+                let executeErrorDetail = String.Join("; ", executeErrors)
+
+                recordAssertion "repair.execute-one-action" executeActionPassed $"outcome={execute.Outcome}; errors={executeErrorDetail}"
 
                 let republicationMessageDetail = String.Join(",", republicationObservedIds)
                 let republicationCorrelationDetail = String.Join(",", republicationObservedCorrelationIds)
