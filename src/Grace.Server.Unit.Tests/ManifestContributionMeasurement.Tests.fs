@@ -1,6 +1,7 @@
 namespace Grace.Server.Unit.Tests
 
 open Grace.Server.Tests.Measurement
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -87,6 +88,22 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     /// Verifies the Redis restart assertion contract is the exact owner-accepted set.
     [<Test>]
     member _.RedisRestartAssertionIdentifiersAreExact() = Assert.That(RedisRestart.requiredAssertionIds = redisRestartAssertionIds, Is.True)
+
+    /// Verifies the seed branch can both accept its setup Save and parent the post-restart recovery branch.
+    [<Test>]
+    member _.RedisRestartSeedBranchPermissionsSupportSetupAndRecovery() =
+        Assert.That(
+            RedisRestart.promotionEnabledParentPermissions,
+            Is.EquivalentTo(
+                [|
+                    ReferenceType.Commit
+                    ReferenceType.Checkpoint
+                    ReferenceType.Save
+                    ReferenceType.Tag
+                    ReferenceType.Promotion
+                |]
+            )
+        )
 
     /// Verifies a newer Healthy event and successful protocol operation satisfy three independent readiness gates.
     [<Test>]

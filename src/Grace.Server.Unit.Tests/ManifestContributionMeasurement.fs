@@ -8,6 +8,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
+open Grace.Types.Common
 
 /// Projects unbounded diagnostic sources into deterministic, inspectable evidence fields.
 module BoundedEvidence =
@@ -287,6 +288,16 @@ type RedisRestartReadinessEvaluation = { FreshResourceEvent: bool; Healthy: bool
 
 /// Defines the exact assertion and readiness contracts for the Redis restart measurement.
 module RedisRestart =
+
+    /// Grants the seed branch its normal writable References plus Promotion so it can parent the post-restart branch.
+    let promotionEnabledParentPermissions =
+        [|
+            ReferenceType.Commit
+            ReferenceType.Checkpoint
+            ReferenceType.Save
+            ReferenceType.Tag
+            ReferenceType.Promotion
+        |]
 
     /// Lists the only assertion identities permitted to produce a passing Redis restart summary.
     let requiredAssertionIds =

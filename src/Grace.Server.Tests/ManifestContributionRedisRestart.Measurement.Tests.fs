@@ -272,7 +272,17 @@ type ManifestContributionRedisRestartMeasurementTests() =
                 do! BaselineRuntime.saveRootAsync state ownerId organizationId repositoryId root
                 let seedRebaseReferenceId = Guid.NewGuid()
                 let seedSaveReferenceId = Guid.NewGuid()
-                let! seedBranch = BaselineRuntime.createBranchAsync state ownerId organizationId repositoryId defaultBranch 0 seedRebaseReferenceId
+
+                let! seedBranch =
+                    BaselineRuntime.createBranchWithPermissionsAsync
+                        state
+                        ownerId
+                        organizationId
+                        repositoryId
+                        defaultBranch
+                        0
+                        seedRebaseReferenceId
+                        RedisRestart.promotionEnabledParentPermissions
 
                 let seedAsset =
                     {
