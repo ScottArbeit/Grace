@@ -42,6 +42,7 @@
     <Compile Include="ManifestContributionTopologyCardinality.Measurement.Tests.fs" />
     <Compile Include="ManifestContributionDuplicateBacklog.Measurement.Tests.fs" />
     <Compile Include="ManifestContributionServerRestart.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionRepair.Measurement.Tests.fs" />
     <Compile Include="RepositoryCounterRecentResult.Integration.Server.Tests.fs" />
     <Compile Include="Policy.Server.Tests.fs" />
     <Compile Include="Queue.Integration.Server.Tests.fs" />
