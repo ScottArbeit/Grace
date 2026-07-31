@@ -47,6 +47,9 @@ type GraceServerRestartEvidence =
     {
         CommandStartedAt: DateTimeOffset
         CommandCompletedAt: DateTimeOffset
+        NonReadyEventObservedAt: DateTimeOffset
+        NonReadyResourceState: string
+        NonReadyHealthStatus: string
         ResourceEventObservedAt: DateTimeOffset
         ResourceState: string
         HttpReadyObservedAt: DateTimeOffset
@@ -1525,7 +1528,7 @@ module AspireTestHost =
 
                     let commandCompletedAt = DateTimeOffset.UtcNow
                     let mutable healthyEvent: ResourceEvent option = None
-                    let mutable restartTransitionObserved = false
+                    let mutable nonReadyEvent: (DateTimeOffset * ResourceEvent) option = None
 
                     while healthyEvent.IsNone do
                         let! hasEvent = nextResourceEvent
@@ -1544,14 +1547,24 @@ module AspireTestHost =
                                 not isHealthy
                                 || not (String.Equals(resourceEvent.Snapshot.State.Text, KnownResourceStates.Running, StringComparison.Ordinal))
                             then
-                                restartTransitionObserved <- true
-                            elif restartTransitionObserved then
+                                if nonReadyEvent.IsNone then
+                                    nonReadyEvent <- Some(DateTimeOffset.UtcNow, resourceEvent)
+                            elif nonReadyEvent.IsSome then
                                 healthyEvent <- Some resourceEvent
 
                         if healthyEvent.IsNone then nextResourceEvent <- events.MoveNextAsync().AsTask()
 
                     let resourceEventObservedAt = DateTimeOffset.UtcNow
                     let resourceState = healthyEvent.Value.Snapshot.HealthStatus.Value.ToString()
+                    let nonReadyEventObservedAt, observedNonReadyEvent = nonReadyEvent.Value
+                    let nonReadyResourceState = observedNonReadyEvent.Snapshot.State.Text
+
+                    let nonReadyHealthStatus =
+                        if observedNonReadyEvent.Snapshot.HealthStatus.HasValue then
+                            observedNonReadyEvent.Snapshot.HealthStatus.Value.ToString()
+                        else
+                            "Unknown"
+
                     logProgress (formatResourceHealthWaitHealthyProgress graceServerResourceName (Some normalizedRestartContext))
                     do! waitForGraceServerHttpReadyAsync state.Client cts.Token
                     let httpReadyObservedAt = DateTimeOffset.UtcNow
@@ -1562,6 +1575,9 @@ module AspireTestHost =
                         {
                             CommandStartedAt = commandStartedAt
                             CommandCompletedAt = commandCompletedAt
+                            NonReadyEventObservedAt = nonReadyEventObservedAt
+                            NonReadyResourceState = nonReadyResourceState
+                            NonReadyHealthStatus = nonReadyHealthStatus
                             ResourceEventObservedAt = resourceEventObservedAt
                             ResourceState = resourceState
                             HttpReadyObservedAt = httpReadyObservedAt

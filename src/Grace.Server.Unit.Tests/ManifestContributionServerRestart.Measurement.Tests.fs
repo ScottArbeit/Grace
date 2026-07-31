@@ -28,13 +28,26 @@ type ManifestContributionServerRestartMeasurementTests() =
     [<Test>]
     member _.RequiredAssertionIdentifiersAreExact() = Assert.That(ServerRestart.requiredAssertionIds = requiredAssertionIds, Is.True)
 
-    /// Verifies restart readiness requires command success, a fresh Healthy event, and later HTTP success.
+    /// Verifies restart readiness retains the post-command non-ready transition before fresh Healthy and HTTP success.
     [<Test>]
     member _.FreshRestartReadinessPassesInRequiredOrder() =
         let commandStartedAt = DateTimeOffset.Parse("2026-07-31T10:00:00Z")
+        let commandCompletedAt = commandStartedAt.AddSeconds 1.0
+        let nonReadyObservedAt = commandCompletedAt.AddSeconds 1.0
+        let healthyObservedAt = nonReadyObservedAt.AddSeconds 1.0
 
         let errors =
-            ServerRestart.validateFreshReadiness true commandStartedAt (commandStartedAt.AddSeconds 1.0) "Healthy" (commandStartedAt.AddSeconds 2.0) true
+            ServerRestart.validateFreshReadiness
+                true
+                commandStartedAt
+                commandCompletedAt
+                nonReadyObservedAt
+                "Starting"
+                "Unhealthy"
+                healthyObservedAt
+                "Healthy"
+                (healthyObservedAt.AddSeconds 1.0)
+                true
 
         Assert.That(errors, Is.Empty)
 
@@ -43,14 +56,51 @@ type ManifestContributionServerRestartMeasurementTests() =
     member _.StaleHealthOrMissingReadinessFails() =
         let commandStartedAt = DateTimeOffset.Parse("2026-07-31T10:00:00Z")
 
-        let errors = ServerRestart.validateFreshReadiness false commandStartedAt commandStartedAt "Running" (commandStartedAt.AddSeconds -1.0) false
+        let errors =
+            ServerRestart.validateFreshReadiness
+                false
+                commandStartedAt
+                commandStartedAt
+                commandStartedAt
+                "Running"
+                "Healthy"
+                commandStartedAt
+                "Running"
+                (commandStartedAt.AddSeconds -1.0)
+                false
 
-        Assert.That(errors, Has.Length.EqualTo(5))
+        Assert.That(errors, Has.Length.EqualTo(7))
         Assert.That(String.Join("; ", errors), Does.Contain("command did not complete"))
-        Assert.That(String.Join("; ", errors), Does.Contain("not observed after"))
+        Assert.That(String.Join("; ", errors), Does.Contain("non-ready transition was not observed after"))
+        Assert.That(String.Join("; ", errors), Does.Contain("did not demonstrate a non-ready state"))
+        Assert.That(String.Join("; ", errors), Does.Contain("Healthy event did not follow"))
         Assert.That(String.Join("; ", errors), Does.Contain("not Healthy"))
         Assert.That(String.Join("; ", errors), Does.Contain("did not follow"))
         Assert.That(String.Join("; ", errors), Does.Contain("HTTP readiness failed"))
+
+    /// Verifies a Healthy observation cannot hide an omitted or out-of-order non-ready restart transition.
+    [<Test>]
+    member _.MissingOrOutOfOrderNonReadyTransitionFails() =
+        let commandStartedAt = DateTimeOffset.Parse("2026-07-31T10:00:00Z")
+        let commandCompletedAt = commandStartedAt.AddSeconds 1.0
+        let healthyObservedAt = commandCompletedAt.AddSeconds 2.0
+
+        let errors =
+            ServerRestart.validateFreshReadiness
+                true
+                commandStartedAt
+                commandCompletedAt
+                commandStartedAt
+                "Running"
+                "Healthy"
+                healthyObservedAt
+                "Healthy"
+                (healthyObservedAt.AddSeconds 1.0)
+                true
+
+        Assert.That(errors, Has.Length.EqualTo(2))
+        Assert.That(String.Join("; ", errors), Does.Contain("non-ready transition was not observed after"))
+        Assert.That(String.Join("; ", errors), Does.Contain("did not demonstrate a non-ready state"))
 
     /// Verifies unchanged durable state cannot replace exact replay identity and settlement completion.
     [<Test>]

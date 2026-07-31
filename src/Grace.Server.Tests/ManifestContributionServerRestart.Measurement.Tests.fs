@@ -358,6 +358,10 @@ type ManifestContributionServerRestartMeasurementTests() =
                     ServerRestart.validateFreshReadiness
                         true
                         restart.CommandStartedAt
+                        restart.CommandCompletedAt
+                        restart.NonReadyEventObservedAt
+                        restart.NonReadyResourceState
+                        restart.NonReadyHealthStatus
                         restart.ResourceEventObservedAt
                         restart.ResourceState
                         restart.HttpReadyObservedAt
@@ -373,9 +377,10 @@ type ManifestContributionServerRestartMeasurementTests() =
 
                 recordAssertion
                     "server-restart.fresh-health"
-                    (restart.ResourceEventObservedAt > restart.CommandStartedAt
+                    (restart.NonReadyEventObservedAt > restart.CommandCompletedAt
+                     && restart.ResourceEventObservedAt > restart.NonReadyEventObservedAt
                      && restart.ResourceState = "Healthy")
-                    $"state={restart.ResourceState}; observed={restart.ResourceEventObservedAt:O}; errors={readinessErrorDetail}"
+                    $"commandCompleted={restart.CommandCompletedAt:O}; nonReadyState={restart.NonReadyResourceState}; nonReadyHealth={restart.NonReadyHealthStatus}; nonReadyObserved={restart.NonReadyEventObservedAt:O}; healthyState={restart.ResourceState}; healthyObserved={restart.ResourceEventObservedAt:O}; errors={readinessErrorDetail}"
 
                 recordAssertion
                     "server-restart.http-ready"

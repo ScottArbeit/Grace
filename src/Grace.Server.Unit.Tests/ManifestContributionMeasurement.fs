@@ -852,10 +852,14 @@ module ServerRestart =
             "server-restart.evidence-integrity"
         |]
 
-    /// Requires successful restart command execution followed by a fresh Healthy event and bounded HTTP readiness.
+    /// Requires a completed restart command, retained non-ready transition, fresh Healthy event, and bounded HTTP readiness in strict order.
     let validateFreshReadiness
         commandCompleted
         (commandStartedAt: DateTimeOffset)
+        (commandCompletedAt: DateTimeOffset)
+        (nonReadyEventObservedAt: DateTimeOffset)
+        nonReadyResourceState
+        nonReadyHealthStatus
         (resourceEventObservedAt: DateTimeOffset)
         resourceState
         (httpReadyObservedAt: DateTimeOffset)
@@ -866,8 +870,20 @@ module ServerRestart =
         if not commandCompleted then
             errors.Add("The Grace.Server restart command did not complete successfully.")
 
-        if resourceEventObservedAt <= commandStartedAt then
-            errors.Add("Grace.Server health was not observed after the restart command began.")
+        if commandCompletedAt < commandStartedAt then
+            errors.Add("Grace.Server restart command completion preceded its start.")
+
+        if nonReadyEventObservedAt <= commandCompletedAt then
+            errors.Add("The Grace.Server non-ready transition was not observed after restart command completion.")
+
+        if
+            String.Equals(nonReadyResourceState, "Running", StringComparison.Ordinal)
+            && String.Equals(nonReadyHealthStatus, "Healthy", StringComparison.Ordinal)
+        then
+            errors.Add("The retained Grace.Server transition did not demonstrate a non-ready state.")
+
+        if resourceEventObservedAt <= nonReadyEventObservedAt then
+            errors.Add("The fresh Grace.Server Healthy event did not follow the retained non-ready transition.")
 
         if not (String.Equals(resourceState, "Healthy", StringComparison.Ordinal)) then
             errors.Add($"The fresh Grace.Server resource event was not Healthy: {resourceState}.")
