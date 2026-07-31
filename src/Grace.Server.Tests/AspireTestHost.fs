@@ -1583,6 +1583,73 @@ module AspireTestHost =
             return ()
         }
 
+    /// Stops Grace.Server and does not return until Aspire observes a terminal non-running resource state.
+    let stopGraceServerAsync (state: TestHostState) (stopContext: string) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                let normalizedContext = normalizeRestartContext stopContext
+                Console.WriteLine($"Stopping Grace.Server Aspire project resource for {normalizedContext}...")
+                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.StopCommand, cts.Token)
+
+                if not result.Success then
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Stop command was canceled."
+                        else "Stop command failed without details."
+
+                    raise (InvalidOperationException($"Grace.Server stop failed during {normalizedContext}: {errorMessage}"))
+
+                let terminalStates =
+                    [|
+                        KnownResourceStates.Exited
+                        KnownResourceStates.Finished
+                        KnownResourceStates.NotStarted
+                    |]
+
+                let! _ = notificationService.WaitForResourceAsync(graceServerResourceName, terminalStates, cts.Token)
+                logProgress $"Grace.Server reached a terminal stopped state for '{normalizedContext}'."
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
+    /// Starts a stopped Grace.Server and returns timestamps bounding fresh Aspire health plus successful HTTP readiness.
+    let startGraceServerAsync (state: TestHostState) (startContext: string) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                let normalizedContext = normalizeRestartContext startContext
+                Console.WriteLine($"Starting Grace.Server Aspire project resource for {normalizedContext}...")
+                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+                let commandStartedAt = DateTimeOffset.UtcNow
+                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.StartCommand, cts.Token)
+
+                if not result.Success then
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Start command was canceled."
+                        else "Start command failed without details."
+
+                    raise (InvalidOperationException($"Grace.Server start failed during {normalizedContext}: {errorMessage}"))
+
+                do! waitForResourceHealthyWithProgressContextAsync notificationService state.App graceServerResourceName cts.Token None
+
+                let healthObservedAt = DateTimeOffset.UtcNow
+                do! waitForGraceServerHttpReadyAsync state.Client cts.Token
+                logProgress $"Grace.Server HTTP readiness recovered after explicit start '{normalizedContext}'."
+                Console.WriteLine($"Grace.Server Aspire project resource start completed for {normalizedContext}.")
+                return commandStartedAt, healthObservedAt
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
     /// Builds a deterministic service bus receiver for integration setup fixture for the server integration aspire Test Host assertions.
     let private createServiceBusReceiver (state: TestHostState) =
         let options = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete)
