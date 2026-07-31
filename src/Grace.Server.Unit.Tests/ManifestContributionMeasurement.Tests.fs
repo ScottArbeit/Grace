@@ -29,6 +29,24 @@ type ManifestContributionMeasurementTests() =
             "baseline.evidence-integrity"
         |]
 
+    let duplicateBacklogRequiredAssertionIds =
+        [|
+            "duplicate-backlog.seed-deliveries-completed"
+            "duplicate-backlog.pre-stop-terminal-barrier"
+            "duplicate-backlog.visible-while-stopped"
+            "duplicate-backlog.fresh-server-readiness"
+            "duplicate-backlog.replay-message-delta"
+            "duplicate-backlog.replay-duration-delta"
+            "duplicate-backlog.unrelated-event-excluded"
+            "duplicate-backlog.reference-root-state-unchanged"
+            "duplicate-backlog.manifest-state-unchanged"
+            "duplicate-backlog.logical-state-unchanged"
+            "duplicate-backlog.workflow-state-unchanged"
+            "duplicate-backlog.physical-state-unchanged"
+            "duplicate-backlog.identity-isolation"
+            "duplicate-backlog.evidence-integrity"
+        |]
+
     let completedMetrics messages durations =
         $"""
 # TYPE grace_manifest_contribution_messages_total counter
@@ -48,6 +66,94 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     /// Verifies the Baseline assertion contract is an exact stable set.
     [<Test>]
     member _.RequiredAssertionIdentifiersAreExact() = Assert.That(Baseline.requiredAssertionIds = requiredAssertionIds, Is.True)
+
+    /// Verifies the duplicate-backlog assertion contract is an exact stable set.
+    [<Test>]
+    member _.DuplicateBacklogRequiredAssertionIdentifiersAreExact() =
+        Assert.That(DuplicateBacklog.requiredAssertionIds = duplicateBacklogRequiredAssertionIds, Is.True)
+
+    /// Verifies a stop barrier requires every seed identity plus independent durable and delivery terminal signals.
+    [<Test>]
+    member _.DuplicateBacklogStopBarrierRejectsUnsettledSeedDelivery() =
+        let expected =
+            [|
+                "Reference/one/Created"
+                "Reference/two/Created"
+            |]
+
+        let missingIdentity = DuplicateBacklog.validatePreStopBarrier expected [| expected[0] |] true true
+
+        let incompleteDelivery = DuplicateBacklog.validatePreStopBarrier expected expected false true
+
+        let unconvergedDurableState = DuplicateBacklog.validatePreStopBarrier expected expected true false
+
+        Assert.That(missingIdentity, Is.Not.Empty)
+        Assert.That(incompleteDelivery, Has.One.Items)
+        Assert.That(incompleteDelivery[0], Does.Contain("completion"))
+        Assert.That(unconvergedDurableState, Has.One.Items)
+        Assert.That(unconvergedDurableState[0], Does.Contain("converged"))
+
+    /// Verifies stopped-server visibility supports one and multiple selected replays without vacuous empty-peek success.
+    [<Test>]
+    member _.DuplicateBacklogVisibilityRequiresEverySelectedIdentityAtLeastOnce() =
+        let one = [| "Reference/one/Created" |]
+
+        let selected =
+            [|
+                "Reference/one/Created"
+                "Reference/two/Created"
+                "Reference/three/Created"
+            |]
+
+        Assert.That(DuplicateBacklog.validateStoppedBacklogVisibility one one, Is.Empty)
+
+        Assert.That(
+            DuplicateBacklog.validateStoppedBacklogVisibility
+                selected
+                [|
+                    "unrelated/test-event"
+                    selected[2]
+                    selected[0]
+                    selected[1]
+                    selected[0]
+                |],
+            Is.Empty
+        )
+
+        Assert.That(DuplicateBacklog.validateStoppedBacklogVisibility selected Array.empty, Is.Not.Empty)
+        Assert.That(DuplicateBacklog.validateStoppedBacklogVisibility selected [| selected[0]; selected[1] |], Is.Not.Empty)
+
+    /// Verifies stale health or failed HTTP readiness cannot satisfy a post-start readiness gate.
+    [<Test>]
+    member _.DuplicateBacklogFreshReadinessRejectsStaleHealthAndFailedHttp() =
+        let commandStartedAt = DateTimeOffset.Parse("2026-07-31T08:00:00Z")
+        let staleHealth = commandStartedAt.AddMilliseconds(-1.0)
+        let freshHealth = commandStartedAt.AddMilliseconds(1.0)
+
+        Assert.That(DuplicateBacklog.validateFreshServerReadiness commandStartedAt freshHealth true, Is.Empty)
+        Assert.That(DuplicateBacklog.validateFreshServerReadiness commandStartedAt staleHealth true, Is.Not.Empty)
+        Assert.That(DuplicateBacklog.validateFreshServerReadiness commandStartedAt freshHealth false, Is.Not.Empty)
+
+    /// Verifies byte-equivalent durable state cannot substitute for completed replay settlement while duplicates remain queued.
+    [<Test>]
+    member _.DuplicateBacklogUnchangedStateCannotSatisfyQueuedReplay() =
+        let baseline = completedMetrics 7 7
+        let unchangedDurableState = true
+        let replayCompletion = OpenMetrics.evaluateCompletedSettlementDelta 3L baseline baseline
+
+        Assert.That(unchangedDurableState, Is.True)
+        Assert.That(replayCompletion, Is.EqualTo(DeltaEvaluation.Pending))
+
+    /// Verifies an intentional Grace.Server process restart requires exact fresh cumulative totals rather than a stale pre-stop baseline.
+    [<Test>]
+    member _.DuplicateBacklogFreshProcessRequiresExactReplayTotals() =
+        let freshProcessBaseline = completedMetrics 0 0
+
+        Assert.That(OpenMetrics.evaluateCompletedSettlementDelta 3L freshProcessBaseline (completedMetrics 3 3), Is.EqualTo(DeltaEvaluation.Complete(3L, 3L)))
+
+        match OpenMetrics.evaluateCompletedSettlementDelta 3L freshProcessBaseline (completedMetrics 4 3) with
+        | DeltaEvaluation.Invalid reason -> Assert.That(reason, Does.Contain("overshot"))
+        | result -> Assert.Fail($"Fresh-process overshoot unexpectedly produced {result}.")
 
     /// Verifies exact production settlement samples complete only at the requested cumulative deltas.
     [<Test>]
