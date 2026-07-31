@@ -1,6 +1,7 @@
 namespace Grace.Server.Unit.Tests
 
 open Grace.Server.Tests.Measurement
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -63,6 +64,23 @@ type ManifestContributionMeasurementTests() =
             "duplicate-backlog.evidence-integrity"
         |]
 
+    let redisRestartAssertionIds =
+        [|
+            "redis-restart.seed-deliveries-completed"
+            "redis-restart.command-completed"
+            "redis-restart.fresh-health"
+            "redis-restart.protocol-ready"
+            "redis-restart.branch-setup-delivery-completed"
+            "redis-restart.stimulus-message-delta"
+            "redis-restart.stimulus-duration-delta"
+            "redis-restart.reference-root-present"
+            "redis-restart.manifest-relationship-present"
+            "redis-restart.logical-count-plus-one"
+            "redis-restart.workflow-unchanged"
+            "redis-restart.physical-active-count-one"
+            "redis-restart.evidence-integrity"
+        |]
+
     let completedMetrics messages durations =
         $"""
 # TYPE grace_manifest_contribution_messages_total counter
@@ -82,6 +100,206 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     /// Verifies the Baseline assertion contract is an exact stable set.
     [<Test>]
     member _.RequiredAssertionIdentifiersAreExact() = Assert.That(Baseline.requiredAssertionIds = requiredAssertionIds, Is.True)
+
+    /// Verifies the Redis restart assertion contract is the exact owner-accepted set.
+    [<Test>]
+    member _.RedisRestartAssertionIdentifiersAreExact() = Assert.That(RedisRestart.requiredAssertionIds = redisRestartAssertionIds, Is.True)
+
+    /// Verifies the +1 fixture requires one distinct stimulus root while retaining the exact seed manifest content identity.
+    [<Test>]
+    member _.RedisRestartFixtureIdentityRequiresDistinctRootWithSameManifestContent() =
+        let sharedBytes = [| 0uy; 1uy; 2uy; 255uy |]
+
+        let valid =
+            {
+                SeedRootId = "seed-root"
+                RebaseRootId = "rebase-root"
+                StimulusRootId = "stimulus-root"
+                SeedStoragePoolId = "pool"
+                StimulusStoragePoolId = "pool"
+                SeedManifestAddress = "manifest"
+                StimulusManifestAddress = "manifest"
+                SeedContentBlockIdentity = "block"
+                StimulusContentBlockIdentity = "block"
+                SeedBytes = sharedBytes
+                StimulusBytes = Array.copy sharedBytes
+            }
+
+        Assert.That(RedisRestart.validateFixtureIdentity valid, Is.Empty)
+
+        let sameRootErrors = RedisRestart.validateFixtureIdentity { valid with StimulusRootId = valid.SeedRootId }
+
+        Assert.That(sameRootErrors, Has.Some.Contains("distinct from the seed root"))
+
+    /// Verifies every retained manifest-content identity dimension participates in the +1 fixture gate.
+    [<TestCase("storage-pool")>]
+    [<TestCase("manifest")>]
+    [<TestCase("content-block")>]
+    [<TestCase("bytes")>]
+    member _.RedisRestartFixtureIdentityRejectsChangedManifestContent(dimension) =
+        let valid =
+            {
+                SeedRootId = "seed-root"
+                RebaseRootId = "rebase-root"
+                StimulusRootId = "stimulus-root"
+                SeedStoragePoolId = "pool"
+                StimulusStoragePoolId = "pool"
+                SeedManifestAddress = "manifest"
+                StimulusManifestAddress = "manifest"
+                SeedContentBlockIdentity = "block"
+                StimulusContentBlockIdentity = "block"
+                SeedBytes = [| 1uy; 2uy; 3uy |]
+                StimulusBytes = [| 1uy; 2uy; 3uy |]
+            }
+
+        let changed =
+            match dimension with
+            | "storage-pool" -> { valid with StimulusStoragePoolId = "different-pool" }
+            | "manifest" -> { valid with StimulusManifestAddress = "different-manifest" }
+            | "content-block" -> { valid with StimulusContentBlockIdentity = "different-block" }
+            | "bytes" -> { valid with StimulusBytes = [| 1uy; 2uy; 4uy |] }
+            | value -> invalidArg (nameof dimension) value
+
+        Assert.That(RedisRestart.validateFixtureIdentity changed, Is.Not.Empty)
+
+    /// Verifies the seed branch can both accept its setup Save and parent the post-restart recovery branch.
+    [<Test>]
+    member _.RedisRestartSeedBranchPermissionsSupportSetupAndRecovery() =
+        Assert.That(
+            RedisRestart.promotionEnabledParentPermissions,
+            Is.EquivalentTo(
+                [|
+                    ReferenceType.Commit
+                    ReferenceType.Checkpoint
+                    ReferenceType.Save
+                    ReferenceType.Tag
+                    ReferenceType.Promotion
+                |]
+            )
+        )
+
+    /// Verifies branch setup settles independently while the explicit-Reference hot-manifest baseline remains unchanged.
+    [<Test>]
+    member _.RedisRestartBranchSetupAcceptsPersistedRebaseAndUnchangedHotManifest() =
+        let observation =
+            {
+                RebasePersisted = true
+                ObservedEnvelopeCount = 1
+                MessageDelta = 1L
+                DurationDelta = 1L
+                IdentityInventoryClean = true
+                BeforeLogicalCount = 1L
+                BaselineLogicalCount = 1L
+                WorkflowUnchanged = true
+                ManifestRelationshipPresent = true
+                PhysicalActiveCount = 1L
+            }
+
+        Assert.That(RedisRestart.branchSetupComplete observation, Is.True)
+
+    /// Verifies setup cannot pass by mutating the hot-manifest count or observing an unpersisted Rebase identity.
+    [<TestCase(false, 1L)>]
+    [<TestCase(true, 2L)>]
+    member _.RedisRestartBranchSetupRejectsMissingRebaseOrHotManifestMutation(rebasePersisted, baselineLogicalCount) =
+        let observation =
+            {
+                RebasePersisted = rebasePersisted
+                ObservedEnvelopeCount = 1
+                MessageDelta = 1L
+                DurationDelta = 1L
+                IdentityInventoryClean = true
+                BeforeLogicalCount = 1L
+                BaselineLogicalCount = baselineLogicalCount
+                WorkflowUnchanged = true
+                ManifestRelationshipPresent = true
+                PhysicalActiveCount = 1L
+            }
+
+        Assert.That(RedisRestart.branchSetupComplete observation, Is.False)
+
+    /// Verifies a newer Healthy event and successful protocol operation satisfy three independent readiness gates.
+    [<Test>]
+    member _.RedisRestartRequiresFreshHealthyProtocolEvidence() =
+        let evaluation =
+            RedisRestart.evaluateReadiness { PostCommandResourceEventObserved = true; PostCommandHealth = "Healthy"; ProtocolOperationSucceeded = true }
+
+        Assert.That(evaluation.FreshResourceEvent, Is.True)
+        Assert.That(evaluation.Healthy, Is.True)
+        Assert.That(evaluation.ProtocolReady, Is.True)
+
+    /// Verifies a cached pre-command Healthy snapshot cannot satisfy fresh restart readiness.
+    [<Test>]
+    member _.RedisRestartRejectsStaleHealthySnapshot() =
+        let evaluation =
+            RedisRestart.evaluateReadiness { PostCommandResourceEventObserved = false; PostCommandHealth = "Healthy"; ProtocolOperationSucceeded = true }
+
+        Assert.That(evaluation.FreshResourceEvent, Is.False)
+        Assert.That(evaluation.Healthy, Is.True)
+        Assert.That(evaluation.ProtocolReady, Is.True)
+
+    /// Verifies a post-command resource event cannot substitute for Healthy and Redis protocol readiness.
+    [<TestCase("Unhealthy", true)>]
+    [<TestCase("Healthy", false)>]
+    member _.RedisRestartKeepsHealthAndProtocolReadinessIndependent(health, protocolSucceeded) =
+        let evaluation =
+            RedisRestart.evaluateReadiness
+                { PostCommandResourceEventObserved = true; PostCommandHealth = health; ProtocolOperationSucceeded = protocolSucceeded }
+
+        Assert.That(evaluation.FreshResourceEvent, Is.True)
+        Assert.That(evaluation.Healthy && evaluation.ProtocolReady, Is.False)
+
+    /// Verifies a branch setup delivery inside the explicit baseline overshoots the one-delivery stimulus contract.
+    [<Test>]
+    member _.RedisRestartRejectsBranchSetupCrossingExplicitBaseline() =
+        let beforeBranchSetup = completedMetrics 7 7
+        let afterBranchSetupAndStimulus = completedMetrics 9 9
+
+        match OpenMetrics.evaluateCompletedSettlementDelta 1L beforeBranchSetup afterBranchSetupAndStimulus with
+        | DeltaEvaluation.Invalid reason -> Assert.That(reason, Does.Contain("overshot"))
+        | result -> Assert.Fail($"Branch setup unexpectedly produced {result}.")
+
+    /// Verifies one exact post-restart delivery is the accepted settlement boundary.
+    [<Test>]
+    member _.RedisRestartAcceptsExactlyOneStimulusDelivery() =
+        let baseline = completedMetrics 7 7
+        let observed = completedMetrics 8 8
+
+        Assert.That(OpenMetrics.evaluateCompletedSettlementDelta 1L baseline observed, Is.EqualTo(DeltaEvaluation.Complete(1L, 1L)))
+
+    /// Verifies Redis exceptions and bounded timeouts remain terminal runtime failures in the shared summary seam.
+    [<TestCase("StackExchange.Redis.RedisConnectionException: connection unavailable")>]
+    [<TestCase("System.TimeoutException: Redis protocol readiness timed out")>]
+    member _.RedisRestartInfrastructureFailuresCannotProducePassingSummary(runtimeFailure) =
+        let assertions =
+            redisRestartAssertionIds
+            |> Array.map (fun assertionId -> MeasurementAssertion.Create("run-1", "redis-restart", assertionId, true, "proved"))
+
+        let summary = ScenarioSummary.derive "run-1" "redis-restart" redisRestartAssertionIds assertions [| runtimeFailure |] false
+
+        Assert.That(summary.Outcome, Is.EqualTo("Failed"))
+        Assert.That(summary.RuntimeFailures, Is.Not.Empty)
+
+    /// Verifies passing derives from exactly 13 unique Redis restart assertions and no caller-supplied count.
+    [<Test>]
+    member _.RedisRestartSummaryDerivesExactAssertionCount() =
+        let assertions =
+            redisRestartAssertionIds
+            |> Array.map (fun assertionId -> MeasurementAssertion.Create("run-1", "redis-restart", assertionId, true, "proved"))
+
+        let summary = ScenarioSummary.derive "run-1" "redis-restart" redisRestartAssertionIds assertions Array.empty false
+
+        Assert.That(summary.Outcome, Is.EqualTo("Passed"))
+        Assert.That(summary.RequiredAssertionCount, Is.EqualTo(13))
+        Assert.That(summary.PassedAssertionCount, Is.EqualTo(13))
+
+    /// Verifies a failed Redis restart prerequisite is Skipped with no assertion evidence or side-effect claim.
+    [<Test>]
+    member _.RedisRestartFailedPrerequisiteIsCleanSkip() =
+        let summary = ScenarioSummary.derive "run-1" "redis-restart" redisRestartAssertionIds Array.empty Array.empty true
+
+        Assert.That(summary.Outcome, Is.EqualTo("Skipped"))
+        Assert.That(summary.PassedAssertionCount, Is.Zero)
+        Assert.That(summary.RuntimeFailures, Is.Empty)
 
     /// Verifies the Repair assertion contract is the exact derived twelve-identity set.
     [<Test>]

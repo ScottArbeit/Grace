@@ -528,8 +528,8 @@ module internal BaselineRuntime =
             return ()
         }
 
-    /// Creates one child branch with a caller-owned automatic Rebase Reference identity.
-    let createBranchAsync state ownerId organizationId repositoryId (parent: Branch.BranchDto) index rebaseReferenceId =
+    /// Creates one child branch with caller-selected permissions and a caller-owned automatic Rebase Reference identity.
+    let createBranchWithPermissionsAsync state ownerId organizationId repositoryId (parent: Branch.BranchDto) index rebaseReferenceId initialPermissions =
         task {
             let branchId = Guid.NewGuid()
             let parameters = Parameters.Branch.CreateBranchParameters()
@@ -541,11 +541,22 @@ module internal BaselineRuntime =
             parameters.ParentBranchId <- string parent.BranchId
             parameters.ParentBranchName <- string parent.BranchName
             parameters.ReferenceId <- rebaseReferenceId
+            parameters.InitialPermissions <- initialPermissions
             parameters.CorrelationId <- generateCorrelationId ()
             use! response = state.Client.PostAsync("/branch/create", createJsonContent parameters)
             let! _ = requireOkAsync "POST /branch/create" response
             return! getBranchAsync state ownerId organizationId repositoryId branchId
         }
+
+    /// Creates one child branch with the default writable permissions and a caller-owned automatic Rebase Reference identity.
+    let createBranchAsync state ownerId organizationId repositoryId (parent: Branch.BranchDto) index rebaseReferenceId =
+        let defaults =
+            Parameters
+                .Branch
+                .CreateBranchParameters()
+                .InitialPermissions
+
+        createBranchWithPermissionsAsync state ownerId organizationId repositoryId parent index rebaseReferenceId defaults
 
     /// Creates one explicit Save Reference with a caller-owned identity.
     let saveReferenceAsync state ownerId organizationId repositoryId (asset: BaselineAsset) =

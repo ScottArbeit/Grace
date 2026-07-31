@@ -42,6 +42,16 @@ type TestHostState =
         OperationsSqlConnectionString: string
     }
 
+/// Captures the command result and fresh Aspire resource snapshot for one pinned Redis restart.
+type RedisRestartCommandObservation =
+    {
+        PostCommandResourceEventObserved: bool
+        PreCommandStartTimestamp: string
+        PostCommandStartTimestamp: string
+        PostCommandState: string
+        PostCommandHealth: string
+    }
+
 /// Captures the ordered resource and HTTP observations produced by one deliberate Grace.Server restart.
 type GraceServerRestartEvidence =
     {
@@ -1674,6 +1684,92 @@ module AspireTestHost =
                 logProgress $"Grace.Server HTTP readiness recovered after explicit start '{normalizedContext}'."
                 Console.WriteLine($"Grace.Server Aspire project resource start completed for {normalizedContext}.")
                 return commandStartedAt, healthObservedAt
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
+    /// Restarts the pinned Redis resource and requires a post-command event plus a Healthy snapshot before returning.
+    let restartRedisAsync (state: TestHostState) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                let mutable preCommandEvent = Unchecked.defaultof<ResourceEvent>
+
+                if not (notificationService.TryGetCurrentState(redisResourceName, &preCommandEvent)) then
+                    invalidOp "The pinned Redis resource did not expose a pre-command Aspire snapshot."
+
+                let preCommandStartTimestamp = box preCommandEvent.Snapshot.StartTimeStamp
+                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+                let mutable commandIssued = false
+
+                let postCommandEventTask =
+                    task {
+                        use enumerator =
+                            notificationService
+                                .WatchAsync(cts.Token)
+                                .GetAsyncEnumerator(cts.Token)
+
+                        let mutable observed: ResourceEvent option = None
+
+                        while observed.IsNone do
+                            let! hasNext = enumerator.MoveNextAsync().AsTask()
+
+                            if not hasNext then
+                                invalidOp "The Aspire resource event stream ended before Redis restart evidence was observed."
+
+                            let resourceEvent = enumerator.Current
+
+                            if
+                                commandIssued
+                                && resourceEvent.Resource.Name.Equals(redisResourceName, StringComparison.Ordinal)
+                                && not (Object.Equals(box resourceEvent.Snapshot.StartTimeStamp, preCommandStartTimestamp))
+                            then
+                                observed <- Some resourceEvent
+
+                        return observed.Value
+                    }
+
+                commandIssued <- true
+
+                let! result =
+                    task {
+                        try
+                            return! commandService.ExecuteCommandAsync(redisResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+                        with
+                        | ex ->
+                            cts.Cancel()
+                            return raise ex
+                    }
+
+                if not result.Success then
+                    cts.Cancel()
+
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Restart command was canceled."
+                        else "Restart command failed without details."
+
+                    invalidOp $"Redis restart command failed: {errorMessage}"
+
+                let! _ = postCommandEventTask
+
+                do! waitForResourceHealthyWithProgressContextAsync notificationService state.App redisResourceName cts.Token None
+                let mutable postCommandEvent = Unchecked.defaultof<ResourceEvent>
+
+                if not (notificationService.TryGetCurrentState(redisResourceName, &postCommandEvent)) then
+                    invalidOp "The pinned Redis resource did not expose a post-command Aspire snapshot."
+
+                return
+                    {
+                        PostCommandResourceEventObserved = true
+                        PreCommandStartTimestamp = string preCommandEvent.Snapshot.StartTimeStamp
+                        PostCommandStartTimestamp = string postCommandEvent.Snapshot.StartTimeStamp
+                        PostCommandState = string postCommandEvent.Snapshot.State
+                        PostCommandHealth = string postCommandEvent.Snapshot.HealthStatus
+                    }
             finally
                 sharedStateLock.Release() |> ignore
         }

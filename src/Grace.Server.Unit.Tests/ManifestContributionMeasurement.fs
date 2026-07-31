@@ -8,6 +8,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
+open Grace.Types.Common
 open System.Threading.Tasks
 
 /// Projects unbounded diagnostic sources into deterministic, inspectable evidence fields.
@@ -279,6 +280,120 @@ module Baseline =
             "baseline.identity-isolation"
             "baseline.evidence-integrity"
         |]
+
+/// Captures the three independent signals required before a post-restart Reference may be created.
+type RedisRestartReadinessObservation = { PostCommandResourceEventObserved: bool; PostCommandHealth: string; ProtocolOperationSucceeded: bool }
+
+/// Reports each Redis readiness gate separately so stale health cannot be mistaken for recovery.
+type RedisRestartReadinessEvaluation = { FreshResourceEvent: bool; Healthy: bool; ProtocolReady: bool }
+
+/// Captures the independent persistence, delivery, and unchanged hot-manifest gates for post-restart branch setup.
+type RedisRestartBranchSetupObservation =
+    {
+        RebasePersisted: bool
+        ObservedEnvelopeCount: int
+        MessageDelta: int64
+        DurationDelta: int64
+        IdentityInventoryClean: bool
+        BeforeLogicalCount: int64
+        BaselineLogicalCount: int64
+        WorkflowUnchanged: bool
+        ManifestRelationshipPresent: bool
+        PhysicalActiveCount: int64
+    }
+
+/// Captures the root and manifest-content identities that distinguish the Redis-restart +1 stimulus from same-root reuse.
+type RedisRestartFixtureIdentityObservation =
+    {
+        SeedRootId: string
+        RebaseRootId: string
+        StimulusRootId: string
+        SeedStoragePoolId: string
+        StimulusStoragePoolId: string
+        SeedManifestAddress: string
+        StimulusManifestAddress: string
+        SeedContentBlockIdentity: string
+        StimulusContentBlockIdentity: string
+        SeedBytes: byte array
+        StimulusBytes: byte array
+    }
+
+/// Defines the exact assertion and readiness contracts for the Redis restart measurement.
+module RedisRestart =
+
+    /// Grants the seed branch its normal writable References plus Promotion so it can parent the post-restart branch.
+    let promotionEnabledParentPermissions =
+        [|
+            ReferenceType.Commit
+            ReferenceType.Checkpoint
+            ReferenceType.Save
+            ReferenceType.Tag
+            ReferenceType.Promotion
+        |]
+
+    /// Lists the only assertion identities permitted to produce a passing Redis restart summary.
+    let requiredAssertionIds =
+        [|
+            "redis-restart.seed-deliveries-completed"
+            "redis-restart.command-completed"
+            "redis-restart.fresh-health"
+            "redis-restart.protocol-ready"
+            "redis-restart.branch-setup-delivery-completed"
+            "redis-restart.stimulus-message-delta"
+            "redis-restart.stimulus-duration-delta"
+            "redis-restart.reference-root-present"
+            "redis-restart.manifest-relationship-present"
+            "redis-restart.logical-count-plus-one"
+            "redis-restart.workflow-unchanged"
+            "redis-restart.physical-active-count-one"
+            "redis-restart.evidence-integrity"
+        |]
+
+    /// Evaluates a post-command event, Healthy snapshot, and bounded Redis protocol result as independent gates.
+    let evaluateReadiness observation =
+        {
+            FreshResourceEvent = observation.PostCommandResourceEventObserved
+            Healthy = observation.PostCommandHealth.Equals("Healthy", StringComparison.Ordinal)
+            ProtocolReady = observation.ProtocolOperationSucceeded
+        }
+
+    /// Requires the automatic Rebase to settle independently without pretending it contributes the later hot-manifest stimulus.
+    let branchSetupComplete observation =
+        observation.RebasePersisted
+        && observation.ObservedEnvelopeCount = 1
+        && observation.MessageDelta = 1L
+        && observation.DurationDelta = 1L
+        && observation.IdentityInventoryClean
+        && observation.BaselineLogicalCount = observation.BeforeLogicalCount
+        && observation.WorkflowUnchanged
+        && observation.ManifestRelationshipPresent
+        && observation.PhysicalActiveCount = 1L
+
+    /// Rejects a same-root no-op and any fixture drift away from the already-hot manifest's exact content identity.
+    let validateFixtureIdentity (observation: RedisRestartFixtureIdentityObservation) =
+        let errors = ResizeArray<string>()
+
+        if String.Equals(observation.StimulusRootId, observation.SeedRootId, StringComparison.Ordinal) then
+            errors.Add("The stimulus root must be distinct from the seed root.")
+
+        if String.Equals(observation.StimulusRootId, observation.RebaseRootId, StringComparison.Ordinal) then
+            errors.Add("The stimulus root must be distinct from the branch Rebase root.")
+
+        if not (String.Equals(observation.StimulusStoragePoolId, observation.SeedStoragePoolId, StringComparison.Ordinal)) then
+            errors.Add("The stimulus root must retain the seed StoragePool identity.")
+
+        if not (String.Equals(observation.StimulusManifestAddress, observation.SeedManifestAddress, StringComparison.Ordinal)) then
+            errors.Add("The stimulus root must retain the seed ManifestAddress.")
+
+        if not (String.Equals(observation.StimulusContentBlockIdentity, observation.SeedContentBlockIdentity, StringComparison.Ordinal)) then
+            errors.Add("The stimulus root must retain the seed ContentBlock identity.")
+
+        if isNull observation.SeedBytes
+           || isNull observation.StimulusBytes
+           || observation.StimulusBytes <> observation.SeedBytes then
+            errors.Add("The stimulus root must retain the seed manifest bytes.")
+
+        errors.ToArray()
 
 /// Captures structured diagnosis evidence and the action support derived by the production repair planner.
 type RepairDiagnosisEvidence =
