@@ -352,13 +352,14 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
 
             try
                 let bootstrapUserId = Guid.NewGuid().ToString("D")
-                let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
+                let! state = ManifestContributionGroupedRuntime.acquireAsync bootstrapUserId
                 host <- Some state
-                state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
+                ManifestContributionGroupedRuntime.selectBootstrapUser state bootstrapUserId
                 let! _ = AspireTestHost.drainServiceBusAsync state
                 let ownerId = Guid.NewGuid()
                 let organizationId = Guid.NewGuid()
                 let repositoryId = Guid.NewGuid()
+                ManifestContributionGroupedRuntime.registerRepository DuplicateBacklogRuntime.ScenarioId repositoryId
                 do! BaselineRuntime.createOwnerAsync state ownerId
                 do! BaselineRuntime.createOrganizationAsync state ownerId organizationId
                 let! defaultBranchId, defaultReferenceId = BaselineRuntime.createRepositoryAsync state ownerId organizationId repositoryId
@@ -600,7 +601,7 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
                     | ex -> failures.Add($"cleanup-start: {ex}")
 
                 try
-                    do! AspireTestHost.stopIsolatedAsync state
+                    do! ManifestContributionGroupedRuntime.releaseAsync state
                 with
                 | ex -> failures.Add($"cleanup-host: {ex}")
             | None -> ()
