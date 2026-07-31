@@ -405,17 +405,46 @@ type ManifestContributionRedisRestartMeasurementTests() =
                         (branchRebaseObserved
                          |> Array.map (fun envelope -> envelope.MessageId))
 
+                let stimulusRoot = BaselineRuntime.createRoot ownerId organizationId repositoryId 0 manifest bytes
+                do! BaselineRuntime.saveRootAsync state ownerId organizationId repositoryId stimulusRoot
+
                 let recoveryAsset =
-                    { seedAsset with Branch = recoveryBranch; RebaseReferenceId = branchRebaseReferenceId; SaveReferenceId = explicitSaveReferenceId }
+                    { seedAsset with
+                        Root = stimulusRoot
+                        Branch = recoveryBranch
+                        RebaseReferenceId = branchRebaseReferenceId
+                        SaveReferenceId = explicitSaveReferenceId
+                    }
+
+                let fixtureIdentityErrors =
+                    RedisRestart.validateFixtureIdentity
+                        {
+                            SeedRootId = string seedAsset.Root.DirectoryVersionId
+                            RebaseRootId = string recoveryBranch.LatestReference.DirectoryId
+                            StimulusRootId = string stimulusRoot.DirectoryVersionId
+                            SeedStoragePoolId = string seedAsset.Manifest.StoragePoolId
+                            StimulusStoragePoolId = string recoveryAsset.Manifest.StoragePoolId
+                            SeedManifestAddress = string seedAsset.Manifest.ManifestAddress
+                            StimulusManifestAddress = string recoveryAsset.Manifest.ManifestAddress
+                            SeedContentBlockIdentity = string seedAsset.BlockAddress
+                            StimulusContentBlockIdentity = string recoveryAsset.BlockAddress
+                            SeedBytes = bytes
+                            StimulusBytes = Array.copy bytes
+                        }
+
+                let! stimulusManifestRelationshipBeforeSave =
+                    BaselineRuntime.exactRelationshipExistsAsync
+                        state
+                        (ExactRelationship.DirectoryVersionManifest
+                            {
+                                RepositoryId = repositoryId
+                                StoragePoolId = recoveryAsset.Manifest.StoragePoolId
+                                ManifestAddress = recoveryAsset.Manifest.ManifestAddress
+                                DirectoryVersionId = recoveryAsset.Root.DirectoryVersionId
+                            })
 
                 let! explicitDurableBaseline =
-                    RedisRestartRuntime.waitForDurableStateAsync
-                        state
-                        repositoryId
-                        recoveryAsset
-                        None
-                        beforeRestart.LogicalCount
-                        beforeRestart.WorkflowFingerprint
+                    RedisRestartRuntime.waitForDurableStateAsync state repositoryId seedAsset None beforeRestart.LogicalCount beforeRestart.WorkflowFingerprint
 
                 let branchSetupComplete =
                     RedisRestart.branchSetupComplete
@@ -431,13 +460,16 @@ type ManifestContributionRedisRestartMeasurementTests() =
                             ManifestRelationshipPresent = explicitDurableBaseline.ManifestRelationshipPresent
                             PhysicalActiveCount = explicitDurableBaseline.PhysicalActiveCount
                         }
+                    && fixtureIdentityErrors.Length = 0
+                    && not stimulusManifestRelationshipBeforeSave
 
                 let branchInventoryDetail = String.Join("; ", branchInventoryErrors)
+                let fixtureIdentityDetail = String.Join("; ", fixtureIdentityErrors)
 
                 recordAssertion
                     "redis-restart.branch-setup-delivery-completed"
                     branchSetupComplete
-                    $"persisted={rebasePersisted}; observed={branchRebaseObserved.Length}; messages={branchMessageDelta}; durations={branchDurationDelta}; inventory={branchInventoryDetail}; durable={explicitDurableBaseline.Detail}"
+                    $"persisted={rebasePersisted}; observed={branchRebaseObserved.Length}; messages={branchMessageDelta}; durations={branchDurationDelta}; inventory={branchInventoryDetail}; fixtureIdentity={fixtureIdentityDetail}; stimulusManifestBeforeSave={stimulusManifestRelationshipBeforeSave}; durable={explicitDurableBaseline.Detail}"
 
                 if not branchSetupComplete then
                     invalidOp "The explicit Reference was not created because the branch Rebase delivery did not settle before its baseline."

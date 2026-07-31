@@ -105,6 +105,63 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     [<Test>]
     member _.RedisRestartAssertionIdentifiersAreExact() = Assert.That(RedisRestart.requiredAssertionIds = redisRestartAssertionIds, Is.True)
 
+    /// Verifies the +1 fixture requires one distinct stimulus root while retaining the exact seed manifest content identity.
+    [<Test>]
+    member _.RedisRestartFixtureIdentityRequiresDistinctRootWithSameManifestContent() =
+        let sharedBytes = [| 0uy; 1uy; 2uy; 255uy |]
+
+        let valid =
+            {
+                SeedRootId = "seed-root"
+                RebaseRootId = "rebase-root"
+                StimulusRootId = "stimulus-root"
+                SeedStoragePoolId = "pool"
+                StimulusStoragePoolId = "pool"
+                SeedManifestAddress = "manifest"
+                StimulusManifestAddress = "manifest"
+                SeedContentBlockIdentity = "block"
+                StimulusContentBlockIdentity = "block"
+                SeedBytes = sharedBytes
+                StimulusBytes = Array.copy sharedBytes
+            }
+
+        Assert.That(RedisRestart.validateFixtureIdentity valid, Is.Empty)
+
+        let sameRootErrors = RedisRestart.validateFixtureIdentity { valid with StimulusRootId = valid.SeedRootId }
+
+        Assert.That(sameRootErrors, Has.Some.Contains("distinct from the seed root"))
+
+    /// Verifies every retained manifest-content identity dimension participates in the +1 fixture gate.
+    [<TestCase("storage-pool")>]
+    [<TestCase("manifest")>]
+    [<TestCase("content-block")>]
+    [<TestCase("bytes")>]
+    member _.RedisRestartFixtureIdentityRejectsChangedManifestContent(dimension) =
+        let valid =
+            {
+                SeedRootId = "seed-root"
+                RebaseRootId = "rebase-root"
+                StimulusRootId = "stimulus-root"
+                SeedStoragePoolId = "pool"
+                StimulusStoragePoolId = "pool"
+                SeedManifestAddress = "manifest"
+                StimulusManifestAddress = "manifest"
+                SeedContentBlockIdentity = "block"
+                StimulusContentBlockIdentity = "block"
+                SeedBytes = [| 1uy; 2uy; 3uy |]
+                StimulusBytes = [| 1uy; 2uy; 3uy |]
+            }
+
+        let changed =
+            match dimension with
+            | "storage-pool" -> { valid with StimulusStoragePoolId = "different-pool" }
+            | "manifest" -> { valid with StimulusManifestAddress = "different-manifest" }
+            | "content-block" -> { valid with StimulusContentBlockIdentity = "different-block" }
+            | "bytes" -> { valid with StimulusBytes = [| 1uy; 2uy; 4uy |] }
+            | value -> invalidArg (nameof dimension) value
+
+        Assert.That(RedisRestart.validateFixtureIdentity changed, Is.Not.Empty)
+
     /// Verifies the seed branch can both accept its setup Save and parent the post-restart recovery branch.
     [<Test>]
     member _.RedisRestartSeedBranchPermissionsSupportSetupAndRecovery() =

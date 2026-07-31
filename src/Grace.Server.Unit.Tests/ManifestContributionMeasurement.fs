@@ -302,6 +302,22 @@ type RedisRestartBranchSetupObservation =
         PhysicalActiveCount: int64
     }
 
+/// Captures the root and manifest-content identities that distinguish the Redis-restart +1 stimulus from same-root reuse.
+type RedisRestartFixtureIdentityObservation =
+    {
+        SeedRootId: string
+        RebaseRootId: string
+        StimulusRootId: string
+        SeedStoragePoolId: string
+        StimulusStoragePoolId: string
+        SeedManifestAddress: string
+        StimulusManifestAddress: string
+        SeedContentBlockIdentity: string
+        StimulusContentBlockIdentity: string
+        SeedBytes: byte array
+        StimulusBytes: byte array
+    }
+
 /// Defines the exact assertion and readiness contracts for the Redis restart measurement.
 module RedisRestart =
 
@@ -352,6 +368,32 @@ module RedisRestart =
         && observation.WorkflowUnchanged
         && observation.ManifestRelationshipPresent
         && observation.PhysicalActiveCount = 1L
+
+    /// Rejects a same-root no-op and any fixture drift away from the already-hot manifest's exact content identity.
+    let validateFixtureIdentity (observation: RedisRestartFixtureIdentityObservation) =
+        let errors = ResizeArray<string>()
+
+        if String.Equals(observation.StimulusRootId, observation.SeedRootId, StringComparison.Ordinal) then
+            errors.Add("The stimulus root must be distinct from the seed root.")
+
+        if String.Equals(observation.StimulusRootId, observation.RebaseRootId, StringComparison.Ordinal) then
+            errors.Add("The stimulus root must be distinct from the branch Rebase root.")
+
+        if not (String.Equals(observation.StimulusStoragePoolId, observation.SeedStoragePoolId, StringComparison.Ordinal)) then
+            errors.Add("The stimulus root must retain the seed StoragePool identity.")
+
+        if not (String.Equals(observation.StimulusManifestAddress, observation.SeedManifestAddress, StringComparison.Ordinal)) then
+            errors.Add("The stimulus root must retain the seed ManifestAddress.")
+
+        if not (String.Equals(observation.StimulusContentBlockIdentity, observation.SeedContentBlockIdentity, StringComparison.Ordinal)) then
+            errors.Add("The stimulus root must retain the seed ContentBlock identity.")
+
+        if isNull observation.SeedBytes
+           || isNull observation.StimulusBytes
+           || observation.StimulusBytes <> observation.SeedBytes then
+            errors.Add("The stimulus root must retain the seed manifest bytes.")
+
+        errors.ToArray()
 
 /// Captures structured diagnosis evidence and the action support derived by the production repair planner.
 type RepairDiagnosisEvidence =
