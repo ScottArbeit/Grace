@@ -29,6 +29,40 @@ type ManifestContributionMeasurementTests() =
             "baseline.evidence-integrity"
         |]
 
+    let repairRequiredAssertionIds =
+        [|
+            "repair.seed-deliveries-completed"
+            "repair.corruption-applied"
+            "repair.diagnosis-one-supported-action"
+            "repair.dry-run-no-mutation"
+            "repair.execute-one-action"
+            "repair.republication-message-delta"
+            "repair.republication-duration-delta"
+            "repair.reference-root-restored"
+            "repair.logical-state-unchanged"
+            "repair.workflow-state-unchanged"
+            "repair.physical-state-unchanged"
+            "repair.evidence-integrity"
+        |]
+
+    let duplicateBacklogRequiredAssertionIds =
+        [|
+            "duplicate-backlog.seed-deliveries-completed"
+            "duplicate-backlog.pre-stop-terminal-barrier"
+            "duplicate-backlog.visible-while-stopped"
+            "duplicate-backlog.fresh-server-readiness"
+            "duplicate-backlog.replay-message-delta"
+            "duplicate-backlog.replay-duration-delta"
+            "duplicate-backlog.unrelated-event-excluded"
+            "duplicate-backlog.reference-root-state-unchanged"
+            "duplicate-backlog.manifest-state-unchanged"
+            "duplicate-backlog.logical-state-unchanged"
+            "duplicate-backlog.workflow-state-unchanged"
+            "duplicate-backlog.physical-state-unchanged"
+            "duplicate-backlog.identity-isolation"
+            "duplicate-backlog.evidence-integrity"
+        |]
+
     let completedMetrics messages durations =
         $"""
 # TYPE grace_manifest_contribution_messages_total counter
@@ -48,6 +82,369 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     /// Verifies the Baseline assertion contract is an exact stable set.
     [<Test>]
     member _.RequiredAssertionIdentifiersAreExact() = Assert.That(Baseline.requiredAssertionIds = requiredAssertionIds, Is.True)
+
+    /// Verifies the Repair assertion contract is the exact derived twelve-identity set.
+    [<Test>]
+    member _.RepairRequiredAssertionIdentifiersAreExact() = Assert.That(Repair.requiredAssertionIds = repairRequiredAssertionIds, Is.True)
+
+    /// Verifies retained diagnosis uncertainty does not erase an exact action that the production planner supports.
+    [<Test>]
+    member _.RepairDiagnosisRequiresExactProductionSupportedAction() =
+        let valid =
+            {
+                OutcomeIsIncompleteRetain = true
+                ExpectedActionIdentity = "partition|reference-root:expected"
+                MissingRelationships =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                StaleRelationships = Array.empty
+                RepairTargets =
+                    [|
+                        "RepublishReferenceCreated:partition|reference-root:expected"
+                    |]
+                ProductionPlanActionKinds = [| "RepublishReferenceCreated" |]
+                ProductionPlanActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                UnknownFields = [| "unrelated retained field" |]
+                EvidenceGaps = [| "unrelated retained evidence gap" |]
+            }
+
+        Assert.That(Repair.validateDiagnosis valid, Is.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with OutcomeIsIncompleteRetain = false }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with ExpectedActionIdentity = String.Empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with ProductionPlanActionKinds = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with ProductionPlanActionIdentities = [| "partition|reference-root:other" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with MissingRelationships = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with StaleRelationships = [| "partition|stale" |] }, Is.Not.Empty)
+
+        Assert.That(
+            Repair.validateDiagnosis
+                { valid with
+                    RepairTargets =
+                        [|
+                            "GetOrAddExactRelationship:partition|reference-root:expected"
+                        |]
+                },
+            Is.Not.Empty
+        )
+
+        Assert.That(Repair.validateDiagnosis { valid with UnknownFields = null }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with EvidenceGaps = null }, Is.Not.Empty)
+
+    /// Verifies dry run requires one supported plan while preserving the deliberately missing relationship.
+    [<Test>]
+    member _.RepairDryRunRequiresOneActionAndZeroMutation() =
+        let valid =
+            {
+                Execute = false
+                Outcome = "IncompleteRetain"
+                ExpectedActionIdentity = "partition|reference-root:expected"
+                ProposedActionKinds = [| "RepublishReferenceCreated" |]
+                ProposedActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                AppliedActionKinds = Array.empty
+                ReferenceRootPresent = false
+            }
+
+        Assert.That(Repair.validateDryRun valid, Is.Empty)
+        Assert.That(Repair.validateDryRun { valid with ProposedActionKinds = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with ProposedActionKinds = [| "GetOrAddExactRelationship" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with ProposedActionIdentities = [| "partition|reference-root:other" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with AppliedActionKinds = [| "RepublishReferenceCreated" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with ReferenceRootPresent = true }, Is.Not.Empty)
+
+        let failedRetainErrors = Repair.validateDryRun { valid with Outcome = "FailedRetain" }
+
+        let failedRetainAssertions =
+            repairRequiredAssertionIds
+            |> Array.map (fun assertionId ->
+                MeasurementAssertion.Create(
+                    "run-1",
+                    "repair",
+                    assertionId,
+                    assertionId <> "repair.dry-run-no-mutation"
+                    || failedRetainErrors.Length = 0,
+                    "FailedRetain regression"
+                ))
+
+        let failedRetainSummary = ScenarioSummary.derive "run-1" "repair" repairRequiredAssertionIds failedRetainAssertions Array.empty false
+        Assert.That(failedRetainErrors, Is.Not.Empty)
+        Assert.That(failedRetainSummary.Outcome, Is.EqualTo("Failed"))
+
+    /// Verifies restored durable state cannot substitute for exact completed republication attribution.
+    [<Test>]
+    member _.RepairExecuteRequiresOriginalIdentityAndCompletedDelivery() =
+        let referenceId = Guid.Parse("77777777-7610-4000-8000-777777777777")
+        let expectedMessageId = $"Reference/{referenceId}/Created"
+
+        let valid =
+            {
+                Execute = true
+                Outcome = "VerifiedComplete"
+                ExpectedActionIdentity = "partition|reference-root:expected"
+                ProposedActionKinds = [| "RepublishReferenceCreated" |]
+                ProposedActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                AppliedActionKinds = [| "RepublishReferenceCreated" |]
+                AppliedActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                OriginalReferenceId = referenceId
+                RepairCorrelationId = "repair-correlation"
+                OriginalHeaderCorrelationId = "original-event-correlation"
+                OriginalBodyCorrelationId = "original-event-correlation"
+                ExpectedMessageId = expectedMessageId
+                ObservedMessageIds = [| expectedMessageId |]
+                RepublishedHeaderCorrelationIds = [| "original-event-correlation" |]
+                RepublishedBodyCorrelationIds = [| "original-event-correlation" |]
+                MessageDelta = 1L
+                DurationDelta = 1L
+                ReferenceRootRestored = true
+            }
+
+        Assert.That(Repair.validateExecute valid, Is.Empty)
+        Assert.That(Repair.validateExecute { valid with Execute = false }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with AppliedActionKinds = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with ObservedMessageIds = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with RepublishedHeaderCorrelationIds = [| "different-correlation" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with OriginalHeaderCorrelationId = "different-correlation" }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with RepublishedBodyCorrelationIds = [| "different-correlation" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with MessageDelta = 0L; DurationDelta = 0L }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with OriginalReferenceId = Guid.Empty }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with RepairCorrelationId = string referenceId }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with OriginalBodyCorrelationId = String.Empty }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with ExpectedMessageId = "Reference/repair-correlation/Created" }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with ReferenceRootRestored = false }, Is.Not.Empty)
+
+        Assert.That(Repair.validateExecute { valid with Outcome = "IncompleteRetain" }, Is.Empty)
+
+        let failedRetainErrors = Repair.validateExecute { valid with Outcome = "FailedRetain" }
+
+        let failedRetainAssertions =
+            repairRequiredAssertionIds
+            |> Array.map (fun assertionId ->
+                MeasurementAssertion.Create(
+                    "run-1",
+                    "repair",
+                    assertionId,
+                    assertionId <> "repair.execute-one-action"
+                    || failedRetainErrors.Length = 0,
+                    "FailedRetain regression"
+                ))
+
+        let failedRetainSummary = ScenarioSummary.derive "run-1" "repair" repairRequiredAssertionIds failedRetainAssertions Array.empty false
+        Assert.That(failedRetainErrors, Is.Not.Empty)
+        Assert.That(failedRetainSummary.Outcome, Is.EqualTo("Failed"))
+
+    /// Verifies a missing selected-process input terminates as Skipped before Git or evidence-root creation.
+    [<Test>]
+    member _.RepairPreflightMissingInputIsSideEffectFreeSkipped() =
+        task {
+            let mutable sideEffects = 0
+
+            let getEnvironment name = if name = "GRACE_MCA_WORKTREE" then String.Empty else "present"
+
+            let runGit _ _ =
+                sideEffects <- sideEffects + 1
+                Task.FromResult String.Empty
+
+            let createWriter _ _ =
+                sideEffects <- sideEffects + 1
+                invalidOp "The writer must not be created for a missing prerequisite."
+
+            let! result = MeasurementPreflight.prepareAsync "run-missing" "repair" repairRequiredAssertionIds 65536 getEnvironment runGit createWriter
+
+            match result with
+            | Terminal terminal ->
+                Assert.That(terminal.Summary.Outcome, Is.EqualTo("Skipped"))
+                Assert.That(terminal.EvidencePath.IsNone, Is.True)
+                Assert.That(terminal.FallbackDiagnostic.IsSome, Is.True)
+                Assert.That(terminal.FallbackDiagnostic.Value, Does.Contain("GRACE_MCA_WORKTREE"))
+            | Ready _ -> Assert.Fail("Missing preflight input unexpectedly reached runtime readiness.")
+
+            Assert.That(sideEffects, Is.Zero)
+        }
+
+    /// Verifies a Git status failure after writer creation is retained in a Failed primary summary.
+    [<Test>]
+    member _.RepairPreflightGitStatusFailureRetainsFailedSummary() =
+        task {
+            let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-preflight-{Guid.NewGuid():N}")
+
+            let getEnvironment name =
+                match name with
+                | "GRACE_MCA_WORKTREE" -> directory
+                | "GRACE_MCA_HOSTED_COMMAND" -> "dotnet test repair"
+                | "GRACE_MCA_EVIDENCE_ROOT" -> directory
+                | _ -> String.Empty
+
+            let runGit _ (arguments: string array) =
+                if arguments[0] = "rev-parse" then
+                    Task.FromResult(String('a', 40))
+                else
+                    Task.FromException<string>(InvalidOperationException("deterministic git status failure"))
+
+            try
+                let! result =
+                    MeasurementPreflight.prepareAsync
+                        "run-git-failure"
+                        "repair"
+                        repairRequiredAssertionIds
+                        65536
+                        getEnvironment
+                        runGit
+                        (fun path maximumBytes -> new EvidenceWriter(path, maximumBytes))
+
+                match result with
+                | Terminal terminal ->
+                    Assert.That(terminal.Summary.Outcome, Is.EqualTo("Failed"))
+                    Assert.That(terminal.EvidencePath.IsSome, Is.True)
+                    Assert.That(terminal.FallbackDiagnostic.IsNone, Is.True)
+                    Assert.That(String.concat " " terminal.Summary.RuntimeFailures, Does.Contain("deterministic git status failure"))
+
+                    let retained = File.ReadAllText terminal.EvidencePath.Value
+                    Assert.That(retained, Does.Contain("\"Outcome\":\"Failed\""))
+                | Ready _ -> Assert.Fail("Failing Git status unexpectedly reached runtime readiness.")
+            finally
+                if Directory.Exists directory then Directory.Delete(directory, true)
+        }
+
+    /// Verifies writer initialization and initial-run append failures retain bounded fallback terminal diagnostics.
+    [<Test>]
+    member _.RepairPreflightWriterFailuresRetainFallbackDiagnostics() =
+        task {
+            let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-preflight-{Guid.NewGuid():N}")
+
+            let getEnvironment name =
+                match name with
+                | "GRACE_MCA_WORKTREE" -> directory
+                | "GRACE_MCA_HOSTED_COMMAND" -> "dotnet test repair"
+                | "GRACE_MCA_EVIDENCE_ROOT" -> directory
+                | _ -> String.Empty
+
+            let runGit _ _ = Task.FromResult(String('a', 40))
+
+            try
+                let! initializationResult =
+                    MeasurementPreflight.prepareAsync "run-writer-init" "repair" repairRequiredAssertionIds 65536 getEnvironment runGit (fun _ _ ->
+                        invalidOp "deterministic writer initialization failure")
+
+                let! appendResult =
+                    MeasurementPreflight.prepareAsync "run-writer-append" "repair" repairRequiredAssertionIds 1 getEnvironment runGit (fun path maximumBytes ->
+                        new EvidenceWriter(path, maximumBytes))
+
+                [| initializationResult; appendResult |]
+                |> Array.iter (function
+                    | Terminal terminal ->
+                        Assert.That(terminal.Summary.Outcome, Is.EqualTo("Failed"))
+                        Assert.That(terminal.FallbackDiagnostic.IsSome, Is.True)
+                        Assert.That(Encoding.UTF8.GetByteCount terminal.FallbackDiagnostic.Value, Is.LessThanOrEqualTo(16384))
+                    | Ready _ -> Assert.Fail("A deterministic writer failure unexpectedly reached runtime readiness."))
+
+                match initializationResult, appendResult with
+                | Terminal initialization, Terminal append ->
+                    Assert.That(initialization.FallbackDiagnostic.Value, Does.Contain("writer initialization failure"))
+                    Assert.That(append.FallbackDiagnostic.Value, Does.Contain("terminal append failure"))
+                | _ -> Assert.Fail("Both writer failure cases must terminate during preflight.")
+            finally
+                if Directory.Exists directory then Directory.Delete(directory, true)
+        }
+
+    /// Verifies the duplicate-backlog assertion contract is an exact stable set.
+    [<Test>]
+    member _.DuplicateBacklogRequiredAssertionIdentifiersAreExact() =
+        Assert.That(DuplicateBacklog.requiredAssertionIds = duplicateBacklogRequiredAssertionIds, Is.True)
+
+    /// Verifies a stop barrier requires every seed identity plus independent durable and delivery terminal signals.
+    [<Test>]
+    member _.DuplicateBacklogStopBarrierRejectsUnsettledSeedDelivery() =
+        let expected =
+            [|
+                "Reference/one/Created"
+                "Reference/two/Created"
+            |]
+
+        let missingIdentity = DuplicateBacklog.validatePreStopBarrier expected [| expected[0] |] true true
+
+        let incompleteDelivery = DuplicateBacklog.validatePreStopBarrier expected expected false true
+
+        let unconvergedDurableState = DuplicateBacklog.validatePreStopBarrier expected expected true false
+
+        Assert.That(missingIdentity, Is.Not.Empty)
+        Assert.That(incompleteDelivery, Has.One.Items)
+        Assert.That(incompleteDelivery[0], Does.Contain("completion"))
+        Assert.That(unconvergedDurableState, Has.One.Items)
+        Assert.That(unconvergedDurableState[0], Does.Contain("converged"))
+
+    /// Verifies stopped-server visibility supports one and multiple selected replays without vacuous empty-peek success.
+    [<Test>]
+    member _.DuplicateBacklogVisibilityRequiresEverySelectedIdentityAtLeastOnce() =
+        let one = [| "Reference/one/Created" |]
+
+        let selected =
+            [|
+                "Reference/one/Created"
+                "Reference/two/Created"
+                "Reference/three/Created"
+            |]
+
+        Assert.That(DuplicateBacklog.validateStoppedBacklogVisibility one one, Is.Empty)
+
+        Assert.That(
+            DuplicateBacklog.validateStoppedBacklogVisibility
+                selected
+                [|
+                    "unrelated/test-event"
+                    selected[2]
+                    selected[0]
+                    selected[1]
+                    selected[0]
+                |],
+            Is.Empty
+        )
+
+        Assert.That(DuplicateBacklog.validateStoppedBacklogVisibility selected Array.empty, Is.Not.Empty)
+        Assert.That(DuplicateBacklog.validateStoppedBacklogVisibility selected [| selected[0]; selected[1] |], Is.Not.Empty)
+
+    /// Verifies stale health or failed HTTP readiness cannot satisfy a post-start readiness gate.
+    [<Test>]
+    member _.DuplicateBacklogFreshReadinessRejectsStaleHealthAndFailedHttp() =
+        let commandStartedAt = DateTimeOffset.Parse("2026-07-31T08:00:00Z")
+        let staleHealth = commandStartedAt.AddMilliseconds(-1.0)
+        let freshHealth = commandStartedAt.AddMilliseconds(1.0)
+
+        Assert.That(DuplicateBacklog.validateFreshServerReadiness commandStartedAt freshHealth true, Is.Empty)
+        Assert.That(DuplicateBacklog.validateFreshServerReadiness commandStartedAt staleHealth true, Is.Not.Empty)
+        Assert.That(DuplicateBacklog.validateFreshServerReadiness commandStartedAt freshHealth false, Is.Not.Empty)
+
+    /// Verifies byte-equivalent durable state cannot substitute for completed replay settlement while duplicates remain queued.
+    [<Test>]
+    member _.DuplicateBacklogUnchangedStateCannotSatisfyQueuedReplay() =
+        let baseline = completedMetrics 7 7
+        let unchangedDurableState = true
+        let replayCompletion = OpenMetrics.evaluateCompletedSettlementDelta 3L baseline baseline
+
+        Assert.That(unchangedDurableState, Is.True)
+        Assert.That(replayCompletion, Is.EqualTo(DeltaEvaluation.Pending))
+
+    /// Verifies an intentional Grace.Server process restart requires exact fresh cumulative totals rather than a stale pre-stop baseline.
+    [<Test>]
+    member _.DuplicateBacklogFreshProcessRequiresExactReplayTotals() =
+        let freshProcessBaseline = completedMetrics 0 0
+
+        Assert.That(OpenMetrics.evaluateCompletedSettlementDelta 3L freshProcessBaseline (completedMetrics 3 3), Is.EqualTo(DeltaEvaluation.Complete(3L, 3L)))
+
+        match OpenMetrics.evaluateCompletedSettlementDelta 3L freshProcessBaseline (completedMetrics 4 3) with
+        | DeltaEvaluation.Invalid reason -> Assert.That(reason, Does.Contain("overshot"))
+        | result -> Assert.Fail($"Fresh-process overshoot unexpectedly produced {result}.")
 
     /// Verifies exact production settlement samples complete only at the requested cumulative deltas.
     [<Test>]
@@ -634,3 +1031,244 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
             Assert.That(File.ReadAllText(writer.Path), Is.Empty)
         finally
             if Directory.Exists directory then Directory.Delete(directory, true)
+
+/// Proves the exact HotManifest and HighlyShared topology contracts without starting Aspire.
+[<Parallelizable(ParallelScope.All)>]
+type ManifestContributionTopologyCardinalityTests() =
+
+    let hotRequiredAssertionIds =
+        [|
+            "hot-manifest.setup-deliveries-completed"
+            "hot-manifest.stimulus-deliveries-completed"
+            "hot-manifest.reference-root-cardinality"
+            "hot-manifest.manifest-relationship-cardinality"
+            "hot-manifest.logical-count"
+            "hot-manifest.workflow-count"
+            "hot-manifest.physical-active-count"
+            "hot-manifest.message-delta"
+            "hot-manifest.duration-delta"
+            "hot-manifest.identity-isolation"
+            "hot-manifest.evidence-integrity"
+        |]
+
+    let highlySharedRequiredAssertionIds =
+        [|
+            "highly-shared.setup-deliveries-completed"
+            "highly-shared.stimulus-deliveries-completed"
+            "highly-shared.reference-root-cardinality"
+            "highly-shared.manifest-relationship-cardinality"
+            "highly-shared.logical-count"
+            "highly-shared.workflow-count"
+            "highly-shared.physical-active-count"
+            "highly-shared.message-delta"
+            "highly-shared.duration-delta"
+            "highly-shared.identity-isolation"
+            "highly-shared.evidence-integrity"
+        |]
+
+    /// Builds one declared topology with three setup and stimulus deliveries.
+    let expectation scenarioId requiredAssertionIds referenceRootIds manifestRelationshipIds logicalCount =
+        {
+            ScenarioId = scenarioId
+            RepositoryId = $"{scenarioId}-repository"
+            RequiredAssertionIds = requiredAssertionIds
+            DeclaredIdentityIds =
+                [|
+                    $"{scenarioId}-repository"
+                    $"{scenarioId}-branch-1"
+                    $"{scenarioId}-branch-2"
+                    $"{scenarioId}-branch-3"
+                    $"{scenarioId}-rebase-1"
+                    $"{scenarioId}-rebase-2"
+                    $"{scenarioId}-rebase-3"
+                    $"{scenarioId}-save-1"
+                    $"{scenarioId}-save-2"
+                    $"{scenarioId}-save-3"
+                |]
+            SetupMessageIds =
+                [|
+                    $"{scenarioId}-rebase-1"
+                    $"{scenarioId}-rebase-2"
+                    $"{scenarioId}-rebase-3"
+                |]
+            StimulusMessageIds =
+                [|
+                    $"{scenarioId}-save-1"
+                    $"{scenarioId}-save-2"
+                    $"{scenarioId}-save-3"
+                |]
+            ReferenceRootRelationshipIds = referenceRootIds
+            ManifestRelationshipIds = manifestRelationshipIds
+            LogicalCount = logicalCount
+            WorkflowCount = 1L
+            PhysicalActiveCount = 1L
+        }
+
+    let hotExpectation =
+        expectation
+            "hot-manifest"
+            hotRequiredAssertionIds
+            [|
+                "hot-root-1"
+                "hot-root-2"
+                "hot-root-3"
+            |]
+            [|
+                "hot-manifest-1"
+                "hot-manifest-2"
+                "hot-manifest-3"
+            |]
+            3L
+
+    let highlySharedExpectation =
+        expectation
+            "highly-shared"
+            highlySharedRequiredAssertionIds
+            [|
+                "shared-root-1"
+                "shared-root-2"
+                "shared-root-3"
+            |]
+            [| "shared-manifest-1" |]
+            1L
+
+    /// Builds one exact completed observation from its declared topology.
+    let exactObservation expected =
+        {
+            SetupObservedMessageIds = Array.copy expected.SetupMessageIds
+            SetupSettledBeforeStimulusBaseline = true
+            StimulusObservedMessageIds = Array.copy expected.StimulusMessageIds
+            ReferenceRootRelationshipIds = Array.copy expected.ReferenceRootRelationshipIds
+            ManifestRelationshipIds = Array.copy expected.ManifestRelationshipIds
+            LogicalCount = expected.LogicalCount
+            WorkflowCount = expected.WorkflowCount
+            PhysicalActiveCount = expected.PhysicalActiveCount
+            MessageDelta = int64 expected.StimulusMessageIds.Length
+            DurationDelta = int64 expected.StimulusMessageIds.Length
+        }
+
+    /// Verifies both topology assertion contracts are exact and stable.
+    [<Test>]
+    member _.RequiredAssertionIdentifiersAreExact() =
+        Assert.That(HotManifest.requiredAssertionIds = hotRequiredAssertionIds, Is.True)
+        Assert.That(HighlySharedDirectoryVersion.requiredAssertionIds = highlySharedRequiredAssertionIds, Is.True)
+
+    /// Verifies each supported topology accepts only its exact declared graph and completed delivery counts.
+    [<Test>]
+    member _.ExactTopologyCardinalitiesPass() =
+        [|
+            hotExpectation
+            highlySharedExpectation
+        |]
+        |> Array.iter (fun expected ->
+            let result = TopologyCardinality.evaluate expected (exactObservation expected)
+            Assert.That(result.AllPassed, Is.True, expected.ScenarioId))
+
+    /// Verifies missing and surplus relationship cardinalities cannot pass either topology.
+    [<Test>]
+    member _.IncorrectRelationshipCardinalitiesFail() =
+        [|
+            hotExpectation
+            highlySharedExpectation
+        |]
+        |> Array.iter (fun expected ->
+            let observation = exactObservation expected
+
+            let missingReferenceRoot =
+                { observation with
+                    ReferenceRootRelationshipIds =
+                        observation.ReferenceRootRelationshipIds
+                        |> Array.skip 1
+                }
+
+            let surplusManifest = { observation with ManifestRelationshipIds = Array.append observation.ManifestRelationshipIds [| "unexpected-manifest" |] }
+
+            Assert.That(
+                (TopologyCardinality.evaluate expected missingReferenceRoot)
+                    .ReferenceRootCardinality,
+                Is.False,
+                expected.ScenarioId
+            )
+
+            Assert.That(
+                (TopologyCardinality.evaluate expected surplusManifest)
+                    .ManifestRelationshipCardinality,
+                Is.False,
+                expected.ScenarioId
+            ))
+
+    /// Verifies repeated producer or relationship identities cannot satisfy an exact set by count alone.
+    [<Test>]
+    member _.RepeatedIdentityFails() =
+        let observation = exactObservation hotExpectation
+
+        let repeatedStimulus =
+            { observation with
+                StimulusObservedMessageIds =
+                    [|
+                        observation.StimulusObservedMessageIds[0]
+                        observation.StimulusObservedMessageIds[0]
+                        observation.StimulusObservedMessageIds[2]
+                    |]
+            }
+
+        let repeatedRelationship =
+            { observation with
+                ReferenceRootRelationshipIds =
+                    [|
+                        observation.ReferenceRootRelationshipIds[0]
+                        observation.ReferenceRootRelationshipIds[0]
+                        observation.ReferenceRootRelationshipIds[2]
+                    |]
+            }
+
+        Assert.That(
+            (TopologyCardinality.evaluate hotExpectation repeatedStimulus)
+                .StimulusDeliveriesCompleted,
+            Is.False
+        )
+
+        Assert.That(
+            (TopologyCardinality.evaluate hotExpectation repeatedRelationship)
+                .ReferenceRootCardinality,
+            Is.False
+        )
+
+    /// Verifies two scenarios cannot share a repository or any declared production identity.
+    [<Test>]
+    member _.CrossScenarioIdentityCollisionFails() =
+        let colliding =
+            { highlySharedExpectation with
+                DeclaredIdentityIds =
+                    [|
+                        yield! highlySharedExpectation.DeclaredIdentityIds
+                        hotExpectation.DeclaredIdentityIds[1]
+                    |]
+            }
+
+        Assert.That(
+            TopologyCardinality.validateScenarioIsolation [| hotExpectation
+                                                             colliding |],
+            Is.Not.Empty
+        )
+
+    /// Verifies a stimulus baseline captured before setup settlement cannot satisfy the setup barrier.
+    [<Test>]
+    member _.SetupAfterStimulusBaselineFails() =
+        let observation = { exactObservation hotExpectation with SetupSettledBeforeStimulusBaseline = false }
+
+        Assert.That(
+            (TopologyCardinality.evaluate hotExpectation observation)
+                .SetupDeliveriesCompleted,
+            Is.False
+        )
+
+    /// Verifies stimulus message or duration overshoot fails exact cumulative equality.
+    [<Test>]
+    member _.StimulusOvershootFails() =
+        let observation = { exactObservation highlySharedExpectation with MessageDelta = 4L; DurationDelta = 4L }
+
+        let result = TopologyCardinality.evaluate highlySharedExpectation observation
+        Assert.That(result.StimulusDeliveriesCompleted, Is.False)
+        Assert.That(result.MessageDelta, Is.False)
+        Assert.That(result.DurationDelta, Is.False)
