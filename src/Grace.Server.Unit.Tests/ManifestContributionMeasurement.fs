@@ -279,6 +279,20 @@ module Baseline =
             "baseline.evidence-integrity"
         |]
 
+/// Captures structured diagnosis evidence and the action support derived by the production repair planner.
+type RepairDiagnosisEvidence =
+    {
+        OutcomeIsIncompleteRetain: bool
+        ExpectedActionIdentity: string
+        MissingRelationships: string array
+        StaleRelationships: string array
+        RepairTargets: string array
+        ProductionPlanActionKinds: string array
+        ProductionPlanActionIdentities: string array
+        UnknownFields: string array
+        EvidenceGaps: string array
+    }
+
 /// Captures the mutation-sensitive facts produced by the real repair dry-run route.
 type RepairDryRunEvidence =
     {
@@ -301,6 +315,7 @@ type RepairExecuteEvidence =
         AppliedActionIdentities: string array
         OriginalReferenceId: Guid
         RepairCorrelationId: string
+        OriginalEventCorrelationId: string
         ExpectedMessageId: string
         ObservedMessageIds: string array
         ObservedCorrelationIds: string array
@@ -349,6 +364,51 @@ module Repair =
             || not (String.Equals(actionIdentities[0], expectedIdentity, StringComparison.Ordinal))
         then
             errors.Add($"{description} must contain exactly one {SupportedActionKind} action for the expected relationship identity.")
+
+    /// Accepts retained diagnosis uncertainty only when the production planner still derives the exact supported Reference-root action.
+    let validateDiagnosis (evidence: RepairDiagnosisEvidence) =
+        let errors = ResizeArray<string>()
+
+        if not evidence.OutcomeIsIncompleteRetain then
+            errors.Add("The one-missing-root diagnosis must retain an incomplete outcome until repair executes.")
+
+        if String.IsNullOrWhiteSpace evidence.ExpectedActionIdentity then
+            errors.Add("The expected missing Reference-root relationship identity must not be empty.")
+
+        if
+            isNull evidence.MissingRelationships
+            || evidence.MissingRelationships.Length <> 1
+            || not (String.Equals(evidence.MissingRelationships[0], evidence.ExpectedActionIdentity, StringComparison.Ordinal))
+        then
+            errors.Add("Diagnosis must contain exactly the expected missing Reference-root relationship.")
+
+        if isNull evidence.StaleRelationships
+           || evidence.StaleRelationships.Length <> 0 then
+            errors.Add("Diagnosis must not contain a stale relationship for the one-missing-root scenario.")
+
+        let expectedTarget = $"{SupportedActionKind}:{evidence.ExpectedActionIdentity}"
+
+        if
+            isNull evidence.RepairTargets
+            || evidence.RepairTargets.Length <> 1
+            || not (String.Equals(evidence.RepairTargets[0], expectedTarget, StringComparison.Ordinal))
+        then
+            errors.Add("Diagnosis must report exactly the supported Reference-created republication target.")
+
+        validateOneSupportedAction
+            "The production repair plan"
+            evidence.ExpectedActionIdentity
+            evidence.ProductionPlanActionKinds
+            evidence.ProductionPlanActionIdentities
+            errors
+
+        if isNull evidence.UnknownFields then
+            errors.Add("Diagnosis UnknownFields must be retained as an explicit array.")
+
+        if isNull evidence.EvidenceGaps then
+            errors.Add("Diagnosis EvidenceGaps must be retained as an explicit array.")
+
+        errors.ToArray()
 
     /// Rejects a dry run that executes, mutates, or fails to retain the one-action plan.
     let validateDryRun (evidence: RepairDryRunEvidence) =
@@ -403,6 +463,9 @@ module Repair =
         then
             errors.Add("The repair request correlation identity must differ from the original Reference identity.")
 
+        if String.IsNullOrWhiteSpace evidence.OriginalEventCorrelationId then
+            errors.Add("The original persisted Reference-created correlation identity must not be empty.")
+
         let deterministicMessageId = $"Reference/{evidence.OriginalReferenceId}/Created"
 
         if not (String.Equals(evidence.ExpectedMessageId, deterministicMessageId, StringComparison.Ordinal)) then
@@ -418,9 +481,9 @@ module Repair =
         if
             isNull evidence.ObservedCorrelationIds
             || evidence.ObservedCorrelationIds.Length <> 1
-            || not (String.Equals(evidence.ObservedCorrelationIds[0], evidence.RepairCorrelationId, StringComparison.Ordinal))
+            || not (String.Equals(evidence.ObservedCorrelationIds[0], evidence.OriginalEventCorrelationId, StringComparison.Ordinal))
         then
-            errors.Add("Repair republication must carry the repair request correlation identity on its one observed envelope.")
+            errors.Add("Repair republication must preserve the original persisted Reference-created correlation identity.")
 
         if evidence.MessageDelta <> 1L then
             errors.Add($"Repair republication requires an exact completed message delta of one, observed {evidence.MessageDelta}.")

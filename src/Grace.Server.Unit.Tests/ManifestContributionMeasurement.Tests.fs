@@ -87,6 +87,53 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     [<Test>]
     member _.RepairRequiredAssertionIdentifiersAreExact() = Assert.That(Repair.requiredAssertionIds = repairRequiredAssertionIds, Is.True)
 
+    /// Verifies retained diagnosis uncertainty does not erase an exact action that the production planner supports.
+    [<Test>]
+    member _.RepairDiagnosisRequiresExactProductionSupportedAction() =
+        let valid =
+            {
+                OutcomeIsIncompleteRetain = true
+                ExpectedActionIdentity = "partition|reference-root:expected"
+                MissingRelationships =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                StaleRelationships = Array.empty
+                RepairTargets =
+                    [|
+                        "RepublishReferenceCreated:partition|reference-root:expected"
+                    |]
+                ProductionPlanActionKinds = [| "RepublishReferenceCreated" |]
+                ProductionPlanActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                UnknownFields = [| "unrelated retained field" |]
+                EvidenceGaps = [| "unrelated retained evidence gap" |]
+            }
+
+        Assert.That(Repair.validateDiagnosis valid, Is.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with OutcomeIsIncompleteRetain = false }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with ExpectedActionIdentity = String.Empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with ProductionPlanActionKinds = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with ProductionPlanActionIdentities = [| "partition|reference-root:other" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with MissingRelationships = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with StaleRelationships = [| "partition|stale" |] }, Is.Not.Empty)
+
+        Assert.That(
+            Repair.validateDiagnosis
+                { valid with
+                    RepairTargets =
+                        [|
+                            "GetOrAddExactRelationship:partition|reference-root:expected"
+                        |]
+                },
+            Is.Not.Empty
+        )
+
+        Assert.That(Repair.validateDiagnosis { valid with UnknownFields = null }, Is.Not.Empty)
+        Assert.That(Repair.validateDiagnosis { valid with EvidenceGaps = null }, Is.Not.Empty)
+
     /// Verifies dry run requires one supported plan while preserving the deliberately missing relationship.
     [<Test>]
     member _.RepairDryRunRequiresOneActionAndZeroMutation() =
@@ -132,9 +179,10 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
                     |]
                 OriginalReferenceId = referenceId
                 RepairCorrelationId = "repair-correlation"
+                OriginalEventCorrelationId = "original-event-correlation"
                 ExpectedMessageId = expectedMessageId
                 ObservedMessageIds = [| expectedMessageId |]
-                ObservedCorrelationIds = [| "repair-correlation" |]
+                ObservedCorrelationIds = [| "original-event-correlation" |]
                 MessageDelta = 1L
                 DurationDelta = 1L
                 ReferenceRootRestored = true
@@ -148,6 +196,7 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
         Assert.That(Repair.validateExecute { valid with MessageDelta = 0L; DurationDelta = 0L }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with OriginalReferenceId = Guid.Empty }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with RepairCorrelationId = string referenceId }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with OriginalEventCorrelationId = String.Empty }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with ExpectedMessageId = "Reference/repair-correlation/Created" }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with ReferenceRootRestored = false }, Is.Not.Empty)
 

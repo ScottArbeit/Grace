@@ -39,6 +39,9 @@ module private RepairRuntime =
     [<Literal>]
     let MaximumRelationships = 20
 
+    /// Formats a retained diagnosis array without turning a malformed null field into an evidence-writing failure.
+    let joinRetainedValues (separator: string) (values: string array) = if isNull values then "<null>" else String.Join(separator, values)
+
     /// Requires exactly one matching durable snapshot so duplicate persisted state cannot pass as unchanged.
     let private exactlyOne description predicate values =
         let matches = values |> Array.filter predicate
@@ -285,6 +288,8 @@ type ManifestContributionRepairMeasurementTests() =
                     explicitObserved
                     |> Array.map (fun envelope -> envelope.MessageId)
 
+                let originalEventCorrelationId = explicitObserved[0].CorrelationId
+
                 let! durable = BaselineRuntime.waitForDurableStatusAsync state repositoryId [| asset |]
 
                 let! explicitMessageDelta, explicitDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L explicitBaseline
@@ -345,23 +350,43 @@ type ManifestContributionRepairMeasurementTests() =
                 recordAssertion "repair.corruption-applied" (not absentAfterDelete) $"identity={relationshipIdentity}; present={absentAfterDelete}"
                 let! diagnosis, diagnosisJson = RepairRuntime.diagnoseReferenceAsync state explicitReferenceId
 
-                let diagnosisPassed =
-                    diagnosis.Outcome = DiagnosisOutcome.IncompleteRetain
-                    && diagnosis.MissingRelationships = [| relationshipIdentity |]
-                    && diagnosis.StaleRelationships.Length = 0
-                    && diagnosis.RepairTargets = [|
-                        $"RepublishReferenceCreated:{relationshipIdentity}"
-                    |]
-                    && diagnosis.UnknownFields.Length = 0
-                    && diagnosis.EvidenceGaps.Length = 0
+                let diagnosisPlanKinds, diagnosisPlanIdentities =
+                    match ProductionRepair.buildPlan diagnosis with
+                    | Ok plan ->
+                        (plan
+                         |> Array.map (fun mutation -> mutation.Action.Kind)),
+                        (plan
+                         |> Array.map (fun mutation -> mutation.Action.Identity))
+                    | Error error -> [| $"Invalid:{error}" |], Array.empty
 
-                let missingDetail = String.Join(",", diagnosis.MissingRelationships)
-                let targetDetail = String.Join(",", diagnosis.RepairTargets)
+                let diagnosisEvidence =
+                    {
+                        OutcomeIsIncompleteRetain = diagnosis.Outcome = DiagnosisOutcome.IncompleteRetain
+                        ExpectedActionIdentity = relationshipIdentity
+                        MissingRelationships = diagnosis.MissingRelationships
+                        StaleRelationships = diagnosis.StaleRelationships
+                        RepairTargets = diagnosis.RepairTargets
+                        ProductionPlanActionKinds = diagnosisPlanKinds
+                        ProductionPlanActionIdentities = diagnosisPlanIdentities
+                        UnknownFields = diagnosis.UnknownFields
+                        EvidenceGaps = diagnosis.EvidenceGaps
+                    }
+
+                let diagnosisErrors = RepairEvidence.validateDiagnosis diagnosisEvidence
+                let diagnosisPassed = diagnosisErrors.Length = 0
+
+                let missingDetail = RepairRuntime.joinRetainedValues "," diagnosis.MissingRelationships
+                let targetDetail = RepairRuntime.joinRetainedValues "," diagnosis.RepairTargets
+                let planKindDetail = RepairRuntime.joinRetainedValues "," diagnosisPlanKinds
+                let planIdentityDetail = RepairRuntime.joinRetainedValues "," diagnosisPlanIdentities
+                let unknownDetail = RepairRuntime.joinRetainedValues "," diagnosis.UnknownFields
+                let gapDetail = RepairRuntime.joinRetainedValues " | " diagnosis.EvidenceGaps
+                let diagnosisErrorDetail = String.Join("; ", diagnosisErrors)
 
                 recordAssertion
                     "repair.diagnosis-one-supported-action"
                     diagnosisPassed
-                    $"outcome={diagnosis.Outcome}; missing={missingDetail}; targets={targetDetail}"
+                    $"outcome={diagnosis.Outcome}; missing={missingDetail}; targets={targetDetail}; planKinds={planKindDetail}; planIdentities={planIdentityDetail}; unknown={unknownDetail}; gaps={gapDetail}; errors={diagnosisErrorDetail}"
 
                 let dryRunCorrelationId = $"repair-dry-{Guid.NewGuid():N}"
 
@@ -438,6 +463,7 @@ type ManifestContributionRepairMeasurementTests() =
                             |> Array.map (fun action -> action.Identity)
                         OriginalReferenceId = explicitReferenceId
                         RepairCorrelationId = executeCorrelationId
+                        OriginalEventCorrelationId = originalEventCorrelationId
                         ExpectedMessageId = explicitMessageId
                         ObservedMessageIds = republicationObservedIds
                         ObservedCorrelationIds = republicationObservedCorrelationIds
@@ -469,12 +495,15 @@ type ManifestContributionRepairMeasurementTests() =
 
                 let republicationMessageDetail = String.Join(",", republicationObservedIds)
                 let republicationCorrelationDetail = String.Join(",", republicationObservedCorrelationIds)
-                let republicationDetail = $"messages={republicationMessageDetail}; correlations={republicationCorrelationDetail}"
+
+                let republicationDetail =
+                    $"messages={republicationMessageDetail}; expectedCorrelation={originalEventCorrelationId}; correlations={republicationCorrelationDetail}"
 
                 recordAssertion
                     "repair.republication-message-delta"
                     (repairMessageDelta = 1L
-                     && republicationObservedIds = [| explicitMessageId |])
+                     && republicationObservedIds = [| explicitMessageId |]
+                     && republicationObservedCorrelationIds = [| originalEventCorrelationId |])
                     $"delta={repairMessageDelta}; observed={republicationDetail}"
 
                 recordAssertion "repair.republication-duration-delta" (repairDurationDelta = 1L) $"delta={repairDurationDelta}"
