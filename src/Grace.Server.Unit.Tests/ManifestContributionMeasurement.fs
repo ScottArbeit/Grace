@@ -641,6 +641,12 @@ module OpenMetrics =
 
     let private labelPattern = Regex("(?:^|,)\\s*(?<key>[A-Za-z_][A-Za-z0-9_]*)=\"(?<value>(?:\\\\.|[^\"])*)\"\\s*(?=,|$)", RegexOptions.CultureInvariant)
 
+    let private freshProcessZeroBaseline =
+        """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+"""
+
     /// Unescapes one OpenMetrics label value after the label grammar has bounded it.
     let private unescapeLabelValue (value: string) =
         value
@@ -730,6 +736,11 @@ module OpenMetrics =
                             else
                                 errors.Add($"{metricName} contained a non-completed-settlement label set.")
                         | _ -> errors.Add($"{metricName} was malformed.")
+                    elif
+                        metricName.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || metricName.StartsWith(durationMetricName, StringComparison.Ordinal)
+                    then
+                        errors.Add("A completed settlement metric used a forbidden suffixed name.")
                 elif
                     line.StartsWith(messageMetricName, StringComparison.Ordinal)
                     || line.StartsWith(durationMetricName, StringComparison.Ordinal)
@@ -744,6 +755,35 @@ module OpenMetrics =
             Error($"{durationMetricName} required exactly one sample but found {values[durationMetricName].Count}.")
         else
             Ok(values[messageMetricName][0], values[durationMetricName][0])
+
+    /// Captures a freshly restarted process baseline while normalizing only the uninstantiated paired-zero series shape.
+    let captureFreshProcessCompletedSettlementBaseline (scrape: string) =
+        let hasRelevantSeries =
+            scrape.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun rawLine ->
+                let line = rawLine.Trim()
+
+                if line.StartsWith("#", StringComparison.Ordinal) then
+                    false
+                else
+                    let sampleMatch = samplePattern.Match line
+
+                    if sampleMatch.Success then
+                        let metricName = sampleMatch.Groups["name"].Value
+
+                        metricName.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || metricName.StartsWith(durationMetricName, StringComparison.Ordinal)
+                    else
+                        line.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || line.StartsWith(durationMetricName, StringComparison.Ordinal))
+
+        if not hasRelevantSeries then
+            Ok freshProcessZeroBaseline
+        else
+            match parseCompletedSettlementSamples scrape with
+            | Ok (0L, 0L) -> Ok scrape
+            | Ok (messages, durations) -> Error($"Fresh-process settlement metrics must both be zero: messages={messages}, durations={durations}.")
+            | Error error -> Error error
 
     /// Evaluates exact cumulative equality while allowing only unchanged or partial deltas to keep waiting.
     let evaluateCompletedSettlementDelta expectedDelta baselineScrape observedScrape =
@@ -789,6 +829,100 @@ module ProducerInventory =
         observed
         |> Seq.filter (expected.Contains >> not)
         |> Seq.iter (fun messageId -> errors.Add($"Unclassified Reference-created envelope '{messageId}'."))
+
+        errors.ToArray()
+
+/// Defines the deterministic proof contract for one replay after a real Grace.Server restart.
+module ServerRestart =
+
+    /// Returns whether retained state or health text positively identifies a non-ready Grace.Server observation.
+    let isAffirmativeNonReady resourceState healthStatus =
+        let resourceStateIsKnown =
+            not (String.IsNullOrWhiteSpace resourceState)
+            && not (String.Equals(resourceState, "Unknown", StringComparison.OrdinalIgnoreCase))
+
+        let healthStatusIsKnown =
+            not (String.IsNullOrWhiteSpace healthStatus)
+            && not (String.Equals(healthStatus, "Unknown", StringComparison.OrdinalIgnoreCase))
+
+        (resourceStateIsKnown
+         && not (String.Equals(resourceState, "Running", StringComparison.Ordinal)))
+        || (healthStatusIsKnown
+            && not (String.Equals(healthStatus, "Healthy", StringComparison.Ordinal)))
+
+    /// Lists the exact assertion identities required by the server-restart replay witness.
+    let requiredAssertionIds =
+        [|
+            "server-restart.seed-deliveries-completed"
+            "server-restart.command-completed"
+            "server-restart.fresh-health"
+            "server-restart.http-ready"
+            "server-restart.replay-message-delta"
+            "server-restart.replay-duration-delta"
+            "server-restart.reference-root-state-unchanged"
+            "server-restart.manifest-state-unchanged"
+            "server-restart.logical-state-unchanged"
+            "server-restart.workflow-state-unchanged"
+            "server-restart.physical-state-unchanged"
+            "server-restart.evidence-integrity"
+        |]
+
+    /// Requires a completed restart command, retained non-ready transition, fresh Healthy event, and bounded HTTP readiness in strict order.
+    let validateFreshReadiness
+        commandCompleted
+        (commandStartedAt: DateTimeOffset)
+        (commandCompletedAt: DateTimeOffset)
+        (nonReadyEventObservedAt: DateTimeOffset)
+        nonReadyResourceState
+        nonReadyHealthStatus
+        (resourceEventObservedAt: DateTimeOffset)
+        resourceState
+        (httpReadyObservedAt: DateTimeOffset)
+        httpReady
+        =
+        let errors = ResizeArray<string>()
+
+        if not commandCompleted then
+            errors.Add("The Grace.Server restart command did not complete successfully.")
+
+        if commandCompletedAt < commandStartedAt then
+            errors.Add("Grace.Server restart command completion preceded its start.")
+
+        if nonReadyEventObservedAt <= commandCompletedAt then
+            errors.Add("The Grace.Server non-ready transition was not observed after restart command completion.")
+
+        if not (isAffirmativeNonReady nonReadyResourceState nonReadyHealthStatus) then
+            errors.Add("The retained Grace.Server transition did not demonstrate a non-ready state.")
+
+        if resourceEventObservedAt <= nonReadyEventObservedAt then
+            errors.Add("The fresh Grace.Server Healthy event did not follow the retained non-ready transition.")
+
+        if not (String.Equals(resourceState, "Healthy", StringComparison.Ordinal)) then
+            errors.Add($"The fresh Grace.Server resource event was not Healthy: {resourceState}.")
+
+        if httpReadyObservedAt <= resourceEventObservedAt then
+            errors.Add("Grace.Server HTTP readiness did not follow the fresh Healthy resource event.")
+
+        if not httpReady then
+            errors.Add("Grace.Server HTTP readiness failed after the fresh Healthy resource event.")
+
+        errors.ToArray()
+
+    /// Requires one exact observed replay identity plus one completed message and duration settlement observation.
+    let validateReplayCompletion expectedMessageId observedMessageIds messageDelta durationDelta settlementCompleted =
+        let errors = ResizeArray<string>()
+
+        ProducerInventory.validate [| expectedMessageId |] observedMessageIds
+        |> errors.AddRange
+
+        if messageDelta <> 1L then
+            errors.Add($"The replay completed message delta required 1 but observed {messageDelta}.")
+
+        if durationDelta <> 1L then
+            errors.Add($"The replay completed duration delta required 1 but observed {durationDelta}.")
+
+        if not settlementCompleted then
+            errors.Add("The replay settlement failed or did not reach terminal completion.")
 
         errors.ToArray()
 
