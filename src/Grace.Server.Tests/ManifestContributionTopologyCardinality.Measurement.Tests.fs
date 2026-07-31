@@ -331,7 +331,12 @@ module private TopologyCardinalityRuntime =
                         invalidOp "The topology repository default Reference inventory did not match its persisted branch."
 
                     let defaultMessageId = $"Reference/{defaultReferenceId}/Created"
-                    let! defaultObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| defaultMessageId |] $"{scenarioId} repository default"
+                    let! defaultEnvelopes = BaselineRuntime.observeReferenceEnvelopesAsync state [| defaultMessageId |] $"{scenarioId} repository default"
+
+                    let defaultObserved =
+                        defaultEnvelopes
+                        |> Array.map (fun envelope -> envelope.MessageId)
+
                     let! _, _, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L repositoryBaseline
 
                     let manifestAssetIndex =
@@ -370,7 +375,11 @@ module private TopologyCardinalityRuntime =
                     let declared = createExpectation kind repositoryId assetArray
                     expectation <- Some declared
 
-                    let! setupObserved = BaselineRuntime.observeReferenceEnvelopesAsync state declared.SetupMessageIds $"{scenarioId} branch Rebase"
+                    let! setupEnvelopes = BaselineRuntime.observeReferenceEnvelopesAsync state declared.SetupMessageIds $"{scenarioId} branch Rebase"
+
+                    let setupObserved =
+                        setupEnvelopes
+                        |> Array.map (fun envelope -> envelope.MessageId)
 
                     let! setupMessageDelta, setupDurationDelta, saveBaseline =
                         BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 declared.SetupMessageIds.Length) setupBaseline
@@ -409,7 +418,11 @@ module private TopologyCardinalityRuntime =
                         saves.Add saved
                         index <- index + 1
 
-                    let! stimulusObserved = BaselineRuntime.observeReferenceEnvelopesAsync state declared.StimulusMessageIds $"{scenarioId} explicit Save"
+                    let! stimulusEnvelopes = BaselineRuntime.observeReferenceEnvelopesAsync state declared.StimulusMessageIds $"{scenarioId} explicit Save"
+
+                    let stimulusObserved =
+                        stimulusEnvelopes
+                        |> Array.map (fun envelope -> envelope.MessageId)
 
                     let! referenceRoots, manifests, logical, workflows, physical = waitForObservationAsync state declared assetArray
 
@@ -589,7 +602,12 @@ type ManifestContributionTopologyCardinalityMeasurementTests() =
 
                 let fixtureMessageId = $"Reference/{fixtureReferenceId}/Created"
 
-                let! fixtureObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| fixtureMessageId |] "selected-process fixture repository default"
+                let! fixtureEnvelopes =
+                    BaselineRuntime.observeReferenceEnvelopesAsync state [| fixtureMessageId |] "selected-process fixture repository default"
+
+                let fixtureObserved =
+                    fixtureEnvelopes
+                    |> Array.map (fun envelope -> envelope.MessageId)
 
                 fixtureExpectedProducerIds <- [| fixtureMessageId |]
                 fixtureObservedProducerIds <- fixtureObserved

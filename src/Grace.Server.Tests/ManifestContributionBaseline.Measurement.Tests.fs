@@ -55,6 +55,17 @@ type internal DurableStatus =
         Detail: string
     }
 
+/// Retains the persisted Reference-created broker envelope needed by later replay witnesses.
+type internal CapturedReferenceEnvelope =
+    {
+        Body: byte array
+        MessageId: string
+        CorrelationId: string
+        Subject: string
+        ContentType: string
+        ApplicationProperties: Dictionary<string, obj>
+    }
+
 /// Implements the shared fixture-owned selected-process measurement runtime introduced by the Baseline tracer.
 module internal BaselineRuntime =
 
@@ -248,6 +259,7 @@ module internal BaselineRuntime =
             use receiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, options)
             let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
             let mutable drain = ProducerInventoryDrain.start
+            let captured = ResizeArray<CapturedReferenceEnvelope>()
 
             while ProducerInventoryDrain.status drain = ProducerInventoryDrainStatus.Receiving
                   && DateTime.UtcNow < timeoutAt do
@@ -286,6 +298,17 @@ module internal BaselineRuntime =
                                                 observedInBatch.Add($"{message.MessageId} (body identity {expectedMessageId})")
                                             else
                                                 observedInBatch.Add message.MessageId
+
+                                                captured.Add(
+                                                    {
+                                                        Body = message.Body.ToArray()
+                                                        MessageId = message.MessageId
+                                                        CorrelationId = message.CorrelationId
+                                                        Subject = message.Subject
+                                                        ContentType = message.ContentType
+                                                        ApplicationProperties = Dictionary<string, obj>(message.ApplicationProperties, StringComparer.Ordinal)
+                                                    }
+                                                )
                                         | _ -> ()
                                     | _ -> ()
                                 with
@@ -302,7 +325,7 @@ module internal BaselineRuntime =
                 drain <- ProducerInventoryDrain.deadlineExpired drain
 
             match ProducerInventoryDrain.status drain with
-            | ProducerInventoryDrainStatus.Complete -> return ProducerInventoryDrain.observedMessageIds drain
+            | ProducerInventoryDrainStatus.Complete -> return captured.ToArray()
             | ProducerInventoryDrainStatus.Failed -> return invalidOp $"{description} producer inventory failed: {ProducerInventoryDrain.failure drain}"
             | ProducerInventoryDrainStatus.Receiving -> return invalidOp $"{description} producer inventory stopped without terminal evidence."
         }
@@ -1006,6 +1029,7 @@ type ManifestContributionBaselineMeasurementTests() =
                     Array.concat [| defaultObserved
                                     setupObserved
                                     saveObserved |]
+                    |> Array.map (fun envelope -> envelope.MessageId)
 
                 let identityErrors = ProducerInventory.validate allExpected allObserved
                 recordAssertion "baseline.identity-isolation" (identityErrors.Length = 0) (String.Join("; ", identityErrors))
