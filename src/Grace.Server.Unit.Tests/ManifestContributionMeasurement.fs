@@ -279,6 +279,86 @@ module Baseline =
             "baseline.evidence-integrity"
         |]
 
+/// Defines the exact proof contract for deterministic duplicate-backlog recovery.
+module DuplicateBacklog =
+
+    /// Lists the exact assertion identities required by the duplicate-backlog witness.
+    let requiredAssertionIds =
+        [|
+            "duplicate-backlog.seed-deliveries-completed"
+            "duplicate-backlog.pre-stop-terminal-barrier"
+            "duplicate-backlog.visible-while-stopped"
+            "duplicate-backlog.fresh-server-readiness"
+            "duplicate-backlog.replay-message-delta"
+            "duplicate-backlog.replay-duration-delta"
+            "duplicate-backlog.unrelated-event-excluded"
+            "duplicate-backlog.reference-root-state-unchanged"
+            "duplicate-backlog.manifest-state-unchanged"
+            "duplicate-backlog.logical-state-unchanged"
+            "duplicate-backlog.workflow-state-unchanged"
+            "duplicate-backlog.physical-state-unchanged"
+            "duplicate-backlog.identity-isolation"
+            "duplicate-backlog.evidence-integrity"
+        |]
+
+    /// Rejects a stop boundary until the exact finite seed inventory, completed delivery, and durable convergence all agree.
+    let validatePreStopBarrier (expectedMessageIds: string array) (observedMessageIds: string array) deliveryCompleted durableConverged =
+        let errors = ResizeArray<string>()
+        let expected = HashSet<string>(expectedMessageIds, StringComparer.Ordinal)
+        let observed = HashSet<string>(observedMessageIds, StringComparer.Ordinal)
+
+        if expected.Count <> expectedMessageIds.Length then
+            errors.Add("Expected seed inventory contains duplicate identities.")
+
+        if observed.Count <> observedMessageIds.Length then
+            errors.Add("Observed seed inventory contains duplicate deliveries.")
+
+        expected
+        |> Seq.filter (observed.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Missing seed envelope '{messageId}'."))
+
+        observed
+        |> Seq.filter (expected.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Unclassified seed envelope '{messageId}'."))
+
+        if not deliveryCompleted then
+            errors.Add("Seed delivery completion was not terminal before Grace.Server stopped.")
+
+        if not durableConverged then
+            errors.Add("Seed durable state had not converged before Grace.Server stopped.")
+
+        errors.ToArray()
+
+    /// Requires every selected replay identity to appear in at least one observed stopped-server broker snapshot.
+    let validateStoppedBacklogVisibility (selectedMessageIds: string array) (observedMessageIds: string array) =
+        let errors = ResizeArray<string>()
+        let selected = HashSet<string>(selectedMessageIds, StringComparer.Ordinal)
+        let observed = HashSet<string>(observedMessageIds, StringComparer.Ordinal)
+
+        if selected.Count <> selectedMessageIds.Length then
+            errors.Add("Selected replay identities contain duplicates.")
+
+        if Array.isEmpty observedMessageIds then
+            errors.Add("No broker state was observed while Grace.Server was stopped.")
+
+        selected
+        |> Seq.filter (observed.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Replay envelope '{messageId}' was not visible while Grace.Server was stopped."))
+
+        errors.ToArray()
+
+    /// Requires post-command health to be freshly observed and followed by successful HTTP readiness.
+    let validateFreshServerReadiness (commandStartedAt: DateTimeOffset) (healthObservedAt: DateTimeOffset) httpReady =
+        let errors = ResizeArray<string>()
+
+        if healthObservedAt <= commandStartedAt then
+            errors.Add("Grace.Server health was not observed after the start command began.")
+
+        if not httpReady then
+            errors.Add("Grace.Server HTTP readiness failed after fresh health.")
+
+        errors.ToArray()
+
 /// Derives a scenario outcome from exact assertion identities and the runtime-failure ledger.
 module ScenarioSummary =
 

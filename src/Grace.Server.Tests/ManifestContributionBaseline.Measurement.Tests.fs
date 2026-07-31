@@ -34,7 +34,7 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Carries one distinct manifest, root, branch, and explicit Save identity through the Baseline tracer.
-type private BaselineAsset =
+type internal BaselineAsset =
     {
         BlockAddress: ContentBlockAddress
         Manifest: FileManifest
@@ -45,7 +45,7 @@ type private BaselineAsset =
     }
 
 /// Captures each independent durable convergence result without treating one state store as broker evidence.
-type private DurableStatus =
+type internal DurableStatus =
     {
         ReferenceRoots: bool
         ManifestRelationships: bool
@@ -55,8 +55,19 @@ type private DurableStatus =
         Detail: string
     }
 
+/// Retains the persisted Reference-created broker envelope needed by later replay witnesses.
+type internal CapturedReferenceEnvelope =
+    {
+        Body: byte array
+        MessageId: string
+        CorrelationId: string
+        Subject: string
+        ContentType: string
+        ApplicationProperties: Dictionary<string, obj>
+    }
+
 /// Implements the one explicit fixture-owned Baseline measurement runtime.
-module private BaselineRuntime =
+module internal BaselineRuntime =
 
     [<Literal>]
     let SelectedTopologyCount = 3
@@ -248,6 +259,7 @@ module private BaselineRuntime =
             use receiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, options)
             let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
             let mutable drain = ProducerInventoryDrain.start
+            let captured = ResizeArray<CapturedReferenceEnvelope>()
 
             while ProducerInventoryDrain.status drain = ProducerInventoryDrainStatus.Receiving
                   && DateTime.UtcNow < timeoutAt do
@@ -286,6 +298,17 @@ module private BaselineRuntime =
                                                 observedInBatch.Add($"{message.MessageId} (body identity {expectedMessageId})")
                                             else
                                                 observedInBatch.Add message.MessageId
+
+                                                captured.Add(
+                                                    {
+                                                        Body = message.Body.ToArray()
+                                                        MessageId = message.MessageId
+                                                        CorrelationId = message.CorrelationId
+                                                        Subject = message.Subject
+                                                        ContentType = message.ContentType
+                                                        ApplicationProperties = Dictionary<string, obj>(message.ApplicationProperties, StringComparer.Ordinal)
+                                                    }
+                                                )
                                         | _ -> ()
                                     | _ -> ()
                                 with
@@ -302,7 +325,7 @@ module private BaselineRuntime =
                 drain <- ProducerInventoryDrain.deadlineExpired drain
 
             match ProducerInventoryDrain.status drain with
-            | ProducerInventoryDrainStatus.Complete -> return ProducerInventoryDrain.observedMessageIds drain
+            | ProducerInventoryDrainStatus.Complete -> return captured.ToArray()
             | ProducerInventoryDrainStatus.Failed -> return invalidOp $"{description} producer inventory failed: {ProducerInventoryDrain.failure drain}"
             | ProducerInventoryDrainStatus.Receiving -> return invalidOp $"{description} producer inventory stopped without terminal evidence."
         }
@@ -979,6 +1002,7 @@ type ManifestContributionBaselineMeasurementTests() =
                     Array.concat [| defaultObserved
                                     setupObserved
                                     saveObserved |]
+                    |> Array.map (fun envelope -> envelope.MessageId)
 
                 let identityErrors = ProducerInventory.validate allExpected allObserved
                 recordAssertion "baseline.identity-isolation" (identityErrors.Length = 0) (String.Join("; ", identityErrors))
