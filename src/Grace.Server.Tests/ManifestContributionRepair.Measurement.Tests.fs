@@ -245,6 +245,11 @@ type ManifestContributionRepairMeasurementTests() =
 
                 let defaultMessageId = $"Reference/{defaultReferenceId}/Created"
                 let! defaultObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| defaultMessageId |] "repair repository default"
+
+                let defaultObservedIds =
+                    defaultObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+
                 let! initialMetrics = BaselineRuntime.waitForCompletedSettlementSamplesAsync state
                 let! blockAddress, manifest, bytes = BaselineRuntime.createManifestAssetAsync state ownerId organizationId repositoryId 761
                 let root = BaselineRuntime.createRoot ownerId organizationId repositoryId 761 manifest bytes
@@ -266,11 +271,20 @@ type ManifestContributionRepairMeasurementTests() =
                 let rebaseMessageId = $"Reference/{rebaseReferenceId}/Created"
                 let! rebaseObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| rebaseMessageId |] "repair branch Rebase"
 
+                let rebaseObservedIds =
+                    rebaseObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+
                 let! rebaseMessageDelta, rebaseDurationDelta, explicitBaseline = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L initialMetrics
 
                 let! explicitReference = BaselineRuntime.saveReferenceAsync state ownerId organizationId repositoryId asset
                 let explicitMessageId = $"Reference/{explicitReferenceId}/Created"
                 let! explicitObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| explicitMessageId |] "repair explicit Reference"
+
+                let explicitObservedIds =
+                    explicitObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+
                 let! durable = BaselineRuntime.waitForDurableStatusAsync state repositoryId [| asset |]
 
                 let! explicitMessageDelta, explicitDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L explicitBaseline
@@ -282,9 +296,9 @@ type ManifestContributionRepairMeasurementTests() =
                             rebaseMessageId
                             explicitMessageId
                         |]
-                        (Array.concat [| defaultObserved
-                                         rebaseObserved
-                                         explicitObserved |])
+                        (Array.concat [| defaultObservedIds
+                                         rebaseObservedIds
+                                         explicitObservedIds |])
 
                 let seedCompleted =
                     rebaseMessageDelta = 1L
@@ -391,6 +405,14 @@ type ManifestContributionRepairMeasurementTests() =
 
                 let! republicationObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| explicitMessageId |] "repair republication"
 
+                let republicationObservedIds =
+                    republicationObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+
+                let republicationObservedCorrelationIds =
+                    republicationObserved
+                    |> Array.map (fun envelope -> envelope.CorrelationId)
+
                 let! referenceRootRestored = RepairRuntime.waitForRelationshipAsync state relationship true
 
                 let! repairMessageDelta, repairDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L executeBaseline
@@ -417,7 +439,8 @@ type ManifestContributionRepairMeasurementTests() =
                         OriginalReferenceId = explicitReferenceId
                         RepairCorrelationId = executeCorrelationId
                         ExpectedMessageId = explicitMessageId
-                        ObservedMessageIds = republicationObserved
+                        ObservedMessageIds = republicationObservedIds
+                        ObservedCorrelationIds = republicationObservedCorrelationIds
                         MessageDelta = repairMessageDelta
                         DurationDelta = repairDurationDelta
                         ReferenceRootRestored = referenceRootRestored
@@ -440,15 +463,18 @@ type ManifestContributionRepairMeasurementTests() =
                     && proposedActionMatches
                     && appliedActionMatches
                     && not (String.Equals(executeCorrelationId, string explicitReferenceId, StringComparison.OrdinalIgnoreCase))
+                    && executeErrors.Length = 0
 
                 recordAssertion "repair.execute-one-action" executeActionPassed (String.Join("; ", executeErrors))
 
-                let republicationDetail = String.Join(",", republicationObserved)
+                let republicationMessageDetail = String.Join(",", republicationObservedIds)
+                let republicationCorrelationDetail = String.Join(",", republicationObservedCorrelationIds)
+                let republicationDetail = $"messages={republicationMessageDetail}; correlations={republicationCorrelationDetail}"
 
                 recordAssertion
                     "repair.republication-message-delta"
                     (repairMessageDelta = 1L
-                     && republicationObserved = [| explicitMessageId |])
+                     && republicationObservedIds = [| explicitMessageId |])
                     $"delta={repairMessageDelta}; observed={republicationDetail}"
 
                 recordAssertion "repair.republication-duration-delta" (repairDurationDelta = 1L) $"delta={repairDurationDelta}"

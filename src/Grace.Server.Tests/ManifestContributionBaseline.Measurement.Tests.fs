@@ -33,7 +33,7 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
-/// Carries one distinct manifest, root, branch, and explicit Save identity through the Baseline tracer.
+/// Carries one manifest, root, branch, and explicit Save identity through the shared selected-process measurement runtime.
 type internal BaselineAsset =
     {
         BlockAddress: ContentBlockAddress
@@ -55,7 +55,18 @@ type internal DurableStatus =
         Detail: string
     }
 
-/// Implements the R1 fixture-owned host, producer observer, and durable-state measurement runtime.
+/// Retains the persisted Reference-created broker envelope needed by later replay witnesses.
+type internal CapturedReferenceEnvelope =
+    {
+        Body: byte array
+        MessageId: string
+        CorrelationId: string
+        Subject: string
+        ContentType: string
+        ApplicationProperties: Dictionary<string, obj>
+    }
+
+/// Implements the shared fixture-owned selected-process measurement runtime introduced by the Baseline tracer.
 module internal BaselineRuntime =
 
     [<Literal>]
@@ -248,6 +259,7 @@ module internal BaselineRuntime =
             use receiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, options)
             let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
             let mutable drain = ProducerInventoryDrain.start
+            let captured = ResizeArray<CapturedReferenceEnvelope>()
 
             while ProducerInventoryDrain.status drain = ProducerInventoryDrainStatus.Receiving
                   && DateTime.UtcNow < timeoutAt do
@@ -286,6 +298,17 @@ module internal BaselineRuntime =
                                                 observedInBatch.Add($"{message.MessageId} (body identity {expectedMessageId})")
                                             else
                                                 observedInBatch.Add message.MessageId
+
+                                                captured.Add(
+                                                    {
+                                                        Body = message.Body.ToArray()
+                                                        MessageId = message.MessageId
+                                                        CorrelationId = message.CorrelationId
+                                                        Subject = message.Subject
+                                                        ContentType = message.ContentType
+                                                        ApplicationProperties = Dictionary<string, obj>(message.ApplicationProperties, StringComparer.Ordinal)
+                                                    }
+                                                )
                                         | _ -> ()
                                     | _ -> ()
                                 with
@@ -302,7 +325,7 @@ module internal BaselineRuntime =
                 drain <- ProducerInventoryDrain.deadlineExpired drain
 
             match ProducerInventoryDrain.status drain with
-            | ProducerInventoryDrainStatus.Complete -> return ProducerInventoryDrain.observedMessageIds drain
+            | ProducerInventoryDrainStatus.Complete -> return captured.ToArray()
             | ProducerInventoryDrainStatus.Failed -> return invalidOp $"{description} producer inventory failed: {ProducerInventoryDrain.failure drain}"
             | ProducerInventoryDrainStatus.Receiving -> return invalidOp $"{description} producer inventory stopped without terminal evidence."
         }
@@ -597,6 +620,33 @@ module internal BaselineRuntime =
                 return true
             with
             | :? CosmosException as ex when ex.StatusCode = HttpStatusCode.NotFound -> return false
+        }
+
+    /// Enumerates one complete exact-relationship partition through its canonical identity.
+    let readExactRelationshipsAsync state partition =
+        task {
+            let partitionKey =
+                ExactRelationshipKey.createPartitionKey partition
+                |> Result.defaultWith invalidOp
+
+            use client = AspireTestHost.createCosmosClient state
+            let container = client.GetContainer(state.CosmosDatabaseName, state.CosmosContainerName)
+            let options = QueryRequestOptions(PartitionKey = Nullable(PartitionKey partitionKey), MaxItemCount = Nullable 100)
+
+            use iterator = container.GetItemQueryIterator<JsonElement>(QueryDefinition("SELECT c.id, c.PartitionKey FROM c"), requestOptions = options)
+
+            let relationships = ResizeArray<ExactRelationship>()
+
+            while iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync()
+
+                page
+                |> Seq.iter (fun document ->
+                    ExactRelationshipKey.tryParse
+                        { PartitionKey = document.GetProperty("PartitionKey").GetString(); ItemId = document.GetProperty("id").GetString() }
+                    |> Result.iter relationships.Add)
+
+            return relationships.ToArray()
         }
 
     /// Captures all five independent durable assertions at one point in time.
@@ -979,6 +1029,7 @@ type ManifestContributionBaselineMeasurementTests() =
                     Array.concat [| defaultObserved
                                     setupObserved
                                     saveObserved |]
+                    |> Array.map (fun envelope -> envelope.MessageId)
 
                 let identityErrors = ProducerInventory.validate allExpected allObserved
                 recordAssertion "baseline.identity-isolation" (identityErrors.Length = 0) (String.Join("; ", identityErrors))
