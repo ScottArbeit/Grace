@@ -8,6 +8,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
+open System.Threading.Tasks
 
 /// Projects unbounded diagnostic sources into deterministic, inspectable evidence fields.
 module BoundedEvidence =
@@ -297,6 +298,7 @@ type RepairDiagnosisEvidence =
 type RepairDryRunEvidence =
     {
         Execute: bool
+        Outcome: string
         ExpectedActionIdentity: string
         ProposedActionKinds: string array
         ProposedActionIdentities: string array
@@ -308,6 +310,7 @@ type RepairDryRunEvidence =
 type RepairExecuteEvidence =
     {
         Execute: bool
+        Outcome: string
         ExpectedActionIdentity: string
         ProposedActionKinds: string array
         ProposedActionIdentities: string array
@@ -315,10 +318,12 @@ type RepairExecuteEvidence =
         AppliedActionIdentities: string array
         OriginalReferenceId: Guid
         RepairCorrelationId: string
-        OriginalEventCorrelationId: string
+        OriginalHeaderCorrelationId: string
+        OriginalBodyCorrelationId: string
         ExpectedMessageId: string
         ObservedMessageIds: string array
-        ObservedCorrelationIds: string array
+        RepublishedHeaderCorrelationIds: string array
+        RepublishedBodyCorrelationIds: string array
         MessageDelta: int64
         DurationDelta: int64
         ReferenceRootRestored: bool
@@ -417,6 +422,9 @@ module Repair =
         if evidence.Execute then
             errors.Add("The repair dry run was marked for execution.")
 
+        if not (String.Equals(evidence.Outcome, "IncompleteRetain", StringComparison.Ordinal)) then
+            errors.Add("The supported one-action repair dry run must retain IncompleteRetain.")
+
         validateOneSupportedAction
             "The repair dry-run plan"
             evidence.ExpectedActionIdentity
@@ -439,6 +447,12 @@ module Repair =
 
         if not evidence.Execute then
             errors.Add("The repair execute response was marked as a dry run.")
+
+        if
+            not (String.Equals(evidence.Outcome, "VerifiedComplete", StringComparison.Ordinal))
+            && not (String.Equals(evidence.Outcome, "IncompleteRetain", StringComparison.Ordinal))
+        then
+            errors.Add("Repair execute must retain VerifiedComplete or the supported applied-action IncompleteRetain state.")
 
         validateOneSupportedAction
             "The repair execute plan"
@@ -463,8 +477,14 @@ module Repair =
         then
             errors.Add("The repair request correlation identity must differ from the original Reference identity.")
 
-        if String.IsNullOrWhiteSpace evidence.OriginalEventCorrelationId then
+        if String.IsNullOrWhiteSpace evidence.OriginalBodyCorrelationId then
             errors.Add("The original persisted Reference-created correlation identity must not be empty.")
+
+        if
+            String.IsNullOrWhiteSpace evidence.OriginalHeaderCorrelationId
+            || not (String.Equals(evidence.OriginalHeaderCorrelationId, evidence.OriginalBodyCorrelationId, StringComparison.Ordinal))
+        then
+            errors.Add("The original Reference-created broker header must match its persisted event correlation identity.")
 
         let deterministicMessageId = $"Reference/{evidence.OriginalReferenceId}/Created"
 
@@ -479,11 +499,15 @@ module Repair =
             errors.Add("Repair republication must observe exactly one original deterministic Reference-created envelope.")
 
         if
-            isNull evidence.ObservedCorrelationIds
-            || evidence.ObservedCorrelationIds.Length <> 1
-            || not (String.Equals(evidence.ObservedCorrelationIds[0], evidence.OriginalEventCorrelationId, StringComparison.Ordinal))
+            isNull evidence.RepublishedHeaderCorrelationIds
+            || evidence.RepublishedHeaderCorrelationIds.Length
+               <> 1
+            || isNull evidence.RepublishedBodyCorrelationIds
+            || evidence.RepublishedBodyCorrelationIds.Length <> 1
+            || not (String.Equals(evidence.RepublishedHeaderCorrelationIds[0], evidence.RepublishedBodyCorrelationIds[0], StringComparison.Ordinal))
+            || not (String.Equals(evidence.RepublishedBodyCorrelationIds[0], evidence.OriginalBodyCorrelationId, StringComparison.Ordinal))
         then
-            errors.Add("Repair republication must preserve the original persisted Reference-created correlation identity.")
+            errors.Add("Repair republication headers and persisted bodies must agree and preserve the original persisted event correlation identity.")
 
         if evidence.MessageDelta <> 1L then
             errors.Add($"Repair republication requires an exact completed message delta of one, observed {evidence.MessageDelta}.")
@@ -1270,3 +1294,104 @@ type EvidenceWriter(directory: string, maximumRecordBytes: int) =
 
     interface IDisposable with
         member _.Dispose() = ()
+
+/// Retains the initialized primary evidence sink and immutable selected-process inputs after preflight succeeds.
+type MeasurementPreflightReady = { Writer: EvidenceWriter; Worktree: string; Command: string; EvidenceDirectory: string }
+
+/// Retains a pre-runtime terminal result and an optional fallback diagnostic when primary evidence is unavailable.
+type MeasurementPreflightTerminal = { Summary: ScenarioSummary; EvidencePath: string option; FallbackDiagnostic: string option }
+
+/// Distinguishes a runtime-ready selected-process witness from terminal preflight evidence.
+type MeasurementPreflightResult =
+    | Ready of MeasurementPreflightReady
+    | Terminal of MeasurementPreflightTerminal
+
+/// Establishes terminal evidence before a selected-process witness performs Git, host, or scenario side effects.
+module MeasurementPreflight =
+
+    let private requiredInputs =
+        [|
+            "GRACE_MCA_WORKTREE"
+            "GRACE_MCA_HOSTED_COMMAND"
+            "GRACE_MCA_EVIDENCE_ROOT"
+        |]
+
+    /// Produces a bounded diagnostic suitable for the test runner when the primary evidence sink cannot retain terminal truth.
+    let fallbackDiagnostic (summary: ScenarioSummary) detail =
+        let boundedDetail = BoundedEvidence.assertionDetail detail
+        $"MCA terminal fallback: summary={JsonSerializer.Serialize summary}; detail={boundedDetail}"
+
+    /// Validates selected-process inputs without side effects, then creates primary evidence before Git inspection.
+    let prepareAsync
+        runId
+        scenarioId
+        (requiredAssertionIds: string array)
+        maximumRecordBytes
+        (getEnvironment: string -> string)
+        (runGitAsync: string -> string array -> Task<string>)
+        (createWriter: string -> int -> EvidenceWriter)
+        =
+        task {
+            let values =
+                requiredInputs
+                |> Array.map (fun name -> name, getEnvironment name)
+
+            let missing =
+                values
+                |> Array.choose (fun (name, value) -> if String.IsNullOrWhiteSpace value then Some name else None)
+
+            if missing.Length > 0 then
+                let summary = ScenarioSummary.derive runId scenarioId requiredAssertionIds Array.empty Array.empty true
+                let missingNames = String.Join(", ", missing)
+                let detail = $"Missing required selected-process inputs: {missingNames}."
+
+                return Terminal { Summary = summary; EvidencePath = None; FallbackDiagnostic = Some(fallbackDiagnostic summary detail) }
+            else
+                let worktreeValue = snd values[0]
+                let command = (snd values[1]).Trim()
+                let evidenceRootValue = snd values[2]
+
+                try
+                    let worktree = Path.GetFullPath(worktreeValue.Trim())
+                    let evidenceRoot = Path.GetFullPath(evidenceRootValue.Trim())
+                    let evidenceDirectory = Path.Combine(evidenceRoot, runId)
+                    let writer = createWriter evidenceDirectory maximumRecordBytes
+
+                    try
+                        let! commitSha = runGitAsync worktree [| "rev-parse"; "HEAD" |]
+
+                        let! status =
+                            runGitAsync
+                                worktree
+                                [|
+                                    "status"
+                                    "--porcelain=v1"
+                                    "--untracked-files=all"
+                                |]
+
+                        let worktreeState = if String.IsNullOrWhiteSpace status then "clean" else status
+
+                        writer.Append(MeasurementRun.Create(runId, commitSha, worktree, worktreeState, command, evidenceDirectory, [| scenarioId |]))
+
+                        return Ready { Writer = writer; Worktree = worktree; Command = command; EvidenceDirectory = evidenceDirectory }
+                    with
+                    | ex ->
+                        let failures = [| $"preflight: {ex}" |]
+                        let summary = ScenarioSummary.derive runId scenarioId requiredAssertionIds Array.empty failures false
+
+                        try
+                            writer.Append summary
+
+                            return Terminal { Summary = summary; EvidencePath = Some writer.Path; FallbackDiagnostic = None }
+                        with
+                        | summaryEx ->
+                            let detail = $"Primary preflight failure: {ex}; terminal append failure: {summaryEx}"
+
+                            return Terminal { Summary = summary; EvidencePath = Some writer.Path; FallbackDiagnostic = Some(fallbackDiagnostic summary detail) }
+                with
+                | ex ->
+                    let failures = [| $"preflight: {ex}" |]
+                    let summary = ScenarioSummary.derive runId scenarioId requiredAssertionIds Array.empty failures false
+
+                    return Terminal { Summary = summary; EvidencePath = None; FallbackDiagnostic = Some(fallbackDiagnostic summary (ex.ToString())) }
+        }

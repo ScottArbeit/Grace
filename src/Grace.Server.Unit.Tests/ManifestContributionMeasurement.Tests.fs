@@ -140,6 +140,7 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
         let valid =
             {
                 Execute = false
+                Outcome = "IncompleteRetain"
                 ExpectedActionIdentity = "partition|reference-root:expected"
                 ProposedActionKinds = [| "RepublishReferenceCreated" |]
                 ProposedActionIdentities =
@@ -157,6 +158,24 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
         Assert.That(Repair.validateDryRun { valid with AppliedActionKinds = [| "RepublishReferenceCreated" |] }, Is.Not.Empty)
         Assert.That(Repair.validateDryRun { valid with ReferenceRootPresent = true }, Is.Not.Empty)
 
+        let failedRetainErrors = Repair.validateDryRun { valid with Outcome = "FailedRetain" }
+
+        let failedRetainAssertions =
+            repairRequiredAssertionIds
+            |> Array.map (fun assertionId ->
+                MeasurementAssertion.Create(
+                    "run-1",
+                    "repair",
+                    assertionId,
+                    assertionId <> "repair.dry-run-no-mutation"
+                    || failedRetainErrors.Length = 0,
+                    "FailedRetain regression"
+                ))
+
+        let failedRetainSummary = ScenarioSummary.derive "run-1" "repair" repairRequiredAssertionIds failedRetainAssertions Array.empty false
+        Assert.That(failedRetainErrors, Is.Not.Empty)
+        Assert.That(failedRetainSummary.Outcome, Is.EqualTo("Failed"))
+
     /// Verifies restored durable state cannot substitute for exact completed republication attribution.
     [<Test>]
     member _.RepairExecuteRequiresOriginalIdentityAndCompletedDelivery() =
@@ -166,6 +185,7 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
         let valid =
             {
                 Execute = true
+                Outcome = "VerifiedComplete"
                 ExpectedActionIdentity = "partition|reference-root:expected"
                 ProposedActionKinds = [| "RepublishReferenceCreated" |]
                 ProposedActionIdentities =
@@ -179,10 +199,12 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
                     |]
                 OriginalReferenceId = referenceId
                 RepairCorrelationId = "repair-correlation"
-                OriginalEventCorrelationId = "original-event-correlation"
+                OriginalHeaderCorrelationId = "original-event-correlation"
+                OriginalBodyCorrelationId = "original-event-correlation"
                 ExpectedMessageId = expectedMessageId
                 ObservedMessageIds = [| expectedMessageId |]
-                ObservedCorrelationIds = [| "original-event-correlation" |]
+                RepublishedHeaderCorrelationIds = [| "original-event-correlation" |]
+                RepublishedBodyCorrelationIds = [| "original-event-correlation" |]
                 MessageDelta = 1L
                 DurationDelta = 1L
                 ReferenceRootRestored = true
@@ -192,13 +214,149 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
         Assert.That(Repair.validateExecute { valid with Execute = false }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with AppliedActionKinds = Array.empty }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with ObservedMessageIds = Array.empty }, Is.Not.Empty)
-        Assert.That(Repair.validateExecute { valid with ObservedCorrelationIds = [| "different-correlation" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with RepublishedHeaderCorrelationIds = [| "different-correlation" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with OriginalHeaderCorrelationId = "different-correlation" }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with RepublishedBodyCorrelationIds = [| "different-correlation" |] }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with MessageDelta = 0L; DurationDelta = 0L }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with OriginalReferenceId = Guid.Empty }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with RepairCorrelationId = string referenceId }, Is.Not.Empty)
-        Assert.That(Repair.validateExecute { valid with OriginalEventCorrelationId = String.Empty }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with OriginalBodyCorrelationId = String.Empty }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with ExpectedMessageId = "Reference/repair-correlation/Created" }, Is.Not.Empty)
         Assert.That(Repair.validateExecute { valid with ReferenceRootRestored = false }, Is.Not.Empty)
+
+        Assert.That(Repair.validateExecute { valid with Outcome = "IncompleteRetain" }, Is.Empty)
+
+        let failedRetainErrors = Repair.validateExecute { valid with Outcome = "FailedRetain" }
+
+        let failedRetainAssertions =
+            repairRequiredAssertionIds
+            |> Array.map (fun assertionId ->
+                MeasurementAssertion.Create(
+                    "run-1",
+                    "repair",
+                    assertionId,
+                    assertionId <> "repair.execute-one-action"
+                    || failedRetainErrors.Length = 0,
+                    "FailedRetain regression"
+                ))
+
+        let failedRetainSummary = ScenarioSummary.derive "run-1" "repair" repairRequiredAssertionIds failedRetainAssertions Array.empty false
+        Assert.That(failedRetainErrors, Is.Not.Empty)
+        Assert.That(failedRetainSummary.Outcome, Is.EqualTo("Failed"))
+
+    /// Verifies a missing selected-process input terminates as Skipped before Git or evidence-root creation.
+    [<Test>]
+    member _.RepairPreflightMissingInputIsSideEffectFreeSkipped() =
+        task {
+            let mutable sideEffects = 0
+
+            let getEnvironment name = if name = "GRACE_MCA_WORKTREE" then String.Empty else "present"
+
+            let runGit _ _ =
+                sideEffects <- sideEffects + 1
+                Task.FromResult String.Empty
+
+            let createWriter _ _ =
+                sideEffects <- sideEffects + 1
+                invalidOp "The writer must not be created for a missing prerequisite."
+
+            let! result = MeasurementPreflight.prepareAsync "run-missing" "repair" repairRequiredAssertionIds 65536 getEnvironment runGit createWriter
+
+            match result with
+            | Terminal terminal ->
+                Assert.That(terminal.Summary.Outcome, Is.EqualTo("Skipped"))
+                Assert.That(terminal.EvidencePath.IsNone, Is.True)
+                Assert.That(terminal.FallbackDiagnostic.IsSome, Is.True)
+                Assert.That(terminal.FallbackDiagnostic.Value, Does.Contain("GRACE_MCA_WORKTREE"))
+            | Ready _ -> Assert.Fail("Missing preflight input unexpectedly reached runtime readiness.")
+
+            Assert.That(sideEffects, Is.Zero)
+        }
+
+    /// Verifies a Git status failure after writer creation is retained in a Failed primary summary.
+    [<Test>]
+    member _.RepairPreflightGitStatusFailureRetainsFailedSummary() =
+        task {
+            let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-preflight-{Guid.NewGuid():N}")
+
+            let getEnvironment name =
+                match name with
+                | "GRACE_MCA_WORKTREE" -> directory
+                | "GRACE_MCA_HOSTED_COMMAND" -> "dotnet test repair"
+                | "GRACE_MCA_EVIDENCE_ROOT" -> directory
+                | _ -> String.Empty
+
+            let runGit _ (arguments: string array) =
+                if arguments[0] = "rev-parse" then
+                    Task.FromResult(String('a', 40))
+                else
+                    Task.FromException<string>(InvalidOperationException("deterministic git status failure"))
+
+            try
+                let! result =
+                    MeasurementPreflight.prepareAsync
+                        "run-git-failure"
+                        "repair"
+                        repairRequiredAssertionIds
+                        65536
+                        getEnvironment
+                        runGit
+                        (fun path maximumBytes -> new EvidenceWriter(path, maximumBytes))
+
+                match result with
+                | Terminal terminal ->
+                    Assert.That(terminal.Summary.Outcome, Is.EqualTo("Failed"))
+                    Assert.That(terminal.EvidencePath.IsSome, Is.True)
+                    Assert.That(terminal.FallbackDiagnostic.IsNone, Is.True)
+                    Assert.That(String.concat " " terminal.Summary.RuntimeFailures, Does.Contain("deterministic git status failure"))
+
+                    let retained = File.ReadAllText terminal.EvidencePath.Value
+                    Assert.That(retained, Does.Contain("\"Outcome\":\"Failed\""))
+                | Ready _ -> Assert.Fail("Failing Git status unexpectedly reached runtime readiness.")
+            finally
+                if Directory.Exists directory then Directory.Delete(directory, true)
+        }
+
+    /// Verifies writer initialization and initial-run append failures retain bounded fallback terminal diagnostics.
+    [<Test>]
+    member _.RepairPreflightWriterFailuresRetainFallbackDiagnostics() =
+        task {
+            let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-preflight-{Guid.NewGuid():N}")
+
+            let getEnvironment name =
+                match name with
+                | "GRACE_MCA_WORKTREE" -> directory
+                | "GRACE_MCA_HOSTED_COMMAND" -> "dotnet test repair"
+                | "GRACE_MCA_EVIDENCE_ROOT" -> directory
+                | _ -> String.Empty
+
+            let runGit _ _ = Task.FromResult(String('a', 40))
+
+            try
+                let! initializationResult =
+                    MeasurementPreflight.prepareAsync "run-writer-init" "repair" repairRequiredAssertionIds 65536 getEnvironment runGit (fun _ _ ->
+                        invalidOp "deterministic writer initialization failure")
+
+                let! appendResult =
+                    MeasurementPreflight.prepareAsync "run-writer-append" "repair" repairRequiredAssertionIds 1 getEnvironment runGit (fun path maximumBytes ->
+                        new EvidenceWriter(path, maximumBytes))
+
+                [| initializationResult; appendResult |]
+                |> Array.iter (function
+                    | Terminal terminal ->
+                        Assert.That(terminal.Summary.Outcome, Is.EqualTo("Failed"))
+                        Assert.That(terminal.FallbackDiagnostic.IsSome, Is.True)
+                        Assert.That(Encoding.UTF8.GetByteCount terminal.FallbackDiagnostic.Value, Is.LessThanOrEqualTo(16384))
+                    | Ready _ -> Assert.Fail("A deterministic writer failure unexpectedly reached runtime readiness."))
+
+                match initializationResult, appendResult with
+                | Terminal initialization, Terminal append ->
+                    Assert.That(initialization.FallbackDiagnostic.Value, Does.Contain("writer initialization failure"))
+                    Assert.That(append.FallbackDiagnostic.Value, Does.Contain("terminal append failure"))
+                | _ -> Assert.Fail("Both writer failure cases must terminate during preflight.")
+            finally
+                if Directory.Exists directory then Directory.Delete(directory, true)
+        }
 
     /// Verifies the duplicate-backlog assertion contract is an exact stable set.
     [<Test>]

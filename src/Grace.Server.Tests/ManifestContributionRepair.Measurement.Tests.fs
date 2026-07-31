@@ -9,6 +9,7 @@ open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.Events
 open Grace.Types.ManifestContributionAccounting
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Reference
@@ -41,6 +42,17 @@ module private RepairRuntime =
 
     /// Formats a retained diagnosis array without turning a malformed null field into an evidence-writing failure.
     let joinRetainedValues (separator: string) (values: string array) = if isNull values then "<null>" else String.Join(separator, values)
+
+    /// Reads the persisted correlation from one retained Reference-created body without trusting its broker header.
+    let referenceCreatedBodyCorrelationId (envelope: CapturedReferenceEnvelope) =
+        let graceEvent = JsonSerializer.Deserialize<GraceEvent>(envelope.Body, Constants.JsonSerializerOptions)
+
+        match graceEvent with
+        | GraceEvent.ReferenceEvent referenceEvent ->
+            match referenceEvent.Event with
+            | ReferenceEventType.Created _ -> referenceEvent.Metadata.CorrelationId
+            | _ -> invalidOp "The retained Reference envelope body was not a Created event."
+        | _ -> invalidOp "The retained broker body was not a Reference event."
 
     /// Requires exactly one matching durable snapshot so duplicate persisted state cannot pass as unchanged.
     let private exactlyOne description predicate values =
@@ -189,31 +201,39 @@ type ManifestContributionRepairMeasurementTests() =
         task {
             let runId = Guid.NewGuid().ToString("N")
 
-            let worktree =
-                BaselineRuntime.requireEnvironment "GRACE_MCA_WORKTREE"
-                |> Path.GetFullPath
+            let! preflight =
+                MeasurementPreflight.prepareAsync
+                    runId
+                    RepairRuntime.ScenarioId
+                    RepairEvidence.requiredAssertionIds
+                    BaselineRuntime.MaximumRecordBytes
+                    Environment.GetEnvironmentVariable
+                    BaselineRuntime.runGitAsync
+                    (fun directory maximumBytes -> new EvidenceWriter(directory, maximumBytes))
 
-            let command = BaselineRuntime.requireEnvironment "GRACE_MCA_HOSTED_COMMAND"
+            let ready =
+                match preflight with
+                | Ready value -> value
+                | Terminal terminal ->
+                    terminal.FallbackDiagnostic
+                    |> Option.iter (fun diagnostic -> TestContext.Progress.WriteLine diagnostic)
 
-            let evidenceRoot =
-                BaselineRuntime.requireEnvironment "GRACE_MCA_EVIDENCE_ROOT"
-                |> Path.GetFullPath
+                    terminal.EvidencePath
+                    |> Option.iter (fun path -> TestContext.Progress.WriteLine($"MCA Repair terminal evidence: {path}"))
 
-            let evidenceDirectory = Path.Combine(evidenceRoot, runId)
-            let! commitSha = BaselineRuntime.runGitAsync worktree [| "rev-parse"; "HEAD" |]
+                    TestContext.Progress.Flush()
 
-            let! status =
-                BaselineRuntime.runGitAsync
-                    worktree
-                    [|
-                        "status"
-                        "--porcelain=v1"
-                        "--untracked-files=all"
-                    |]
+                    Assert.That(
+                        terminal.Summary.Outcome,
+                        Is.EqualTo("Passed"),
+                        terminal.FallbackDiagnostic
+                        |> Option.defaultValue "Repair preflight terminated before runtime readiness."
+                    )
 
-            let worktreeState = if String.IsNullOrWhiteSpace status then "clean" else status
-            use writer = new EvidenceWriter(evidenceDirectory, BaselineRuntime.MaximumRecordBytes)
-            writer.Append(MeasurementRun.Create(runId, commitSha, worktree, worktreeState, command, evidenceDirectory, [| RepairRuntime.ScenarioId |]))
+                    failwith "Repair preflight terminal assertion did not stop the fixture."
+
+            use writer = ready.Writer
+            let evidenceDirectory = ready.EvidenceDirectory
             let assertions = ResizeArray<MeasurementAssertion>()
             let failures = ResizeArray<string>()
             let mutable host: TestHostState option = None
@@ -222,7 +242,11 @@ type ManifestContributionRepairMeasurementTests() =
             let recordAssertion assertionId passed detail =
                 let assertion = MeasurementAssertion.Create(runId, RepairRuntime.ScenarioId, assertionId, passed, detail)
                 assertions.Add assertion
-                writer.Append assertion
+
+                try
+                    writer.Append assertion
+                with
+                | ex -> failures.Add($"evidence assertion append ({assertionId}): {ex}")
 
             try
                 let bootstrapUserId = Guid.NewGuid().ToString("D")
@@ -288,7 +312,8 @@ type ManifestContributionRepairMeasurementTests() =
                     explicitObserved
                     |> Array.map (fun envelope -> envelope.MessageId)
 
-                let originalEventCorrelationId = explicitObserved[0].CorrelationId
+                let originalHeaderCorrelationId = explicitObserved[0].CorrelationId
+                let originalBodyCorrelationId = RepairRuntime.referenceCreatedBodyCorrelationId explicitObserved[0]
 
                 let! durable = BaselineRuntime.waitForDurableStatusAsync state repositoryId [| asset |]
 
@@ -399,6 +424,7 @@ type ManifestContributionRepairMeasurementTests() =
                 let dryRunEvidence =
                     {
                         Execute = dryRun.Execute
+                        Outcome = string dryRun.Outcome
                         ExpectedActionIdentity = relationshipIdentity
                         ProposedActionKinds =
                             dryRun.ProposedActions
@@ -438,6 +464,10 @@ type ManifestContributionRepairMeasurementTests() =
                     republicationObserved
                     |> Array.map (fun envelope -> envelope.CorrelationId)
 
+                let republicationBodyCorrelationIds =
+                    republicationObserved
+                    |> Array.map RepairRuntime.referenceCreatedBodyCorrelationId
+
                 let! referenceRootRestored = RepairRuntime.waitForRelationshipAsync state relationship true
 
                 let! repairMessageDelta, repairDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L executeBaseline
@@ -448,6 +478,7 @@ type ManifestContributionRepairMeasurementTests() =
                 let executeEvidence =
                     {
                         Execute = execute.Execute
+                        Outcome = string execute.Outcome
                         ExpectedActionIdentity = relationshipIdentity
                         ProposedActionKinds =
                             execute.ProposedActions
@@ -463,10 +494,12 @@ type ManifestContributionRepairMeasurementTests() =
                             |> Array.map (fun action -> action.Identity)
                         OriginalReferenceId = explicitReferenceId
                         RepairCorrelationId = executeCorrelationId
-                        OriginalEventCorrelationId = originalEventCorrelationId
+                        OriginalHeaderCorrelationId = originalHeaderCorrelationId
+                        OriginalBodyCorrelationId = originalBodyCorrelationId
                         ExpectedMessageId = explicitMessageId
                         ObservedMessageIds = republicationObservedIds
-                        ObservedCorrelationIds = republicationObservedCorrelationIds
+                        RepublishedHeaderCorrelationIds = republicationObservedCorrelationIds
+                        RepublishedBodyCorrelationIds = republicationBodyCorrelationIds
                         MessageDelta = repairMessageDelta
                         DurationDelta = repairDurationDelta
                         ReferenceRootRestored = referenceRootRestored
@@ -495,15 +528,18 @@ type ManifestContributionRepairMeasurementTests() =
 
                 let republicationMessageDetail = String.Join(",", republicationObservedIds)
                 let republicationCorrelationDetail = String.Join(",", republicationObservedCorrelationIds)
+                let republicationBodyCorrelationDetail = String.Join(",", republicationBodyCorrelationIds)
 
                 let republicationDetail =
-                    $"messages={republicationMessageDetail}; expectedCorrelation={originalEventCorrelationId}; correlations={republicationCorrelationDetail}"
+                    $"messages={republicationMessageDetail}; originalHeaderCorrelation={originalHeaderCorrelationId}; originalBodyCorrelation={originalBodyCorrelationId}; republishedHeaderCorrelations={republicationCorrelationDetail}; republishedBodyCorrelations={republicationBodyCorrelationDetail}"
 
                 recordAssertion
                     "repair.republication-message-delta"
                     (repairMessageDelta = 1L
                      && republicationObservedIds = [| explicitMessageId |]
-                     && republicationObservedCorrelationIds = [| originalEventCorrelationId |])
+                     && originalHeaderCorrelationId = originalBodyCorrelationId
+                     && republicationObservedCorrelationIds = [| originalBodyCorrelationId |]
+                     && republicationBodyCorrelationIds = [| originalBodyCorrelationId |])
                     $"delta={repairMessageDelta}; observed={republicationDetail}"
 
                 recordAssertion "repair.republication-duration-delta" (repairDurationDelta = 1L) $"delta={repairDurationDelta}"
@@ -581,10 +617,30 @@ type ManifestContributionRepairMeasurementTests() =
                 then
                     recordAssertion assertionId false "The runtime failed before this assertion could be evaluated.")
 
-            let summary =
+            let mutable summary =
                 ScenarioSummary.derive runId RepairRuntime.ScenarioId RepairEvidence.requiredAssertionIds (assertions.ToArray()) (failures.ToArray()) false
 
-            writer.Append summary
+            let mutable fallbackTerminalDiagnostic: string option = None
+
+            try
+                writer.Append summary
+            with
+            | ex ->
+                failures.Add($"terminal summary append: {ex}")
+
+                summary <-
+                    ScenarioSummary.derive runId RepairRuntime.ScenarioId RepairEvidence.requiredAssertionIds (assertions.ToArray()) (failures.ToArray()) false
+
+                try
+                    writer.Append summary
+                with
+                | retryEx ->
+                    fallbackTerminalDiagnostic <-
+                        Some(MeasurementPreflight.fallbackDiagnostic summary $"Primary terminal summary append failed twice: {ex}; {retryEx}")
+
+            fallbackTerminalDiagnostic
+            |> Option.iter (fun diagnostic -> TestContext.Progress.WriteLine diagnostic)
+
             TestContext.Progress.WriteLine($"MCA Repair evidence directory: {evidenceDirectory}")
             TestContext.Progress.Flush()
 
