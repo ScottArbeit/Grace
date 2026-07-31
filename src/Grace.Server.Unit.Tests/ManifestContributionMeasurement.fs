@@ -835,6 +835,21 @@ module ProducerInventory =
 /// Defines the deterministic proof contract for one replay after a real Grace.Server restart.
 module ServerRestart =
 
+    /// Returns whether retained state or health text positively identifies a non-ready Grace.Server observation.
+    let isAffirmativeNonReady resourceState healthStatus =
+        let resourceStateIsKnown =
+            not (String.IsNullOrWhiteSpace resourceState)
+            && not (String.Equals(resourceState, "Unknown", StringComparison.OrdinalIgnoreCase))
+
+        let healthStatusIsKnown =
+            not (String.IsNullOrWhiteSpace healthStatus)
+            && not (String.Equals(healthStatus, "Unknown", StringComparison.OrdinalIgnoreCase))
+
+        (resourceStateIsKnown
+         && not (String.Equals(resourceState, "Running", StringComparison.Ordinal)))
+        || (healthStatusIsKnown
+            && not (String.Equals(healthStatus, "Healthy", StringComparison.Ordinal)))
+
     /// Lists the exact assertion identities required by the server-restart replay witness.
     let requiredAssertionIds =
         [|
@@ -876,10 +891,7 @@ module ServerRestart =
         if nonReadyEventObservedAt <= commandCompletedAt then
             errors.Add("The Grace.Server non-ready transition was not observed after restart command completion.")
 
-        if
-            String.Equals(nonReadyResourceState, "Running", StringComparison.Ordinal)
-            && String.Equals(nonReadyHealthStatus, "Healthy", StringComparison.Ordinal)
-        then
+        if not (isAffirmativeNonReady nonReadyResourceState nonReadyHealthStatus) then
             errors.Add("The retained Grace.Server transition did not demonstrate a non-ready state.")
 
         if resourceEventObservedAt <= nonReadyEventObservedAt then

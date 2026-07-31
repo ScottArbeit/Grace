@@ -1539,17 +1539,29 @@ module AspireTestHost =
                         let resourceEvent = events.Current
 
                         if resourceEvent.Resource.Name.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
+                            let resourceState = resourceEvent.Snapshot.State.Text
+
                             let isHealthy =
                                 resourceEvent.Snapshot.HealthStatus.HasValue
                                 && resourceEvent.Snapshot.HealthStatus.Value = Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy
 
-                            if
-                                not isHealthy
-                                || not (String.Equals(resourceEvent.Snapshot.State.Text, KnownResourceStates.Running, StringComparison.Ordinal))
-                            then
+                            let hasNamedNonRunningState =
+                                not (String.IsNullOrWhiteSpace resourceState)
+                                && not (String.Equals(resourceState, "Unknown", StringComparison.OrdinalIgnoreCase))
+                                && not (String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal))
+
+                            let hasKnownNonHealthyStatus =
+                                resourceEvent.Snapshot.HealthStatus.HasValue
+                                && not isHealthy
+
+                            if hasNamedNonRunningState
+                               || hasKnownNonHealthyStatus then
                                 if nonReadyEvent.IsNone then
                                     nonReadyEvent <- Some(DateTimeOffset.UtcNow, resourceEvent)
-                            elif nonReadyEvent.IsSome then
+                            elif
+                                nonReadyEvent.IsSome && isHealthy
+                                && String.Equals(resourceState, KnownResourceStates.Running, StringComparison.Ordinal)
+                            then
                                 healthyEvent <- Some resourceEvent
 
                         if healthyEvent.IsNone then nextResourceEvent <- events.MoveNextAsync().AsTask()

@@ -102,6 +102,20 @@ type ManifestContributionServerRestartMeasurementTests() =
         Assert.That(String.Join("; ", errors), Does.Contain("non-ready transition was not observed after"))
         Assert.That(String.Join("; ", errors), Does.Contain("did not demonstrate a non-ready state"))
 
+    /// Verifies blank or Unknown state and health text cannot become affirmative restart-transition evidence.
+    [<TestCase("", "Unknown")>]
+    [<TestCase("Unknown", "")>]
+    [<TestCase("Running", "Unknown")>]
+    [<TestCase("Unknown", "Healthy")>]
+    member _.BlankOrUnknownTransitionDoesNotProveNonReady(resourceState, healthStatus) =
+        Assert.That(ServerRestart.isAffirmativeNonReady resourceState healthStatus, Is.False)
+
+    /// Verifies either a named non-running state or known non-Healthy health value proves the transition.
+    [<TestCase("Starting", "Unknown")>]
+    [<TestCase("Running", "Unhealthy")>]
+    member _.ExplicitNonReadyStateOrHealthProvesTransition(resourceState, healthStatus) =
+        Assert.That(ServerRestart.isAffirmativeNonReady resourceState healthStatus, Is.True)
+
     /// Verifies unchanged durable state cannot replace exact replay identity and settlement completion.
     [<Test>]
     member _.UnsettledReplayFailsEvenWhenDurableStateIsUnchanged() =
