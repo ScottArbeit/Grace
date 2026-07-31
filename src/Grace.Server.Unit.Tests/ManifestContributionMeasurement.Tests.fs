@@ -144,6 +144,17 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
         Assert.That(unchangedDurableState, Is.True)
         Assert.That(replayCompletion, Is.EqualTo(DeltaEvaluation.Pending))
 
+    /// Verifies an intentional Grace.Server process restart requires exact fresh cumulative totals rather than a stale pre-stop baseline.
+    [<Test>]
+    member _.DuplicateBacklogFreshProcessRequiresExactReplayTotals() =
+        let freshProcessBaseline = completedMetrics 0 0
+
+        Assert.That(OpenMetrics.evaluateCompletedSettlementDelta 3L freshProcessBaseline (completedMetrics 3 3), Is.EqualTo(DeltaEvaluation.Complete(3L, 3L)))
+
+        match OpenMetrics.evaluateCompletedSettlementDelta 3L freshProcessBaseline (completedMetrics 4 3) with
+        | DeltaEvaluation.Invalid reason -> Assert.That(reason, Does.Contain("overshot"))
+        | result -> Assert.Fail($"Fresh-process overshoot unexpectedly produced {result}.")
+
     /// Verifies exact production settlement samples complete only at the requested cumulative deltas.
     [<Test>]
     member _.ExactCompletedSettlementDeltasPass() =

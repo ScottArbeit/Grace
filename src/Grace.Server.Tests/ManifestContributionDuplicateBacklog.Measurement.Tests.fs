@@ -39,6 +39,13 @@ module private DuplicateBacklogRuntime =
     [<Literal>]
     let ScenarioId = "duplicate-backlog"
 
+    /// Represents the known empty cumulative settlement series of a newly started Grace.Server process.
+    let private freshProcessCompletedSettlementBaseline =
+        """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+"""
+
     /// Serializes a typed durable projection into the stable Grace JSON contract used for field-equivalent comparison.
     let private serialize value = JsonSerializer.Serialize(value, Constants.JsonSerializerOptions)
 
@@ -282,6 +289,14 @@ module private DuplicateBacklogRuntime =
             return observed |> Seq.toArray
         }
 
+    /// Waits for exact cumulative replay totals in the freshly started Grace.Server metrics process.
+    let waitForFreshProcessCompletedSettlementAsync state expectedTotal =
+        task {
+            let! _ = BaselineRuntime.waitForCompletedSettlementSamplesAsync state
+
+            return! BaselineRuntime.waitForCompletedSettlementDeltaAsync state expectedTotal freshProcessCompletedSettlementBaseline
+        }
+
     /// Adds one typed duplicate-backlog sample with stable completed-settlement labels.
     let recordSample (writer: EvidenceWriter) runId sampleId name value =
         let labels = Dictionary<string, string>()
@@ -419,8 +434,7 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
                 let assetArray = assets.ToArray()
                 let! beforeSnapshot = DuplicateBacklogRuntime.waitForSnapshotAsync state repositoryId assetArray
 
-                let! saveMessageDelta, saveDurationDelta, replayBaseline =
-                    BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 assets.Count) saveBaseline
+                let! saveMessageDelta, saveDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 assets.Count) saveBaseline
 
                 let allSeedExpected =
                     Array.concat [| [| defaultMessageId |]
@@ -505,7 +519,7 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
 
                 let! replayObserved = BaselineRuntime.observeReferenceEnvelopesAsync state saveMessageIds "duplicate-backlog replay"
 
-                let! replayMessageDelta, replayDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 assets.Count) replayBaseline
+                let! replayMessageDelta, replayDurationDelta, _ = DuplicateBacklogRuntime.waitForFreshProcessCompletedSettlementAsync state (int64 assets.Count)
 
                 let! afterSnapshot = DuplicateBacklogRuntime.waitForSnapshotAsync state repositoryId assetArray
 
