@@ -260,7 +260,12 @@ type ManifestContributionRedisRestartMeasurementTests() =
                 let defaultMessageId = $"Reference/{defaultReferenceId}/Created"
                 expectedMessageIds.Add defaultMessageId
                 let! defaultObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| defaultMessageId |] "repository default"
-                observedMessageIds.AddRange defaultObserved
+
+                observedMessageIds.AddRange(
+                    defaultObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+                )
+
                 let! initialMetrics = BaselineRuntime.waitForCompletedSettlementSamplesAsync state
                 let! blockAddress, manifest, bytes = BaselineRuntime.createManifestAssetAsync state ownerId organizationId repositoryId 0
                 let root = BaselineRuntime.createRoot ownerId organizationId repositoryId 0 manifest bytes
@@ -282,7 +287,11 @@ type ManifestContributionRedisRestartMeasurementTests() =
                 let seedRebaseMessageId = $"Reference/{seedRebaseReferenceId}/Created"
                 expectedMessageIds.Add seedRebaseMessageId
                 let! seedRebaseObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| seedRebaseMessageId |] "seed branch Rebase"
-                observedMessageIds.AddRange seedRebaseObserved
+
+                observedMessageIds.AddRange(
+                    seedRebaseObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+                )
 
                 let! seedRebaseMessageDelta, seedRebaseDurationDelta, seedSaveBaseline =
                     BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L initialMetrics
@@ -291,7 +300,12 @@ type ManifestContributionRedisRestartMeasurementTests() =
                 let seedSaveMessageId = $"Reference/{seedSaveReferenceId}/Created"
                 expectedMessageIds.Add seedSaveMessageId
                 let! seedSaveObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| seedSaveMessageId |] "seed explicit Save"
-                observedMessageIds.AddRange seedSaveObserved
+
+                observedMessageIds.AddRange(
+                    seedSaveObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+                )
+
                 let! seedDurable = BaselineRuntime.waitForDurableStatusAsync state repositoryId [| seedAsset |]
 
                 let! seedSaveMessageDelta, seedSaveDurationDelta, restartMetricsBaseline =
@@ -360,7 +374,11 @@ type ManifestContributionRedisRestartMeasurementTests() =
                 let branchRebaseMessageId = $"Reference/{branchRebaseReferenceId}/Created"
                 expectedMessageIds.Add branchRebaseMessageId
                 let! branchRebaseObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| branchRebaseMessageId |] "post-restart branch Rebase"
-                observedMessageIds.AddRange branchRebaseObserved
+
+                observedMessageIds.AddRange(
+                    branchRebaseObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+                )
 
                 let! branchMessageDelta, branchDurationDelta, explicitMetricsBaseline =
                     BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L restartMetricsBaseline
@@ -398,7 +416,11 @@ type ManifestContributionRedisRestartMeasurementTests() =
                 let explicitMessageId = $"Reference/{explicitSaveReferenceId}/Created"
                 expectedMessageIds.Add explicitMessageId
                 let! explicitObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| explicitMessageId |] "post-restart explicit Save"
-                observedMessageIds.AddRange explicitObserved
+
+                observedMessageIds.AddRange(
+                    explicitObserved
+                    |> Array.map (fun envelope -> envelope.MessageId)
+                )
 
                 let! finalDurable =
                     RedisRestartRuntime.waitForDurableStateAsync

@@ -314,6 +314,268 @@ module RedisRestart =
             ProtocolReady = observation.ProtocolOperationSucceeded
         }
 
+/// Defines the only HotManifest assertion identities permitted to produce a passing summary.
+module HotManifest =
+
+    /// Lists the exact assertion identities required by the MCA HotManifest topology.
+    let requiredAssertionIds =
+        [|
+            "hot-manifest.setup-deliveries-completed"
+            "hot-manifest.stimulus-deliveries-completed"
+            "hot-manifest.reference-root-cardinality"
+            "hot-manifest.manifest-relationship-cardinality"
+            "hot-manifest.logical-count"
+            "hot-manifest.workflow-count"
+            "hot-manifest.physical-active-count"
+            "hot-manifest.message-delta"
+            "hot-manifest.duration-delta"
+            "hot-manifest.identity-isolation"
+            "hot-manifest.evidence-integrity"
+        |]
+
+/// Defines the only HighlySharedDirectoryVersion assertion identities permitted to produce a passing summary.
+module HighlySharedDirectoryVersion =
+
+    /// Lists the exact assertion identities required by the MCA HighlySharedDirectoryVersion topology.
+    let requiredAssertionIds =
+        [|
+            "highly-shared.setup-deliveries-completed"
+            "highly-shared.stimulus-deliveries-completed"
+            "highly-shared.reference-root-cardinality"
+            "highly-shared.manifest-relationship-cardinality"
+            "highly-shared.logical-count"
+            "highly-shared.workflow-count"
+            "highly-shared.physical-active-count"
+            "highly-shared.message-delta"
+            "highly-shared.duration-delta"
+            "highly-shared.identity-isolation"
+            "highly-shared.evidence-integrity"
+        |]
+
+/// Declares the exact identities and cardinalities that one topology is allowed to produce.
+type TopologyCardinalityExpectation =
+    {
+        ScenarioId: string
+        RepositoryId: string
+        RequiredAssertionIds: string array
+        DeclaredIdentityIds: string array
+        SetupMessageIds: string array
+        StimulusMessageIds: string array
+        ReferenceRootRelationshipIds: string array
+        ManifestRelationshipIds: string array
+        LogicalCount: int64
+        WorkflowCount: int64
+        PhysicalActiveCount: int64
+    }
+
+/// Captures the completed-only deliveries and durable graph observed for one topology.
+type TopologyCardinalityObservation =
+    {
+        SetupObservedMessageIds: string array
+        SetupSettledBeforeStimulusBaseline: bool
+        StimulusObservedMessageIds: string array
+        ReferenceRootRelationshipIds: string array
+        ManifestRelationshipIds: string array
+        LogicalCount: int64
+        WorkflowCount: int64
+        PhysicalActiveCount: int64
+        MessageDelta: int64
+        DurationDelta: int64
+    }
+
+/// Projects exact topology evidence into the assertion decisions used by hosted scenarios.
+type TopologyCardinalityEvaluation =
+    {
+        SetupDeliveriesCompleted: bool
+        StimulusDeliveriesCompleted: bool
+        ReferenceRootCardinality: bool
+        ManifestRelationshipCardinality: bool
+        LogicalCount: bool
+        WorkflowCount: bool
+        PhysicalActiveCount: bool
+        MessageDelta: bool
+        DurationDelta: bool
+        IdentityIsolation: bool
+        AllPassed: bool
+    }
+
+/// Evaluates topology evidence without allowing counts or duplicate identities to stand in for the declared graph.
+module TopologyCardinality =
+
+    /// Requires exact unique ordinal identity sets on both sides.
+    let private exactUniqueSet (expected: string array) (observed: string array) =
+        let expectedSet = HashSet<string>(expected, StringComparer.Ordinal)
+        let observedSet = HashSet<string>(observed, StringComparer.Ordinal)
+
+        expectedSet.Count = expected.Length
+        && observedSet.Count = observed.Length
+        && expectedSet.SetEquals observedSet
+
+    /// Rejects repository, scenario, or declared production identities shared by two topology declarations.
+    let validateScenarioIsolation (expectations: TopologyCardinalityExpectation array) =
+        let errors = ResizeArray<string>()
+
+        let requireUnique description values =
+            values
+            |> Array.countBy id
+            |> Array.filter (fun (_, count) -> count > 1)
+            |> Array.iter (fun (value, count) -> errors.Add($"{description} '{value}' occurred {count} times."))
+
+        expectations
+        |> Array.collect (fun expectation -> expectation.DeclaredIdentityIds)
+        |> requireUnique "Declared topology identity"
+
+        expectations
+        |> Array.map (fun expectation -> expectation.RepositoryId)
+        |> requireUnique "Topology repository"
+
+        expectations
+        |> Array.map (fun expectation -> expectation.ScenarioId)
+        |> requireUnique "Scenario identity"
+
+        errors.ToArray()
+
+    /// Evaluates every cardinality and delivery gate using exact equality and unique identities.
+    let evaluate (expected: TopologyCardinalityExpectation) (observed: TopologyCardinalityObservation) =
+        let setupDeliveriesCompleted =
+            expected.SetupMessageIds.Length > 0
+            && observed.SetupSettledBeforeStimulusBaseline
+            && exactUniqueSet expected.SetupMessageIds observed.SetupObservedMessageIds
+
+        let expectedStimulusDelta = int64 expected.StimulusMessageIds.Length
+
+        let stimulusIdentitiesComplete =
+            expected.StimulusMessageIds.Length > 0
+            && exactUniqueSet expected.StimulusMessageIds observed.StimulusObservedMessageIds
+
+        let messageDelta = observed.MessageDelta = expectedStimulusDelta
+        let durationDelta = observed.DurationDelta = expectedStimulusDelta
+
+        let stimulusDeliveriesCompleted =
+            stimulusIdentitiesComplete
+            && messageDelta
+            && durationDelta
+
+        let referenceRootCardinality = exactUniqueSet expected.ReferenceRootRelationshipIds observed.ReferenceRootRelationshipIds
+
+        let manifestRelationshipCardinality = exactUniqueSet expected.ManifestRelationshipIds observed.ManifestRelationshipIds
+
+        let logicalCount = observed.LogicalCount = expected.LogicalCount
+        let workflowCount = observed.WorkflowCount = expected.WorkflowCount
+        let physicalActiveCount = observed.PhysicalActiveCount = expected.PhysicalActiveCount
+
+        let identityIsolation =
+            validateScenarioIsolation [| expected |]
+            |> Array.isEmpty
+            && stimulusIdentitiesComplete
+            && exactUniqueSet expected.SetupMessageIds observed.SetupObservedMessageIds
+
+        let allPassed =
+            setupDeliveriesCompleted
+            && stimulusDeliveriesCompleted
+            && referenceRootCardinality
+            && manifestRelationshipCardinality
+            && logicalCount
+            && workflowCount
+            && physicalActiveCount
+            && messageDelta
+            && durationDelta
+            && identityIsolation
+
+        {
+            SetupDeliveriesCompleted = setupDeliveriesCompleted
+            StimulusDeliveriesCompleted = stimulusDeliveriesCompleted
+            ReferenceRootCardinality = referenceRootCardinality
+            ManifestRelationshipCardinality = manifestRelationshipCardinality
+            LogicalCount = logicalCount
+            WorkflowCount = workflowCount
+            PhysicalActiveCount = physicalActiveCount
+            MessageDelta = messageDelta
+            DurationDelta = durationDelta
+            IdentityIsolation = identityIsolation
+            AllPassed = allPassed
+        }
+
+/// Defines the exact proof contract for deterministic duplicate-backlog recovery.
+module DuplicateBacklog =
+
+    /// Lists the exact assertion identities required by the duplicate-backlog witness.
+    let requiredAssertionIds =
+        [|
+            "duplicate-backlog.seed-deliveries-completed"
+            "duplicate-backlog.pre-stop-terminal-barrier"
+            "duplicate-backlog.visible-while-stopped"
+            "duplicate-backlog.fresh-server-readiness"
+            "duplicate-backlog.replay-message-delta"
+            "duplicate-backlog.replay-duration-delta"
+            "duplicate-backlog.unrelated-event-excluded"
+            "duplicate-backlog.reference-root-state-unchanged"
+            "duplicate-backlog.manifest-state-unchanged"
+            "duplicate-backlog.logical-state-unchanged"
+            "duplicate-backlog.workflow-state-unchanged"
+            "duplicate-backlog.physical-state-unchanged"
+            "duplicate-backlog.identity-isolation"
+            "duplicate-backlog.evidence-integrity"
+        |]
+
+    /// Rejects a stop boundary until the exact finite seed inventory, completed delivery, and durable convergence all agree.
+    let validatePreStopBarrier (expectedMessageIds: string array) (observedMessageIds: string array) deliveryCompleted durableConverged =
+        let errors = ResizeArray<string>()
+        let expected = HashSet<string>(expectedMessageIds, StringComparer.Ordinal)
+        let observed = HashSet<string>(observedMessageIds, StringComparer.Ordinal)
+
+        if expected.Count <> expectedMessageIds.Length then
+            errors.Add("Expected seed inventory contains duplicate identities.")
+
+        if observed.Count <> observedMessageIds.Length then
+            errors.Add("Observed seed inventory contains duplicate deliveries.")
+
+        expected
+        |> Seq.filter (observed.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Missing seed envelope '{messageId}'."))
+
+        observed
+        |> Seq.filter (expected.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Unclassified seed envelope '{messageId}'."))
+
+        if not deliveryCompleted then
+            errors.Add("Seed delivery completion was not terminal before Grace.Server stopped.")
+
+        if not durableConverged then
+            errors.Add("Seed durable state had not converged before Grace.Server stopped.")
+
+        errors.ToArray()
+
+    /// Requires every selected replay identity to appear in at least one observed stopped-server broker snapshot.
+    let validateStoppedBacklogVisibility (selectedMessageIds: string array) (observedMessageIds: string array) =
+        let errors = ResizeArray<string>()
+        let selected = HashSet<string>(selectedMessageIds, StringComparer.Ordinal)
+        let observed = HashSet<string>(observedMessageIds, StringComparer.Ordinal)
+
+        if selected.Count <> selectedMessageIds.Length then
+            errors.Add("Selected replay identities contain duplicates.")
+
+        if Array.isEmpty observedMessageIds then
+            errors.Add("No broker state was observed while Grace.Server was stopped.")
+
+        selected
+        |> Seq.filter (observed.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Replay envelope '{messageId}' was not visible while Grace.Server was stopped."))
+
+        errors.ToArray()
+
+    /// Requires post-command health to be freshly observed and followed by successful HTTP readiness.
+    let validateFreshServerReadiness (commandStartedAt: DateTimeOffset) (healthObservedAt: DateTimeOffset) httpReady =
+        let errors = ResizeArray<string>()
+
+        if healthObservedAt <= commandStartedAt then
+            errors.Add("Grace.Server health was not observed after the start command began.")
+
+        if not httpReady then
+            errors.Add("Grace.Server HTTP readiness failed after fresh health.")
+
+        errors.ToArray()
+
 /// Derives a scenario outcome from exact assertion identities and the runtime-failure ledger.
 module ScenarioSummary =
 
