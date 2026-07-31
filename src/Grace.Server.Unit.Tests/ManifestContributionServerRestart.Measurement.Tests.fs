@@ -114,3 +114,55 @@ grace_manifest_contribution_messages_total_created{otel_scope_name="Grace.Manife
         match OpenMetrics.evaluateCompletedSettlementDelta 1L baseline observed with
         | DeltaEvaluation.Invalid error -> Assert.That(error, Does.Contain("suffixed"))
         | result -> Assert.Fail($"A suffixed settlement series unexpectedly produced {result}.")
+
+    /// Verifies a fresh process with both settlement series absent normalizes to the exact paired-zero baseline.
+    [<Test>]
+    member _.AbsentFreshProcessSeriesNormalizeToPairedZero() =
+        let observed =
+            """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 1
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 1
+"""
+
+        match OpenMetrics.captureFreshProcessCompletedSettlementBaseline "# unrelated metrics only" with
+        | Ok baseline -> Assert.That(OpenMetrics.evaluateCompletedSettlementDelta 1L baseline observed, Is.EqualTo(DeltaEvaluation.Complete(1L, 1L)))
+        | Error error -> Assert.Fail($"Expected an absent fresh-process pair to normalize, got {error}.")
+
+    /// Verifies an exact paired-zero fresh-process scrape remains a valid captured baseline.
+    [<Test>]
+    member _.ExactFreshProcessZeroSeriesRemainValid() =
+        let zero =
+            """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+"""
+
+        match OpenMetrics.captureFreshProcessCompletedSettlementBaseline zero with
+        | Ok baseline -> Assert.That(baseline, Is.EqualTo(zero))
+        | Error error -> Assert.Fail($"Expected an exact zero baseline to remain valid, got {error}.")
+
+    /// Verifies every ambiguous or nonzero fresh-process settlement shape fails instead of becoming a replay baseline.
+    [<Test>]
+    member _.UnsafeFreshProcessBaselineShapesFail() =
+        let messages value =
+            $"grace_manifest_contribution_messages_total{{otel_scope_name=\"Grace.ManifestContributionAccounting\",stage=\"settle\",outcome=\"completed\"}} {value}"
+
+        let durations value =
+            $"grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_name=\"Grace.ManifestContributionAccounting\",stage=\"settle\",outcome=\"completed\"}} {value}"
+
+        let invalidScrapes =
+            [|
+                "partial", messages 0
+                "nonzero", $"{messages 1}{Environment.NewLine}{durations 1}"
+                "suffix", "grace_manifest_contribution_messages_total_created 0"
+                "other-label", "grace_manifest_contribution_messages_total{outcome=\"completed\"} 0"
+                "settlement-failed", "grace_manifest_contribution_messages_total{outcome=\"settlement_failed\"} 0"
+                "duplicate", $"{messages 0}{Environment.NewLine}{messages 0}{Environment.NewLine}{durations 0}"
+                "malformed", "grace_manifest_contribution_messages_total{ 0"
+            |]
+
+        invalidScrapes
+        |> Array.iter (fun (name, scrape) ->
+            match OpenMetrics.captureFreshProcessCompletedSettlementBaseline scrape with
+            | Error _ -> ()
+            | Ok _ -> Assert.Fail($"{name} unexpectedly normalized to a fresh-process baseline."))

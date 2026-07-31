@@ -641,6 +641,12 @@ module OpenMetrics =
 
     let private labelPattern = Regex("(?:^|,)\\s*(?<key>[A-Za-z_][A-Za-z0-9_]*)=\"(?<value>(?:\\\\.|[^\"])*)\"\\s*(?=,|$)", RegexOptions.CultureInvariant)
 
+    let private freshProcessZeroBaseline =
+        """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+"""
+
     /// Unescapes one OpenMetrics label value after the label grammar has bounded it.
     let private unescapeLabelValue (value: string) =
         value
@@ -749,6 +755,35 @@ module OpenMetrics =
             Error($"{durationMetricName} required exactly one sample but found {values[durationMetricName].Count}.")
         else
             Ok(values[messageMetricName][0], values[durationMetricName][0])
+
+    /// Captures a freshly restarted process baseline while normalizing only the uninstantiated paired-zero series shape.
+    let captureFreshProcessCompletedSettlementBaseline (scrape: string) =
+        let hasRelevantSeries =
+            scrape.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun rawLine ->
+                let line = rawLine.Trim()
+
+                if line.StartsWith("#", StringComparison.Ordinal) then
+                    false
+                else
+                    let sampleMatch = samplePattern.Match line
+
+                    if sampleMatch.Success then
+                        let metricName = sampleMatch.Groups["name"].Value
+
+                        metricName.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || metricName.StartsWith(durationMetricName, StringComparison.Ordinal)
+                    else
+                        line.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || line.StartsWith(durationMetricName, StringComparison.Ordinal))
+
+        if not hasRelevantSeries then
+            Ok freshProcessZeroBaseline
+        else
+            match parseCompletedSettlementSamples scrape with
+            | Ok (0L, 0L) -> Ok scrape
+            | Ok (messages, durations) -> Error($"Fresh-process settlement metrics must both be zero: messages={messages}, durations={durations}.")
+            | Error error -> Error error
 
     /// Evaluates exact cumulative equality while allowing only unchanged or partial deltas to keep waiting.
     let evaluateCompletedSettlementDelta expectedDelta baselineScrape observedScrape =

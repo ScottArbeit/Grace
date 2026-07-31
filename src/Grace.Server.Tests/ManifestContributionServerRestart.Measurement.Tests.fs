@@ -383,7 +383,12 @@ type ManifestContributionServerRestartMeasurementTests() =
                      && readinessErrors.Length = 0)
                     $"ready={restart.HttpReadyObservedAt:O}; errors={readinessErrorDetail}"
 
-                let! replayBaseline = BaselineRuntime.scrapeMetricsAsync state
+                let! rawReplayBaseline = BaselineRuntime.scrapeMetricsAsync state
+
+                let replayBaseline =
+                    OpenMetrics.captureFreshProcessCompletedSettlementBaseline rawReplayBaseline
+                    |> Result.defaultWith (fun error -> invalidOp $"Invalid fresh-process replay baseline: {error}")
+
                 let replayEnvelope = saveObserved[0]
                 do! ServerRestartRuntime.publishCapturedEnvelopeAsync state replayEnvelope
                 let! replayObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| saveMessageId |] "server-restart replay"
