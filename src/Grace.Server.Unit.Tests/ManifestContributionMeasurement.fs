@@ -9,6 +9,7 @@ open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
 open Grace.Types.Common
+open System.Threading.Tasks
 
 /// Projects unbounded diagnostic sources into deterministic, inspectable evidence fields.
 module BoundedEvidence =
@@ -351,6 +352,246 @@ module RedisRestart =
         && observation.WorkflowUnchanged
         && observation.ManifestRelationshipPresent
         && observation.PhysicalActiveCount = 1L
+
+/// Captures structured diagnosis evidence and the action support derived by the production repair planner.
+type RepairDiagnosisEvidence =
+    {
+        OutcomeIsIncompleteRetain: bool
+        ExpectedActionIdentity: string
+        MissingRelationships: string array
+        StaleRelationships: string array
+        RepairTargets: string array
+        ProductionPlanActionKinds: string array
+        ProductionPlanActionIdentities: string array
+        UnknownFields: string array
+        EvidenceGaps: string array
+    }
+
+/// Captures the mutation-sensitive facts produced by the real repair dry-run route.
+type RepairDryRunEvidence =
+    {
+        Execute: bool
+        Outcome: string
+        ExpectedActionIdentity: string
+        ProposedActionKinds: string array
+        ProposedActionIdentities: string array
+        AppliedActionKinds: string array
+        ReferenceRootPresent: bool
+    }
+
+/// Captures the action, identity, broker, and durable facts required to attribute repair republication.
+type RepairExecuteEvidence =
+    {
+        Execute: bool
+        Outcome: string
+        ExpectedActionIdentity: string
+        ProposedActionKinds: string array
+        ProposedActionIdentities: string array
+        AppliedActionKinds: string array
+        AppliedActionIdentities: string array
+        OriginalReferenceId: Guid
+        RepairCorrelationId: string
+        OriginalHeaderCorrelationId: string
+        OriginalBodyCorrelationId: string
+        ExpectedMessageId: string
+        ObservedMessageIds: string array
+        RepublishedHeaderCorrelationIds: string array
+        RepublishedBodyCorrelationIds: string array
+        MessageDelta: int64
+        DurationDelta: int64
+        ReferenceRootRestored: bool
+    }
+
+/// Defines and validates the exact evidence contract for one missing Reference-root repair witness.
+module Repair =
+
+    [<Literal>]
+    let private SupportedActionKind = "RepublishReferenceCreated"
+
+    /// Lists the exact assertion identities required by the MCA Repair scenario.
+    let requiredAssertionIds =
+        [|
+            "repair.seed-deliveries-completed"
+            "repair.corruption-applied"
+            "repair.diagnosis-one-supported-action"
+            "repair.dry-run-no-mutation"
+            "repair.execute-one-action"
+            "repair.republication-message-delta"
+            "repair.republication-duration-delta"
+            "repair.reference-root-restored"
+            "repair.logical-state-unchanged"
+            "repair.workflow-state-unchanged"
+            "repair.physical-state-unchanged"
+            "repair.evidence-integrity"
+        |]
+
+    /// Requires one supported action and rejects zero, duplicate, or unrelated repair plans.
+    let private validateOneSupportedAction
+        description
+        expectedIdentity
+        (actionKinds: string array)
+        (actionIdentities: string array)
+        (errors: ResizeArray<string>)
+        =
+        if
+            isNull actionKinds
+            || actionKinds.Length <> 1
+            || not (String.Equals(actionKinds[0], SupportedActionKind, StringComparison.Ordinal))
+            || isNull actionIdentities
+            || actionIdentities.Length <> 1
+            || not (String.Equals(actionIdentities[0], expectedIdentity, StringComparison.Ordinal))
+        then
+            errors.Add($"{description} must contain exactly one {SupportedActionKind} action for the expected relationship identity.")
+
+    /// Accepts retained diagnosis uncertainty only when the production planner still derives the exact supported Reference-root action.
+    let validateDiagnosis (evidence: RepairDiagnosisEvidence) =
+        let errors = ResizeArray<string>()
+
+        if not evidence.OutcomeIsIncompleteRetain then
+            errors.Add("The one-missing-root diagnosis must retain an incomplete outcome until repair executes.")
+
+        if String.IsNullOrWhiteSpace evidence.ExpectedActionIdentity then
+            errors.Add("The expected missing Reference-root relationship identity must not be empty.")
+
+        if
+            isNull evidence.MissingRelationships
+            || evidence.MissingRelationships.Length <> 1
+            || not (String.Equals(evidence.MissingRelationships[0], evidence.ExpectedActionIdentity, StringComparison.Ordinal))
+        then
+            errors.Add("Diagnosis must contain exactly the expected missing Reference-root relationship.")
+
+        if isNull evidence.StaleRelationships
+           || evidence.StaleRelationships.Length <> 0 then
+            errors.Add("Diagnosis must not contain a stale relationship for the one-missing-root scenario.")
+
+        let expectedTarget = $"{SupportedActionKind}:{evidence.ExpectedActionIdentity}"
+
+        if
+            isNull evidence.RepairTargets
+            || evidence.RepairTargets.Length <> 1
+            || not (String.Equals(evidence.RepairTargets[0], expectedTarget, StringComparison.Ordinal))
+        then
+            errors.Add("Diagnosis must report exactly the supported Reference-created republication target.")
+
+        validateOneSupportedAction
+            "The production repair plan"
+            evidence.ExpectedActionIdentity
+            evidence.ProductionPlanActionKinds
+            evidence.ProductionPlanActionIdentities
+            errors
+
+        if isNull evidence.UnknownFields then
+            errors.Add("Diagnosis UnknownFields must be retained as an explicit array.")
+
+        if isNull evidence.EvidenceGaps then
+            errors.Add("Diagnosis EvidenceGaps must be retained as an explicit array.")
+
+        errors.ToArray()
+
+    /// Rejects a dry run that executes, mutates, or fails to retain the one-action plan.
+    let validateDryRun (evidence: RepairDryRunEvidence) =
+        let errors = ResizeArray<string>()
+
+        if evidence.Execute then
+            errors.Add("The repair dry run was marked for execution.")
+
+        if not (String.Equals(evidence.Outcome, "IncompleteRetain", StringComparison.Ordinal)) then
+            errors.Add("The supported one-action repair dry run must retain IncompleteRetain.")
+
+        validateOneSupportedAction
+            "The repair dry-run plan"
+            evidence.ExpectedActionIdentity
+            evidence.ProposedActionKinds
+            evidence.ProposedActionIdentities
+            errors
+
+        if isNull evidence.AppliedActionKinds
+           || evidence.AppliedActionKinds.Length <> 0 then
+            errors.Add("The repair dry run applied a mutation.")
+
+        if evidence.ReferenceRootPresent then
+            errors.Add("The missing Reference-root relationship changed during dry run.")
+
+        errors.ToArray()
+
+    /// Rejects execute evidence unless one original deterministic delivery both settles and restores the relationship.
+    let validateExecute (evidence: RepairExecuteEvidence) =
+        let errors = ResizeArray<string>()
+
+        if not evidence.Execute then
+            errors.Add("The repair execute response was marked as a dry run.")
+
+        if
+            not (String.Equals(evidence.Outcome, "VerifiedComplete", StringComparison.Ordinal))
+            && not (String.Equals(evidence.Outcome, "IncompleteRetain", StringComparison.Ordinal))
+        then
+            errors.Add("Repair execute must retain VerifiedComplete or the supported applied-action IncompleteRetain state.")
+
+        validateOneSupportedAction
+            "The repair execute plan"
+            evidence.ExpectedActionIdentity
+            evidence.ProposedActionKinds
+            evidence.ProposedActionIdentities
+            errors
+
+        validateOneSupportedAction
+            "The repair applied prefix"
+            evidence.ExpectedActionIdentity
+            evidence.AppliedActionKinds
+            evidence.AppliedActionIdentities
+            errors
+
+        if evidence.OriginalReferenceId = Guid.Empty then
+            errors.Add("The original Reference identity must not be empty.")
+
+        if
+            String.IsNullOrWhiteSpace evidence.RepairCorrelationId
+            || String.Equals(evidence.RepairCorrelationId, string evidence.OriginalReferenceId, StringComparison.OrdinalIgnoreCase)
+        then
+            errors.Add("The repair request correlation identity must differ from the original Reference identity.")
+
+        if String.IsNullOrWhiteSpace evidence.OriginalBodyCorrelationId then
+            errors.Add("The original persisted Reference-created correlation identity must not be empty.")
+
+        if
+            String.IsNullOrWhiteSpace evidence.OriginalHeaderCorrelationId
+            || not (String.Equals(evidence.OriginalHeaderCorrelationId, evidence.OriginalBodyCorrelationId, StringComparison.Ordinal))
+        then
+            errors.Add("The original Reference-created broker header must match its persisted event correlation identity.")
+
+        let deterministicMessageId = $"Reference/{evidence.OriginalReferenceId}/Created"
+
+        if not (String.Equals(evidence.ExpectedMessageId, deterministicMessageId, StringComparison.Ordinal)) then
+            errors.Add("Repair republication must reuse the original deterministic Reference-created message identity.")
+
+        if
+            isNull evidence.ObservedMessageIds
+            || evidence.ObservedMessageIds.Length <> 1
+            || not (String.Equals(evidence.ObservedMessageIds[0], deterministicMessageId, StringComparison.Ordinal))
+        then
+            errors.Add("Repair republication must observe exactly one original deterministic Reference-created envelope.")
+
+        if
+            isNull evidence.RepublishedHeaderCorrelationIds
+            || evidence.RepublishedHeaderCorrelationIds.Length
+               <> 1
+            || isNull evidence.RepublishedBodyCorrelationIds
+            || evidence.RepublishedBodyCorrelationIds.Length <> 1
+            || not (String.Equals(evidence.RepublishedHeaderCorrelationIds[0], evidence.RepublishedBodyCorrelationIds[0], StringComparison.Ordinal))
+            || not (String.Equals(evidence.RepublishedBodyCorrelationIds[0], evidence.OriginalBodyCorrelationId, StringComparison.Ordinal))
+        then
+            errors.Add("Repair republication headers and persisted bodies must agree and preserve the original persisted event correlation identity.")
+
+        if evidence.MessageDelta <> 1L then
+            errors.Add($"Repair republication requires an exact completed message delta of one, observed {evidence.MessageDelta}.")
+
+        if evidence.DurationDelta <> 1L then
+            errors.Add($"Repair republication requires an exact completed duration delta of one, observed {evidence.DurationDelta}.")
+
+        if not evidence.ReferenceRootRestored then
+            errors.Add("Repair republication did not restore the exact Reference-root relationship.")
+
+        errors.ToArray()
 
 /// Defines the only HotManifest assertion identities permitted to produce a passing summary.
 module HotManifest =
@@ -695,6 +936,12 @@ type DeltaEvaluation =
     | Pending
     | Invalid of reason: string
 
+/// Reports whether an exact completed-settlement snapshot stayed unchanged or became invalid.
+type UnchangedEvaluation =
+    | Unchanged of messages: int64 * durations: int64
+    | Changed of reason: string
+    | UnchangedInvalid of reason: string
+
 /// Parses only the two exact production OpenMetrics settlement samples used by the Baseline witness.
 module OpenMetrics =
 
@@ -713,6 +960,12 @@ module OpenMetrics =
         Regex("^(?<name>[A-Za-z_:][A-Za-z0-9_:]*)(?:\\{(?<labels>.*)\\})?\\s+(?<value>[^\\s]+)(?:\\s+.*)?$", RegexOptions.CultureInvariant)
 
     let private labelPattern = Regex("(?:^|,)\\s*(?<key>[A-Za-z_][A-Za-z0-9_]*)=\"(?<value>(?:\\\\.|[^\"])*)\"\\s*(?=,|$)", RegexOptions.CultureInvariant)
+
+    let private freshProcessZeroBaseline =
+        """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 0
+"""
 
     /// Unescapes one OpenMetrics label value after the label grammar has bounded it.
     let private unescapeLabelValue (value: string) =
@@ -803,6 +1056,11 @@ module OpenMetrics =
                             else
                                 errors.Add($"{metricName} contained a non-completed-settlement label set.")
                         | _ -> errors.Add($"{metricName} was malformed.")
+                    elif
+                        metricName.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || metricName.StartsWith(durationMetricName, StringComparison.Ordinal)
+                    then
+                        errors.Add("A completed settlement metric used a forbidden suffixed name.")
                 elif
                     line.StartsWith(messageMetricName, StringComparison.Ordinal)
                     || line.StartsWith(durationMetricName, StringComparison.Ordinal)
@@ -817,6 +1075,49 @@ module OpenMetrics =
             Error($"{durationMetricName} required exactly one sample but found {values[durationMetricName].Count}.")
         else
             Ok(values[messageMetricName][0], values[durationMetricName][0])
+
+    /// Requires exactly one completed-settlement sample from each metric family on both scrapes before comparing cumulative values.
+    let evaluateCompletedSettlementUnchanged baselineScrape observedScrape =
+        match parseCompletedSettlementSamples baselineScrape, parseCompletedSettlementSamples observedScrape with
+        | Ok (baselineMessages, baselineDurations), Ok (observedMessages, observedDurations) ->
+            if baselineMessages = observedMessages
+               && baselineDurations = observedDurations then
+                Unchanged(observedMessages, observedDurations)
+            else
+                Changed(
+                    $"Completed settlement telemetry changed: messages={baselineMessages}->{observedMessages}; durations={baselineDurations}->{observedDurations}."
+                )
+        | Error baselineError, _ -> UnchangedInvalid($"Invalid baseline scrape: {baselineError}")
+        | _, Error observedError -> UnchangedInvalid($"Invalid observed scrape: {observedError}")
+
+    /// Captures a freshly restarted process baseline while normalizing only the uninstantiated paired-zero series shape.
+    let captureFreshProcessCompletedSettlementBaseline (scrape: string) =
+        let hasRelevantSeries =
+            scrape.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun rawLine ->
+                let line = rawLine.Trim()
+
+                if line.StartsWith("#", StringComparison.Ordinal) then
+                    false
+                else
+                    let sampleMatch = samplePattern.Match line
+
+                    if sampleMatch.Success then
+                        let metricName = sampleMatch.Groups["name"].Value
+
+                        metricName.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || metricName.StartsWith(durationMetricName, StringComparison.Ordinal)
+                    else
+                        line.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || line.StartsWith(durationMetricName, StringComparison.Ordinal))
+
+        if not hasRelevantSeries then
+            Ok freshProcessZeroBaseline
+        else
+            match parseCompletedSettlementSamples scrape with
+            | Ok (0L, 0L) -> Ok scrape
+            | Ok (messages, durations) -> Error($"Fresh-process settlement metrics must both be zero: messages={messages}, durations={durations}.")
+            | Error error -> Error error
 
     /// Evaluates exact cumulative equality while allowing only unchanged or partial deltas to keep waiting.
     let evaluateCompletedSettlementDelta expectedDelta baselineScrape observedScrape =
@@ -862,6 +1163,100 @@ module ProducerInventory =
         observed
         |> Seq.filter (expected.Contains >> not)
         |> Seq.iter (fun messageId -> errors.Add($"Unclassified Reference-created envelope '{messageId}'."))
+
+        errors.ToArray()
+
+/// Defines the deterministic proof contract for one replay after a real Grace.Server restart.
+module ServerRestart =
+
+    /// Returns whether retained state or health text positively identifies a non-ready Grace.Server observation.
+    let isAffirmativeNonReady resourceState healthStatus =
+        let resourceStateIsKnown =
+            not (String.IsNullOrWhiteSpace resourceState)
+            && not (String.Equals(resourceState, "Unknown", StringComparison.OrdinalIgnoreCase))
+
+        let healthStatusIsKnown =
+            not (String.IsNullOrWhiteSpace healthStatus)
+            && not (String.Equals(healthStatus, "Unknown", StringComparison.OrdinalIgnoreCase))
+
+        (resourceStateIsKnown
+         && not (String.Equals(resourceState, "Running", StringComparison.Ordinal)))
+        || (healthStatusIsKnown
+            && not (String.Equals(healthStatus, "Healthy", StringComparison.Ordinal)))
+
+    /// Lists the exact assertion identities required by the server-restart replay witness.
+    let requiredAssertionIds =
+        [|
+            "server-restart.seed-deliveries-completed"
+            "server-restart.command-completed"
+            "server-restart.fresh-health"
+            "server-restart.http-ready"
+            "server-restart.replay-message-delta"
+            "server-restart.replay-duration-delta"
+            "server-restart.reference-root-state-unchanged"
+            "server-restart.manifest-state-unchanged"
+            "server-restart.logical-state-unchanged"
+            "server-restart.workflow-state-unchanged"
+            "server-restart.physical-state-unchanged"
+            "server-restart.evidence-integrity"
+        |]
+
+    /// Requires a completed restart command, retained non-ready transition, fresh Healthy event, and bounded HTTP readiness in strict order.
+    let validateFreshReadiness
+        commandCompleted
+        (commandStartedAt: DateTimeOffset)
+        (commandCompletedAt: DateTimeOffset)
+        (nonReadyEventObservedAt: DateTimeOffset)
+        nonReadyResourceState
+        nonReadyHealthStatus
+        (resourceEventObservedAt: DateTimeOffset)
+        resourceState
+        (httpReadyObservedAt: DateTimeOffset)
+        httpReady
+        =
+        let errors = ResizeArray<string>()
+
+        if not commandCompleted then
+            errors.Add("The Grace.Server restart command did not complete successfully.")
+
+        if commandCompletedAt < commandStartedAt then
+            errors.Add("Grace.Server restart command completion preceded its start.")
+
+        if nonReadyEventObservedAt <= commandCompletedAt then
+            errors.Add("The Grace.Server non-ready transition was not observed after restart command completion.")
+
+        if not (isAffirmativeNonReady nonReadyResourceState nonReadyHealthStatus) then
+            errors.Add("The retained Grace.Server transition did not demonstrate a non-ready state.")
+
+        if resourceEventObservedAt <= nonReadyEventObservedAt then
+            errors.Add("The fresh Grace.Server Healthy event did not follow the retained non-ready transition.")
+
+        if not (String.Equals(resourceState, "Healthy", StringComparison.Ordinal)) then
+            errors.Add($"The fresh Grace.Server resource event was not Healthy: {resourceState}.")
+
+        if httpReadyObservedAt <= resourceEventObservedAt then
+            errors.Add("Grace.Server HTTP readiness did not follow the fresh Healthy resource event.")
+
+        if not httpReady then
+            errors.Add("Grace.Server HTTP readiness failed after the fresh Healthy resource event.")
+
+        errors.ToArray()
+
+    /// Requires one exact observed replay identity plus one completed message and duration settlement observation.
+    let validateReplayCompletion expectedMessageId observedMessageIds messageDelta durationDelta settlementCompleted =
+        let errors = ResizeArray<string>()
+
+        ProducerInventory.validate [| expectedMessageId |] observedMessageIds
+        |> errors.AddRange
+
+        if messageDelta <> 1L then
+            errors.Add($"The replay completed message delta required 1 but observed {messageDelta}.")
+
+        if durationDelta <> 1L then
+            errors.Add($"The replay completed duration delta required 1 but observed {durationDelta}.")
+
+        if not settlementCompleted then
+            errors.Add("The replay settlement failed or did not reach terminal completion.")
 
         errors.ToArray()
 
@@ -992,3 +1387,104 @@ type EvidenceWriter(directory: string, maximumRecordBytes: int) =
 
     interface IDisposable with
         member _.Dispose() = ()
+
+/// Retains the initialized primary evidence sink and immutable selected-process inputs after preflight succeeds.
+type MeasurementPreflightReady = { Writer: EvidenceWriter; Worktree: string; Command: string; EvidenceDirectory: string }
+
+/// Retains a pre-runtime terminal result and an optional fallback diagnostic when primary evidence is unavailable.
+type MeasurementPreflightTerminal = { Summary: ScenarioSummary; EvidencePath: string option; FallbackDiagnostic: string option }
+
+/// Distinguishes a runtime-ready selected-process witness from terminal preflight evidence.
+type MeasurementPreflightResult =
+    | Ready of MeasurementPreflightReady
+    | Terminal of MeasurementPreflightTerminal
+
+/// Establishes terminal evidence before a selected-process witness performs Git, host, or scenario side effects.
+module MeasurementPreflight =
+
+    let private requiredInputs =
+        [|
+            "GRACE_MCA_WORKTREE"
+            "GRACE_MCA_HOSTED_COMMAND"
+            "GRACE_MCA_EVIDENCE_ROOT"
+        |]
+
+    /// Produces a bounded diagnostic suitable for the test runner when the primary evidence sink cannot retain terminal truth.
+    let fallbackDiagnostic (summary: ScenarioSummary) detail =
+        let boundedDetail = BoundedEvidence.assertionDetail detail
+        $"MCA terminal fallback: summary={JsonSerializer.Serialize summary}; detail={boundedDetail}"
+
+    /// Validates selected-process inputs without side effects, then creates primary evidence before Git inspection.
+    let prepareAsync
+        runId
+        scenarioId
+        (requiredAssertionIds: string array)
+        maximumRecordBytes
+        (getEnvironment: string -> string)
+        (runGitAsync: string -> string array -> Task<string>)
+        (createWriter: string -> int -> EvidenceWriter)
+        =
+        task {
+            let values =
+                requiredInputs
+                |> Array.map (fun name -> name, getEnvironment name)
+
+            let missing =
+                values
+                |> Array.choose (fun (name, value) -> if String.IsNullOrWhiteSpace value then Some name else None)
+
+            if missing.Length > 0 then
+                let summary = ScenarioSummary.derive runId scenarioId requiredAssertionIds Array.empty Array.empty true
+                let missingNames = String.Join(", ", missing)
+                let detail = $"Missing required selected-process inputs: {missingNames}."
+
+                return Terminal { Summary = summary; EvidencePath = None; FallbackDiagnostic = Some(fallbackDiagnostic summary detail) }
+            else
+                let worktreeValue = snd values[0]
+                let command = (snd values[1]).Trim()
+                let evidenceRootValue = snd values[2]
+
+                try
+                    let worktree = Path.GetFullPath(worktreeValue.Trim())
+                    let evidenceRoot = Path.GetFullPath(evidenceRootValue.Trim())
+                    let evidenceDirectory = Path.Combine(evidenceRoot, runId)
+                    let writer = createWriter evidenceDirectory maximumRecordBytes
+
+                    try
+                        let! commitSha = runGitAsync worktree [| "rev-parse"; "HEAD" |]
+
+                        let! status =
+                            runGitAsync
+                                worktree
+                                [|
+                                    "status"
+                                    "--porcelain=v1"
+                                    "--untracked-files=all"
+                                |]
+
+                        let worktreeState = if String.IsNullOrWhiteSpace status then "clean" else status
+
+                        writer.Append(MeasurementRun.Create(runId, commitSha, worktree, worktreeState, command, evidenceDirectory, [| scenarioId |]))
+
+                        return Ready { Writer = writer; Worktree = worktree; Command = command; EvidenceDirectory = evidenceDirectory }
+                    with
+                    | ex ->
+                        let failures = [| $"preflight: {ex}" |]
+                        let summary = ScenarioSummary.derive runId scenarioId requiredAssertionIds Array.empty failures false
+
+                        try
+                            writer.Append summary
+
+                            return Terminal { Summary = summary; EvidencePath = Some writer.Path; FallbackDiagnostic = None }
+                        with
+                        | summaryEx ->
+                            let detail = $"Primary preflight failure: {ex}; terminal append failure: {summaryEx}"
+
+                            return Terminal { Summary = summary; EvidencePath = Some writer.Path; FallbackDiagnostic = Some(fallbackDiagnostic summary detail) }
+                with
+                | ex ->
+                    let failures = [| $"preflight: {ex}" |]
+                    let summary = ScenarioSummary.derive runId scenarioId requiredAssertionIds Array.empty failures false
+
+                    return Terminal { Summary = summary; EvidencePath = None; FallbackDiagnostic = Some(fallbackDiagnostic summary (ex.ToString())) }
+        }

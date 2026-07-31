@@ -79,7 +79,7 @@ module internal BaselineRuntime =
     let requireEnvironment name =
         match Environment.GetEnvironmentVariable name with
         | value when not (String.IsNullOrWhiteSpace value) -> value.Trim()
-        | _ -> invalidOp $"The explicit Baseline witness requires {name}."
+        | _ -> invalidOp $"The explicit manifest-contribution witness requires {name}."
 
     /// Runs one Git query while concurrently draining both redirected streams.
     let runGitAsync worktree arguments =
