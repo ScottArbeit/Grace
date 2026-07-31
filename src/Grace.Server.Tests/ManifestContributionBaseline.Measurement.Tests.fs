@@ -246,50 +246,65 @@ module private BaselineRuntime =
             use client = new ServiceBusClient(state.ServiceBusConnectionString)
             let options = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete)
             use receiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, options)
-            let observed = ResizeArray<string>()
-            let expected = HashSet<string>(expectedMessageIds, StringComparer.Ordinal)
-            let seenExpected = HashSet<string>(StringComparer.Ordinal)
             let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
+            let mutable drain = ProducerInventoryDrain.start
 
-            while seenExpected.Count < expected.Count
+            while ProducerInventoryDrain.status drain = ProducerInventoryDrainStatus.Receiving
                   && DateTime.UtcNow < timeoutAt do
-                let! messages = receiver.ReceiveMessagesAsync(50, TimeSpan.FromSeconds(1.0))
-                let batch = messages |> Seq.toArray
-                let mutable index = 0
+                let remaining = timeoutAt - DateTime.UtcNow
 
-                while index < batch.Length do
-                    let message = batch[index]
+                if remaining <= TimeSpan.Zero then
+                    drain <- ProducerInventoryDrain.deadlineExpired drain
+                else
+                    let receiveWindow = min remaining (TimeSpan.FromSeconds(2.0))
 
                     try
-                        let graceEvent = JsonSerializer.Deserialize<GraceEvent>(message.Body.ToArray(), Constants.JsonSerializerOptions)
+                        let! messages = receiver.ReceiveMessagesAsync(50, receiveWindow)
+                        let batch = messages |> Seq.toArray
 
-                        match graceEvent with
-                        | GraceEvent.ReferenceEvent referenceEvent ->
-                            match referenceEvent.Event with
-                            | ReferenceEventType.Created (referenceId, _, _, _, _, _, _, _, _, _, _) ->
-                                let expectedMessageId = $"Reference/{referenceId}/Created"
+                        if DateTime.UtcNow >= timeoutAt then
+                            drain <- ProducerInventoryDrain.deadlineExpired drain
+                        elif Array.isEmpty batch then
+                            drain <- ProducerInventoryDrain.emptyWindow expectedMessageIds drain
+                        else
+                            let observedInBatch = ResizeArray<string>()
+                            let mutable index = 0
 
-                                if not (message.MessageId.Equals(expectedMessageId, StringComparison.Ordinal)) then
-                                    observed.Add($"{message.MessageId} (body identity {expectedMessageId})")
-                                else
-                                    observed.Add message.MessageId
+                            while index < batch.Length do
+                                let message = batch[index]
 
-                                    if expected.Contains message.MessageId then
-                                        seenExpected.Add message.MessageId |> ignore
-                            | _ -> ()
-                        | _ -> ()
+                                try
+                                    let graceEvent = JsonSerializer.Deserialize<GraceEvent>(message.Body.ToArray(), Constants.JsonSerializerOptions)
+
+                                    match graceEvent with
+                                    | GraceEvent.ReferenceEvent referenceEvent ->
+                                        match referenceEvent.Event with
+                                        | ReferenceEventType.Created (referenceId, _, _, _, _, _, _, _, _, _, _) ->
+                                            let expectedMessageId = $"Reference/{referenceId}/Created"
+
+                                            if not (message.MessageId.Equals(expectedMessageId, StringComparison.Ordinal)) then
+                                                observedInBatch.Add($"{message.MessageId} (body identity {expectedMessageId})")
+                                            else
+                                                observedInBatch.Add message.MessageId
+                                        | _ -> ()
+                                    | _ -> ()
+                                with
+                                | :? JsonException -> ()
+
+                                index <- index + 1
+
+                            drain <- ProducerInventoryDrain.receiveBatch expectedMessageIds (observedInBatch.ToArray()) drain
                     with
-                    | :? JsonException -> ()
+                    | :? OperationCanceledException -> drain <- ProducerInventoryDrain.cancelled drain
+                    | ex -> drain <- ProducerInventoryDrain.receiveFailed ex.Message drain
 
-                    index <- index + 1
+            if ProducerInventoryDrain.status drain = ProducerInventoryDrainStatus.Receiving then
+                drain <- ProducerInventoryDrain.deadlineExpired drain
 
-            let errors = ProducerInventory.validate expectedMessageIds (observed.ToArray())
-
-            if errors.Length > 0 then
-                let errorText = String.Join("; ", errors)
-                invalidOp $"{description} producer inventory failed: {errorText}"
-
-            return observed.ToArray()
+            match ProducerInventoryDrain.status drain with
+            | ProducerInventoryDrainStatus.Complete -> return ProducerInventoryDrain.observedMessageIds drain
+            | ProducerInventoryDrainStatus.Failed -> return invalidOp $"{description} producer inventory failed: {ProducerInventoryDrain.failure drain}"
+            | ProducerInventoryDrainStatus.Receiving -> return invalidOp $"{description} producer inventory stopped without terminal evidence."
         }
 
     /// Encodes deterministic but distinct content for one selected topology position.

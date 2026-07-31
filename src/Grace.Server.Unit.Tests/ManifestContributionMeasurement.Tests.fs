@@ -145,6 +145,145 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
             Is.Not.Empty
         )
 
+    /// Verifies an exact producer set becomes terminal only after two consecutive quiet receive windows.
+    [<Test>]
+    member _.ExactProducerInventoryRequiresTwoQuietWindows() =
+        let expected = [| "Reference/one/Created" |]
+
+        let observed =
+            ProducerInventoryDrain.start
+            |> ProducerInventoryDrain.receiveBatch expected expected
+
+        Assert.That(ProducerInventoryDrain.status observed, Is.EqualTo(ProducerInventoryDrainStatus.Receiving))
+
+        let oneQuietWindow =
+            observed
+            |> ProducerInventoryDrain.emptyWindow expected
+
+        Assert.That(ProducerInventoryDrain.status oneQuietWindow, Is.EqualTo(ProducerInventoryDrainStatus.Receiving))
+
+        let twoQuietWindows =
+            oneQuietWindow
+            |> ProducerInventoryDrain.emptyWindow expected
+
+        Assert.That(ProducerInventoryDrain.status twoQuietWindows, Is.EqualTo(ProducerInventoryDrainStatus.Complete))
+
+    /// Verifies a duplicate delivered after the expected set is observed fails with the complete received inventory.
+    [<Test>]
+    member _.LateDuplicateProducerIdentityFailsTruthfully() =
+        let expected = [| "Reference/one/Created" |]
+
+        let failed =
+            ProducerInventoryDrain.start
+            |> ProducerInventoryDrain.receiveBatch expected expected
+            |> ProducerInventoryDrain.receiveBatch expected expected
+
+        Assert.That(ProducerInventoryDrain.status failed, Is.EqualTo(ProducerInventoryDrainStatus.Failed))
+        Assert.That(ProducerInventoryDrain.observedMessageIds failed = [| expected[0]; expected[0] |], Is.True)
+        Assert.That(ProducerInventoryDrain.failure failed, Does.Contain("duplicate"))
+
+    /// Verifies an unclassified identity delivered after the expected set fails with truthful terminal detail.
+    [<Test>]
+    member _.LateUnclassifiedProducerIdentityFailsTruthfully() =
+        let expected = [| "Reference/one/Created" |]
+
+        let failed =
+            ProducerInventoryDrain.start
+            |> ProducerInventoryDrain.receiveBatch expected expected
+            |> ProducerInventoryDrain.receiveBatch expected [| "Reference/unclassified/Created" |]
+
+        Assert.That(ProducerInventoryDrain.status failed, Is.EqualTo(ProducerInventoryDrainStatus.Failed))
+        Assert.That(ProducerInventoryDrain.failure failed, Does.Contain("Unclassified"))
+
+    /// Verifies any broker delivery after the first quiet window restarts the two-window drain.
+    [<Test>]
+    member _.ReceivedBatchAfterFirstQuietWindowResetsDrain() =
+        let expected = [| "Reference/one/Created" |]
+
+        let afterReceivedBatch =
+            ProducerInventoryDrain.start
+            |> ProducerInventoryDrain.receiveBatch expected expected
+            |> ProducerInventoryDrain.emptyWindow expected
+            |> ProducerInventoryDrain.receiveBatch expected Array.empty
+
+        let oneQuietWindowAfterDelivery =
+            afterReceivedBatch
+            |> ProducerInventoryDrain.emptyWindow expected
+
+        Assert.That(ProducerInventoryDrain.status oneQuietWindowAfterDelivery, Is.EqualTo(ProducerInventoryDrainStatus.Receiving))
+
+        let twoQuietWindowsAfterDelivery =
+            oneQuietWindowAfterDelivery
+            |> ProducerInventoryDrain.emptyWindow expected
+
+        Assert.That(ProducerInventoryDrain.status twoQuietWindowsAfterDelivery, Is.EqualTo(ProducerInventoryDrainStatus.Complete))
+
+    /// Verifies expiry after expected-set observation remains a terminal failed evidence outcome.
+    [<Test>]
+    member _.InventoryDeadlineAfterExpectedSetProducesFailedEvidence() =
+        let expected = [| "Reference/one/Created" |]
+
+        let failed =
+            ProducerInventoryDrain.start
+            |> ProducerInventoryDrain.receiveBatch expected expected
+            |> ProducerInventoryDrain.deadlineExpired
+
+        let failure = ProducerInventoryDrain.failure failed
+        let assertions = requiredAssertionIds |> Array.map passingAssertion
+        let summary = ScenarioSummary.derive "run-1" "baseline" requiredAssertionIds assertions [| failure |] false
+
+        Assert.That(ProducerInventoryDrain.status failed, Is.EqualTo(ProducerInventoryDrainStatus.Failed))
+        Assert.That(failure, Does.Contain("deadline"))
+        Assert.That(summary.Outcome, Is.EqualTo("Failed"))
+        Assert.That(summary.RuntimeFailures, Is.Not.Empty)
+
+    /// Verifies cancellation after expected-set observation remains terminal and cannot yield passing evidence.
+    [<Test>]
+    member _.InventoryCancellationAfterExpectedSetProducesFailedEvidence() =
+        let expected = [| "Reference/one/Created" |]
+
+        let failed =
+            ProducerInventoryDrain.start
+            |> ProducerInventoryDrain.receiveBatch expected expected
+            |> ProducerInventoryDrain.cancelled
+
+        let failure = ProducerInventoryDrain.failure failed
+        let assertions = requiredAssertionIds |> Array.map passingAssertion
+        let summary = ScenarioSummary.derive "run-1" "baseline" requiredAssertionIds assertions [| failure |] false
+
+        Assert.That(ProducerInventoryDrain.status failed, Is.EqualTo(ProducerInventoryDrainStatus.Failed))
+        Assert.That(failure, Does.Contain("cancelled"))
+        Assert.That(summary.Outcome, Is.EqualTo("Failed"))
+        Assert.That(summary.RuntimeFailures, Is.Not.Empty)
+
+    /// Verifies receive and evidence-write failures during quiet drain remain terminal failed evidence.
+    [<Test>]
+    member _.QuietDrainInfrastructureFailuresProduceFailedEvidence() =
+        let expected = [| "Reference/one/Created" |]
+
+        let observed =
+            ProducerInventoryDrain.start
+            |> ProducerInventoryDrain.receiveBatch expected expected
+            |> ProducerInventoryDrain.emptyWindow expected
+
+        let failures =
+            [|
+                ProducerInventoryDrain.receiveFailed "broker unavailable" observed
+                ProducerInventoryDrain.evidenceWriteFailed "disk full" observed
+            |]
+
+        let assertions = requiredAssertionIds |> Array.map passingAssertion
+
+        failures
+        |> Array.iter (fun failed ->
+            let failure = ProducerInventoryDrain.failure failed
+            let summary = ScenarioSummary.derive "run-1" "baseline" requiredAssertionIds assertions [| failure |] false
+
+            Assert.That(ProducerInventoryDrain.status failed, Is.EqualTo(ProducerInventoryDrainStatus.Failed))
+            Assert.That(failure, Is.Not.Empty)
+            Assert.That(summary.Outcome, Is.EqualTo("Failed"))
+            Assert.That(summary.RuntimeFailures, Is.Not.Empty))
+
     /// Verifies summary success is derived only from the exact unique assertion set and an empty failure ledger.
     [<Test>]
     member _.SummaryPassIsDerivedFromExactAssertions() =

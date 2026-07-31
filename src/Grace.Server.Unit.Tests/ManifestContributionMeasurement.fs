@@ -478,8 +478,10 @@ module ProducerInventory =
         if expected.Count <> expectedMessageIds.Length then
             errors.Add("Expected producer inventory contains duplicate identities.")
 
-        if observed.Count <> observedMessageIds.Length then
-            errors.Add("Observed producer inventory contains duplicate deliveries.")
+        observedMessageIds
+        |> Array.countBy id
+        |> Array.filter (fun (_, count) -> count > 1)
+        |> Array.iter (fun (messageId, count) -> errors.Add($"Observed producer inventory contains duplicate delivery '{messageId}' with count {count}."))
 
         expected
         |> Seq.filter (observed.Contains >> not)
@@ -490,6 +492,96 @@ module ProducerInventory =
         |> Seq.iter (fun messageId -> errors.Add($"Unclassified Reference-created envelope '{messageId}'."))
 
         errors.ToArray()
+
+/// Reports whether the bounded producer-inventory drain is still receiving, complete, or failed.
+type ProducerInventoryDrainStatus =
+    | Receiving
+    | Complete
+    | Failed
+
+/// Retains the classified Reference-created identities and quiet-window progress for one inventory drain.
+type ProducerInventoryDrainState = private { ObservedMessageIds: string array; ConsecutiveEmptyWindows: int; IsComplete: bool; Failure: string option }
+
+/// Advances the deterministic producer-inventory protocol without depending on Service Bus or Aspire.
+module ProducerInventoryDrain =
+
+    let private surplusErrors (expectedMessageIds: string array) (observedMessageIds: string array) =
+        let errors = ResizeArray<string>()
+        let expected = HashSet<string>(expectedMessageIds, StringComparer.Ordinal)
+        let observed = HashSet<string>(observedMessageIds, StringComparer.Ordinal)
+
+        if observed.Count <> observedMessageIds.Length then
+            errors.Add("Observed producer inventory contains duplicate deliveries.")
+
+        observed
+        |> Seq.filter (expected.Contains >> not)
+        |> Seq.iter (fun messageId -> errors.Add($"Unclassified Reference-created envelope '{messageId}'."))
+
+        errors.ToArray()
+
+    /// Starts an empty producer inventory that has not observed the expected set.
+    let start = { ObservedMessageIds = Array.empty; ConsecutiveEmptyWindows = 0; IsComplete = false; Failure = None }
+
+    /// Returns the externally observable terminal state of the drain.
+    let status state =
+        match state.Failure, state.IsComplete with
+        | Some _, _ -> ProducerInventoryDrainStatus.Failed
+        | None, true -> ProducerInventoryDrainStatus.Complete
+        | None, false -> ProducerInventoryDrainStatus.Receiving
+
+    /// Returns every Reference-created identity consumed before the current terminal or receiving state.
+    let observedMessageIds state = Array.copy state.ObservedMessageIds
+
+    /// Returns the terminal failure detail, or an empty string while the drain has not failed.
+    let failure state = state.Failure |> Option.defaultValue String.Empty
+
+    let private fail detail state =
+        if state.IsComplete || state.Failure.IsSome then
+            state
+        else
+            { state with Failure = Some detail }
+
+    /// Fails a still-active drain when the shared inventory deadline expires.
+    let deadlineExpired state = fail "The producer inventory deadline expired." state
+
+    /// Fails a still-active drain when its caller cancels broker observation.
+    let cancelled state = fail "The producer inventory receive was cancelled." state
+
+    /// Fails a still-active drain when the broker receive operation rejects the window.
+    let receiveFailed detail state = fail $"The producer inventory receive failed: {detail}" state
+
+    /// Fails a still-active drain when its terminal evidence cannot be written.
+    let evidenceWriteFailed detail state = fail $"The producer inventory evidence write failed: {detail}" state
+
+    /// Records one nonempty broker batch and resets quiet progress even when it contains no Reference-created identity.
+    let receiveBatch (expectedMessageIds: string array) (referenceMessageIds: string array) state =
+        if state.IsComplete || state.Failure.IsSome then
+            state
+        else
+            let observedMessageIds = Array.append state.ObservedMessageIds referenceMessageIds
+            let errors = surplusErrors expectedMessageIds observedMessageIds
+
+            { state with
+                ObservedMessageIds = observedMessageIds
+                ConsecutiveEmptyWindows = 0
+                Failure = if Array.isEmpty errors then None else Some(String.Join("; ", errors))
+            }
+
+    /// Records one empty broker receive window and completes only after two quiet windows follow the exact expected set.
+    let emptyWindow expectedMessageIds state =
+        if state.IsComplete || state.Failure.IsSome then
+            state
+        else
+            let exactSetObserved =
+                ProducerInventory.validate expectedMessageIds state.ObservedMessageIds
+                |> Array.isEmpty
+
+            if exactSetObserved then
+                let consecutiveEmptyWindows = state.ConsecutiveEmptyWindows + 1
+
+                { state with ConsecutiveEmptyWindows = consecutiveEmptyWindows; IsComplete = consecutiveEmptyWindows >= 2 }
+            else
+                { state with ConsecutiveEmptyWindows = 0 }
 
 /// Writes bounded complete records to one retained UTF-8-without-BOM NDJSON evidence file.
 type EvidenceWriter(directory: string, maximumRecordBytes: int) =
