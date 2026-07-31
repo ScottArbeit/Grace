@@ -29,6 +29,22 @@ type ManifestContributionMeasurementTests() =
             "baseline.evidence-integrity"
         |]
 
+    let repairRequiredAssertionIds =
+        [|
+            "repair.seed-deliveries-completed"
+            "repair.corruption-applied"
+            "repair.diagnosis-one-supported-action"
+            "repair.dry-run-no-mutation"
+            "repair.execute-one-action"
+            "repair.republication-message-delta"
+            "repair.republication-duration-delta"
+            "repair.reference-root-restored"
+            "repair.logical-state-unchanged"
+            "repair.workflow-state-unchanged"
+            "repair.physical-state-unchanged"
+            "repair.evidence-integrity"
+        |]
+
     let completedMetrics messages durations =
         $"""
 # TYPE grace_manifest_contribution_messages_total counter
@@ -48,6 +64,69 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     /// Verifies the Baseline assertion contract is an exact stable set.
     [<Test>]
     member _.RequiredAssertionIdentifiersAreExact() = Assert.That(Baseline.requiredAssertionIds = requiredAssertionIds, Is.True)
+
+    /// Verifies the Repair assertion contract is the exact derived twelve-identity set.
+    [<Test>]
+    member _.RepairRequiredAssertionIdentifiersAreExact() = Assert.That(Repair.requiredAssertionIds = repairRequiredAssertionIds, Is.True)
+
+    /// Verifies dry run requires one supported plan while preserving the deliberately missing relationship.
+    [<Test>]
+    member _.RepairDryRunRequiresOneActionAndZeroMutation() =
+        let valid =
+            {
+                Execute = false
+                ExpectedActionIdentity = "partition|reference-root:expected"
+                ProposedActionKinds = [| "RepublishReferenceCreated" |]
+                ProposedActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                AppliedActionKinds = Array.empty
+                ReferenceRootPresent = false
+            }
+
+        Assert.That(Repair.validateDryRun valid, Is.Empty)
+        Assert.That(Repair.validateDryRun { valid with ProposedActionKinds = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with ProposedActionKinds = [| "GetOrAddExactRelationship" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with ProposedActionIdentities = [| "partition|reference-root:other" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with AppliedActionKinds = [| "RepublishReferenceCreated" |] }, Is.Not.Empty)
+        Assert.That(Repair.validateDryRun { valid with ReferenceRootPresent = true }, Is.Not.Empty)
+
+    /// Verifies restored durable state cannot substitute for exact completed republication attribution.
+    [<Test>]
+    member _.RepairExecuteRequiresOriginalIdentityAndCompletedDelivery() =
+        let referenceId = Guid.Parse("77777777-7610-4000-8000-777777777777")
+        let expectedMessageId = $"Reference/{referenceId}/Created"
+
+        let valid =
+            {
+                Execute = true
+                ExpectedActionIdentity = "partition|reference-root:expected"
+                ProposedActionKinds = [| "RepublishReferenceCreated" |]
+                ProposedActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                AppliedActionKinds = [| "RepublishReferenceCreated" |]
+                AppliedActionIdentities =
+                    [|
+                        "partition|reference-root:expected"
+                    |]
+                OriginalReferenceId = referenceId
+                RepairCorrelationId = "repair-correlation"
+                ExpectedMessageId = expectedMessageId
+                ObservedMessageIds = [| expectedMessageId |]
+                MessageDelta = 1L
+                DurationDelta = 1L
+                ReferenceRootRestored = true
+            }
+
+        Assert.That(Repair.validateExecute valid, Is.Empty)
+        Assert.That(Repair.validateExecute { valid with ObservedMessageIds = Array.empty }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with MessageDelta = 0L; DurationDelta = 0L }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with RepairCorrelationId = string referenceId }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with ExpectedMessageId = "Reference/repair-correlation/Created" }, Is.Not.Empty)
+        Assert.That(Repair.validateExecute { valid with ReferenceRootRestored = false }, Is.Not.Empty)
 
     /// Verifies exact production settlement samples complete only at the requested cumulative deltas.
     [<Test>]

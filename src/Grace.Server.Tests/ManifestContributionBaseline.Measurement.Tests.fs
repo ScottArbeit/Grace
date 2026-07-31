@@ -34,7 +34,7 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Carries one distinct manifest, root, branch, and explicit Save identity through the Baseline tracer.
-type private BaselineAsset =
+type internal BaselineAsset =
     {
         BlockAddress: ContentBlockAddress
         Manifest: FileManifest
@@ -45,7 +45,7 @@ type private BaselineAsset =
     }
 
 /// Captures each independent durable convergence result without treating one state store as broker evidence.
-type private DurableStatus =
+type internal DurableStatus =
     {
         ReferenceRoots: bool
         ManifestRelationships: bool
@@ -55,8 +55,8 @@ type private DurableStatus =
         Detail: string
     }
 
-/// Implements the one explicit fixture-owned Baseline measurement runtime.
-module private BaselineRuntime =
+/// Implements the R1 fixture-owned host, producer observer, and durable-state measurement runtime.
+module internal BaselineRuntime =
 
     [<Literal>]
     let SelectedTopologyCount = 3
@@ -68,7 +68,7 @@ module private BaselineRuntime =
     let requireEnvironment name =
         match Environment.GetEnvironmentVariable name with
         | value when not (String.IsNullOrWhiteSpace value) -> value.Trim()
-        | _ -> invalidOp $"The explicit Baseline witness requires {name}."
+        | _ -> invalidOp $"The explicit manifest-contribution witness requires {name}."
 
     /// Runs one Git query while concurrently draining both redirected streams.
     let runGitAsync worktree arguments =

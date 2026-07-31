@@ -279,6 +279,152 @@ module Baseline =
             "baseline.evidence-integrity"
         |]
 
+/// Captures the mutation-sensitive facts produced by the real repair dry-run route.
+type RepairDryRunEvidence =
+    {
+        Execute: bool
+        ExpectedActionIdentity: string
+        ProposedActionKinds: string array
+        ProposedActionIdentities: string array
+        AppliedActionKinds: string array
+        ReferenceRootPresent: bool
+    }
+
+/// Captures the action, identity, broker, and durable facts required to attribute repair republication.
+type RepairExecuteEvidence =
+    {
+        Execute: bool
+        ExpectedActionIdentity: string
+        ProposedActionKinds: string array
+        ProposedActionIdentities: string array
+        AppliedActionKinds: string array
+        AppliedActionIdentities: string array
+        OriginalReferenceId: Guid
+        RepairCorrelationId: string
+        ExpectedMessageId: string
+        ObservedMessageIds: string array
+        MessageDelta: int64
+        DurationDelta: int64
+        ReferenceRootRestored: bool
+    }
+
+/// Defines and validates the exact evidence contract for one missing Reference-root repair witness.
+module Repair =
+
+    [<Literal>]
+    let private SupportedActionKind = "RepublishReferenceCreated"
+
+    /// Lists the exact assertion identities required by the MCA Repair scenario.
+    let requiredAssertionIds =
+        [|
+            "repair.seed-deliveries-completed"
+            "repair.corruption-applied"
+            "repair.diagnosis-one-supported-action"
+            "repair.dry-run-no-mutation"
+            "repair.execute-one-action"
+            "repair.republication-message-delta"
+            "repair.republication-duration-delta"
+            "repair.reference-root-restored"
+            "repair.logical-state-unchanged"
+            "repair.workflow-state-unchanged"
+            "repair.physical-state-unchanged"
+            "repair.evidence-integrity"
+        |]
+
+    /// Requires one supported action and rejects zero, duplicate, or unrelated repair plans.
+    let private validateOneSupportedAction
+        description
+        expectedIdentity
+        (actionKinds: string array)
+        (actionIdentities: string array)
+        (errors: ResizeArray<string>)
+        =
+        if
+            isNull actionKinds
+            || actionKinds.Length <> 1
+            || not (String.Equals(actionKinds[0], SupportedActionKind, StringComparison.Ordinal))
+            || isNull actionIdentities
+            || actionIdentities.Length <> 1
+            || not (String.Equals(actionIdentities[0], expectedIdentity, StringComparison.Ordinal))
+        then
+            errors.Add($"{description} must contain exactly one {SupportedActionKind} action for the expected relationship identity.")
+
+    /// Rejects a dry run that executes, mutates, or fails to retain the one-action plan.
+    let validateDryRun (evidence: RepairDryRunEvidence) =
+        let errors = ResizeArray<string>()
+
+        if evidence.Execute then
+            errors.Add("The repair dry run was marked for execution.")
+
+        validateOneSupportedAction
+            "The repair dry-run plan"
+            evidence.ExpectedActionIdentity
+            evidence.ProposedActionKinds
+            evidence.ProposedActionIdentities
+            errors
+
+        if isNull evidence.AppliedActionKinds
+           || evidence.AppliedActionKinds.Length <> 0 then
+            errors.Add("The repair dry run applied a mutation.")
+
+        if evidence.ReferenceRootPresent then
+            errors.Add("The missing Reference-root relationship changed during dry run.")
+
+        errors.ToArray()
+
+    /// Rejects execute evidence unless one original deterministic delivery both settles and restores the relationship.
+    let validateExecute (evidence: RepairExecuteEvidence) =
+        let errors = ResizeArray<string>()
+
+        if not evidence.Execute then
+            errors.Add("The repair execute response was marked as a dry run.")
+
+        validateOneSupportedAction
+            "The repair execute plan"
+            evidence.ExpectedActionIdentity
+            evidence.ProposedActionKinds
+            evidence.ProposedActionIdentities
+            errors
+
+        validateOneSupportedAction
+            "The repair applied prefix"
+            evidence.ExpectedActionIdentity
+            evidence.AppliedActionKinds
+            evidence.AppliedActionIdentities
+            errors
+
+        if evidence.OriginalReferenceId = Guid.Empty then
+            errors.Add("The original Reference identity must not be empty.")
+
+        if
+            String.IsNullOrWhiteSpace evidence.RepairCorrelationId
+            || String.Equals(evidence.RepairCorrelationId, string evidence.OriginalReferenceId, StringComparison.OrdinalIgnoreCase)
+        then
+            errors.Add("The repair request correlation identity must differ from the original Reference identity.")
+
+        let deterministicMessageId = $"Reference/{evidence.OriginalReferenceId}/Created"
+
+        if not (String.Equals(evidence.ExpectedMessageId, deterministicMessageId, StringComparison.Ordinal)) then
+            errors.Add("Repair republication must reuse the original deterministic Reference-created message identity.")
+
+        if
+            isNull evidence.ObservedMessageIds
+            || evidence.ObservedMessageIds.Length <> 1
+            || not (String.Equals(evidence.ObservedMessageIds[0], deterministicMessageId, StringComparison.Ordinal))
+        then
+            errors.Add("Repair republication must observe exactly one original deterministic Reference-created envelope.")
+
+        if evidence.MessageDelta <> 1L then
+            errors.Add($"Repair republication requires an exact completed message delta of one, observed {evidence.MessageDelta}.")
+
+        if evidence.DurationDelta <> 1L then
+            errors.Add($"Repair republication requires an exact completed duration delta of one, observed {evidence.DurationDelta}.")
+
+        if not evidence.ReferenceRootRestored then
+            errors.Add("Repair republication did not restore the exact Reference-root relationship.")
+
+        errors.ToArray()
+
 /// Derives a scenario outcome from exact assertion identities and the runtime-failure ledger.
 module ScenarioSummary =
 
