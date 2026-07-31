@@ -863,6 +863,12 @@ type DeltaEvaluation =
     | Pending
     | Invalid of reason: string
 
+/// Reports whether an exact completed-settlement snapshot stayed unchanged or became invalid.
+type UnchangedEvaluation =
+    | Unchanged of messages: int64 * durations: int64
+    | Changed of reason: string
+    | UnchangedInvalid of reason: string
+
 /// Parses only the two exact production OpenMetrics settlement samples used by the Baseline witness.
 module OpenMetrics =
 
@@ -996,6 +1002,20 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
             Error($"{durationMetricName} required exactly one sample but found {values[durationMetricName].Count}.")
         else
             Ok(values[messageMetricName][0], values[durationMetricName][0])
+
+    /// Requires exactly one completed-settlement sample from each metric family on both scrapes before comparing cumulative values.
+    let evaluateCompletedSettlementUnchanged baselineScrape observedScrape =
+        match parseCompletedSettlementSamples baselineScrape, parseCompletedSettlementSamples observedScrape with
+        | Ok (baselineMessages, baselineDurations), Ok (observedMessages, observedDurations) ->
+            if baselineMessages = observedMessages
+               && baselineDurations = observedDurations then
+                Unchanged(observedMessages, observedDurations)
+            else
+                Changed(
+                    $"Completed settlement telemetry changed: messages={baselineMessages}->{observedMessages}; durations={baselineDurations}->{observedDurations}."
+                )
+        | Error baselineError, _ -> UnchangedInvalid($"Invalid baseline scrape: {baselineError}")
+        | _, Error observedError -> UnchangedInvalid($"Invalid observed scrape: {observedError}")
 
     /// Captures a freshly restarted process baseline while normalizing only the uninstantiated paired-zero series shape.
     let captureFreshProcessCompletedSettlementBaseline (scrape: string) =
