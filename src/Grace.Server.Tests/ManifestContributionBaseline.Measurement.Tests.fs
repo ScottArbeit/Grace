@@ -34,7 +34,7 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Carries one distinct manifest, root, branch, and explicit Save identity through the Baseline tracer.
-type private BaselineAsset =
+type internal BaselineAsset =
     {
         BlockAddress: ContentBlockAddress
         Manifest: FileManifest
@@ -45,7 +45,7 @@ type private BaselineAsset =
     }
 
 /// Captures each independent durable convergence result without treating one state store as broker evidence.
-type private DurableStatus =
+type internal DurableStatus =
     {
         ReferenceRoots: bool
         ManifestRelationships: bool
@@ -56,7 +56,7 @@ type private DurableStatus =
     }
 
 /// Implements the one explicit fixture-owned Baseline measurement runtime.
-module private BaselineRuntime =
+module internal BaselineRuntime =
 
     [<Literal>]
     let SelectedTopologyCount = 3

@@ -360,6 +360,12 @@ type DeltaEvaluation =
     | Pending
     | Invalid of reason: string
 
+/// Reports whether an exact completed-settlement snapshot stayed unchanged or became invalid.
+type UnchangedEvaluation =
+    | Unchanged of messages: int64 * durations: int64
+    | Changed of reason: string
+    | UnchangedInvalid of reason: string
+
 /// Parses only the two exact production OpenMetrics settlement samples used by the Baseline witness.
 module OpenMetrics =
 
@@ -482,6 +488,34 @@ module OpenMetrics =
             Error($"{durationMetricName} required exactly one sample but found {values[durationMetricName].Count}.")
         else
             Ok(values[messageMetricName][0], values[durationMetricName][0])
+
+    /// Requires the exact completed-settlement samples to remain equal, while accepting their absence on both fresh-host scrapes.
+    let evaluateCompletedSettlementUnchanged baselineScrape observedScrape =
+        let hasTargetMetricFamily (scrape: string) =
+            scrape.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun rawLine ->
+                let line = rawLine.Trim()
+
+                not (line.StartsWith("#", StringComparison.Ordinal))
+                && (line.StartsWith(messageMetricName, StringComparison.Ordinal)
+                    || line.StartsWith(durationMetricName, StringComparison.Ordinal)))
+
+        match parseCompletedSettlementSamples baselineScrape, parseCompletedSettlementSamples observedScrape with
+        | Ok (baselineMessages, baselineDurations), Ok (observedMessages, observedDurations) ->
+            if baselineMessages = observedMessages
+               && baselineDurations = observedDurations then
+                Unchanged(observedMessages, observedDurations)
+            else
+                Changed(
+                    $"Completed settlement telemetry changed: messages={baselineMessages}->{observedMessages}; durations={baselineDurations}->{observedDurations}."
+                )
+        | Error _, Error _ when
+            not (hasTargetMetricFamily baselineScrape)
+            && not (hasTargetMetricFamily observedScrape)
+            ->
+            Unchanged(0L, 0L)
+        | Error baselineError, _ -> UnchangedInvalid($"Invalid baseline scrape: {baselineError}")
+        | _, Error observedError -> UnchangedInvalid($"Invalid observed scrape: {observedError}")
 
     /// Evaluates exact cumulative equality while allowing only unchanged or partial deltas to keep waiting.
     let evaluateCompletedSettlementDelta expectedDelta baselineScrape observedScrape =
