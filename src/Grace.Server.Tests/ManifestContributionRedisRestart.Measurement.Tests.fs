@@ -393,31 +393,51 @@ type ManifestContributionRedisRestartMeasurementTests() =
                 let! branchMessageDelta, branchDurationDelta, explicitMetricsBaseline =
                     BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L restartMetricsBaseline
 
+                let! recoveryReferences = BaselineRuntime.getBranchReferencesAsync state ownerId organizationId repositoryId recoveryBranch.BranchId
+
+                let rebasePersisted =
+                    recoveryReferences
+                    |> Array.exists (fun reference -> reference.ReferenceId = branchRebaseReferenceId)
+
+                let branchInventoryErrors =
+                    ProducerInventory.validate
+                        [| branchRebaseMessageId |]
+                        (branchRebaseObserved
+                         |> Array.map (fun envelope -> envelope.MessageId))
+
                 let recoveryAsset =
                     { seedAsset with Branch = recoveryBranch; RebaseReferenceId = branchRebaseReferenceId; SaveReferenceId = explicitSaveReferenceId }
-
-                let expectedBranchLogicalCount = beforeRestart.LogicalCount + 1L
 
                 let! explicitDurableBaseline =
                     RedisRestartRuntime.waitForDurableStateAsync
                         state
                         repositoryId
                         recoveryAsset
-                        (Some branchRebaseReferenceId)
-                        expectedBranchLogicalCount
+                        None
+                        beforeRestart.LogicalCount
                         beforeRestart.WorkflowFingerprint
 
                 let branchSetupComplete =
-                    branchRebaseObserved.Length = 1
-                    && branchMessageDelta = 1L
-                    && branchDurationDelta = 1L
-                    && explicitDurableBaseline.LogicalCount = expectedBranchLogicalCount
-                    && explicitDurableBaseline.WorkflowFingerprint.Equals(beforeRestart.WorkflowFingerprint, StringComparison.Ordinal)
+                    RedisRestart.branchSetupComplete
+                        {
+                            RebasePersisted = rebasePersisted
+                            ObservedEnvelopeCount = branchRebaseObserved.Length
+                            MessageDelta = branchMessageDelta
+                            DurationDelta = branchDurationDelta
+                            IdentityInventoryClean = branchInventoryErrors.Length = 0
+                            BeforeLogicalCount = beforeRestart.LogicalCount
+                            BaselineLogicalCount = explicitDurableBaseline.LogicalCount
+                            WorkflowUnchanged = explicitDurableBaseline.WorkflowFingerprint.Equals(beforeRestart.WorkflowFingerprint, StringComparison.Ordinal)
+                            ManifestRelationshipPresent = explicitDurableBaseline.ManifestRelationshipPresent
+                            PhysicalActiveCount = explicitDurableBaseline.PhysicalActiveCount
+                        }
+
+                let branchInventoryDetail = String.Join("; ", branchInventoryErrors)
 
                 recordAssertion
                     "redis-restart.branch-setup-delivery-completed"
                     branchSetupComplete
-                    $"observed={branchRebaseObserved.Length}; messages={branchMessageDelta}; durations={branchDurationDelta}; durable={explicitDurableBaseline.Detail}"
+                    $"persisted={rebasePersisted}; observed={branchRebaseObserved.Length}; messages={branchMessageDelta}; durations={branchDurationDelta}; inventory={branchInventoryDetail}; durable={explicitDurableBaseline.Detail}"
 
                 if not branchSetupComplete then
                     invalidOp "The explicit Reference was not created because the branch Rebase delivery did not settle before its baseline."

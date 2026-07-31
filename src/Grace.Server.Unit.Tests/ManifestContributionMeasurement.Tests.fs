@@ -105,6 +105,45 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
             )
         )
 
+    /// Verifies branch setup settles independently while the explicit-Reference hot-manifest baseline remains unchanged.
+    [<Test>]
+    member _.RedisRestartBranchSetupAcceptsPersistedRebaseAndUnchangedHotManifest() =
+        let observation =
+            {
+                RebasePersisted = true
+                ObservedEnvelopeCount = 1
+                MessageDelta = 1L
+                DurationDelta = 1L
+                IdentityInventoryClean = true
+                BeforeLogicalCount = 1L
+                BaselineLogicalCount = 1L
+                WorkflowUnchanged = true
+                ManifestRelationshipPresent = true
+                PhysicalActiveCount = 1L
+            }
+
+        Assert.That(RedisRestart.branchSetupComplete observation, Is.True)
+
+    /// Verifies setup cannot pass by mutating the hot-manifest count or observing an unpersisted Rebase identity.
+    [<TestCase(false, 1L)>]
+    [<TestCase(true, 2L)>]
+    member _.RedisRestartBranchSetupRejectsMissingRebaseOrHotManifestMutation(rebasePersisted, baselineLogicalCount) =
+        let observation =
+            {
+                RebasePersisted = rebasePersisted
+                ObservedEnvelopeCount = 1
+                MessageDelta = 1L
+                DurationDelta = 1L
+                IdentityInventoryClean = true
+                BeforeLogicalCount = 1L
+                BaselineLogicalCount = baselineLogicalCount
+                WorkflowUnchanged = true
+                ManifestRelationshipPresent = true
+                PhysicalActiveCount = 1L
+            }
+
+        Assert.That(RedisRestart.branchSetupComplete observation, Is.False)
+
     /// Verifies a newer Healthy event and successful protocol operation satisfy three independent readiness gates.
     [<Test>]
     member _.RedisRestartRequiresFreshHealthyProtocolEvidence() =

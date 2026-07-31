@@ -286,6 +286,21 @@ type RedisRestartReadinessObservation = { PostCommandResourceEventObserved: bool
 /// Reports each Redis readiness gate separately so stale health cannot be mistaken for recovery.
 type RedisRestartReadinessEvaluation = { FreshResourceEvent: bool; Healthy: bool; ProtocolReady: bool }
 
+/// Captures the independent persistence, delivery, and unchanged hot-manifest gates for post-restart branch setup.
+type RedisRestartBranchSetupObservation =
+    {
+        RebasePersisted: bool
+        ObservedEnvelopeCount: int
+        MessageDelta: int64
+        DurationDelta: int64
+        IdentityInventoryClean: bool
+        BeforeLogicalCount: int64
+        BaselineLogicalCount: int64
+        WorkflowUnchanged: bool
+        ManifestRelationshipPresent: bool
+        PhysicalActiveCount: int64
+    }
+
 /// Defines the exact assertion and readiness contracts for the Redis restart measurement.
 module RedisRestart =
 
@@ -324,6 +339,18 @@ module RedisRestart =
             Healthy = observation.PostCommandHealth.Equals("Healthy", StringComparison.Ordinal)
             ProtocolReady = observation.ProtocolOperationSucceeded
         }
+
+    /// Requires the automatic Rebase to settle independently without pretending it contributes the later hot-manifest stimulus.
+    let branchSetupComplete observation =
+        observation.RebasePersisted
+        && observation.ObservedEnvelopeCount = 1
+        && observation.MessageDelta = 1L
+        && observation.DurationDelta = 1L
+        && observation.IdentityInventoryClean
+        && observation.BaselineLogicalCount = observation.BeforeLogicalCount
+        && observation.WorkflowUnchanged
+        && observation.ManifestRelationshipPresent
+        && observation.PhysicalActiveCount = 1L
 
 /// Defines the only HotManifest assertion identities permitted to produce a passing summary.
 module HotManifest =
