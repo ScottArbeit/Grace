@@ -6,10 +6,15 @@ open Grace.Server.Tests.Measurement
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types
+open Grace.Types.Branch
 open Grace.Types.Common
+open Grace.Types.DirectoryVersion
 open Grace.Types.Events
+open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Reference
+open Grace.Types.Repository
+open Grace.Types.Validation
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -22,6 +27,20 @@ open System.Threading.Tasks
 module private DeadLetterRuntime =
 
     let private receiveWindow = TimeSpan.FromSeconds(2.0)
+
+    /// Identifies every durable entity created by the finite selected-process default-Reference fixture.
+    type FixtureProducerInventory =
+        {
+            OwnerId: Guid
+            OrganizationId: Guid
+            RepositoryId: Guid
+            BranchId: Guid
+            ReferenceId: Guid
+            DirectoryVersionId: Guid
+        }
+
+        /// Gets the deterministic Reference-created broker identity owned by this fixture.
+        member this.ReferenceMessageId = $"Reference/{this.ReferenceId}/Created"
 
     /// Reports missing selected-process inputs before any host, broker, or evidence side effect begins.
     let missingPrerequisites () =
@@ -91,16 +110,78 @@ module private DeadLetterRuntime =
             if branch.LatestReference.ReferenceId <> referenceId then
                 invalidOp "The dead-letter fixture repository default Reference did not match its persisted branch."
 
-            return $"Reference/{referenceId}/Created"
+            return
+                {
+                    OwnerId = ownerId
+                    OrganizationId = organizationId
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    ReferenceId = referenceId
+                    DirectoryVersionId = branch.LatestReference.DirectoryId
+                }
         }
 
+    /// Classifies only Grace events whose body identities belong to the selected fixture entity tuple.
+    let fixtureOwnsEvent (fixture: FixtureProducerInventory) graceEvent =
+        match graceEvent with
+        | GraceEvent.OwnerEvent ownerEvent ->
+            match ownerEvent.Event with
+            | OwnerEventType.Created (ownerId, _) -> ownerId = fixture.OwnerId
+            | _ -> false
+        | GraceEvent.OrganizationEvent organizationEvent ->
+            match organizationEvent.Event with
+            | OrganizationEventType.Created (organizationId, _, ownerId) ->
+                organizationId = fixture.OrganizationId
+                && ownerId = fixture.OwnerId
+            | _ -> false
+        | GraceEvent.RepositoryEvent repositoryEvent ->
+            match repositoryEvent.Event with
+            | RepositoryEventType.Created (_, repositoryId, ownerId, organizationId, _) ->
+                repositoryId = fixture.RepositoryId
+                && ownerId = fixture.OwnerId
+                && organizationId = fixture.OrganizationId
+            | _ -> false
+        | GraceEvent.BranchEvent branchEvent ->
+            match branchEvent.Event with
+            | BranchEventType.Created (branchId, _, _, _, ownerId, organizationId, repositoryId, _) ->
+                branchId = fixture.BranchId
+                && ownerId = fixture.OwnerId
+                && organizationId = fixture.OrganizationId
+                && repositoryId = fixture.RepositoryId
+            | _ -> false
+        | GraceEvent.DirectoryVersionEvent directoryVersionEvent ->
+            match directoryVersionEvent.Event with
+            | DirectoryVersionEventType.Created directoryVersion ->
+                directoryVersion.DirectoryVersionId = fixture.DirectoryVersionId
+                && directoryVersion.OwnerId = fixture.OwnerId
+                && directoryVersion.OrganizationId = fixture.OrganizationId
+                && directoryVersion.RepositoryId = fixture.RepositoryId
+            | _ -> false
+        | GraceEvent.ReferenceEvent referenceEvent ->
+            match referenceEvent.Event with
+            | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryVersionId, _, _, _, _, _) ->
+                referenceId = fixture.ReferenceId
+                && ownerId = fixture.OwnerId
+                && organizationId = fixture.OrganizationId
+                && repositoryId = fixture.RepositoryId
+                && branchId = fixture.BranchId
+                && directoryVersionId = fixture.DirectoryVersionId
+            | _ -> false
+        | GraceEvent.ValidationResultEvent validationResultEvent ->
+            match validationResultEvent.Event with
+            | ValidationResultEventType.Recorded validationResult ->
+                validationResult.OwnerId = fixture.OwnerId
+                && validationResult.OrganizationId = fixture.OrganizationId
+                && validationResult.RepositoryId = fixture.RepositoryId
+        | _ -> false
+
     /// Inventories active selected-process work through PeekLock and settles only the classified fixture/default producers.
-    let inventoryDefaultReferenceProducerAsync (state: TestHostState) fixtureCorrelationId expectedMessageId =
+    let inventoryDefaultReferenceProducerAsync (state: TestHostState) (fixture: FixtureProducerInventory) =
         task {
             use client = new ServiceBusClient(state.ServiceBusConnectionString)
             let options = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock)
             use receiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, options)
-            let expectedMessageIds = [| expectedMessageId |]
+            let expectedMessageIds = [| fixture.ReferenceMessageId |]
             let expected = HashSet<string>(expectedMessageIds, StringComparer.Ordinal)
             let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
             let mutable drain = ProducerInventoryDrain.start
@@ -124,7 +205,6 @@ module private DeadLetterRuntime =
 
                         while index < batch.Length do
                             let message = batch[index]
-                            let testOwned = String.Equals(message.CorrelationId, fixtureCorrelationId, StringComparison.Ordinal)
 
                             let parsedEvent =
                                 try
@@ -156,11 +236,13 @@ module private DeadLetterRuntime =
 
                             let classifiedTestWork =
                                 match parsedEvent, referenceIdentity with
-                                | Some _, Some identity -> expected.Contains identity
-                                | Some _, None -> true
+                                | Some graceEvent, Some identity ->
+                                    fixtureOwnsEvent fixture graceEvent
+                                    && expected.Contains identity
+                                | Some graceEvent, None -> fixtureOwnsEvent fixture graceEvent
                                 | None, _ -> false
 
-                            if testOwned && classifiedTestWork then
+                            if classifiedTestWork then
                                 do! receiver.CompleteMessageAsync(message)
                             else
                                 do! receiver.AbandonMessageAsync(message)
@@ -355,12 +437,16 @@ type ManifestContributionDeadLetterMeasurementTests() =
                     invalidOp "The selected test subscription resolved to the production server subscription."
 
                 let fixtureCorrelationId = generateCorrelationId ()
-                let! defaultReferenceMessageId = DeadLetterRuntime.createDefaultReferenceProducerAsync state fixtureCorrelationId
+                let! fixtureInventory = DeadLetterRuntime.createDefaultReferenceProducerAsync state fixtureCorrelationId
 
-                let! producerInventory = DeadLetterRuntime.inventoryDefaultReferenceProducerAsync state fixtureCorrelationId defaultReferenceMessageId
+                let! producerInventory = DeadLetterRuntime.inventoryDefaultReferenceProducerAsync state fixtureInventory
 
                 let producerInventoryValid =
-                    ProducerInventory.validate [| defaultReferenceMessageId |] producerInventory
+                    ProducerInventory.validate
+                        [|
+                            fixtureInventory.ReferenceMessageId
+                        |]
+                        producerInventory
                     |> Array.isEmpty
 
                 let producerInventoryDetail = String.Join(",", producerInventory)
