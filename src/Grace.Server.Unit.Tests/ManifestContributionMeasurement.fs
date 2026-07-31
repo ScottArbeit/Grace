@@ -279,6 +279,41 @@ module Baseline =
             "baseline.evidence-integrity"
         |]
 
+/// Captures the three independent signals required before a post-restart Reference may be created.
+type RedisRestartReadinessObservation = { PostCommandResourceEventObserved: bool; PostCommandHealth: string; ProtocolOperationSucceeded: bool }
+
+/// Reports each Redis readiness gate separately so stale health cannot be mistaken for recovery.
+type RedisRestartReadinessEvaluation = { FreshResourceEvent: bool; Healthy: bool; ProtocolReady: bool }
+
+/// Defines the exact assertion and readiness contracts for the Redis restart measurement.
+module RedisRestart =
+
+    /// Lists the only assertion identities permitted to produce a passing Redis restart summary.
+    let requiredAssertionIds =
+        [|
+            "redis-restart.seed-deliveries-completed"
+            "redis-restart.command-completed"
+            "redis-restart.fresh-health"
+            "redis-restart.protocol-ready"
+            "redis-restart.branch-setup-delivery-completed"
+            "redis-restart.stimulus-message-delta"
+            "redis-restart.stimulus-duration-delta"
+            "redis-restart.reference-root-present"
+            "redis-restart.manifest-relationship-present"
+            "redis-restart.logical-count-plus-one"
+            "redis-restart.workflow-unchanged"
+            "redis-restart.physical-active-count-one"
+            "redis-restart.evidence-integrity"
+        |]
+
+    /// Evaluates a post-command event, Healthy snapshot, and bounded Redis protocol result as independent gates.
+    let evaluateReadiness observation =
+        {
+            FreshResourceEvent = observation.PostCommandResourceEventObserved
+            Healthy = observation.PostCommandHealth.Equals("Healthy", StringComparison.Ordinal)
+            ProtocolReady = observation.ProtocolOperationSucceeded
+        }
+
 /// Derives a scenario outcome from exact assertion identities and the runtime-failure ledger.
 module ScenarioSummary =
 

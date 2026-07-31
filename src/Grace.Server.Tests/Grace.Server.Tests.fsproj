@@ -39,6 +39,7 @@
     <Compile Include="RestartDurability.Server.Tests.fs" />
     <Compile Include="ManifestContributionAccounting.Server.Tests.fs" />
     <Compile Include="ManifestContributionBaseline.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionRedisRestart.Measurement.Tests.fs" />
     <Compile Include="RepositoryCounterRecentResult.Integration.Server.Tests.fs" />
     <Compile Include="Policy.Server.Tests.fs" />
     <Compile Include="Queue.Integration.Server.Tests.fs" />

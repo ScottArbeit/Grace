@@ -36,6 +36,23 @@ grace_manifest_contribution_messages_total{{otel_scope_name="Grace.ManifestContr
 grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"}} {durations}
 """
 
+    let redisRestartAssertionIds =
+        [|
+            "redis-restart.seed-deliveries-completed"
+            "redis-restart.command-completed"
+            "redis-restart.fresh-health"
+            "redis-restart.protocol-ready"
+            "redis-restart.branch-setup-delivery-completed"
+            "redis-restart.stimulus-message-delta"
+            "redis-restart.stimulus-duration-delta"
+            "redis-restart.reference-root-present"
+            "redis-restart.manifest-relationship-present"
+            "redis-restart.logical-count-plus-one"
+            "redis-restart.workflow-unchanged"
+            "redis-restart.physical-active-count-one"
+            "redis-restart.evidence-integrity"
+        |]
+
     /// Creates one passing assertion with the supplied identifier.
     let passingAssertion assertionId = MeasurementAssertion.Create("run-1", "baseline", assertionId, true, "proved")
 
@@ -48,6 +65,94 @@ grace_manifest_contribution_processing_duration_milliseconds_count{{otel_scope_n
     /// Verifies the Baseline assertion contract is an exact stable set.
     [<Test>]
     member _.RequiredAssertionIdentifiersAreExact() = Assert.That(Baseline.requiredAssertionIds = requiredAssertionIds, Is.True)
+
+    /// Verifies the Redis restart assertion contract is the exact owner-accepted set.
+    [<Test>]
+    member _.RedisRestartAssertionIdentifiersAreExact() = Assert.That(RedisRestart.requiredAssertionIds = redisRestartAssertionIds, Is.True)
+
+    /// Verifies a newer Healthy event and successful protocol operation satisfy three independent readiness gates.
+    [<Test>]
+    member _.RedisRestartRequiresFreshHealthyProtocolEvidence() =
+        let evaluation =
+            RedisRestart.evaluateReadiness { PostCommandResourceEventObserved = true; PostCommandHealth = "Healthy"; ProtocolOperationSucceeded = true }
+
+        Assert.That(evaluation.FreshResourceEvent, Is.True)
+        Assert.That(evaluation.Healthy, Is.True)
+        Assert.That(evaluation.ProtocolReady, Is.True)
+
+    /// Verifies a cached pre-command Healthy snapshot cannot satisfy fresh restart readiness.
+    [<Test>]
+    member _.RedisRestartRejectsStaleHealthySnapshot() =
+        let evaluation =
+            RedisRestart.evaluateReadiness { PostCommandResourceEventObserved = false; PostCommandHealth = "Healthy"; ProtocolOperationSucceeded = true }
+
+        Assert.That(evaluation.FreshResourceEvent, Is.False)
+        Assert.That(evaluation.Healthy, Is.True)
+        Assert.That(evaluation.ProtocolReady, Is.True)
+
+    /// Verifies a post-command resource event cannot substitute for Healthy and Redis protocol readiness.
+    [<TestCase("Unhealthy", true)>]
+    [<TestCase("Healthy", false)>]
+    member _.RedisRestartKeepsHealthAndProtocolReadinessIndependent(health, protocolSucceeded) =
+        let evaluation =
+            RedisRestart.evaluateReadiness
+                { PostCommandResourceEventObserved = true; PostCommandHealth = health; ProtocolOperationSucceeded = protocolSucceeded }
+
+        Assert.That(evaluation.FreshResourceEvent, Is.True)
+        Assert.That(evaluation.Healthy && evaluation.ProtocolReady, Is.False)
+
+    /// Verifies a branch setup delivery inside the explicit baseline overshoots the one-delivery stimulus contract.
+    [<Test>]
+    member _.RedisRestartRejectsBranchSetupCrossingExplicitBaseline() =
+        let beforeBranchSetup = completedMetrics 7 7
+        let afterBranchSetupAndStimulus = completedMetrics 9 9
+
+        match OpenMetrics.evaluateCompletedSettlementDelta 1L beforeBranchSetup afterBranchSetupAndStimulus with
+        | DeltaEvaluation.Invalid reason -> Assert.That(reason, Does.Contain("overshot"))
+        | result -> Assert.Fail($"Branch setup unexpectedly produced {result}.")
+
+    /// Verifies one exact post-restart delivery is the accepted settlement boundary.
+    [<Test>]
+    member _.RedisRestartAcceptsExactlyOneStimulusDelivery() =
+        let baseline = completedMetrics 7 7
+        let observed = completedMetrics 8 8
+
+        Assert.That(OpenMetrics.evaluateCompletedSettlementDelta 1L baseline observed, Is.EqualTo(DeltaEvaluation.Complete(1L, 1L)))
+
+    /// Verifies Redis exceptions and bounded timeouts remain terminal runtime failures in the shared summary seam.
+    [<TestCase("StackExchange.Redis.RedisConnectionException: connection unavailable")>]
+    [<TestCase("System.TimeoutException: Redis protocol readiness timed out")>]
+    member _.RedisRestartInfrastructureFailuresCannotProducePassingSummary(runtimeFailure) =
+        let assertions =
+            redisRestartAssertionIds
+            |> Array.map (fun assertionId -> MeasurementAssertion.Create("run-1", "redis-restart", assertionId, true, "proved"))
+
+        let summary = ScenarioSummary.derive "run-1" "redis-restart" redisRestartAssertionIds assertions [| runtimeFailure |] false
+
+        Assert.That(summary.Outcome, Is.EqualTo("Failed"))
+        Assert.That(summary.RuntimeFailures, Is.Not.Empty)
+
+    /// Verifies passing derives from exactly 13 unique Redis restart assertions and no caller-supplied count.
+    [<Test>]
+    member _.RedisRestartSummaryDerivesExactAssertionCount() =
+        let assertions =
+            redisRestartAssertionIds
+            |> Array.map (fun assertionId -> MeasurementAssertion.Create("run-1", "redis-restart", assertionId, true, "proved"))
+
+        let summary = ScenarioSummary.derive "run-1" "redis-restart" redisRestartAssertionIds assertions Array.empty false
+
+        Assert.That(summary.Outcome, Is.EqualTo("Passed"))
+        Assert.That(summary.RequiredAssertionCount, Is.EqualTo(13))
+        Assert.That(summary.PassedAssertionCount, Is.EqualTo(13))
+
+    /// Verifies a failed Redis restart prerequisite is Skipped with no assertion evidence or side-effect claim.
+    [<Test>]
+    member _.RedisRestartFailedPrerequisiteIsCleanSkip() =
+        let summary = ScenarioSummary.derive "run-1" "redis-restart" redisRestartAssertionIds Array.empty Array.empty true
+
+        Assert.That(summary.Outcome, Is.EqualTo("Skipped"))
+        Assert.That(summary.PassedAssertionCount, Is.Zero)
+        Assert.That(summary.RuntimeFailures, Is.Empty)
 
     /// Verifies exact production settlement samples complete only at the requested cumulative deltas.
     [<Test>]

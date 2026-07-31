@@ -34,7 +34,7 @@ open System.Threading
 open System.Threading.Tasks
 
 /// Carries one distinct manifest, root, branch, and explicit Save identity through the Baseline tracer.
-type private BaselineAsset =
+type internal BaselineAsset =
     {
         BlockAddress: ContentBlockAddress
         Manifest: FileManifest
@@ -45,7 +45,7 @@ type private BaselineAsset =
     }
 
 /// Captures each independent durable convergence result without treating one state store as broker evidence.
-type private DurableStatus =
+type internal DurableStatus =
     {
         ReferenceRoots: bool
         ManifestRelationships: bool
@@ -56,7 +56,7 @@ type private DurableStatus =
     }
 
 /// Implements the one explicit fixture-owned Baseline measurement runtime.
-module private BaselineRuntime =
+module internal BaselineRuntime =
 
     [<Literal>]
     let SelectedTopologyCount = 3
@@ -535,7 +535,7 @@ module private BaselineRuntime =
             parameters.ReferenceId <- asset.SaveReferenceId
             parameters.DirectoryVersionId <- asset.Root.DirectoryVersionId
             parameters.Sha256Hash <- asset.Root.Sha256Hash
-            parameters.Message <- "MCA-08B-R1 Baseline explicit Save"
+            parameters.Message <- "MCA selected-process explicit Save measurement"
             parameters.CorrelationId <- generateCorrelationId ()
             use! response = state.Client.PostAsync("/branch/save", createJsonContent parameters)
             let! _ = requireOkAsync "POST /branch/save" response
