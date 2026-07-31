@@ -16,6 +16,18 @@ module BoundedEvidence =
     let private WorktreeStatePreviewCharacters = 4096
 
     [<Literal>]
+    let private RunCommandVerbatimSerializedBytes = 8192
+
+    [<Literal>]
+    let private RunCommandPreviewCharacters = 4096
+
+    [<Literal>]
+    let private AssertionDetailVerbatimSerializedBytes = 8192
+
+    [<Literal>]
+    let private AssertionDetailPreviewCharacters = 4096
+
+    [<Literal>]
     let private RuntimeFailurePreviewCharacters = 3072
 
     [<Literal>]
@@ -28,7 +40,7 @@ module BoundedEvidence =
         |> Convert.ToHexString
         |> fun digest -> digest.ToLowerInvariant()
 
-    /// Converts diagnostic text to printable JSON-safe ASCII without obscuring its source digest.
+    /// Converts diagnostic text to a deterministic ASCII alphabet that the default JSON encoder preserves one-for-one.
     let private printableAscii (value: string) =
         let builder = StringBuilder(value.Length)
 
@@ -39,9 +51,17 @@ module BoundedEvidence =
                 | '\r'
                 | '\n'
                 | '\t' -> ' '
-                | '"' -> '\''
-                | '\\' -> '/'
-                | value when value >= ' ' && value <= '~' -> value
+                | value when Char.IsAsciiLetterOrDigit value -> value
+                | ' '
+                | '.'
+                | ','
+                | ':'
+                | ';'
+                | '='
+                | '_'
+                | '-'
+                | '/'
+                | '?' -> character
                 | _ -> '?'
 
             builder.Append printable |> ignore)
@@ -79,6 +99,23 @@ module BoundedEvidence =
         let truncated = source.Length > maximumPreviewCharacters
 
         $"sourceChars={source.Length}; sourceUtf8Bytes={bytes.Length}; sha256={sha256Bytes bytes}; truncated={truncated.ToString().ToLowerInvariant()}; preview={boundedPreview maximumPreviewCharacters source}"
+
+    /// Preserves a value while its exact default-JSON representation fits, otherwise retaining a bounded source summary.
+    let private boundedText maximumVerbatimSerializedBytes maximumPreviewCharacters value =
+        let source = if isNull value then String.Empty else value
+        let serializedBytes = JsonSerializer.SerializeToUtf8Bytes source
+
+        if serializedBytes.Length
+           <= maximumVerbatimSerializedBytes then
+            source
+        else
+            summarize maximumPreviewCharacters source
+
+    /// Preserves an ordinary hosted command verbatim and summarizes values that would consume an unsafe serialized budget.
+    let command value = boundedText RunCommandVerbatimSerializedBytes RunCommandPreviewCharacters value
+
+    /// Preserves ordinary assertion diagnostics and summarizes failure-controlled details before evidence serialization.
+    let assertionDetail value = boundedText AssertionDetailVerbatimSerializedBytes AssertionDetailPreviewCharacters value
 
     /// Represents raw Git porcelain state without allowing path count to exceed one run record.
     let worktreeState value =
@@ -149,7 +186,7 @@ type MeasurementRun =
             CommitSha = commitSha
             Worktree = worktree
             WorktreeState = BoundedEvidence.worktreeState worktreeState
-            Command = command
+            Command = BoundedEvidence.command command
             EvidenceDirectory = evidenceDirectory
             Scenarios = Array.copy executedScenarioPlan
             StartedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
@@ -203,7 +240,7 @@ type MeasurementAssertion =
             ScenarioId = scenarioId
             AssertionId = assertionId
             Passed = passed
-            Detail = detail
+            Detail = BoundedEvidence.assertionDetail detail
             ObservedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
         }
 

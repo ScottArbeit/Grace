@@ -339,6 +339,20 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
 
         Assert.That(run.Scenarios = plan, Is.True)
 
+    /// Verifies an ordinary hosted selector command remains verbatim rather than becoming diagnostic projection text.
+    [<Test>]
+    member _.OrdinaryHostedCommandRemainsVerbatim() =
+        let commandPrefix = "dotnet test --configuration Release --no-build --filter "
+
+        let command =
+            commandPrefix
+            + String('x', 208 - commandPrefix.Length)
+
+        let run = MeasurementRun.Create("run-1", "commit", "worktree", "clean", command, "evidence", [| "baseline" |])
+
+        Assert.That(command, Has.Length.EqualTo(208))
+        Assert.That(run.Command, Is.EqualTo(command))
+
     /// Verifies large worktree metadata remains writable while retaining a bounded preview and source digest.
     [<Test>]
     member _.LargeWorktreeStateProducesBoundedTruthfulRunMetadata() =
@@ -363,6 +377,36 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
             Assert.That(run.WorktreeState, Does.Contain("untracked-0000"))
             Assert.That(run.WorktreeState, Does.Contain("untracked-2047"))
             Assert.That(run.WorktreeState, Does.Not.Contain("untracked-1024"))
+        finally
+            if Directory.Exists directory then Directory.Delete(directory, true)
+
+    /// Verifies oversized caller-controlled command metadata remains truthful and writable through the real writer.
+    [<Test>]
+    member _.EscapeHeavyHostedCommandProducesBoundedTruthfulRunMetadata() =
+        let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-measurement-{Guid.NewGuid():N}")
+        let command = String.replicate 8192 "<>&"
+
+        let worktreeState =
+            Array.init 2048 (fun index -> $"?? untracked-{index:D4}-{String('x', 48)}.txt")
+            |> String.concat Environment.NewLine
+
+        try
+            use writer = new EvidenceWriter(directory, 65536)
+
+            let run = MeasurementRun.Create("run-1", "commit", "worktree", worktreeState, command, directory, [| "baseline" |])
+
+            writer.Append run
+
+            let line = File.ReadAllText(writer.Path).TrimEnd()
+            Assert.That(Encoding.UTF8.GetByteCount(line), Is.LessThanOrEqualTo(65536))
+            Assert.That(run.WorktreeState, Does.Contain("pathEntryCount=2048"))
+            Assert.That(run.Command, Does.Contain($"sourceChars={command.Length}"))
+            Assert.That(run.Command, Does.Contain($"sourceUtf8Bytes={Encoding.UTF8.GetByteCount command}"))
+            Assert.That(run.Command, Does.Contain($"sha256={sha256 command}"))
+            Assert.That(run.Command, Does.Contain("truncated=true"))
+
+            let repeated = MeasurementRun.Create("run-1", "commit", "worktree", worktreeState, command, directory, [| "baseline" |])
+            Assert.That(repeated.Command, Is.EqualTo(run.Command))
         finally
             if Directory.Exists directory then Directory.Delete(directory, true)
 
@@ -393,6 +437,134 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
             Assert.That(String.concat " " summary.RuntimeFailures, Does.Contain("startup-failure-000"))
             Assert.That(String.concat " " summary.RuntimeFailures, Does.Contain("cleanup-failure-063"))
             Assert.That(summary.RuntimeFailures.Length, Is.LessThan(failures.Length))
+        finally
+            if Directory.Exists directory then Directory.Delete(directory, true)
+
+    /// Verifies JSON-escape-heavy failures retain bounded truthful terminal evidence through the real writer.
+    [<Test>]
+    member _.EscapeHeavyRuntimeFailuresProduceBoundedTruthfulTerminalSummary() =
+        let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-measurement-{Guid.NewGuid():N}")
+
+        let escapeHeavyDetail = String.replicate 8192 "<>&"
+
+        let failures = Array.init 8 (fun index -> $"failure-{index:D2}:{escapeHeavyDetail}")
+
+        let assertions = requiredAssertionIds |> Array.map passingAssertion
+
+        try
+            use writer = new EvidenceWriter(directory, 65536)
+            let summary = ScenarioSummary.derive "run-1" "baseline" requiredAssertionIds assertions failures false
+            writer.Append summary
+
+            let line = File.ReadAllText(writer.Path).TrimEnd()
+            let retainedFailures = String.concat " " summary.RuntimeFailures
+            Assert.That(Encoding.UTF8.GetByteCount(line), Is.LessThanOrEqualTo(65536))
+            Assert.That(summary.Outcome, Is.EqualTo("Failed"))
+            Assert.That(summary.RuntimeFailures[0], Does.Contain("failureCount=8"))
+            Assert.That(retainedFailures, Does.Contain($"sourceChars={failures[0].Length}"))
+            Assert.That(retainedFailures, Does.Contain($"sourceUtf8Bytes={Encoding.UTF8.GetByteCount failures[0]}"))
+            Assert.That(retainedFailures, Does.Contain($"sha256={sha256 failures[0]}"))
+            Assert.That(retainedFailures, Does.Contain("truncated=true"))
+            Assert.That(retainedFailures, Does.Contain("failure-00"))
+            Assert.That(retainedFailures, Does.Contain("failure-07"))
+        finally
+            if Directory.Exists directory then Directory.Delete(directory, true)
+
+    /// Verifies failure-controlled assertion detail retains source truth without escaping past the record limit.
+    [<Test>]
+    member _.EscapeHeavyAssertionDetailProducesBoundedTruthfulEvidence() =
+        let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-measurement-{Guid.NewGuid():N}")
+        let detail = String.replicate 8192 "<>&"
+
+        try
+            use writer = new EvidenceWriter(directory, 65536)
+            let assertion = MeasurementAssertion.Create("run-1", "baseline", requiredAssertionIds[0], false, detail)
+            writer.Append assertion
+
+            let line = File.ReadAllText(writer.Path).TrimEnd()
+            Assert.That(Encoding.UTF8.GetByteCount(line), Is.LessThanOrEqualTo(65536))
+            Assert.That(assertion.Detail, Does.Contain($"sourceChars={detail.Length}"))
+            Assert.That(assertion.Detail, Does.Contain($"sourceUtf8Bytes={Encoding.UTF8.GetByteCount detail}"))
+            Assert.That(assertion.Detail, Does.Contain($"sha256={sha256 detail}"))
+            Assert.That(assertion.Detail, Does.Contain("truncated=true"))
+        finally
+            if Directory.Exists directory then Directory.Delete(directory, true)
+
+    /// Audits the supported Baseline constructors against the exact writer serialization for all four evidence types.
+    [<Test>]
+    member _.SupportedBaselineEvidenceRecordTypesRemainWithinSerializedLimit() =
+        let directory = Path.Combine(Path.GetTempPath(), $"grace-mca-measurement-{Guid.NewGuid():N}")
+        let commandPrefix = "dotnet test --configuration Release --no-build --filter "
+
+        let command =
+            commandPrefix
+            + String('x', 208 - commandPrefix.Length)
+
+        let labels = Dictionary<string, string>(StringComparer.Ordinal)
+        labels["stage"] <- "settle"
+        labels["outcome"] <- "completed"
+
+        let run = MeasurementRun.Create("0123456789abcdef0123456789abcdef", String('a', 40), @"C:\Source\Grace", "clean", command, directory, [| "baseline" |])
+
+        let sample =
+            MeasurementSample.Create(
+                "0123456789abcdef0123456789abcdef",
+                "baseline",
+                "stimulus-durations",
+                "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+                3L,
+                labels
+            )
+
+        let assertion =
+            MeasurementAssertion.Create(
+                "0123456789abcdef0123456789abcdef",
+                "baseline",
+                "baseline.manifest-relationship-set",
+                true,
+                "references=3; relationships=3; logicalCounts=3; workflowCounts=3; physicalActiveCounts=3"
+            )
+
+        let summary = ScenarioSummary.derive "run-1" "baseline" requiredAssertionIds (requiredAssertionIds |> Array.map passingAssertion) Array.empty false
+
+        Assert.That(run.Command, Is.EqualTo(command))
+        Assert.That(run.Scenarios = [| "baseline" |], Is.True)
+        Assert.That(sample.Name, Is.EqualTo("grace_manifest_contribution_processing_duration_milliseconds_count.delta"))
+        Assert.That(sample.Labels["stage"], Is.EqualTo("settle"))
+        Assert.That(sample.Labels["outcome"], Is.EqualTo("completed"))
+        Assert.That(assertion.Detail, Is.EqualTo("references=3; relationships=3; logicalCounts=3; workflowCounts=3; physicalActiveCounts=3"))
+        Assert.That(summary.RequiredAssertionIds = requiredAssertionIds, Is.True)
+
+        try
+            use writer = new EvidenceWriter(directory, 65536)
+            writer.Append run
+            writer.Append sample
+            writer.Append assertion
+            writer.Append summary
+
+            let lines = File.ReadAllLines(writer.Path)
+            Assert.That(lines, Has.Length.EqualTo(4))
+
+            let recordTypes =
+                lines
+                |> Array.map (fun line ->
+                    Assert.That(Encoding.UTF8.GetByteCount(line), Is.LessThanOrEqualTo(65536))
+                    use document = JsonDocument.Parse(line)
+
+                    document
+                        .RootElement
+                        .GetProperty("RecordType")
+                        .GetString())
+
+            let expectedRecordTypes =
+                [|
+                    "MeasurementRun"
+                    "MeasurementSample"
+                    "MeasurementAssertion"
+                    "ScenarioSummary"
+                |]
+
+            Assert.That((recordTypes = expectedRecordTypes), Is.True)
         finally
             if Directory.Exists directory then Directory.Delete(directory, true)
 
@@ -444,7 +616,17 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
 
         try
             use writer = new EvidenceWriter(directory, 256)
-            let assertion = MeasurementAssertion.Create("run-1", "baseline", requiredAssertionIds[0], false, String.replicate 1024 "x")
+
+            let assertion =
+                {
+                    RecordType = nameof MeasurementAssertion
+                    RunId = "run-1"
+                    ScenarioId = "baseline"
+                    AssertionId = requiredAssertionIds[0]
+                    Passed = false
+                    Detail = String.replicate 1024 "x"
+                    ObservedAt = "2026-07-30T00:00:00.0000000+00:00"
+                }
 
             Assert.Throws<InvalidDataException>(Action(fun () -> writer.Append(assertion)))
             |> ignore
