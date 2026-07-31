@@ -83,12 +83,12 @@ module private DeadLetterRuntime =
                 |> Option.defaultWith (fun () -> invalidOp $"Timed out waiting for exact {description} identity '{expectedMessageId}'.")
         }
 
-    /// Completes the delivery-limit transition and returns exact active-boundary plus DLQ observations.
+    /// Completes the delivery-limit transition and terminally removes the observed DLQ witness through ReceiveAndDelete.
     let transitionAsync (state: TestHostState) expectedMessageId =
         task {
             use client = new ServiceBusClient(state.ServiceBusConnectionString)
             let activeOptions = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock)
-            let deadLetterOptions = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock, SubQueue = SubQueue.DeadLetter)
+            let deadLetterOptions = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete, SubQueue = SubQueue.DeadLetter)
             use activeReceiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, activeOptions)
             use deadLetterReceiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, deadLetterOptions)
             let mutable activeIdentityExact = true
@@ -114,7 +114,6 @@ module private DeadLetterRuntime =
             let deadLetterMessageId = deadLetterMessage.MessageId
             let deadLetterDeliveryCount = deadLetterMessage.DeliveryCount
             let deadLetterReason = deadLetterMessage.DeadLetterReason
-            do! deadLetterReceiver.CompleteMessageAsync(deadLetterMessage)
             return activeIdentityExact, belowMaximum, deadLetterMessageId, deadLetterDeliveryCount, deadLetterReason
         }
 
