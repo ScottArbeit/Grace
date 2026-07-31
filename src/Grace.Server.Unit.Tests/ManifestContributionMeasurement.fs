@@ -279,6 +279,188 @@ module Baseline =
             "baseline.evidence-integrity"
         |]
 
+/// Defines the only HotManifest assertion identities permitted to produce a passing summary.
+module HotManifest =
+
+    /// Lists the exact assertion identities required by the MCA HotManifest topology.
+    let requiredAssertionIds =
+        [|
+            "hot-manifest.setup-deliveries-completed"
+            "hot-manifest.stimulus-deliveries-completed"
+            "hot-manifest.reference-root-cardinality"
+            "hot-manifest.manifest-relationship-cardinality"
+            "hot-manifest.logical-count"
+            "hot-manifest.workflow-count"
+            "hot-manifest.physical-active-count"
+            "hot-manifest.message-delta"
+            "hot-manifest.duration-delta"
+            "hot-manifest.identity-isolation"
+            "hot-manifest.evidence-integrity"
+        |]
+
+/// Defines the only HighlySharedDirectoryVersion assertion identities permitted to produce a passing summary.
+module HighlySharedDirectoryVersion =
+
+    /// Lists the exact assertion identities required by the MCA HighlySharedDirectoryVersion topology.
+    let requiredAssertionIds =
+        [|
+            "highly-shared.setup-deliveries-completed"
+            "highly-shared.stimulus-deliveries-completed"
+            "highly-shared.reference-root-cardinality"
+            "highly-shared.manifest-relationship-cardinality"
+            "highly-shared.logical-count"
+            "highly-shared.workflow-count"
+            "highly-shared.physical-active-count"
+            "highly-shared.message-delta"
+            "highly-shared.duration-delta"
+            "highly-shared.identity-isolation"
+            "highly-shared.evidence-integrity"
+        |]
+
+/// Declares the exact identities and cardinalities that one topology is allowed to produce.
+type TopologyCardinalityExpectation =
+    {
+        ScenarioId: string
+        RepositoryId: string
+        RequiredAssertionIds: string array
+        DeclaredIdentityIds: string array
+        SetupMessageIds: string array
+        StimulusMessageIds: string array
+        ReferenceRootRelationshipIds: string array
+        ManifestRelationshipIds: string array
+        LogicalCount: int64
+        WorkflowCount: int64
+        PhysicalActiveCount: int64
+    }
+
+/// Captures the completed-only deliveries and durable graph observed for one topology.
+type TopologyCardinalityObservation =
+    {
+        SetupObservedMessageIds: string array
+        SetupSettledBeforeStimulusBaseline: bool
+        StimulusObservedMessageIds: string array
+        ReferenceRootRelationshipIds: string array
+        ManifestRelationshipIds: string array
+        LogicalCount: int64
+        WorkflowCount: int64
+        PhysicalActiveCount: int64
+        MessageDelta: int64
+        DurationDelta: int64
+    }
+
+/// Projects exact topology evidence into the assertion decisions used by hosted scenarios.
+type TopologyCardinalityEvaluation =
+    {
+        SetupDeliveriesCompleted: bool
+        StimulusDeliveriesCompleted: bool
+        ReferenceRootCardinality: bool
+        ManifestRelationshipCardinality: bool
+        LogicalCount: bool
+        WorkflowCount: bool
+        PhysicalActiveCount: bool
+        MessageDelta: bool
+        DurationDelta: bool
+        IdentityIsolation: bool
+        AllPassed: bool
+    }
+
+/// Evaluates topology evidence without allowing counts or duplicate identities to stand in for the declared graph.
+module TopologyCardinality =
+
+    /// Requires exact unique ordinal identity sets on both sides.
+    let private exactUniqueSet (expected: string array) (observed: string array) =
+        let expectedSet = HashSet<string>(expected, StringComparer.Ordinal)
+        let observedSet = HashSet<string>(observed, StringComparer.Ordinal)
+
+        expectedSet.Count = expected.Length
+        && observedSet.Count = observed.Length
+        && expectedSet.SetEquals observedSet
+
+    /// Rejects repository, scenario, or declared production identities shared by two topology declarations.
+    let validateScenarioIsolation (expectations: TopologyCardinalityExpectation array) =
+        let errors = ResizeArray<string>()
+
+        let requireUnique description values =
+            values
+            |> Array.countBy id
+            |> Array.filter (fun (_, count) -> count > 1)
+            |> Array.iter (fun (value, count) -> errors.Add($"{description} '{value}' occurred {count} times."))
+
+        expectations
+        |> Array.collect (fun expectation -> expectation.DeclaredIdentityIds)
+        |> requireUnique "Declared topology identity"
+
+        expectations
+        |> Array.map (fun expectation -> expectation.RepositoryId)
+        |> requireUnique "Topology repository"
+
+        expectations
+        |> Array.map (fun expectation -> expectation.ScenarioId)
+        |> requireUnique "Scenario identity"
+
+        errors.ToArray()
+
+    /// Evaluates every cardinality and delivery gate using exact equality and unique identities.
+    let evaluate (expected: TopologyCardinalityExpectation) (observed: TopologyCardinalityObservation) =
+        let setupDeliveriesCompleted =
+            expected.SetupMessageIds.Length > 0
+            && observed.SetupSettledBeforeStimulusBaseline
+            && exactUniqueSet expected.SetupMessageIds observed.SetupObservedMessageIds
+
+        let expectedStimulusDelta = int64 expected.StimulusMessageIds.Length
+
+        let stimulusIdentitiesComplete =
+            expected.StimulusMessageIds.Length > 0
+            && exactUniqueSet expected.StimulusMessageIds observed.StimulusObservedMessageIds
+
+        let messageDelta = observed.MessageDelta = expectedStimulusDelta
+        let durationDelta = observed.DurationDelta = expectedStimulusDelta
+
+        let stimulusDeliveriesCompleted =
+            stimulusIdentitiesComplete
+            && messageDelta
+            && durationDelta
+
+        let referenceRootCardinality = exactUniqueSet expected.ReferenceRootRelationshipIds observed.ReferenceRootRelationshipIds
+
+        let manifestRelationshipCardinality = exactUniqueSet expected.ManifestRelationshipIds observed.ManifestRelationshipIds
+
+        let logicalCount = observed.LogicalCount = expected.LogicalCount
+        let workflowCount = observed.WorkflowCount = expected.WorkflowCount
+        let physicalActiveCount = observed.PhysicalActiveCount = expected.PhysicalActiveCount
+
+        let identityIsolation =
+            validateScenarioIsolation [| expected |]
+            |> Array.isEmpty
+            && stimulusIdentitiesComplete
+            && exactUniqueSet expected.SetupMessageIds observed.SetupObservedMessageIds
+
+        let allPassed =
+            setupDeliveriesCompleted
+            && stimulusDeliveriesCompleted
+            && referenceRootCardinality
+            && manifestRelationshipCardinality
+            && logicalCount
+            && workflowCount
+            && physicalActiveCount
+            && messageDelta
+            && durationDelta
+            && identityIsolation
+
+        {
+            SetupDeliveriesCompleted = setupDeliveriesCompleted
+            StimulusDeliveriesCompleted = stimulusDeliveriesCompleted
+            ReferenceRootCardinality = referenceRootCardinality
+            ManifestRelationshipCardinality = manifestRelationshipCardinality
+            LogicalCount = logicalCount
+            WorkflowCount = workflowCount
+            PhysicalActiveCount = physicalActiveCount
+            MessageDelta = messageDelta
+            DurationDelta = durationDelta
+            IdentityIsolation = identityIsolation
+            AllPassed = allPassed
+        }
+
 /// Defines the exact proof contract for deterministic duplicate-backlog recovery.
 module DuplicateBacklog =
 
