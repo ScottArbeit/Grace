@@ -674,8 +674,8 @@ DAG showing dependencies and parallelism.
 ### Handoff boundaries
 
 Implementation agents must follow current repo templates and issue-owned workflow. Do not create alternate durable
-task ledgers. The main orchestrator should delegate coding/fixing to worker subagents and use review-only sibling
-subagents for code review when tracked implementation begins.
+task ledgers. The main orchestrator should delegate coding/fixing to worker subagents and run the fresh current-head
+review-subagent gate from `docs/Development process.md` for tracked implementation.
 
 ## Completion semantics and final audit instructions
 

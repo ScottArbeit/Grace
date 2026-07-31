@@ -200,5 +200,5 @@ Epic #343 is close to release-candidate shape, but this audit no longer marks ev
 satisfied. The remaining release decision belongs to orchestrator and maintainer coordination: either schedule the two
 follow-up issues above before the final `main` release PR, or explicitly accept them as deferred non-blocking cleanup in
 the release-candidate PR record. In either path, the orchestrator should open or update the final ready-for-review PR to
-`main`, record validation and review state on that PR, monitor Codex Code Review Bot on the latest head, and stop for
-maintainer manual review rather than automatically merging the epic branch.
+`main`, run a fresh current-head review subagent concurrently with required PR checks, record both results on that PR,
+and stop for maintainer manual review rather than automatically merging the epic branch.

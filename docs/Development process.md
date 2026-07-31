@@ -25,7 +25,7 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
 - Include the purpose behind each feature or implementation change. Plans, issue bodies, and pull request bodies should
   explain why the work benefits Grace and its users so implementation agents can make better decisions when details are
   incomplete.
-- Use the existing issue details to prevent likely Codex Code Review Bot findings before the pull request exists. This
+- Use the existing issue details to prevent likely current-head review findings before the pull request exists. This
   means sharper invariants, forbidden implementation shapes, adversarial cases, and test evidence rather than more
   issue-template ceremony.
 - Grace is not in production. There is no production data to import, migrate, preserve, or grandfather. Do not weaken
@@ -267,7 +267,7 @@ Before assigning, claiming, or starting a coding issue, apply this minimum detai
 
 Write the minimum detail gate as review-prevention guidance. The issue should predict the implementation shortcuts,
 weak tests, contract drift, stale identity assumptions, authorization mistakes, async or cancellation gaps, stale docs,
-generated-artifact omissions, or validation gaps that Codex Code Review Bot is likely to flag if the worker misses them.
+generated-artifact omissions, or validation gaps that a fresh reviewer is likely to flag if the worker misses them.
 Prefer a few task-specific warnings over copying broad checklists. This is a quality bar for the existing issue fields,
 not a new required section.
 
@@ -402,9 +402,10 @@ Definition of done:
 - Behavior changed
 - Tests or docs updated
 - Coding and fix work completed through implementation subagents, with the main agent acting as orchestrator
-- Worker completed a bot-prevention self-review over the actual diff before handoff
-- Codex Code Review Bot reviewed the latest PR commit and either reported no issues with a 👍🏻 reaction on the PR body
-  or all bot comments were fixed, answered, resolved, and followed by a no-issues bot review
+- Worker completed a review-prevention self-review over the actual diff before handoff
+- A fresh Terra Medium review subagent following `dev-process/CODE_REVIEW.md` reported no blocking findings for the
+  latest PR commit
+- Required PR checks passed for that same latest commit
 - Ready-for-review pull request opened and linked
 - Validation recorded
 - Review evidence prepared
@@ -530,465 +531,165 @@ YAML parsing, or `git diff --check`.
 
 ## Required Agent Orchestration And Review
 
-When acting as the main agent for a tracked implementation, stay in the orchestrator role. The main agent owns issue
-coordination, DAG sequencing, prompts, review ledgers, pull request updates, CI/merge status, docs/process updates,
-review/fix routing, and final integration evidence. The main orchestrator must delegate all coding and fixing tasks to
-worker subagents and must not implement, repair, inspect or validate code fixes as a substitute for the worker, or
-commit code changes locally. Grace relies on Codex Code Review Bot for the blocking pull request code-review gate, not
-locally spawned review-only subagents.
+For implementation issues and pull requests, keep responsibility split between the main orchestrator and fresh
+subagents:
 
-If an earlier worker thread is lost, compacted away, leaves uncommitted work, or otherwise cannot be resumed, the main
-orchestrator must assign the continuation to a fresh worker subagent. The continuation prompt must include the existing
-worktree and branch, current git status, prior objective, owned and forbidden paths, validation requirements, and any
-review findings or review-ledger notes already recorded. The main orchestrator may inspect enough metadata to route the
-work safely, but it must not take over code implementation or code-fix validation itself.
+- The orchestrator owns issue and PR coordination, review status, CI state, merge decisions, and cleanup.
+- A fresh implementation or fix worker owns each code change, focused proof, commit, push, and handoff.
+- The orchestrator does not implement or repair code as a substitute for a worker.
+- A fresh review subagent owns the independent current-head code review and remains read-only.
+
+After the first implementation worker pushes the issue branch, the orchestrator opens a normal ready-for-review pull
+request. Keep the PR open while implementation, validation, review, and fixes continue so the current state remains
+visible on the issue and PR.
 
 ### Execution Budget
 
-Add this table to the issue and keep it current in PR `Review Status`:
+Grace limits implementation and fix workers, not runtime proof:
 
-| Resource              | Limit | Used | Next gate               |
-| --------------------- | ----- | ---- | ----------------------- |
-| Subagent starts       | 4     | 0    | Owner approval before 5 |
-| Aspire starts         | 3     | 0    | Owner approval before 4 |
-| Codex review sessions | 3     | 0    | Timeline audit before 4 |
+| Start type | Default issue-level limit | Notes |
+| ---------- | ------------------------- | ----- |
+| Implementation or fix worker | 4 starts | Cumulative across replacements, compactions, branches, and model changes. |
+| Aspire or other runtime start | Uncapped | Record the purpose and result; avoid overlapping runs unless the scenario requires concurrency. |
+| Review subagent | One fresh session per PR head | Review sessions are tracked for stabilization, not charged to the worker limit. |
 
-Every created agent task counts, including owner-requested and failed tasks that began a turn; replacement work does
-not reset usage. Before a start, record: `N/limit - trigger; current-head evidence; issue criterion; why the active
-worker cannot continue; result if this attempt fails`.
+Record worker usage in the issue and PR `Review Status`. At the worker limit, or when a worker reports an owner gate,
+preserve state and return to the owner before starting another implementation or fix worker. A runtime start does not
+consume a worker start and does not require a larger numeric budget. Stop a runtime run when its proof is complete, and
+do not create overlapping Aspire environments accidentally.
 
-Keep local RED/GREEN, build, test, and Aspire diagnosis with the active worker. Fresh fix workers are for post-push
-current-head CI or Codex findings, or a lost worker. Never run parallel analyses of one head or stop decision. At a
-limit or stop condition, freeze, preserve state, update GitHub, and ask the owner.
-
-Every worker prompt should include a status-reporting protocol so the orchestrator does not have to infer whether the
-worker is active, blocked, validating, or ready for review. For Grace work, ask the worker to create or update a temp
-status file outside the repository, such as `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with these fields:
-
-- `phase`: current work phase, such as orienting, patching, focused validation, full validation, handoff, or blocked
-- `lastUpdate`: timestamp for the latest status write
-- `changedFiles`: intended or actual file groups touched
-- `validation`: commands run, running, passed, failed, or intentionally skipped
-- `blockers`: concrete blockers or an empty list
-- `nextStep`: the next action the worker intends to take
-
-Require the worker to update that file before code edits, before and after long validation or generation commands,
-before commit/push/handoff steps, and before its final response. Also require a short chat heartbeat roughly every
-five minutes while still working. The heartbeat should be a status update, not a request for attention, unless the worker
-is blocked. The orchestrator may read the status file and thread output to monitor progress, and should avoid
-interrupting an active worker only to ask for status.
-
-Agents must never sleep or poll for more than 120 seconds in one command. This applies to `Start-Sleep`, `wait_agent`,
-long-polling commands, watch loops, and tool waits. Use repeated shorter checks instead, and update the status file
-between checks when monitoring long-running validation, generation, CI, or review activity.
-
-Before editing files, the implementation worker should post or include a lightweight preflight after reading the issue:
-
-```markdown
 ## Implementation Preflight
 
-- Acceptance criteria I will prove:
-- Contract surfaces I must update or explicitly waive:
-- Existing tests I expect to fail or extend:
-- Adversarial cases I will cover:
-- Global options or modes that could change behavior:
-- Validation I will run:
-- Paths I will touch:
-- Issue-owned path expansion needed before editing:
-```
+Before assigning the first implementation worker, the orchestrator must confirm that the issue is implementable from
+its body alone. At minimum, record:
 
-Keep this preflight short. Its job is to catch missing acceptance criteria, contract surfaces, adversarial examples,
-mode interactions, validation gaps, and path-lease expansion before code changes start.
+- the behavior invariant and the source that decides it;
+- forbidden implementation shapes;
+- positive, negative, regression, and boundary proof, or an explicit waiver for each;
+- high-risk adversarial examples and selected risk-surface traps;
+- owned, sensitive, and forbidden paths;
+- the contract propagation map and any explicit N/A surfaces;
+- stale-source revalidation, abort, retry, cleanup, and proof expectations when applicable;
+- the focused validation profile and docs impact.
 
-Before handoff, the worker must perform a bot-prevention self-review over the actual diff. This is part of
-implementation done, not a separate review phase. The worker should look for likely Codex Code Review Bot findings in:
+If product, domain, or architecture decisions remain open, stop implementation and complete specification or design
+readiness first. Review is not the place to discover requirements that the issue should have stated.
 
-- correctness and edge cases
-- missing, weak, or false-positive tests
-- authorization, scope, identity, or materialization ordering
-- DTO, API, CLI, SDK, serialization, or OpenAPI contract drift
-- async, retry, idempotency, cancellation, or observability gaps
-- stale docs, generated artifacts, examples, or help text
-- validation gaps or stale evidence
+### Worker Status And Self-Review
 
-Anything found in this pass should be fixed before the worker pushes or hands off. If a category is not applicable, the
-handoff can say so briefly rather than expanding the issue or pull request with boilerplate.
+Every worker prompt must include the Grace status-file and heartbeat protocol from `AGENTS.md`. Before handoff, require
+the worker to review the actual diff for likely current-head findings, correct issues it can see within scope, and
+report:
 
-Prefer worker prompts that end at a handoff boundary. A worker subagent performs the assigned implementation or fix,
-keeps its worktree consistent, runs required validation, commits and pushes when the prompt asks for it, and returns a
-handoff with commit hash, changed files, validation evidence, blockers, and follow-ups. By default, workers should not
-update GitHub issues, pull request bodies, review comments, conversation resolution, labels, checklists, merge state, or
-cleanup records. The orchestrator owns those coordination updates. Once the handoff is sufficient, the orchestrator may
-start the next independent worker before completing wrap-up for the prior worker, as long as the dependency graph and
-write sets make that scheduling safe.
+- changed files and commits;
+- focused validation commands and results;
+- first-pass review readiness;
+- residual risks and skipped validation;
+- any issue or sibling-issue detail that should be strengthened to prevent recurrence.
 
-For high-risk slices, the orchestrator may assign a fresh pre-PR review worker before opening or updating the pull
-request when that is cheaper than a likely bot/fix/re-review loop. Reserve this exception for changes that touch
-authorization, storage/materialization, public contracts, generated clients or OpenAPI, async/idempotency behavior,
-large cross-surface diffs, or slices where the implementation worker reports residual risk. This optional pre-PR review
-does not replace Codex Code Review Bot as the blocking review gate.
+### Current-Head Review Gate
 
-After the first coding subagent that works on the issue commits and pushes the new branch to origin, the orchestrator
-must open a normal ready-for-review pull request. The pull request can remain open while the step is still in progress.
-From that point on, review findings, review fixes, validation evidence, and bot-review state belong on the pull request,
-not only on the issue. Use the issue for claim, planning, parent/epic coordination, and pre-PR evidence; use the pull
-request as the durable code-review ledger once it exists. Whenever the orchestrator adds or updates code-review comments
-on a pull request, it must update the pull request body's `Review Status` section in the same turn. That section should
-stay high-level: current head SHA, bot state for the current head, manual trigger decision, manual trigger lock text,
-bot reviews observed, current open findings, fix commits already pushed, final no-issues bot status, and links to
-detailed review/fix comments.
+For every PR revision that may be merged:
 
-The implementation subagent must stop after committing, validating, and pushing the slice branch, then return a
-[Ready For Review handoff](#ready-for-review-handoff) to the parent/orchestrator thread. The parent/orchestrator is
-responsible for opening or updating the pull request and monitoring Codex Code Review Bot. Do not run `codex review`
-through the shell, do not ask GitHub `@codex review`, and do not spawn local review-only subagents for the normal Grace
-completion gate except for the selective high-risk pre-PR review described above or when the maintainer explicitly
-changes the review mode for that task.
+1. Read the installed `dev-process/CODE_REVIEW.md` instructions.
+1. Start exactly one fresh review subagent with `model: gpt-5.6-terra`, `reasoning_effort: medium`, and
+   `fork_turns: none`.
+1. Because the reviewer receives no forked conversation, provide the complete review context: repository and worktree,
+   issue and PR links, base and head SHAs, intended behavior, owned and forbidden paths, validation evidence, known
+   risks, and the exact diff scope.
+1. Tell the reviewer to read `dev-process/CODE_REVIEW.md`, inspect the full current-head diff, remain read-only, and
+   return its structured verdict and findings to the orchestrator. The reviewer must not edit files, push commits, or
+   change GitHub state.
+1. Run the fresh review concurrently with the required GitHub PR checks.
+1. Wait for both the review verdict and the required checks. They satisfy the gate only when both apply to the same
+   head SHA and both pass.
 
-Codex Code Review Bot communicates through PR-body emoji reactions, review summaries, top-level PR comments, and
-inline pull-request-review comments:
+Any new commit makes the prior review verdict and prior check results stale. Start a new fresh reviewer and wait for
+new required checks on the new head. Automatic review comments, reaction emoji, and manual review-trigger commands are
+not Grace review state and are not part of this process.
 
-- 👀 on the pull request body means the bot has seen the latest pushed commit and is reviewing it.
-- 👍🏻 on the pull request body means the bot found no issues for the latest reviewed commit.
-- A pull request comment or inline pull-request-review comment from Codex Code Review Bot means it found one or more
-  actionable issues.
+### Finding Routing And Fix Serialization
 
-The orchestrator must verify that the bot signal applies to the latest pushed commit before treating the review gate as
-complete. Do not merge, close, or call a task review-complete while the latest bot state is still 👀, while a bot comment
-is unresolved, or while the bot has not yet reacted to the current head commit.
+After the reviewer completes, freeze the finding set for that head. Classify each finding as fix now, invalid, waived,
+or deferred to a named future epic leaf. Record the reason and evidence for every non-fix disposition.
 
-### Review Freshness and Fix Serialization
+Route each fix-now finding to a fresh implementation or fix worker. Serialize fix workers for one PR unless the
+completed review contains findings with provably disjoint write sets. A fix worker owns the code change, proof, commit,
+push, and handoff. The orchestrator records the disposition and starts the new-head review/check pair.
 
-Review-fix routing starts from a frozen action set. The orchestrator must wait for Codex Code Review Bot to finish on
-the latest head commit, then classify findings before assigning any fix worker.
-
-- A fresh finding belongs to the completed bot review for the current head commit, or is repeated after that review
-  completes.
-- A previous-pass finding is stale when a newer head exists and the completed latest-head review does not repeat it.
-  GitHub can keep mapping old review threads onto the current diff, so do not use `isOutdated = false`, the current
-  line number, or the thread's displayed commit alone as proof that the finding is fresh.
-- Do not assign a worker, edit code, or post fix evidence for stale findings. When the maintainer directs stale
-  findings to be closed, reply with a stale disposition, say that no code change addressed the thread, resolve it, and
-  keep the current action set limited to fresh latest-review findings.
-- For epic-branch pull requests, also classify each fresh latest-review finding against the current leaf issue's scope.
-  If a finding is valid but explicitly belongs to a named future leaf issue in the same epic, the orchestrator may
-  reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
-  and avoid assigning a fix worker for that item. Do not broaden the current pull request to absorb future-leaf scope.
-  If the finding exposes missing acceptance criteria, adversarial cases, or risk-surface traps, update the future
-  sibling issue's detail gate before assigning that future work.
-- If the bot has acknowledged the current head with 👀 but has not yet submitted its completed review or no-issues
-  result, continue waiting. Do not infer the action set from early inline threads.
-
-Review-fix workers on a single pull request are serialized by default. A review-fix worker may cover multiple fresh
-findings from the same completed latest-head review when they share a write set or behavior surface. Do not start
-another fix worker for that pull request until the active worker has handed off, pushed its commit, and the orchestrator
-has replied to and resolved the fresh findings it addressed. Parallel fix workers are allowed only when all of these are
-true:
-
-- the findings come from the same completed latest-head review
-- the write sets, tests, and review surfaces are provably disjoint
-- the worker prompts name the disjoint owned and forbidden paths
-- the orchestrator can merge the results without predictable branch churn or conflicting review replies
-
-After every review-fix push, wait for Codex Code Review Bot to finish on the new head before assigning more fix work.
-
-### Repeated Review Cycle Learning Loop
-
-A PR crosses the stabilization threshold when it has three substantive Codex review cycles, two cycles on the same
-invariant family, or one cycle with enough related findings to show that the issue text missed a model boundary.
-
-When that happens, stop treating findings as isolated fixes:
-
-1. Build a review timeline: review number, commit, finding titles, paths, fix commits, and recurring theme.
-2. Fetch the originating issue and compare its acceptance criteria to the findings.
-3. Classify root cause into one or more lanes:
-   - product-decision gap
-   - contract-propagation gap
-   - authority-source gap
-   - stale-snapshot / interleaving gap
-   - lifecycle / retry gap
-   - authorization / materialization ordering gap
-   - negative-proof gap
-   - validation freshness gap
-   - slice-boundary gap
-   - ordinary implementation mistake
-4. Post or update a stabilization ledger with the invariant family, required proof, explicit out-of-scope boundaries, and
-   status map.
-5. Update active sibling issues, future issue generators, specs, templates, or agent guidance if the lane can recur.
-6. Request another review only after the ledger is mapped to implementation and proof on the current head.
-
-The PR prevention line should name the lane and the durable artifact updated or intentionally not updated. Example:
-`Prevention: contract-propagation gap; issue #NNN now requires OpenAPI, generated clients, SDK, and CLI JSON proof or an
-explicit N/A waiver.`
-
-### Manual Codex Review Trigger Lock
-
-The manual Codex review trigger lock prevents duplicate review requests while Codex Code Review Bot is already working
-on the current pull request head. If 👀 appears at any point for the current head commit, the only valid action is to
-wait for either a 👍🏻 no-issues reaction or bot findings. Do not run `codex review`, ask GitHub `@codex review`, or use
-any other manual trigger path while that lock is active.
-
-The lock is active for the current head when any of these states exist:
-
-- 👀 is present on the pull request body for the current head.
-- 👍🏻 is present on the pull request body for the current head.
-- Codex Code Review Bot has submitted a review for the current head.
-- Codex Code Review Bot has written a top-level pull request comment or inline review comment for the current head.
-- The available GitHub data is ambiguous, stale, incomplete, or cannot prove the bot state for the current head.
-
-The missed-ack exception is the only allowed manual trigger path. It is available only after the minimum wait window has
-elapsed since the current head commit or pull request update and the orchestrator has verified all of these conditions
-for the current head:
-
-- no 👀 reaction exists
-- no 👍🏻 reaction exists
-- no Codex Code Review Bot review exists
-- no Codex Code Review Bot top-level comment exists
-- no Codex Code Review Bot inline review comment exists
-
-Use `pwsh ./scripts/guard-codex-review-trigger.ps1 -PullRequest <number>` before any missed-ack manual trigger decision.
-The script is a one-shot guard, not a watcher. It prints a pasteable `Review Status` block and exits successfully only
-when the missed-ack exception is allowed. A nonzero exit means the lock is active, the wait window has not elapsed, or
-the state is ambiguous; in all of those cases, do not manually trigger review.
-
-Do not rely on `gh pr view --json comments` alone when checking for bot findings. That field only covers top-level PR
-comments and can miss inline comments stored under the pull request review. Inspect the latest bot review and its inline
-comments before merging. A GraphQL check should include `reviews.nodes.comments.nodes`, for example:
-
-```powershell
-$query = @'
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      headRefOid
-      comments(first: 50) { nodes { author { login } body url } }
-      reviews(first: 20) {
-        nodes {
-          author { login }
-          state
-          body
-          url
-          commit { oid }
-          comments(first: 50) { nodes { path line body url } }
-        }
-      }
-      reactionGroups { content users(first: 20) { totalCount nodes { login } } }
-    }
-  }
-}
-'@
-
-gh api graphql `
-  -f query="$query" `
-  -F owner="<owner>" `
-  -F name="<repo>" `
-  -F number="<pr-number>"
-```
-
-The review loop is blocking:
-
-1. After the implementation subagent pushes a commit, monitor the pull request for Codex Code Review Bot activity.
-2. Wait for the bot to put 👀 on the pull request body for the current head commit, then wait for either a 👍🏻 reaction
-   or a bot review comment.
-   Use repeated checks no longer than 120 seconds each; do not run one long sleep, watch, `wait_agent`, or poll command
-   while waiting for the bot.
-   If 👀 appears at any point for the current head, the manual trigger lock is active and the only valid action is to
-   wait for 👍🏻 or findings.
-3. If the bot switches the PR-body reaction to 👍🏻 and there are no unresolved bot review comments for the current head,
-   record that no-issues state in `Review Status` and continue toward merge readiness.
-4. If the completed latest-head bot review contains fresh findings, update `Review Status`, then send the frozen fresh
-   action set to a fresh implementation subagent to address in the issue-owned branch/worktree. Do not include stale
-   previous-pass findings unless the latest completed review repeats them.
-5. If the review finds a missing acceptance-criterion class, adversarial case, contract-propagation requirement, stale
-   validation evidence, repeated trap, or issue-template gap that could affect active or future workers, amend the
-   active and future sibling issues before spawning more workers. Update the issue template or agent docs when the trap
-   is structural. Preserve issue history by appending an addendum unless replacing stale text is clearer and safe.
-6. The implementation subagent adds focused regression proof for the changed behavior or docs, then uses GitHub
-   `Validate` as the current-revision broad result. Local Fast or Full is required only for a documented escalation.
-7. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
-8. The orchestrator replies to each Codex Code Review Bot top-level or inline review comment with the outcome, fix
-   commit, and validation evidence using the [Review/Fix comment template](#reviewfix-comment-template). The comment
-   must include a short prevention line and make the high-level outcome easy to scan before the detailed issue and fix
-   text. The orchestrator resolves the GitHub conversation after the feedback has been satisfied.
-9. The orchestrator updates the pull request body's `Review Status` section with the fix commit, validation evidence,
-   and link to the bot comment or fix reply.
-10. Wait for Codex Code Review Bot to review the new head commit. Repeat the loop until the bot reports no issues with
-   a 👍🏻 reaction on the pull request body and all bot conversations are resolved.
-
-Only after Codex Code Review Bot reports no issues for the latest commit can the task continue toward merge readiness,
-handoff, or any other completion step. Record the final bot no-issues state and validation evidence in the pull request.
+For an epic-branch PR, a valid finding may be deferred only when it is explicitly outside the current leaf, a future
+leaf owns it, and that future issue is updated with the finding and proof obligation. Never defer a finding that makes
+a fact, persisted field, status flag, event, or trust predicate produced by the current leaf unreliable for later
+leaves.
 
 ### Repeated Review Stabilization
 
-Count substantive Codex Code Review Bot cycles for every Grace pull request. A substantive cycle is:
+Count a substantive cycle when a current-head reviewer reports a behavior, correctness, concurrency, recovery,
+durability, contract, authorization, or maintainability finding; a worker fixes it; and the next current-head review
+reports another substantive finding.
 
-1. Codex reports one or more behavior, correctness, concurrency, recovery, durability, authority, contract, or
-   maintainability findings.
-2. A worker pushes a fix commit or fix series.
-3. Codex reports another substantive finding on the new head.
+- After cycle 1, continue the normal fix loop.
+- After cycle 2, add a repeated-theme prevention note to `Review Status`.
+- After cycle 3, stop one-off patching and post a stabilization ledger to the issue and PR.
+- After cycle 4, hard stop until the ledger is implemented, proven, and self-reviewed.
 
-Do not count duplicate findings, stale resolved threads, formatting-only comments, administrative comments, CI flakes,
-findings the maintainer explicitly classifies as invalid, or findings the maintainer accepts as deferred to a named
-future issue.
-
-Use these thresholds:
-
-- **Cycle 1:** continue the normal review-fix loop.
-- **Cycle 2:** continue, but add a short prevention note to `Review Status` naming any repeated theme.
-- **Cycle 3:** pause one-off fixing and start a stabilization pass before assigning more routine fix work.
-- **Cycle 4:** hard stop. Do not assign another routine fix worker or request another review until the stabilization
-  ledger is implemented, proven, and self-reviewed.
-
-Start stabilization after **two substantive cycles** when the pull request touches a high-risk surface:
-
-- Watch state, IPC/status contracts, branch-switch safety, local working-tree mutation, or runtime timers
-- storage, CAS, manifests, object placement, cleanup, or reference accounting
-- Orleans actor state, idempotency, replay, retries, or reminders
-- authorization, ownership, tenant or repository scope, secrets, or token authority
-- public DTOs, CLI contracts, OpenAPI, SDK behavior, serialized events, or persisted shapes
-- concurrency, TOCTOU windows, partial failure, recovery, or side-effect ordering
-
-Treat each completed Codex Code Review Bot pass on a distinct PR head as a review session, whether the outcome is a
-no-issues 👍🏻 reaction, a top-level finding, inline review-thread findings, or a mix of stale and fresh comments. A
-manual missed-ack trigger that causes the bot to review the same head also counts as a session; repeated status checks,
-CI reruns, or unresolved stale threads without a new completed bot pass do not.
-
-If a pull request has more than three Codex Code Review Bot review sessions, audit the review timeline before assigning
-another routine fix worker even when not every session counts as a substantive cycle. The audit should separate stale,
-duplicate, invalid, deferred, and no-issue sessions from fresh findings, then decide whether the PR needs a missing
-invariant, a sibling-issue deferral, or a structural stabilization ledger before the next review request.
-
-During a stabilization pass, the orchestrator must:
-
-- collect a concise review timeline and group findings by missing invariant, not only by review order;
-- decide whether each fresh finding belongs to the current issue or to a named future leaf issue;
-- post a Review Stabilization Ledger to the issue and pull request;
-- freeze one-off review-fix workers until the ledger is the acceptance target;
-- assign one structural fix worker when code changes are needed;
-- require a final self-review mapping every ledger invariant to code and proof.
-
-If a review finding is clearly owned by a future leaf issue in the same epic, the orchestrator may resolve it without a
-fix worker only when all of these are true:
-
-- the finding is about behavior explicitly out of scope for the current leaf;
-- the future issue already exists or is created before resolution;
-- the future issue body is updated with the exact finding, invariant, and proof obligation;
-- the PR reply names the future issue and explains why the current PR must not implement it;
-- the PR `Review Status` records the deferral.
-
-Do not defer prerequisites that make the current leaf's contract trustworthy. If later leaves consume a fact, authority
-signal, persisted field, status flag, or trust predicate produced by the current leaf, then the current leaf owns making
-that surface reliable.
-
-After stabilization starts, the worker handoff must include a status map:
-
-| Invariant | Status | Code seam | Test/proof seam | Residual risk |
-| --------- | ------ | --------- | --------------- | ------------- |
-| `<ledger invariant>` | `<allowed status>` | `<file/function>` | `<test or validation>` | `<risk or none>` |
-
-Allowed statuses are only:
-
-- `implemented and proven`
-- `implemented but proof incomplete`
-- `waived`, with reason
-- `out of scope`, with reason
-- `not applicable`, with reason
-
-Do not request another Codex review until every unresolved current-head finding is fixed, waived, or explicitly
-deferred to a named future issue; the status map is present; focused tests and the selected validation gate passed; and
-residual risks are recorded in the pull request.
+For high-risk surfaces such as storage, actors, retries, idempotency, authorization, public or persisted contracts,
+concurrency, recovery, side-effect ordering, Watch state, or runtime timers, start stabilization after two substantive
+cycles. If a PR exceeds three completed review-subagent sessions even without three substantive cycles, audit the
+timeline before assigning another routine fix worker. Use `skills/code-review-stabilizer/SKILL.md` for the ledger and
+status-map workflow.
 
 ### Ready For Review Handoff
 
-When the implementation agent is itself a subagent, it must not attempt to satisfy the review gate by running `codex`,
-asking `@codex review`, spawning nested review work, or updating GitHub issues, pull requests, review comments, labels,
-checklists, or merge/cleanup state unless the orchestrator explicitly delegated that GitHub update. Instead, it must
-return this handoff to the parent/orchestrator thread:
+An implementation or fix worker hands off when its current slice is committed, pushed, and supported by focused proof.
+The orchestrator then owns the independent review/check gate.
+
+Use this handoff shape:
 
 ```markdown
 ## Ready For Review
 
-**Worktree:** `<absolute path>`
-**Branch:** `<branch-name>`
-**Commit:** `<commit-sha> <commit subject>`
-**Diff:** `<base>..<head>`
-**Remote:** `<origin branch or PR URL, if already available>`
+- Issue and PR:
+- Base SHA:
+- Head SHA:
+- Commits:
+- Changed paths:
 
 ### Validation
 
-- `<focused command>`: <result>
-- `<broader command, if any>`: <result or skipped reason>
+- Focused proof:
+- Formatting or generated-artifact checks:
+- Skipped validation and reason:
 
 ### First-Pass Review Readiness
 
-- Bot-prevention self-review: <completed; notable categories checked>
-- Issues found and fixed before handoff: <none, or summary>
-- Residual risks: <none, or summary>
+- Worker self-review result:
+- Residual risks:
+- Suggested prevention updates:
 
 ### Orchestrator Follow-Up
 
-- `<issue/PR/comment/checklist update needed, or none>`
-
-### Review Request
-
-Please monitor Codex Code Review Bot on the pull request. Do not run local review-only subagents, `codex review`, or
-`@codex review` for the normal Grace completion gate. Manual trigger not attempted. The orchestrator must use the pull
-request `Review Status` lock and `scripts/guard-codex-review-trigger.ps1` missed-ack guard before any manual trigger
-path. Wait for the bot to acknowledge the latest commit with 👀, then wait for either a 👍🏻 no-issues reaction or a PR
-comment with findings. If 👀 appears at any point, the only valid action is to wait for 👍🏻 or findings. If the bot
-comments with findings, route the fix to a fresh implementation subagent, reply to the bot comment with the fix commit
-and validation evidence, resolve the conversation, and wait for the next bot review on the new head commit.
+- Start one fresh Terra Medium review subagent with no forked turns.
+- Run it concurrently with required GitHub checks.
+- Record the same-head verdict, checks, findings, and dispositions.
 ```
 
-If Codex Code Review Bot finds issues, the parent/orchestrator sends those findings to an implementation subagent. The
-implementation subagent addresses the findings, validates, commits and pushes the fixes, and returns a new Ready For
-Review handoff. The parent/orchestrator replies to the bot comment, resolves the conversation, updates `Review Status`,
-and waits for the next bot review.
+### Review/Fix Record Template
 
-### Review/Fix Comment Template
-
-Use this Markdown structure when replying to a Codex Code Review Bot comment after a review issue is fixed. Keep the top
-section short and scannable; put detailed evidence below it.
+Record each finding and disposition on the PR:
 
 ```markdown
-## Review/Fix: <short issue title>
+## Review/Fix: <short finding title>
 
-**Status:** Fixed in `<commit-sha>`
-**Review source:** Codex Code Review Bot
-**Validation:** <command or check result>
-**Prevention:** <root-cause class>; <current issue, sibling issues, template, or agent docs update needed?>
-
-### Summary
-
-_One or two sentences explaining the review issue and the fix at a high level._
-
-### Review Issue
-
-<Describe the actionable issue the reviewer found. Include file/line references when available.>
-
-### Fix
-
-<Describe the code or docs change that addressed the issue. Include the fix commit and important files changed.>
-
-### Validation
-
-- `<focused command>`: <result>
-- `<broader command, if any>`: <result or skipped reason>
+- Reviewed head SHA:
+- Review source: Fresh `gpt-5.6-terra` subagent using `dev-process/CODE_REVIEW.md`
+- Finding classification: fix now | invalid | waived | deferred
+- Finding or rationale:
+- Fix commit, if any:
+- Validation:
+- Prevention update:
+- New-head review/check status:
 ```
-
-Use one of these root-cause classes in the `Prevention` line:
-
-- acceptance-criteria / negative-proof gap
-- contract-propagation gap
-- CLI mode / side-effect interaction
-- auth / materialization / traversal ordering gap
-- algorithm adversarial-case gap
-- validation / stale-evidence gap
-- ordinary implementation mistake
-
-Not every review finding requires a docs change. Ordinary implementation mistakes can be fixed and recorded without
-changing templates or process docs. Repeated or structural traps should update active/future sibling issues before more
-workers are assigned, and should update the issue template or agent docs when the missing guard belongs in future tasks.
 
 ## Validation
 
@@ -1120,12 +821,11 @@ comments as the review loop continues:
 - optional Fast or Full evidence and the reason when one was run
 - current head SHA, GitHub `Validate` conclusion, run link, and confirmation that it is associated with the latest PR
   revision; successful logs need not be summarized unless CI fails or warns
-- implementation and review path used, including the implementation subagent and Codex Code Review Bot state observed
-- final no-issues bot review result for the latest commit
-- replies to each Codex Code Review Bot comment that required a fix, including the issue, fix, fix commit, validation,
-  and resolved conversation state
-- a `Review Status` section that summarizes the current review/fix state, current head SHA, bot state for the current
-  head, manual trigger decision, manual trigger lock text, and links to detailed review/fix comments
+- implementation and review path used, including the implementation subagent and fresh review-subagent session
+- final review-subagent verdict for the latest commit
+- each finding disposition, including the finding, classification, fix commit when applicable, and validation
+- a `Review Status` section that summarizes the current review/fix state, current head SHA, reviewer configuration,
+  verdict, required check results, and links to detailed review/fix comments
 - docs impact
 - residual risk
 - rollback or recovery notes when the change touches runtime or data
@@ -1144,8 +844,8 @@ Then verify:
 - no unexpected deletions were introduced during the update
 - focused proof was rerun when conflict resolution or relevant base changes could affect the slice
 
-Push the refreshed revision, require a new GitHub `Validate` result associated with that revision, and wait for Codex
-Code Review Bot. CI and code review can run in parallel. A bot reaction, comment, or CI result on an older revision is
+Push the refreshed revision, run one fresh Terra Medium review subagent following `dev-process/CODE_REVIEW.md`
+concurrently with the required GitHub checks, and wait for both. A review verdict or CI result on an older revision is
 useful history, but it does not satisfy the completion review gate.
 
 Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
@@ -1177,7 +877,8 @@ If the comment is ambiguous, conflicts with another requirement, or would cause 
 clarification or reply with the trade-off instead of resolving the thread prematurely.
 
 The prevention line must include one root-cause class and whether the current issue, sibling issues, issue template, or
-agent docs need an update. Use the same classes from the [Review/Fix comment template](#reviewfix-comment-template).
+agent docs need an update. Use the same classes from the
+[Review/Fix record template](#reviewfix-record-template).
 Not every finding requires a docs change, but repeated or structural traps should update active/future issues before
 more workers are assigned.
 
