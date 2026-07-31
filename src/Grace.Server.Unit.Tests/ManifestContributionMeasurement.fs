@@ -468,6 +468,11 @@ module OpenMetrics =
                             else
                                 errors.Add($"{metricName} contained a non-completed-settlement label set.")
                         | _ -> errors.Add($"{metricName} was malformed.")
+                    elif
+                        metricName.StartsWith(messageMetricName, StringComparison.Ordinal)
+                        || metricName.StartsWith(durationMetricName, StringComparison.Ordinal)
+                    then
+                        errors.Add("A completed settlement metric used a forbidden suffixed name.")
                 elif
                     line.StartsWith(messageMetricName, StringComparison.Ordinal)
                     || line.StartsWith(durationMetricName, StringComparison.Ordinal)
@@ -527,6 +532,72 @@ module ProducerInventory =
         observed
         |> Seq.filter (expected.Contains >> not)
         |> Seq.iter (fun messageId -> errors.Add($"Unclassified Reference-created envelope '{messageId}'."))
+
+        errors.ToArray()
+
+/// Defines the deterministic proof contract for one replay after a real Grace.Server restart.
+module ServerRestart =
+
+    /// Lists the exact assertion identities required by the server-restart replay witness.
+    let requiredAssertionIds =
+        [|
+            "server-restart.seed-deliveries-completed"
+            "server-restart.command-completed"
+            "server-restart.fresh-health"
+            "server-restart.http-ready"
+            "server-restart.replay-message-delta"
+            "server-restart.replay-duration-delta"
+            "server-restart.reference-root-state-unchanged"
+            "server-restart.manifest-state-unchanged"
+            "server-restart.logical-state-unchanged"
+            "server-restart.workflow-state-unchanged"
+            "server-restart.physical-state-unchanged"
+            "server-restart.evidence-integrity"
+        |]
+
+    /// Requires successful restart command execution followed by a fresh Healthy event and bounded HTTP readiness.
+    let validateFreshReadiness
+        commandCompleted
+        (commandStartedAt: DateTimeOffset)
+        (resourceEventObservedAt: DateTimeOffset)
+        resourceState
+        (httpReadyObservedAt: DateTimeOffset)
+        httpReady
+        =
+        let errors = ResizeArray<string>()
+
+        if not commandCompleted then
+            errors.Add("The Grace.Server restart command did not complete successfully.")
+
+        if resourceEventObservedAt <= commandStartedAt then
+            errors.Add("Grace.Server health was not observed after the restart command began.")
+
+        if not (String.Equals(resourceState, "Healthy", StringComparison.Ordinal)) then
+            errors.Add($"The fresh Grace.Server resource event was not Healthy: {resourceState}.")
+
+        if httpReadyObservedAt <= resourceEventObservedAt then
+            errors.Add("Grace.Server HTTP readiness did not follow the fresh Healthy resource event.")
+
+        if not httpReady then
+            errors.Add("Grace.Server HTTP readiness failed after the fresh Healthy resource event.")
+
+        errors.ToArray()
+
+    /// Requires one exact observed replay identity plus one completed message and duration settlement observation.
+    let validateReplayCompletion expectedMessageId observedMessageIds messageDelta durationDelta settlementCompleted =
+        let errors = ResizeArray<string>()
+
+        ProducerInventory.validate [| expectedMessageId |] observedMessageIds
+        |> errors.AddRange
+
+        if messageDelta <> 1L then
+            errors.Add($"The replay completed message delta required 1 but observed {messageDelta}.")
+
+        if durationDelta <> 1L then
+            errors.Add($"The replay completed duration delta required 1 but observed {durationDelta}.")
+
+        if not settlementCompleted then
+            errors.Add("The replay settlement failed or did not reach terminal completion.")
 
         errors.ToArray()
 

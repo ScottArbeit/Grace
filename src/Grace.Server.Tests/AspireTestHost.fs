@@ -42,6 +42,16 @@ type TestHostState =
         OperationsSqlConnectionString: string
     }
 
+/// Captures the ordered resource and HTTP observations produced by one deliberate Grace.Server restart.
+type GraceServerRestartEvidence =
+    {
+        CommandStartedAt: DateTimeOffset
+        CommandCompletedAt: DateTimeOffset
+        ResourceEventObservedAt: DateTimeOffset
+        ResourceState: string
+        HttpReadyObservedAt: DateTimeOffset
+    }
+
 /// Groups shared helpers for aspire test host.
 module AspireTestHost =
     do AppDomain.CurrentDomain.ProcessExit.Add(fun _ -> Environment.ExitCode <- 0)
@@ -1483,8 +1493,8 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
-    /// Restarts Grace.Server with a scenario label for deliberate restart diagnostics.
-    let restartGraceServerAsync (state: TestHostState) (restartContext: string) =
+    /// Restarts Grace.Server and returns fresh post-command resource-event and HTTP-readiness evidence.
+    let restartGraceServerWithEvidenceAsync (state: TestHostState) (restartContext: string) =
         task {
             do! sharedStateLock.WaitAsync()
 
@@ -1492,33 +1502,85 @@ module AspireTestHost =
                 let normalizedRestartContext = normalizeRestartContext restartContext
                 Console.WriteLine($"Restarting Grace.Server Aspire project resource for {normalizedRestartContext}...")
                 let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
                 use cts = new CancellationTokenSource(defaultWaitTimeout)
 
-                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+                let events =
+                    notificationService
+                        .WatchAsync(cts.Token)
+                        .GetAsyncEnumerator(cts.Token)
 
-                if not result.Success then
-                    let errorMessage =
-                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
-                        elif result.Canceled then "Restart command was canceled."
-                        else "Restart command failed without details."
+                try
+                    let commandStartedAt = DateTimeOffset.UtcNow
+                    let mutable nextResourceEvent = events.MoveNextAsync().AsTask()
+                    let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.RestartCommand, cts.Token)
 
-                    raise (InvalidOperationException($"Grace.Server restart failed during {normalizedRestartContext}: {errorMessage}"))
+                    if not result.Success then
+                        let errorMessage =
+                            if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                            elif result.Canceled then "Restart command was canceled."
+                            else "Restart command failed without details."
 
-                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                        raise (InvalidOperationException($"Grace.Server restart failed during {normalizedRestartContext}: {errorMessage}"))
 
-                do!
-                    waitForResourceHealthyWithProgressContextAsync
-                        notificationService
-                        state.App
-                        graceServerResourceName
-                        cts.Token
-                        (Some normalizedRestartContext)
+                    let commandCompletedAt = DateTimeOffset.UtcNow
+                    let mutable healthyEvent: ResourceEvent option = None
+                    let mutable restartTransitionObserved = false
 
-                do! waitForGraceServerHttpReadyAsync state.Client cts.Token
-                logProgress $"Grace.Server HTTP readiness recovered after intentional restart '{normalizedRestartContext}'."
-                Console.WriteLine($"Grace.Server Aspire project resource restart completed for {normalizedRestartContext}.")
+                    while healthyEvent.IsNone do
+                        let! hasEvent = nextResourceEvent
+
+                        if not hasEvent then
+                            invalidOp "Grace.Server resource event observation ended before fresh Healthy evidence."
+
+                        let resourceEvent = events.Current
+
+                        if resourceEvent.Resource.Name.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) then
+                            let isHealthy =
+                                resourceEvent.Snapshot.HealthStatus.HasValue
+                                && resourceEvent.Snapshot.HealthStatus.Value = Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy
+
+                            if
+                                not isHealthy
+                                || not (String.Equals(resourceEvent.Snapshot.State.Text, KnownResourceStates.Running, StringComparison.Ordinal))
+                            then
+                                restartTransitionObserved <- true
+                            elif restartTransitionObserved then
+                                healthyEvent <- Some resourceEvent
+
+                        if healthyEvent.IsNone then nextResourceEvent <- events.MoveNextAsync().AsTask()
+
+                    let resourceEventObservedAt = DateTimeOffset.UtcNow
+                    let resourceState = healthyEvent.Value.Snapshot.HealthStatus.Value.ToString()
+                    logProgress (formatResourceHealthWaitHealthyProgress graceServerResourceName (Some normalizedRestartContext))
+                    do! waitForGraceServerHttpReadyAsync state.Client cts.Token
+                    let httpReadyObservedAt = DateTimeOffset.UtcNow
+                    logProgress $"Grace.Server HTTP readiness recovered after intentional restart '{normalizedRestartContext}'."
+                    Console.WriteLine($"Grace.Server Aspire project resource restart completed for {normalizedRestartContext}.")
+
+                    return
+                        {
+                            CommandStartedAt = commandStartedAt
+                            CommandCompletedAt = commandCompletedAt
+                            ResourceEventObservedAt = resourceEventObservedAt
+                            ResourceState = resourceState
+                            HttpReadyObservedAt = httpReadyObservedAt
+                        }
+                finally
+                    events
+                        .DisposeAsync()
+                        .AsTask()
+                        .GetAwaiter()
+                        .GetResult()
             finally
                 sharedStateLock.Release() |> ignore
+        }
+
+    /// Restarts Grace.Server with a scenario label for deliberate restart diagnostics.
+    let restartGraceServerAsync (state: TestHostState) (restartContext: string) =
+        task {
+            let! _ = restartGraceServerWithEvidenceAsync state restartContext
+            return ()
         }
 
     /// Builds a deterministic service bus receiver for integration setup fixture for the server integration aspire Test Host assertions.
