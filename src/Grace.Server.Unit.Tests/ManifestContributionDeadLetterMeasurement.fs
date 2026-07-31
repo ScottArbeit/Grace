@@ -35,6 +35,9 @@ module DeadLetter =
         not (String.IsNullOrWhiteSpace expectedMessageId)
         && expectedMessageId.Equals(observedMessageId, StringComparison.Ordinal)
 
+    /// Derives the DLQ-observed assertion only from the exact identity returned by the broker transition.
+    let dlqMessageObserved expectedMessageId returnedMessageId = identityMatches expectedMessageId returnedMessageId
+
     /// Requires the last active delivery to remain outside the DLQ at the configured maximum.
     let belowMaximumRemainsActive expectedMessageId activeMessageId activeDeliveryCount (deadLetterMessageIds: string array) =
         identityMatches expectedMessageId activeMessageId
@@ -64,14 +67,18 @@ module DeadLetter =
 
         builder.ToString()
 
+    /// Requires broker-owned dead-letter diagnostics to remain nonempty after bounded redaction.
+    let brokerReasonPasses reason =
+        let boundedReason = boundedBrokerReason reason
+
+        not (String.IsNullOrWhiteSpace boundedReason)
+        && boundedReason.Length <= MaximumReasonCharacters
+
     /// Requires the exact witness to appear in the DLQ on delivery eleven with inspectable broker diagnostics.
     let deadLetterObservationPasses expectedMessageId observedMessageId deliveryCount brokerReason =
-        let boundedReason = boundedBrokerReason brokerReason
-
         identityMatches expectedMessageId observedMessageId
         && deliveryCount = DeadLetterDeliveryCount
-        && not (String.IsNullOrWhiteSpace boundedReason)
-        && boundedReason.Length <= MaximumReasonCharacters
+        && brokerReasonPasses brokerReason
 
     /// Requires terminal cleanup to remove the exact witness from both active and dead-letter subqueues.
     let cleanupComplete expectedMessageId (activeMessageIds: string array) (deadLetterMessageIds: string array) =

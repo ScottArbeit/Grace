@@ -9,8 +9,10 @@ open Grace.Types
 open Grace.Types.Common
 open Grace.Types.Events
 open Grace.Types.Owner
+open Grace.Types.Reference
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.IO
 open System.Text.Json
 open System.Threading
@@ -50,6 +52,136 @@ module private DeadLetterRuntime =
             use sender = client.CreateSender(state.ServiceBusTopic)
             use cts = new CancellationTokenSource(TimeSpan.FromSeconds(10.0))
             do! sender.SendMessageAsync(message, cts.Token)
+        }
+
+    /// Creates the selected-process fixture repository and returns its persisted default Reference producer identity.
+    let createDefaultReferenceProducerAsync (state: TestHostState) fixtureCorrelationId =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let ownerParameters = Parameters.Owner.CreateOwnerParameters()
+            ownerParameters.OwnerId <- string ownerId
+            ownerParameters.OwnerName <- $"McaDeadLetterOwner{ownerId:N}"
+            ownerParameters.CorrelationId <- fixtureCorrelationId
+            use! ownerResponse = state.Client.PostAsync("/owner/create", createJsonContent ownerParameters)
+            let! _ = BaselineRuntime.requireOkAsync "POST /owner/create" ownerResponse
+
+            let organizationParameters = Parameters.Organization.CreateOrganizationParameters()
+            organizationParameters.OwnerId <- string ownerId
+            organizationParameters.OrganizationId <- string organizationId
+            organizationParameters.OrganizationName <- $"McaDeadLetterOrganization{organizationId:N}"
+            organizationParameters.CorrelationId <- fixtureCorrelationId
+            use! organizationResponse = state.Client.PostAsync("/organization/create", createJsonContent organizationParameters)
+            let! _ = BaselineRuntime.requireOkAsync "POST /organization/create" organizationResponse
+
+            let repositoryParameters = Parameters.Repository.CreateRepositoryParameters()
+            repositoryParameters.OwnerId <- string ownerId
+            repositoryParameters.OrganizationId <- string organizationId
+            repositoryParameters.RepositoryId <- string repositoryId
+            repositoryParameters.RepositoryName <- $"mca-dead-letter-{repositoryId:N}"
+            repositoryParameters.CorrelationId <- fixtureCorrelationId
+            use! repositoryResponse = state.Client.PostAsync("/repository/create", createJsonContent repositoryParameters)
+            let! repositoryBody = BaselineRuntime.requireOkAsync "POST /repository/create" repositoryResponse
+            let result = deserialize<GraceReturnValue<string>> repositoryBody
+            let branchId = Grace.Server.Tests.Common.requireGuidProperty (nameof BranchId) result.Properties[nameof BranchId]
+            let referenceId = Grace.Server.Tests.Common.requireGuidProperty (nameof ReferenceId) result.Properties[nameof ReferenceId]
+            let! branch = BaselineRuntime.getBranchAsync state ownerId organizationId repositoryId branchId
+
+            if branch.LatestReference.ReferenceId <> referenceId then
+                invalidOp "The dead-letter fixture repository default Reference did not match its persisted branch."
+
+            return $"Reference/{referenceId}/Created"
+        }
+
+    /// Inventories active selected-process work through PeekLock and settles only the classified fixture/default producers.
+    let inventoryDefaultReferenceProducerAsync (state: TestHostState) fixtureCorrelationId expectedMessageId =
+        task {
+            use client = new ServiceBusClient(state.ServiceBusConnectionString)
+            let options = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock)
+            use receiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, options)
+            let expectedMessageIds = [| expectedMessageId |]
+            let expected = HashSet<string>(expectedMessageIds, StringComparer.Ordinal)
+            let timeoutAt = DateTime.UtcNow.AddSeconds(30.0)
+            let mutable drain = ProducerInventoryDrain.start
+
+            while ProducerInventoryDrain.status drain = ProducerInventoryDrainStatus.Receiving
+                  && DateTime.UtcNow < timeoutAt do
+                let remaining = timeoutAt - DateTime.UtcNow
+
+                if remaining <= TimeSpan.Zero then
+                    drain <- ProducerInventoryDrain.deadlineExpired drain
+                else
+                    let receiveWindow = min remaining (TimeSpan.FromSeconds(2.0))
+                    let! received = receiver.ReceiveMessagesAsync(50, receiveWindow)
+                    let batch = received |> Seq.toArray
+
+                    if Array.isEmpty batch then
+                        drain <- ProducerInventoryDrain.emptyWindow expectedMessageIds drain
+                    else
+                        let observedReferenceIds = ResizeArray<string>()
+                        let mutable index = 0
+
+                        while index < batch.Length do
+                            let message = batch[index]
+                            let testOwned = String.Equals(message.CorrelationId, fixtureCorrelationId, StringComparison.Ordinal)
+
+                            let parsedEvent =
+                                try
+                                    JsonSerializer.Deserialize<GraceEvent>(message.Body.ToArray(), Constants.JsonSerializerOptions)
+                                    |> Some
+                                with
+                                | :? JsonException -> None
+
+                            let referenceIdentity =
+                                match parsedEvent with
+                                | Some graceEvent ->
+                                    match graceEvent with
+                                    | GraceEvent.ReferenceEvent referenceEvent ->
+                                        match referenceEvent.Event with
+                                        | ReferenceEventType.Created (referenceId, _, _, _, _, _, _, _, _, _, _) ->
+                                            let bodyIdentity = $"Reference/{referenceId}/Created"
+
+                                            if String.Equals(message.MessageId, bodyIdentity, StringComparison.Ordinal) then
+                                                Some bodyIdentity
+                                            else
+                                                Some $"{message.MessageId} (body identity {bodyIdentity})"
+                                        | _ -> None
+                                    | _ -> None
+                                | None -> None
+
+                            match referenceIdentity with
+                            | Some identity -> observedReferenceIds.Add identity
+                            | None -> ()
+
+                            let classifiedTestWork =
+                                match parsedEvent, referenceIdentity with
+                                | Some _, Some identity -> expected.Contains identity
+                                | Some _, None -> true
+                                | None, _ -> false
+
+                            if testOwned && classifiedTestWork then
+                                do! receiver.CompleteMessageAsync(message)
+                            else
+                                do! receiver.AbandonMessageAsync(message)
+
+                                let identity =
+                                    referenceIdentity
+                                    |> Option.defaultValue message.MessageId
+
+                                invalidOp $"Active producer inventory observed unclassified identity '{identity}'."
+
+                            index <- index + 1
+
+                        drain <- ProducerInventoryDrain.receiveBatch expectedMessageIds (observedReferenceIds.ToArray()) drain
+
+            if ProducerInventoryDrain.status drain = ProducerInventoryDrainStatus.Receiving then
+                drain <- ProducerInventoryDrain.deadlineExpired drain
+
+            match ProducerInventoryDrain.status drain with
+            | ProducerInventoryDrainStatus.Complete -> return ProducerInventoryDrain.observedMessageIds drain
+            | ProducerInventoryDrainStatus.Failed -> return invalidOp $"Dead-letter producer inventory failed: {ProducerInventoryDrain.failure drain}"
+            | ProducerInventoryDrainStatus.Receiving -> return invalidOp "Dead-letter producer inventory stopped without terminal evidence."
         }
 
     /// Peeks a bounded broker snapshot without settling or locking any message.
@@ -114,7 +246,8 @@ module private DeadLetterRuntime =
             let deadLetterMessageId = deadLetterMessage.MessageId
             let deadLetterDeliveryCount = deadLetterMessage.DeliveryCount
             let deadLetterReason = deadLetterMessage.DeadLetterReason
-            return activeIdentityExact, belowMaximum, deadLetterMessageId, deadLetterDeliveryCount, deadLetterReason
+            let deadLetterIdentityExact = DeadLetter.dlqMessageObserved expectedMessageId deadLetterMessageId
+            return activeIdentityExact, belowMaximum, deadLetterIdentityExact, deadLetterMessageId, deadLetterDeliveryCount, deadLetterReason
         }
 
     /// Peeks both subqueues after terminal settlement so the exact witness cannot obstruct later scenarios.
@@ -216,28 +349,38 @@ type ManifestContributionDeadLetterMeasurementTests() =
                 let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
                 host <- Some state
                 state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
-                let! _ = AspireTestHost.drainServiceBusAsync state
                 let testSubscriptionIsolated = not (state.ServiceBusTestSubscription.Equals(state.ServiceBusServerSubscription, StringComparison.Ordinal))
-
-                recordAssertion
-                    "dead-letter.test-subscription-isolated"
-                    testSubscriptionIsolated
-                    $"testSubscription={state.ServiceBusTestSubscription}; productionSubscriptionDistinct={testSubscriptionIsolated}"
 
                 if not testSubscriptionIsolated then
                     invalidOp "The selected test subscription resolved to the production server subscription."
 
-                let! baselineMetrics = BaselineRuntime.scrapeMetricsAsync state
+                let fixtureCorrelationId = generateCorrelationId ()
+                let! defaultReferenceMessageId = DeadLetterRuntime.createDefaultReferenceProducerAsync state fixtureCorrelationId
+
+                let! producerInventory = DeadLetterRuntime.inventoryDefaultReferenceProducerAsync state fixtureCorrelationId defaultReferenceMessageId
+
+                let producerInventoryValid =
+                    ProducerInventory.validate [| defaultReferenceMessageId |] producerInventory
+                    |> Array.isEmpty
+
+                let producerInventoryDetail = String.Join(",", producerInventory)
+
+                recordAssertion
+                    "dead-letter.test-subscription-isolated"
+                    (testSubscriptionIsolated && producerInventoryValid)
+                    $"testSubscription={state.ServiceBusTestSubscription}; productionSubscriptionDistinct={testSubscriptionIsolated}; producerInventory={producerInventoryDetail}"
+
+                let! baselineMetrics = BaselineRuntime.waitForCompletedSettlementSamplesAsync state
                 let messageId = $"mca-dead-letter-{runId}"
                 witnessMessageId <- Some messageId
                 do! DeadLetterRuntime.sendUnrelatedGraceEventAsync state messageId
 
-                let! exactActiveIdentity, belowMaximum, deadLetterMessageId, deadLetterDeliveryCount, deadLetterReason =
+                let! exactActiveIdentity, belowMaximum, deadLetterIdentityExact, deadLetterMessageId, deadLetterDeliveryCount, deadLetterReason =
                     DeadLetterRuntime.transitionAsync state messageId
 
                 recordAssertion "dead-letter.message-identity-exact" exactActiveIdentity $"messageId={messageId}"
                 recordAssertion "dead-letter.below-maximum-remains-active" belowMaximum $"delivery={DeadLetter.MaximumDeliveryCount}"
-                recordAssertion "dead-letter.dlq-message-observed" true $"messageId={deadLetterMessageId}"
+                recordAssertion "dead-letter.dlq-message-observed" deadLetterIdentityExact $"messageId={deadLetterMessageId}"
 
                 recordAssertion
                     "dead-letter.delivery-count-eleven"
@@ -246,10 +389,7 @@ type ManifestContributionDeadLetterMeasurementTests() =
 
                 let boundedReason = DeadLetter.boundedBrokerReason deadLetterReason
 
-                recordAssertion
-                    "dead-letter.reason-bounded-nonempty"
-                    (DeadLetter.deadLetterObservationPasses messageId deadLetterMessageId deadLetterDeliveryCount deadLetterReason)
-                    $"reason={boundedReason}"
+                recordAssertion "dead-letter.reason-bounded-nonempty" (DeadLetter.brokerReasonPasses deadLetterReason) $"reason={boundedReason}"
 
                 let! observedMetrics = BaselineRuntime.scrapeMetricsAsync state
 

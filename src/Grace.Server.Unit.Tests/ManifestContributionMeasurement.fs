@@ -1003,17 +1003,8 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
         else
             Ok(values[messageMetricName][0], values[durationMetricName][0])
 
-    /// Requires the exact completed-settlement samples to remain equal, while accepting their absence on both fresh-host scrapes.
+    /// Requires exactly one completed-settlement sample from each metric family on both scrapes before comparing cumulative values.
     let evaluateCompletedSettlementUnchanged baselineScrape observedScrape =
-        let hasTargetMetricFamily (scrape: string) =
-            scrape.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
-            |> Array.exists (fun rawLine ->
-                let line = rawLine.Trim()
-
-                not (line.StartsWith("#", StringComparison.Ordinal))
-                && (line.StartsWith(messageMetricName, StringComparison.Ordinal)
-                    || line.StartsWith(durationMetricName, StringComparison.Ordinal)))
-
         match parseCompletedSettlementSamples baselineScrape, parseCompletedSettlementSamples observedScrape with
         | Ok (baselineMessages, baselineDurations), Ok (observedMessages, observedDurations) ->
             if baselineMessages = observedMessages
@@ -1023,11 +1014,6 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
                 Changed(
                     $"Completed settlement telemetry changed: messages={baselineMessages}->{observedMessages}; durations={baselineDurations}->{observedDurations}."
                 )
-        | Error _, Error _ when
-            not (hasTargetMetricFamily baselineScrape)
-            && not (hasTargetMetricFamily observedScrape)
-            ->
-            Unchanged(0L, 0L)
         | Error baselineError, _ -> UnchangedInvalid($"Invalid baseline scrape: {baselineError}")
         | _, Error observedError -> UnchangedInvalid($"Invalid observed scrape: {observedError}")
 

@@ -32,9 +32,28 @@ type ManifestContributionDeadLetterMeasurementTests() =
         let wrong = "mca-dead-letter-wrong"
 
         Assert.That(DeadLetter.identityMatches expected wrong, Is.False)
+        Assert.That(DeadLetter.dlqMessageObserved expected wrong, Is.False)
         Assert.That(DeadLetter.belowMaximumRemainsActive expected wrong DeadLetter.MaximumDeliveryCount Array.empty, Is.False)
         Assert.That(DeadLetter.deadLetterObservationPasses expected wrong DeadLetter.DeadLetterDeliveryCount "MaxDeliveryCountExceeded", Is.False)
         Assert.That(DeadLetter.cleanupComplete expected [| wrong |] [| wrong |], Is.True)
+
+    /// Verifies the selected fixture/default producer inventory rejects any unexpected active Reference identity.
+    [<Test>]
+    member _.``selected fixture producer inventory requires only the declared default Reference``() =
+        let expected = [| "Reference/default/Created" |]
+
+        Assert.That(ProducerInventory.validate expected expected, Is.Empty)
+
+        let unexpected =
+            ProducerInventory.validate
+                expected
+                [|
+                    expected[0]
+                    "Reference/unexpected/Created"
+                |]
+
+        Assert.That(unexpected, Has.One.Items)
+        Assert.That(unexpected[0], Does.Contain("Unclassified Reference-created envelope"))
 
     /// Verifies delivery ten remains active and absent from the DLQ, while nearby false boundaries fail.
     [<Test>]
@@ -68,12 +87,12 @@ type ManifestContributionDeadLetterMeasurementTests() =
         Assert.That(DeadLetter.cleanupComplete expected [| expected |] Array.empty, Is.False)
         Assert.That(DeadLetter.cleanupComplete expected Array.empty [| expected |], Is.False)
 
-    /// Verifies unchanged production settlement telemetry accepts equal exact samples or their absence on both fresh-host scrapes.
+    /// Verifies unchanged production settlement telemetry requires one exact sample of each family on both scrapes.
     [<Test>]
-    member _.``unchanged telemetry rejects mutation and one-sided absence``() =
+    member _.``unchanged telemetry rejects absent malformed and changed samples``() =
         match OpenMetrics.evaluateCompletedSettlementUnchanged String.Empty String.Empty with
-        | UnchangedEvaluation.Unchanged (0L, 0L) -> ()
-        | result -> Assert.Fail($"Expected absent fresh-host samples to remain unchanged, got {result}.")
+        | UnchangedEvaluation.UnchangedInvalid _ -> ()
+        | result -> Assert.Fail($"Expected two absent scrapes to be invalid, got {result}.")
 
         match OpenMetrics.evaluateCompletedSettlementUnchanged (completed 4 4) (completed 4 4) with
         | UnchangedEvaluation.Unchanged (4L, 4L) -> ()
@@ -87,8 +106,37 @@ type ManifestContributionDeadLetterMeasurementTests() =
         | UnchangedEvaluation.UnchangedInvalid _ -> ()
         | result -> Assert.Fail($"Expected one-sided absence to be invalid, got {result}.")
 
-        let suffixOnly = "grace_manifest_contribution_messages_total_suffix 0\n"
+        let invalidScrapes =
+            [|
+                "missing",
+                "grace_manifest_contribution_messages_total{otel_scope_name=\"Grace.ManifestContributionAccounting\",stage=\"settle\",outcome=\"completed\"} 4"
+                "duplicate",
+                completed 4 4
+                + Environment.NewLine
+                + completed 4 4
+                "suffix",
+                """
+grace_manifest_contribution_messages_total_suffix{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 4
+grace_manifest_contribution_processing_duration_milliseconds_count_suffix{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 4
+"""
+                "other-label",
+                """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed",reference_type="Save"} 4
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="completed"} 4
+"""
+                "settlement-failed",
+                """
+grace_manifest_contribution_messages_total{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="settlement_failed"} 4
+grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_name="Grace.ManifestContributionAccounting",stage="settle",outcome="settlement_failed"} 4
+"""
+            |]
 
-        match OpenMetrics.evaluateCompletedSettlementUnchanged suffixOnly suffixOnly with
-        | UnchangedEvaluation.UnchangedInvalid _ -> ()
-        | result -> Assert.Fail($"Expected a suffix-only metric family to be invalid, got {result}.")
+        invalidScrapes
+        |> Array.iter (fun (name, scrape) ->
+            match OpenMetrics.evaluateCompletedSettlementUnchanged (completed 4 4) scrape with
+            | UnchangedEvaluation.UnchangedInvalid _ -> ()
+            | result -> Assert.Fail($"Expected {name} samples to be invalid, got {result}."))
+
+        match OpenMetrics.evaluateCompletedSettlementUnchanged (completed 4 4) (completed 3 4) with
+        | UnchangedEvaluation.Changed _ -> ()
+        | result -> Assert.Fail($"Expected reset samples to fail, got {result}.")
