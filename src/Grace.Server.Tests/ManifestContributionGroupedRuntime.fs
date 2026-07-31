@@ -9,6 +9,7 @@ open Grace.Server.Tests.Services
 module internal ManifestContributionGroupedRuntime =
 
     let mutable private groupedState: TestHostState option = None
+    let mutable private groupedBootstrapUserId: string option = None
     let private repositories = Dictionary<string, string>(StringComparer.Ordinal)
 
     /// Starts the single grouped Aspire session before any accepted leaf scenario executes.
@@ -20,6 +21,8 @@ module internal ManifestContributionGroupedRuntime =
             let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
             repositories.Clear()
             groupedState <- Some state
+            groupedBootstrapUserId <- Some bootstrapUserId
+            state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
             return state
         }
 
@@ -46,15 +49,21 @@ module internal ManifestContributionGroupedRuntime =
             | None -> ()
             | Some state ->
                 groupedState <- None
+                groupedBootstrapUserId <- None
                 do! AspireTestHost.stopIsolatedAsync state
         }
 
-    /// Replaces the selected-process test identity before each scenario-local namespace is created.
+    /// Retains the startup-granted grouped identity while preserving each standalone leaf's selected identity.
     let selectBootstrapUser (state: TestHostState) (bootstrapUserId: string) =
+        let selectedUserId =
+            match groupedState, groupedBootstrapUserId with
+            | Some active, Some groupedUserId when Object.ReferenceEquals(active, state) -> groupedUserId
+            | _ -> bootstrapUserId
+
         state.Client.DefaultRequestHeaders.Remove("x-grace-user-id")
         |> ignore
 
-        state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
+        state.Client.DefaultRequestHeaders.Add("x-grace-user-id", selectedUserId)
 
     /// Records the scenario-local Repository identity exposed by an accepted leaf fixture.
     let registerRepository scenarioId repositoryId = repositories[scenarioId] <- string repositoryId
