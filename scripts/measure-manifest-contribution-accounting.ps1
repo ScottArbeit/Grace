@@ -420,7 +420,7 @@ function Invoke-McaCommand {
     if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'docker-unavailable' 'docker-version' }
     $started = [DateTimeOffset]::UtcNow.ToString('O')
     $canonicalCommand = 'pwsh ./scripts/measure-manifest-contribution-accounting.ps1 -OutputDirectory ./artifacts/manifest-accounting-measurements'
-    $hostedCommand = 'dotnet test src/Grace.Server.Tests/Grace.Server.Tests.fsproj --configuration Release --no-build --filter FullyQualifiedName~ManifestContributionGroupedMeasurementTests -- NUnit.ExplicitMode=Only'
+    $hostedCommand = 'dotnet test src/Grace.Server.Tests/Grace.Server.Tests.fsproj --configuration Release --no-build --filter FullyQualifiedName~ManifestContributionGroupedMeasurementTests'
     $evidenceRoot = Join-Path ([IO.Path]::GetTempPath()) ('grace-mca-752-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
     try {
@@ -431,7 +431,7 @@ function Invoke-McaCommand {
         try {
             $env:GRACE_MCA_WORKTREE = $repositoryRoot; $env:GRACE_MCA_HOSTED_COMMAND = $hostedCommand
             $env:GRACE_MCA_EVIDENCE_ROOT = $evidenceRoot; $env:GRACE_MCA_EXPECTED_SHA = $sha
-            & dotnet test (Join-Path $repositoryRoot 'src/Grace.Server.Tests/Grace.Server.Tests.fsproj') --configuration Release --no-build --filter 'FullyQualifiedName~ManifestContributionGroupedMeasurementTests' -- NUnit.ExplicitMode=Only
+            & dotnet test (Join-Path $repositoryRoot 'src/Grace.Server.Tests/Grace.Server.Tests.fsproj') --configuration Release --no-build --filter 'FullyQualifiedName~ManifestContributionGroupedMeasurementTests'
             if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'grouped-runtime-failed' 'ManifestContributionGroupedMeasurementTests' }
         }
         finally { foreach ($name in $prior.Keys) { [Environment]::SetEnvironmentVariable($name, $prior[$name]) } }
