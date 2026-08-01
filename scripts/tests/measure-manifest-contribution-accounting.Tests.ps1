@@ -7,6 +7,7 @@ $scriptPath = Join-Path $repositoryRoot 'scripts/measure-manifest-contribution-a
 
 $script:Passed = 0
 $script:Failed = 0
+$script:TestRunId = '0123456789abcdef0123456789abcdef'
 
 function Assert-True {
     param([bool] $Condition, [string] $Message)
@@ -47,7 +48,7 @@ function Update-TestRawHashes {
 function New-TestRawPacket {
     param([string] $RawDirectory, [string] $Sha = ('a' * 40), [string] $Branch = 'agent/test')
     [IO.Directory]::CreateDirectory($RawDirectory) | Out-Null
-    $runId = '0123456789abcdef0123456789abcdef'
+    $runId = $script:TestRunId
     $time = '2026-08-01T00:00:00.0000000+00:00'
     $run = [ordered]@{
         CommitSha = $Sha; Branch = $Branch; Dirty = $false; Command = 'grouped fixture command'
@@ -99,10 +100,14 @@ function New-TestRawPacket {
 }
 
 function New-TestExecution {
-    param([string] $Sha = ('a' * 40), [string] $Branch = 'agent/test')
+    param(
+        [string] $Sha = ('a' * 40),
+        [string] $Branch = 'agent/test',
+        [string] $RequestedOutput = './artifacts/manifest-accounting-measurements'
+    )
     return @{
         SourceGitSha = $Sha; SourceGitBranch = $Branch
-        Command = 'pwsh ./scripts/measure-manifest-contribution-accounting.ps1 -OutputDirectory ./artifacts/manifest-accounting-measurements'
+        Command = Get-McaInvocationCommand $RequestedOutput
         StartedAtUtc = '2026-08-01T00:00:00Z'; FinishedAtUtc = '2026-08-01T00:10:00Z'
         Machine = 'test-machine'; Os = 'test-os'; CpuCount = 4; MemoryBytes = 8589934592
     }
@@ -110,7 +115,10 @@ function New-TestExecution {
 
 function Copy-TestRawPacket {
     param([string] $Source, [string] $Destination)
-    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse
+    [IO.Directory]::CreateDirectory($Destination) | Out-Null
+    $copy = Join-Path $Destination (Split-Path -Leaf $Source)
+    Copy-Item -LiteralPath $Source -Destination $copy -Recurse
+    return $copy
 }
 
 function Invoke-ExpectedPublicationFailure {
@@ -125,12 +133,13 @@ function Invoke-ExpectedPublicationFailure {
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('grace-mca-752-script-tests-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($testRoot) | Out-Null
 try {
-    $validRaw = Join-Path $testRoot 'valid-raw'
+    $validRaw = Join-Path $testRoot $script:TestRunId
     New-TestRawPacket $validRaw
 
     Invoke-Case 'positive absolute publication and exact tree' {
         $output = Join-Path $testRoot 'absolute-output'
-        $published = Publish-McaPacket $validRaw $output (New-TestExecution)
+        $execution = New-TestExecution -RequestedOutput $output
+        $published = Publish-McaPacket $validRaw $output $execution
         Assert-True ($published -ceq [IO.Path]::GetFullPath($output)) 'absolute output should resolve exactly'
         $expected = @(
             'artifact-hashes.json', 'assertions.json', 'run.json', 'samples.ndjson', 'summary.json',
@@ -154,6 +163,8 @@ try {
         $hashPaths = @($hashes.path)
         Assert-True (-not (Compare-Object $hashPaths @($hashPaths | Sort-Object) -SyncWindow 0)) 'hash paths should be deterministic'
         $publishedRun = Get-Content (Join-Path $output 'run.json') -Raw | ConvertFrom-Json
+        Assert-True ($publishedRun.command -ceq (Get-McaInvocationCommand $output)) 'command should record the actual absolute invocation'
+        Assert-True ($publishedRun.outputDirectory -ceq [IO.Path]::GetFullPath($output)) 'run output should record the resolved absolute destination'
         Assert-True ($publishedRun.localClaims.Count -eq 10) 'local claim set should be explicit and exact'
         Assert-True ($publishedRun.azureOnlyUnknowns.Count -eq 6) 'Azure-only unknown set should be explicit and exact'
         Assert-True ($publishedRun.localClaims -notcontains $publishedRun.azureOnlyUnknowns[0]) 'local and Azure claims must not overlap'
@@ -162,10 +173,24 @@ try {
     Invoke-Case 'positive relative publication' {
         Push-Location $testRoot
         try {
-            $published = Publish-McaPacket $validRaw './relative-output' (New-TestExecution)
+            $execution = New-TestExecution -RequestedOutput './relative-output'
+            $published = Publish-McaPacket $validRaw './relative-output' $execution
             Assert-True ($published -ceq [IO.Path]::GetFullPath((Join-Path $testRoot 'relative-output'))) 'relative output should resolve from the caller location'
+            $publishedRun = Get-Content (Join-Path $published 'run.json') -Raw | ConvertFrom-Json
+            Assert-True ($publishedRun.command -ceq (Get-McaInvocationCommand './relative-output')) 'command should record the actual relative invocation'
+            Assert-True ($publishedRun.outputDirectory -ceq $published) 'relative run output should record the resolved destination'
         }
         finally { Pop-Location }
+    }
+
+    Invoke-Case 'invocation safely escapes a PowerShell path literal' {
+        $requested = "C:\packet'; Write-Host injected; 'tail"
+        $command = Get-McaInvocationCommand $requested
+        Assert-True ($command -ceq "pwsh ./scripts/measure-manifest-contribution-accounting.ps1 -OutputDirectory 'C:\packet''; Write-Host injected; ''tail'") 'single quotes should be escaped deterministically'
+        $tokens = $null; $parseErrors = $null
+        [Management.Automation.Language.Parser]::ParseInput($command, [ref]$tokens, [ref]$parseErrors) | Out-Null
+        Assert-True ($parseErrors.Count -eq 0) 'escaped invocation should remain parseable'
+        Assert-True (@($tokens | Where-Object Kind -EQ 'Semi').Count -eq 0) 'path punctuation must not create a command separator'
     }
 
     Invoke-Case 'unknown parameters fail in binding before runtime' {
@@ -221,18 +246,60 @@ try {
     )
     foreach ($case in $negativeCases) {
         Invoke-Case $case.Name {
-            $slug = $case.Name.Replace(' ', '-'); $raw = Join-Path $testRoot "raw-$slug"; Copy-TestRawPacket $validRaw $raw
+            $slug = $case.Name.Replace(' ', '-'); $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot "raw-$slug")
             & $case.Mutate $raw; if ($case.Rehash -and (Test-Path (Join-Path $raw 'samples.ndjson'))) { Update-TestRawHashes $raw }
             Invoke-ExpectedPublicationFailure $raw (Join-Path $testRoot "out-$slug")
         }
     }
 
+    Invoke-Case 'known assertions cannot swap exact scenarios' {
+        $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot 'raw-swapped-scenarios')
+        $records = @(Get-Content (Join-Path $raw 'assertions.ndjson') | ConvertFrom-Json -AsHashtable)
+        foreach ($record in $records) {
+            if ($record.ScenarioId -ceq 'baseline') { $record.ScenarioId = 'hot-manifest' }
+            elseif ($record.ScenarioId -ceq 'hot-manifest') { $record.ScenarioId = 'baseline' }
+        }
+        Write-TestNdjson (Join-Path $raw 'assertions.ndjson') $records; Update-TestRawHashes $raw
+        Invoke-ExpectedPublicationFailure $raw (Join-Path $testRoot 'out-swapped-scenarios')
+    }
+
+    Invoke-Case 'all raw records must share the directory run ID' {
+        $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot 'raw-run-id-mismatch')
+        $records = @(Get-Content (Join-Path $raw 'samples.ndjson') | ConvertFrom-Json -AsHashtable)
+        $records[0].RunId = 'fedcba9876543210fedcba9876543210'
+        Write-TestNdjson (Join-Path $raw 'samples.ndjson') $records; Update-TestRawHashes $raw
+        Invoke-ExpectedPublicationFailure $raw (Join-Path $testRoot 'out-run-id-mismatch')
+    }
+
     Invoke-Case 'forbidden secret fails without echoing value' {
-        $raw = Join-Path $testRoot 'raw-secret'; Copy-TestRawPacket $validRaw $raw
+        $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot 'raw-secret')
         $records = @(Get-Content (Join-Path $raw 'assertions.ndjson') | ConvertFrom-Json -AsHashtable)
         $secret = 'super-secret-never-echo'; $records[0].Detail = "Authorization: Bearer $secret"
         Write-TestNdjson (Join-Path $raw 'assertions.ndjson') $records; Update-TestRawHashes $raw
         Invoke-ExpectedPublicationFailure $raw (Join-Path $testRoot 'out-secret') { param($errorRecord) Assert-True (-not $errorRecord.Exception.Message.Contains($secret)) 'diagnostic must not echo secret' }
+    }
+
+    foreach ($tokenForm in @('Token: generic-secret-never-echo', 'token=generic-secret-never-echo')) {
+        Invoke-Case "generic token form $($tokenForm.Substring(0, 6)) fails without echoing value" {
+            $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot ([guid]::NewGuid().ToString('N')))
+            $records = @(Get-Content (Join-Path $raw 'assertions.ndjson') | ConvertFrom-Json -AsHashtable)
+            $secret = 'generic-secret-never-echo'; $records[0].Detail = $tokenForm
+            Write-TestNdjson (Join-Path $raw 'assertions.ndjson') $records; Update-TestRawHashes $raw
+            Invoke-ExpectedPublicationFailure $raw (Join-Path $testRoot ([guid]::NewGuid().ToString('N'))) {
+                param($errorRecord)
+                Assert-True (-not $errorRecord.Exception.Message.Contains($secret)) 'generic token diagnostic must not echo secret'
+            }
+        }
+    }
+
+    Invoke-Case 'ordinary token count and type prose is allowed' {
+        $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot 'raw-token-prose')
+        $records = @(Get-Content (Join-Path $raw 'assertions.ndjson') | ConvertFrom-Json -AsHashtable)
+        $records[0].Detail = 'token count is 11; token type is synthetic'
+        Write-TestNdjson (Join-Path $raw 'assertions.ndjson') $records; Update-TestRawHashes $raw
+        $output = Join-Path $testRoot 'out-token-prose'
+        Publish-McaPacket $raw $output (New-TestExecution -RequestedOutput $output) | Out-Null
+        Assert-True (Test-Path -LiteralPath $output) 'ordinary token prose should publish'
     }
 
     Invoke-Case 'wrong and stale source SHA fail' {
@@ -255,7 +322,7 @@ try {
         [IO.File]::WriteAllBytes($boundary, [byte[]]::new($script:McaFileLimit)); Assert-McaFileSize $boundary
         [IO.File]::WriteAllBytes($boundary, [byte[]]::new($script:McaFileLimit + 1))
         $failed = $false; try { Assert-McaFileSize $boundary } catch { $failed = $true }; Assert-True $failed 'one-byte file overflow should fail'
-        $raw = Join-Path $testRoot 'raw-file-overflow'; Copy-TestRawPacket $validRaw $raw
+        $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot 'raw-file-overflow')
         [IO.File]::WriteAllBytes((Join-Path $raw 'samples.ndjson'), [byte[]]::new($script:McaFileLimit + 1))
         Invoke-ExpectedPublicationFailure $raw (Join-Path $testRoot 'out-file-overflow')
     }

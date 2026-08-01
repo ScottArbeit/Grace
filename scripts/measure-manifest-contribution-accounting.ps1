@@ -62,6 +62,29 @@ $script:McaRequiredAssertionIds = @(
     'grouped.records-bounded', 'grouped.records-parseable',
     'grouped.required-assertion-id-coverage', 'grouped.required-scenario-outcomes'
 )
+$script:McaRequiredAssertionIdsByScenario = [ordered]@{
+    baseline = @($script:McaRequiredAssertionIds[0..10])
+    'hot-manifest' = @($script:McaRequiredAssertionIds[11..21])
+    'highly-shared' = @($script:McaRequiredAssertionIds[22..32])
+    'duplicate-backlog' = @($script:McaRequiredAssertionIds[33..46])
+    'redis-restart' = @($script:McaRequiredAssertionIds[47..59])
+    'server-restart' = @($script:McaRequiredAssertionIds[60..71])
+    repair = @($script:McaRequiredAssertionIds[72..83])
+    'dead-letter' = @($script:McaRequiredAssertionIds[84..92])
+    grouped = @($script:McaRequiredAssertionIds[93..103])
+}
+$script:McaAssertionScenarioById = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+foreach ($scenarioId in $script:McaRequiredAssertionIdsByScenario.Keys) {
+    foreach ($assertionId in $script:McaRequiredAssertionIdsByScenario[$scenarioId]) {
+        if (-not $assertionId.StartsWith("$scenarioId.", [StringComparison]::Ordinal)) {
+            throw [InvalidOperationException]::new("MCA assertion/scenario definition is inconsistent: $assertionId")
+        }
+        $script:McaAssertionScenarioById.Add($assertionId, $scenarioId)
+    }
+}
+if ($script:McaAssertionScenarioById.Count -ne $script:McaRequiredAssertionIds.Count) {
+    throw [InvalidOperationException]::new('MCA assertion/scenario definition does not cover every required assertion ID.')
+}
 $script:McaRawFileNames = @('run.ndjson', 'samples.ndjson', 'assertions.ndjson', 'summaries.ndjson', 'artifact-hashes.json')
 $script:McaRecordLimit = 65536
 $script:McaFileLimit = 2MB
@@ -177,6 +200,7 @@ function Assert-McaForbiddenContent {
     $patterns = @(
         '(?i)authorization\s*[:=]', '(?i)bearer\s+[a-z0-9._~+/=-]+', '(?i)sharedaccesssignature',
         '(?i)(accountkey|sharedaccesskey(?:name)?|client_secret|access_token|refresh_token|password)\s*[:=]',
+        '(?i)\btoken\s*[:=]\s*\S+',
         '(?i)(^|[?&])sig=', '(?i)"(?:body|payload|diagnosisjson|repairjson|rediskey)"\s*:',
         '(?i)\b(?:payloadbody|diagnosisjson|repairjson|redis[_-]?key)\s*[:=]'
     )
@@ -201,6 +225,12 @@ function Write-McaJson {
 function Test-McaSequenceEqual {
     param([object[]] $Actual, [object[]] $Expected)
     return ($Actual.Count -eq $Expected.Count -and -not (Compare-Object $Actual $Expected -SyncWindow 0))
+}
+
+function Get-McaInvocationCommand {
+    param([Parameter(Mandatory)][string] $RequestedOutput)
+    $escapedOutput = $RequestedOutput.Replace("'", "''")
+    return "pwsh ./scripts/measure-manifest-contribution-accounting.ps1 -OutputDirectory '$escapedOutput'"
 }
 
 function Publish-McaPacket {
@@ -274,21 +304,32 @@ function Publish-McaPacket {
             Throw-McaFailure 'assertion-id-closure' 'assertions.ndjson'
         }
         foreach ($assertion in $assertions) {
-            if ($assertion.Passed -ne $true -or $script:McaGroupedScenarioIds -cnotcontains $assertion.ScenarioId) {
+            $expectedScenarioId = $script:McaAssertionScenarioById[$assertion.AssertionId]
+            if ($assertion.Passed -ne $true -or $assertion.ScenarioId -cne $expectedScenarioId) {
                 Throw-McaFailure 'failed-or-unknown-assertion' $assertion.AssertionId
+            }
+        }
+        $rawRunId = Split-Path -Leaf $RawRunDirectory
+        if ([string]::IsNullOrWhiteSpace($rawRunId)) { Throw-McaFailure 'raw-run-id' 'raw-run-directory' }
+        foreach ($recordSet in @($samples, $assertions, $summaries)) {
+            foreach ($record in $recordSet) {
+                if ([string]::IsNullOrWhiteSpace($record.RunId) -or $record.RunId -cne $rawRunId) {
+                    Throw-McaFailure 'raw-run-id' "$($record.RecordType)/$($record.ScenarioId)"
+                }
             }
         }
         if ($summaries.Count -ne 9 -or -not (Test-McaSequenceEqual @($summaries.ScenarioId) $script:McaGroupedScenarioIds)) {
             Throw-McaFailure 'summary-order' 'summaries.ndjson'
         }
         foreach ($summary in $summaries) {
-            $expectedIds = @($script:McaRequiredAssertionIds | Where-Object { $_.StartsWith("$($summary.ScenarioId).", [StringComparison]::Ordinal) })
+            $expectedIds = @($script:McaRequiredAssertionIdsByScenario[$summary.ScenarioId])
             $observed = @($assertions | Where-Object ScenarioId -CEQ $summary.ScenarioId)
+            $observedIds = @($observed | ForEach-Object AssertionId)
             if ($summary.Outcome -cne 'Passed' -or $summary.RequiredAssertionCount -ne $expectedIds.Count -or
                 $summary.PassedAssertionCount -ne $expectedIds.Count -or @($summary.FailedAssertionIds).Count -ne 0 -or
                 @($summary.RuntimeFailures).Count -ne 0 -or
                 (Compare-Object @($summary.RequiredAssertionIds | Sort-Object) @($expectedIds | Sort-Object)) -or
-                $observed.Count -ne $expectedIds.Count) {
+                (Compare-Object @($summary.RequiredAssertionIds | Sort-Object) @($observedIds | Sort-Object))) {
                 Throw-McaFailure 'summary-derivation' $summary.ScenarioId
             }
         }
@@ -424,7 +465,7 @@ function Invoke-McaCommand {
     $dockerVersion = (& docker version --format '{{.Server.Version}}').Trim()
     if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'docker-unavailable' 'docker-version' }
     $started = [DateTimeOffset]::UtcNow.ToString('O')
-    $canonicalCommand = 'pwsh ./scripts/measure-manifest-contribution-accounting.ps1 -OutputDirectory ./artifacts/manifest-accounting-measurements'
+    $actualCommand = Get-McaInvocationCommand $RequestedOutput
     $hostedCommand = 'dotnet test src/Grace.Server.Tests/Grace.Server.Tests.fsproj --configuration Release --no-build --filter FullyQualifiedName~ManifestContributionGroupedMeasurementTests'
     $evidenceRoot = Join-Path ([IO.Path]::GetTempPath()) ('grace-mca-752-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
@@ -442,7 +483,7 @@ function Invoke-McaCommand {
         finally { foreach ($name in $prior.Keys) { [Environment]::SetEnvironmentVariable($name, $prior[$name]) } }
         $rawRunDirectory = Get-McaSingleRawRunDirectory $evidenceRoot
         $execution = @{
-            SourceGitSha = $sha; SourceGitBranch = $branch; Command = $canonicalCommand; StartedAtUtc = $started
+            SourceGitSha = $sha; SourceGitBranch = $branch; Command = $actualCommand; StartedAtUtc = $started
             FinishedAtUtc = [DateTimeOffset]::UtcNow.ToString('O'); Machine = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { 'unavailable' }
             Os = [Environment]::OSVersion.VersionString; CpuCount = [Environment]::ProcessorCount
             MemoryBytes = [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes
