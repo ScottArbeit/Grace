@@ -72,6 +72,10 @@ Open `http://localhost:18888` and confirm the following resources show
   `grace-operational-facts` topic and durable `operational-facts-processor`
   subscription
 
+For the fixed full-run manifest contribution accounting command, its exact-SHA evidence packet, and the local/Azure
+claim boundary, see
+[Manifest contribution accounting runtime](../../docs/Manifest%20contribution%20accounting%20runtime.md).
+
 Redis is provisioned by AppHost and its host/port are forwarded to
 `Grace.Server`. Repository manifest accounting uses direct Redis `GET` and
 `SET` calls only to accelerate recently completed counter operations. Results

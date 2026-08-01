@@ -1,0 +1,372 @@
+{
+  "schemaVersion": "1.0",
+  "scenarioOutcomes": [
+    {
+      "scenarioId": "baseline",
+      "outcome": "Passed",
+      "assertionCount": 11,
+      "sampleCount": 8
+    },
+    {
+      "scenarioId": "hot-manifest",
+      "outcome": "Passed",
+      "assertionCount": 11,
+      "sampleCount": 8
+    },
+    {
+      "scenarioId": "highly-shared",
+      "outcome": "Passed",
+      "assertionCount": 11,
+      "sampleCount": 8
+    },
+    {
+      "scenarioId": "duplicate-backlog",
+      "outcome": "Passed",
+      "assertionCount": 14,
+      "sampleCount": 6
+    },
+    {
+      "scenarioId": "redis-restart",
+      "outcome": "Passed",
+      "assertionCount": 13,
+      "sampleCount": 6
+    },
+    {
+      "scenarioId": "server-restart",
+      "outcome": "Passed",
+      "assertionCount": 12,
+      "sampleCount": 6
+    },
+    {
+      "scenarioId": "repair",
+      "outcome": "Passed",
+      "assertionCount": 12,
+      "sampleCount": 6
+    },
+    {
+      "scenarioId": "dead-letter",
+      "outcome": "Passed",
+      "assertionCount": 9,
+      "sampleCount": 4
+    }
+  ],
+  "groupedOutcome": {
+    "scenarioId": "grouped",
+    "outcome": "Passed",
+    "assertionCount": 11,
+    "sampleCount": 0
+  },
+  "assertionTotals": {
+    "source": "raw/assertions.ndjson",
+    "total": 104,
+    "passed": 104,
+    "failed": 0
+  },
+  "sampleTotals": {
+    "source": "raw/samples.ndjson",
+    "total": 52,
+    "phaseSnapshots": 32
+  },
+  "numericAggregates": [
+    {
+      "scenarioId": "baseline",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 4.0,
+      "maximum": 7.0,
+      "sum": 11.0
+    },
+    {
+      "scenarioId": "baseline",
+      "name": "grace_manifest_contribution_messages_total.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 6.0
+    },
+    {
+      "scenarioId": "baseline",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 4.0,
+      "maximum": 7.0,
+      "sum": 11.0
+    },
+    {
+      "scenarioId": "baseline",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 6.0
+    },
+    {
+      "scenarioId": "dead-letter",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 6.0,
+      "maximum": 6.0,
+      "sum": 12.0
+    },
+    {
+      "scenarioId": "dead-letter",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 6.0,
+      "maximum": 6.0,
+      "sum": 12.0
+    },
+    {
+      "scenarioId": "duplicate-backlog",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 0.0,
+      "maximum": 3.0,
+      "sum": 3.0
+    },
+    {
+      "scenarioId": "duplicate-backlog",
+      "name": "grace_manifest_contribution_messages_total.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 3.0
+    },
+    {
+      "scenarioId": "duplicate-backlog",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 0.0,
+      "maximum": 3.0,
+      "sum": 3.0
+    },
+    {
+      "scenarioId": "duplicate-backlog",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 3.0
+    },
+    {
+      "scenarioId": "highly-shared",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 19.0,
+      "maximum": 22.0,
+      "sum": 41.0
+    },
+    {
+      "scenarioId": "highly-shared",
+      "name": "grace_manifest_contribution_messages_total.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 6.0
+    },
+    {
+      "scenarioId": "highly-shared",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 19.0,
+      "maximum": 22.0,
+      "sum": 41.0
+    },
+    {
+      "scenarioId": "highly-shared",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 6.0
+    },
+    {
+      "scenarioId": "hot-manifest",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 12.0,
+      "maximum": 15.0,
+      "sum": 27.0
+    },
+    {
+      "scenarioId": "hot-manifest",
+      "name": "grace_manifest_contribution_messages_total.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 6.0
+    },
+    {
+      "scenarioId": "hot-manifest",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 12.0,
+      "maximum": 15.0,
+      "sum": 27.0
+    },
+    {
+      "scenarioId": "hot-manifest",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 3.0,
+      "maximum": 3.0,
+      "sum": 6.0
+    },
+    {
+      "scenarioId": "redis-restart",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 7.0,
+      "maximum": 8.0,
+      "sum": 15.0
+    },
+    {
+      "scenarioId": "redis-restart",
+      "name": "grace_manifest_contribution_messages_total.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    },
+    {
+      "scenarioId": "redis-restart",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 7.0,
+      "maximum": 8.0,
+      "sum": 15.0
+    },
+    {
+      "scenarioId": "redis-restart",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    },
+    {
+      "scenarioId": "repair",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 4.0,
+      "maximum": 5.0,
+      "sum": 9.0
+    },
+    {
+      "scenarioId": "repair",
+      "name": "grace_manifest_contribution_messages_total.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    },
+    {
+      "scenarioId": "repair",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 4.0,
+      "maximum": 5.0,
+      "sum": 9.0
+    },
+    {
+      "scenarioId": "repair",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    },
+    {
+      "scenarioId": "server-restart",
+      "name": "grace_manifest_contribution_messages_total",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    },
+    {
+      "scenarioId": "server-restart",
+      "name": "grace_manifest_contribution_messages_total.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    },
+    {
+      "scenarioId": "server-restart",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 2,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    },
+    {
+      "scenarioId": "server-restart",
+      "name": "grace_manifest_contribution_processing_duration_milliseconds_count.delta",
+      "source": "raw/samples.ndjson",
+      "derivation": "count/minimum/maximum/sum over exact scenarioId and name",
+      "count": 1,
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "sum": 1.0
+    }
+  ]
+}
