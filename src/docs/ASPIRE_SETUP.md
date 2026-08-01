@@ -82,10 +82,12 @@ Redis is provisioned by AppHost and its host/port are forwarded to
 expire after exactly ten minutes. Redis is not a membership ledger or source
 of truth: missing, expired, malformed, or unavailable results are cache misses,
 never a zero count. Additions can continue under cache loss because extra
-retention is safe; removals pause or withhold their decrement workflow until
-Redis confirms the bounded completed result. The client connects lazily, uses
-native reconnect, and bounds each connection and command wait without an outer
-Polly policy.
+retention is safe. Removal processing retains the exact relationship until the
+matching decrement and zero-transition work are verified complete. Redis can
+replay a recent result during that brief handoff, but durable counter and exact
+relationship evidence remain the decision inputs when the cache is absent. The
+client connects lazily, uses native reconnect, and bounds each connection and
+command wait without an outer Polly policy.
 
 Repository manifest counters persist only `Count`, `Revision`, and the latest
 completed change. Manifest contribution workflows overwrite their bounded
