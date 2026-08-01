@@ -148,6 +148,9 @@ try {
             Assert-True ($entry.sha256 -cmatch '^[0-9a-f]{64}$') 'published hashes should be lowercase SHA-256'
             Assert-True ($entry.sha256 -ceq (Get-McaSha256 (Join-Path $output $entry.path))) "hash should verify for $($entry.path)"
         }
+        foreach ($file in @(Get-ChildItem $output -File -Filter '*.json') + @(Get-ChildItem (Join-Path $output 'logs') -File -Filter '*.jsonl')) {
+            Assert-True (-not [IO.File]::ReadAllText($file.FullName).Contains("`r")) "$($file.Name) should use LF-only generated lines"
+        }
         $hashPaths = @($hashes.path)
         Assert-True (-not (Compare-Object $hashPaths @($hashPaths | Sort-Object) -SyncWindow 0)) 'hash paths should be deterministic'
         $publishedRun = Get-Content (Join-Path $output 'run.json') -Raw | ConvertFrom-Json

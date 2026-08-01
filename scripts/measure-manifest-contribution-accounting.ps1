@@ -194,7 +194,8 @@ function Assert-McaForbiddenContent {
 function Write-McaJson {
     param([string] $Path, [object] $Value)
     $json = $Value | ConvertTo-Json -Depth 30
-    [IO.File]::WriteAllText($Path, "$json`n", [Text.UTF8Encoding]::new($false))
+    $normalizedJson = $json.Replace("`r`n", "`n").Replace("`r", "`n")
+    [IO.File]::WriteAllText($Path, "$normalizedJson`n", [Text.UTF8Encoding]::new($false))
 }
 
 function Test-McaSequenceEqual {
@@ -374,7 +375,11 @@ function Publish-McaPacket {
             foreach ($assertion in $assertions) { $lineNumber++; if ($assertion.ScenarioId -ceq $scenario) { $lines.Add(([ordered]@{ source = 'assertions.ndjson'; line = $lineNumber; record = $assertion } | ConvertTo-Json -Compress -Depth 30)) } }
             $lineNumber = 0
             foreach ($summary in $summaries) { $lineNumber++; if ($summary.ScenarioId -ceq $scenario) { $lines.Add(([ordered]@{ source = 'summaries.ndjson'; line = $lineNumber; record = $summary } | ConvertTo-Json -Compress -Depth 30)) } }
-            [IO.File]::WriteAllLines((Join-Path $staging "logs/$scenario.jsonl"), $lines, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText(
+                (Join-Path $staging "logs/$scenario.jsonl"),
+                (($lines -join "`n") + "`n"),
+                [Text.UTF8Encoding]::new($false)
+            )
         }
 
         foreach ($file in Get-ChildItem -LiteralPath $staging -Recurse -File) {
