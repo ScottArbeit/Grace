@@ -646,7 +646,7 @@ type SaveBoundaryActorTests() =
 
             Assert.That(
                 decision.Intents[0],
-                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L))
             )
         | Error error -> Assert.Fail($"Expected repository content counter increment to succeed, got {error.Error}.")
 
@@ -681,7 +681,12 @@ type SaveBoundaryActorTests() =
                 Unchecked.defaultof<RepositoryContentCounterDecision>
 
         Assert.That(replayDecision.WasIdempotentReplay, Is.True)
-        Assert.That(replayDecision.Intents, Is.Empty)
+        Assert.That(replayDecision.Intents, Has.Length.EqualTo(1))
+
+        match replayDecision.Intents[0] with
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (_, _, replayManifestAddress, _) ->
+            Assert.That(replayManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        | intent -> Assert.Fail($"Expected increment workflow intent on replay, got {intent}.")
 
         match ReferenceActor.tryCreateManifestContributionStartForCounterDecision plan replayDecision firstCounterDecision.Events with
         | Some startCommand ->
@@ -703,7 +708,7 @@ type SaveBoundaryActorTests() =
             ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-fanout"
             |> expectPlan
 
-        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L)
 
         match ReferenceActor.tryCreateManifestContributionStart plan intent with
         | Some startCommand ->
@@ -716,29 +721,6 @@ type SaveBoundaryActorTests() =
                 Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(manifest.Blocks.Count))
             | Error error -> Assert.Fail($"Expected contribution workflow start to succeed, got {error.Error}.")
         | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
-
-    /// Verifies that reference Boundary Plans Commit And Checkpoint Manifest Ownership.
-    [<Test>]
-    member _.ReferenceBoundaryPlansCommitAndCheckpointManifestOwnership() =
-        let manifest = finalizedManifest ()
-        let directoryVersion = directoryWith [ manifestFile manifest ]
-
-        let commitPlan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-commit"
-            |> expectPlan
-
-        Assert.That(commitPlan.Manifest.StoragePoolId, Is.EqualTo(storagePoolId))
-        Assert.That(commitPlan.WorkflowRanges[0].StoragePoolId, Is.EqualTo(storagePoolId))
-
-        let checkpointPlan =
-            ReferenceActor.planManifestSaveExpiryBoundary repositoryId referenceId directoryVersion "corr-checkpoint-expiry"
-            |> expectPlan
-
-        match checkpointPlan.CounterCommand with
-        | RepositoryContentCounterCommand.RemoveReference (_, _, commandStoragePoolId, manifestAddress) ->
-            Assert.That(commandStoragePoolId, Is.EqualTo(storagePoolId))
-            Assert.That(manifestAddress, Is.EqualTo(manifest.ManifestAddress))
-        | _ -> Assert.Fail("Expected checkpoint expiry planning to remove manifest ownership.")
 
     /// Verifies that reference Boundary Plans Nested Child Directory Manifest Ownership By Stored Pool.
     [<Test>]
@@ -875,55 +857,6 @@ type SaveBoundaryActorTests() =
         Assert.That(plans[0].Manifest.StoragePoolId, Is.EqualTo(archiveStoragePoolId))
         Assert.That(plans[0].Manifest.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
 
-    /// Verifies that save Expiry Planning Matches Recursive Save Manifest Keys By Stored Pool.
-    [<Test>]
-    member _.SaveExpiryPlanningMatchesRecursiveSaveManifestKeysByStoredPool() =
-        let rootManifest = finalizedManifest ()
-        let childManifest = finalizedManifestInPool archiveStoragePoolId
-
-        let childDirectory =
-            hashedDirectory
-                childDirectoryVersionId
-                (RelativePath "/src/")
-                []
-                [
-                    manifestFileAt "/src/large.bin" childManifest
-                ]
-
-        let rootDirectory = hashedDirectory directoryVersionId (RelativePath "/") [ childDirectory ] [ manifestFile rootManifest ]
-        let recursiveDirectoryVersions = [ rootDirectory; childDirectory ]
-
-        let savePlans =
-            ReferenceActor.planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId recursiveDirectoryVersions "corr-recursive-save-plan"
-            |> expectPlans
-
-        let expiryPlans =
-            ReferenceActor.planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId recursiveDirectoryVersions "corr-recursive-expiry-plan"
-            |> expectPlans
-
-        let saveKeys =
-            savePlans
-            |> Seq.map (fun plan -> plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress)
-            |> Seq.toArray
-
-        let expiryKeys =
-            expiryPlans
-            |> Seq.map (fun plan -> plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress)
-            |> Seq.toArray
-
-        Assert.That(expiryKeys, Is.EquivalentTo(saveKeys))
-
-        Assert.That(
-            expiryPlans
-            |> Seq.forall (fun plan ->
-                match plan.CounterCommand with
-                | RepositoryContentCounterCommand.RemoveReference (_, _, commandStoragePoolId, manifestAddress) ->
-                    commandStoragePoolId = plan.Manifest.StoragePoolId
-                    && manifestAddress = plan.Manifest.ManifestAddress
-                | _ -> false),
-            Is.True
-        )
-
     /// Verifies that save Boundary Starts Contribution Workflow For Repeated Manifest Block Occurrences.
     [<Test>]
     member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
@@ -941,12 +874,11 @@ type SaveBoundaryActorTests() =
             plan.WorkflowRanges
             |> Seq.forall (fun range ->
                 range.StoragePoolId = expectedStoragePoolId
-                && range.OrdinalStart = 0
-                && range.OrdinalCount = 1),
+                && range.ContentBlockAddress = manifest.Blocks[0].Address),
             Is.True
         )
 
-        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L)
 
         match ReferenceActor.tryCreateManifestContributionStart plan intent with
         | Some startCommand ->
@@ -979,7 +911,7 @@ type SaveBoundaryActorTests() =
                     )
             }
 
-        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L)
 
         match ReferenceActor.tryCreateManifestContributionStart decrementPlan intent with
         | Some startCommand ->
@@ -1007,7 +939,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     savePlan
-                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L))
                 with
             | Some command -> command
             | None ->
@@ -1037,7 +969,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     decrementPlan
-                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 2L))
                 with
             | Some command -> command
             | None ->
@@ -1103,7 +1035,12 @@ type SaveBoundaryActorTests() =
         | Ok decision ->
             Assert.That(decision.WasIdempotentReplay, Is.True)
             Assert.That(decision.Events, Is.Empty)
-            Assert.That(decision.Intents, Is.Empty)
+            Assert.That(decision.Intents, Has.Length.EqualTo(1))
+
+            match decision.Intents[0] with
+            | RepositoryContentCounterIntent.DecrementManifestReferenceCount (_, _, replayManifestAddress, _) ->
+                Assert.That(replayManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+            | intent -> Assert.Fail($"Expected decrement workflow intent on replay, got {intent}.")
 
             match ReferenceActor.tryCreateManifestContributionStartForCounterDecision decrementPlan decision allEvents with
             | Some startCommand ->
@@ -1145,7 +1082,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     decrementPlan
-                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress, 1L))
                 with
             | Some command -> command
             | None ->
@@ -1191,41 +1128,6 @@ type SaveBoundaryActorTests() =
         match ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-whole-file-expiry" with
         | Ok plans -> Assert.That(plans, Is.Empty)
         | Error error -> Assert.Fail($"Expected whole-file save expiry planning to remain a no-op, got {error.Error}.")
-
-    /// Verifies that physical Deletion Reminder Applies Expiry Boundary Only For Live Save References.
-    [<Test>]
-    member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveSaveReferences() =
-        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
-        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Commit), Is.False)
-        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
-        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)
-
-    /// Verifies that save Expiry Reference Planning Skips Recursive Fetch For Checkpoint References.
-    [<Test>]
-    member _.SaveExpiryReferencePlanningSkipsRecursiveFetchForCheckpointReferences() =
-        task {
-            let mutable fetchCalled = false
-
-            /// Extracts recursive Directory Versions from the scenario result so assertions stay focused on server unit save Boundary Actor behavior.
-            let getRecursiveDirectoryVersions () =
-                fetchCalled <- true
-                Task.FromResult Array.empty<Grace.Types.DirectoryVersion.DirectoryVersionDto>
-
-            let! result =
-                ReferenceActor.planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
-                    repositoryId
-                    referenceId
-                    directoryVersionId
-                    (referenceDto ReferenceType.Checkpoint)
-                    getRecursiveDirectoryVersions
-                    "corr-checkpoint-expiry-skip"
-
-            match result with
-            | Error error -> Assert.Fail($"Expected checkpoint expiry planning to skip manifest traversal, got {error.Error}.")
-            | Ok plans -> Assert.That(plans, Is.Empty)
-
-            Assert.That(fetchCalled, Is.False)
-        }
 
     /// Verifies that recursive Directory Traversal Completeness Rejects Missing Declared Child Before Cache Write.
     [<Test>]

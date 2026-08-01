@@ -37,6 +37,10 @@ type Branch() =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Promote)}")
 
     /// Records a commit reference in this branch.
+    static member public Commit(parameters: CommitReferenceParameters) =
+        postServer<CommitReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Commit)}")
+
+    /// Keeps existing SDK callers source-compatible while MCA-02 propagates caller-owned Reference identities.
     static member public Commit(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Commit)}")
 

@@ -152,6 +152,7 @@ module private QueueIntegrationTestHelpers =
             parameters.BranchName <- $"queue-proof-{Guid.NewGuid():N}"
             parameters.ParentBranchId <- $"{parentBranch.BranchId}"
             parameters.ParentBranchName <- $"{parentBranch.BranchName}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = postAsync "/branch/create" (createJsonContent parameters)

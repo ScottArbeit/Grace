@@ -1775,7 +1775,8 @@ module Application =
                 subRoute
                     "/admin"
                     [
-                        POST [
+                        POST [ route "/manifest-contribution/diagnose" (composeHandlers requireSystemAdmin ManifestContributionDiagnosis.Diagnose)
+                               route "/manifest-contribution/repair" (composeHandlers requireSystemAdmin ManifestContributionRepair.Repair)
 #if DEBUG
                                route "/deleteAllFromCosmosDB" (composeHandlers requireSystemAdmin Storage.DeleteAllFromCosmosDB)
                                route "/deleteAllRemindersFromCosmosDB" (composeHandlers requireSystemAdmin Storage.DeleteAllRemindersFromCosmosDB)
@@ -1884,6 +1885,7 @@ module Application =
                         .AddAspNetCoreInstrumentation()
                         .AddMeter("Microsoft.AspNetCore.Hosting")
                         .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
+                        .AddMeter(ManifestContributionTelemetry.InstrumentationName)
                         .AddPrometheusExporter(fun prometheusOptions -> prometheusOptions.ScrapeEndpointPath <- "/metrics")
                     |> ignore
 
@@ -1900,6 +1902,7 @@ module Application =
                         .AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
                         .AddSource(graceServerAppId)
+                        .AddSource(ManifestContributionTelemetry.InstrumentationName)
                     |> ignore
 
                     if
@@ -2063,6 +2066,28 @@ module Application =
                         invalidOp "Azure Cosmos DB connection string is required when managed identity is disabled."
 
                     new CosmosClient(cosmosConnectionString, options))
+            |> ignore
+
+            services.AddSingleton<IRepositoryCounterRecentResult> (fun serviceProvider ->
+                let redisHost = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.RedisHost)
+
+                let redisPort = configuration.GetValue<int>(getConfigKey Constants.EnvironmentVariables.RedisPort)
+
+                if String.IsNullOrWhiteSpace redisHost then
+                    RepositoryCounterRecentResult.UnavailableRepositoryCounterRecentResult() :> IRepositoryCounterRecentResult
+                else
+                    let effectivePort = if redisPort > 0 then redisPort else 6379
+
+                    let redisLog =
+                        serviceProvider
+                            .GetRequiredService<ILoggerFactory>()
+                            .CreateLogger("RepositoryCounterRecentResult.Server")
+
+                    new RepositoryCounterRecentResult.RedisRepositoryCounterRecentResult(redisHost, effectivePort, redisLog) :> IRepositoryCounterRecentResult)
+            |> ignore
+
+            services.AddSingleton<IExactRelationshipStore> (fun _ ->
+                ManifestContributionAccounting.CosmosExactRelationshipStore(ApplicationContext.cosmosContainer) :> IExactRelationshipStore)
             |> ignore
 
             let apiVersioningBuilder =

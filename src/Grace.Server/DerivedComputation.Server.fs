@@ -13,6 +13,8 @@ open Grace.Types.Common
 open Grace.Types.Validation
 open Microsoft.Extensions.Logging
 open System
+open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 
 /// Contains Grace Server derived computation behavior and supporting helpers.
@@ -29,6 +31,41 @@ module DerivedComputation =
         | ReferenceType.Promotion -> true
         | _ -> false
 
+    /// Derives the versioned durable identity for one Reference quick-scan result.
+    let internal buildQuickScanValidationResultId (repositoryId: RepositoryId) (referenceId: ReferenceId) =
+        let repositorySegment = repositoryId.ToString("D").ToLowerInvariant()
+        let referenceSegment = referenceId.ToString("D").ToLowerInvariant()
+
+        let seed = $"grace.validation.quick-scan.v1|{repositorySegment}|{referenceSegment}"
+
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed))
+        let guidBytes = hash[0..15]
+        guidBytes[7] <- (guidBytes[7] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
+        ValidationResultId(guidBytes)
+
+    /// Builds the replay-safe quick-scan result from the persisted Reference Created event.
+    let internal buildQuickScanValidationResult (referenceEvent: ReferenceEvent) =
+        match referenceEvent.Event with
+        | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, _, _, _, _, referenceType, _, _) ->
+            { ValidationResultDto.Default with
+                ValidationResultId = buildQuickScanValidationResultId repositoryId referenceId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                ValidationName = "quick-scan"
+                ValidationVersion = "1.0"
+                Output =
+                    {
+                        Status = ValidationStatus.Pass
+                        Summary = $"quick-scan recorded for {getDiscriminatedUnionCaseName referenceType}; referenceId={referenceId}."
+                        ArtifactIds = []
+                    }
+                OnBehalfOf = [ UserId Constants.GraceSystemUser ]
+                CreatedAt = referenceEvent.Metadata.Timestamp
+            }
+        | _ -> invalidArg (nameof referenceEvent) "Quick-scan results require a persisted Reference Created event."
+
     /// Coordinates handle reference event processing for Grace Server.
     let handleReferenceEvent (referenceEvent: ReferenceEvent) =
         task {
@@ -37,7 +74,7 @@ module DerivedComputation =
                                           ownerId,
                                           organizationId,
                                           repositoryId,
-                                          branchId,
+                                          _,
                                           directoryId,
                                           sha256Hash,
                                           blake3Hash,
@@ -47,35 +84,7 @@ module DerivedComputation =
                 match referenceType with
                 | _ when shouldRecordQuickScan referenceType ->
                     let correlationId = referenceEvent.Metadata.CorrelationId
-                    let policyActorProxy = Policy.CreateActorProxy branchId repositoryId correlationId
-
-                    let! policySnapshot =
-                        task {
-                            match! policyActorProxy.GetCurrent correlationId with
-                            | Some snapshot -> return snapshot.PolicySnapshotId
-                            | None -> return PolicySnapshotId String.Empty
-                        }
-
-                    let now = getCurrentInstant ()
-
-                    let validationResult =
-                        { ValidationResultDto.Default with
-                            ValidationResultId = Guid.NewGuid()
-                            OwnerId = ownerId
-                            OrganizationId = organizationId
-                            RepositoryId = repositoryId
-                            ValidationName = "quick-scan"
-                            ValidationVersion = "1.0"
-                            Output =
-                                {
-                                    Status = ValidationStatus.Pass
-                                    Summary =
-                                        $"quick-scan recorded for {getDiscriminatedUnionCaseName referenceType}; referenceId={referenceId}; policySnapshotId={policySnapshot}."
-                                    ArtifactIds = []
-                                }
-                            OnBehalfOf = [ UserId Constants.GraceSystemUser ]
-                            CreatedAt = now
-                        }
+                    let validationResult = buildQuickScanValidationResult referenceEvent
 
                     let validationResultActorProxy = ValidationResult.CreateActorProxy validationResult.ValidationResultId repositoryId correlationId
 

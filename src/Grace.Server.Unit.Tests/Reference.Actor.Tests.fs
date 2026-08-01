@@ -1,14 +1,19 @@
 namespace Grace.Server.Unit.Tests
 
+open Azure.Messaging.ServiceBus
 open Grace.Actors.Reference
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.Events
 open Grace.Types.Reference
+open Grace.Types.Reminder
+open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
-open System.IO
+open System.Diagnostics
+open System.Text.Json
 open System.Threading.Tasks
 
 /// Covers reference Actor Hash Validation behavior in no-Aspire server unit tests.
@@ -26,6 +31,32 @@ type ReferenceActorHashValidationTests() =
     let branchId = Guid.Parse("55555555-bbbb-4444-8888-555555555555")
     let referenceId = Guid.Parse("66666666-bbbb-4444-8888-666666666666")
     let referenceText = ReferenceText "matching replay"
+
+    /// Builds one automatic physical-deletion reminder with stable Reference target facts.
+    let automaticPhysicalDeletionReminder reminderId correlationId reminderTime deleteReason =
+        { ReminderDto.Default with
+            ReminderId = reminderId
+            ActorName = "ReferenceActor"
+            ActorId = $"referenceactor/{referenceId:N}"
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryId = repositoryId
+            ReminderType = ReminderTypes.PhysicalDeletion
+            CreatedAt = Instant.FromUtc(2026, 7, 26, 8, 0)
+            ReminderTime = reminderTime
+            CorrelationId = correlationId
+            State =
+                ReminderState.ReferencePhysicalDeletion
+                    {
+                        RepositoryId = repositoryId
+                        BranchId = branchId
+                        DirectoryVersionId = directoryVersionId
+                        Sha256Hash = sha256Hash
+                        Blake3Hash = blake3Hash
+                        DeleteReason = deleteReason
+                        CorrelationId = correlationId
+                    }
+        }
 
     /// Builds directory Version With Hashes test data for the server unit reference Actor scenarios in this file.
     let directoryVersionWithHashes sha blake3 =
@@ -214,138 +245,290 @@ type ReferenceActorHashValidationTests() =
         )
         |> ignore
 
-    /// Verifies that save Create Applies Manifest Contribution Boundary Before Created Event Persists.
+    /// Verifies that Reference creation persists durable state before strict publication begins.
     [<Test>]
-    member _.SaveCreateAppliesManifestContributionBoundaryBeforeCreatedEventPersists() =
-        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
-        let actorSource = File.ReadAllText actorPath
-        let eventPlanningStart = actorSource.IndexOf("let! (referenceEventTypeResult", StringComparison.Ordinal)
+    member _.ReferenceCreatedPersistencePrecedesStrictPublication() =
+        task {
+            let calls = ResizeArray<string>()
 
-        Assert.That(eventPlanningStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor event-planning block must be present.")
+            do!
+                persistReferenceCreatedThenPublish
+                    (fun () ->
+                        calls.Add("persist")
+                        Task.CompletedTask)
+                    (fun () ->
+                        calls.Add("publish")
+                        Task.CompletedTask)
 
-        let createBranchStart = actorSource.IndexOf("| Create (referenceId,", eventPlanningStart, StringComparison.Ordinal)
+            Assert.That(calls.Count, Is.EqualTo(2))
+            Assert.That(calls[0], Is.EqualTo("persist"))
+            Assert.That(calls[1], Is.EqualTo("publish"))
+        }
 
-        Assert.That(createBranchStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor Create branch must be present.")
-
-        let addLinkBranchStart = actorSource.IndexOf("| AddLink link ->", createBranchStart, StringComparison.Ordinal)
-
-        Assert.That(addLinkBranchStart, Is.GreaterThan(createBranchStart), "The ReferenceActor Create branch must have a bounded source slice.")
-
-        let createBranch = actorSource.Substring(createBranchStart, addLinkBranchStart - createBranchStart)
-
-        let validateIndex = createBranch.IndexOf("validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash", StringComparison.Ordinal)
-
-        Assert.That(validateIndex, Is.GreaterThanOrEqualTo(0), "Create must validate root directory hashes before planning Created.")
-
-        let boundaryIndex =
-            createBranch.IndexOf("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType", validateIndex, StringComparison.Ordinal)
-
-        Assert.That(
-            boundaryIndex,
-            Is.GreaterThan(validateIndex),
-            "Save create must apply manifest contribution side effects after hash validation and before planning Created."
-        )
-
-        let createdIndex = createBranch.IndexOf("Created(", boundaryIndex, StringComparison.Ordinal)
-
-        Assert.That(
-            createdIndex,
-            Is.GreaterThan(boundaryIndex),
-            "A failed Save manifest contribution boundary must return Error before Created is planned for persistence."
-        )
-
-        let applyResultStart = actorSource.IndexOf("match referenceEventTypeResult with", addLinkBranchStart, StringComparison.Ordinal)
-
-        Assert.That(applyResultStart, Is.GreaterThan(addLinkBranchStart), "ReferenceActor must apply the selected event after command planning.")
-
-        let handleEnd = actorSource.IndexOf("match! isValid command metadata with", applyResultStart, StringComparison.Ordinal)
-
-        Assert.That(handleEnd, Is.GreaterThan(applyResultStart), "ReferenceActor event application must have a bounded source slice.")
-
-        let applyResultSlice = actorSource.Substring(applyResultStart, handleEnd - applyResultStart)
-        let applyEventIndex = applyResultSlice.IndexOf("let! returnValue = this.ApplyEvent referenceEvent", StringComparison.Ordinal)
-
-        Assert.That(
-            applyResultSlice,
-            Does.Contain("return! this.ApplyEvent referenceEvent"),
-            "ReferenceActor must persist the planned reference event through ApplyEvent after pre-persistence validation."
-        )
-
-        Assert.That(
-            applyEventIndex,
-            Is.LessThan(0),
-            "ReferenceActor must not keep the legacy ApplyEvent binding that allowed post-persistence boundary failures."
-        )
-
-        Assert.That(
-            applyResultSlice,
-            Does.Not.Contain("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType"),
-            "Save manifest contribution boundary failures must not occur after ApplyEvent persists Created."
-        )
-
-    /// Verifies that manifest Expiry Boundary Only Applies To Save References Until Commit Checkpoint Fanout Is Wired.
+    /// Measures the fixed durable-save and broker-send foreground work against small and large manifest graphs.
     [<Test>]
-    member _.ManifestExpiryBoundaryOnlyAppliesToSaveReferencesUntilCommitCheckpointFanoutIsWired() =
-        let referenceOfType referenceType = { ReferenceDto.Default with ReferenceId = Guid.NewGuid(); ReferenceType = referenceType }
+    member _.ReferenceCreatedForegroundWorkIsIndependentOfManifestGraphSize() =
+        task {
+            let iterations = 10_000
 
-        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Save), Is.True)
-        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Commit), Is.False)
-        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Checkpoint), Is.False)
-        Assert.That(shouldApplyManifestExpiryBoundary ReferenceDto.Default, Is.False)
+            let measure manifestGraphSize =
+                task {
+                    let manifestGraph = Array.zeroCreate<byte> manifestGraphSize
+                    let mutable persistenceCalls = 0
+                    let mutable publicationCalls = 0
+                    let stopwatch = Stopwatch.StartNew()
 
-    /// Verifies that manifest Contribution Boundary Predicate Keeps Commit Checkpoint Out Of Unwired Workflow.
-    [<Test>]
-    member _.ManifestContributionBoundaryPredicateKeepsCommitCheckpointOutOfUnwiredWorkflow() =
-        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
-        let actorSource = File.ReadAllText actorPath
-        let predicateStart = actorSource.IndexOf("let appliesManifestBoundary referenceType =", StringComparison.Ordinal)
-        let boundaryStart = actorSource.IndexOf("let applyReferenceManifestBoundary", predicateStart, StringComparison.Ordinal)
+                    for _ in 1..iterations do
+                        do!
+                            persistReferenceCreatedThenPublish
+                                (fun () ->
+                                    persistenceCalls <- persistenceCalls + 1
+                                    Task.CompletedTask)
+                                (fun () ->
+                                    publicationCalls <- publicationCalls + 1
+                                    Task.CompletedTask)
 
-        Assert.That(predicateStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor manifest-boundary predicate must be present.")
-        Assert.That(boundaryStart, Is.GreaterThan(predicateStart), "The manifest-boundary predicate slice must be bounded.")
+                    stopwatch.Stop()
+                    GC.KeepAlive(manifestGraph)
+                    return struct (persistenceCalls, publicationCalls, stopwatch.Elapsed)
+                }
 
-        let predicateSource = actorSource.Substring(predicateStart, boundaryStart - predicateStart)
+            let! struct (smallPersistenceCalls, smallPublicationCalls, smallElapsed) = measure 1
+            let! struct (largePersistenceCalls, largePublicationCalls, largeElapsed) = measure 10_000
 
-        Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Save"))
-        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
-        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
-
-    /// Verifies that manifest Contribution Boundary Traversals Force Regeneration Instead Of Cached Recursive Results.
-    [<Test>]
-    member _.ManifestContributionBoundaryTraversalsForceRegenerationInsteadOfCachedRecursiveResults() =
-        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
-        let actorSource = File.ReadAllText actorPath
-
-        /// Asserts the boundary Forces Regeneration condition so failures identify the violated server unit reference Actor invariant.
-        let assertBoundaryForcesRegeneration (boundaryStartText: string) (boundaryEndText: string) =
-            let boundaryStart = actorSource.IndexOf(boundaryStartText, StringComparison.Ordinal)
-
-            Assert.That(boundaryStart, Is.GreaterThanOrEqualTo(0), $"Expected ReferenceActor boundary `{boundaryStartText}` to be present.")
-
-            let boundaryEnd = actorSource.IndexOf(boundaryEndText, boundaryStart, StringComparison.Ordinal)
-
-            Assert.That(boundaryEnd, Is.GreaterThan(boundaryStart), $"Expected ReferenceActor boundary `{boundaryStartText}` to have a bounded source slice.")
-
-            let boundarySource = actorSource.Substring(boundaryStart, boundaryEnd - boundaryStart)
-
-            Assert.That(
-                boundarySource,
-                Does.Contain("GetRecursiveDirectoryVersions true"),
-                $"Expected ReferenceActor boundary `{boundaryStartText}` to bypass cached partial recursive directory results."
+            TestContext.Progress.WriteLine(
+                $"MCA foreground measurement: iterations={iterations}; smallGraph=1; "
+                + $"calls={smallPersistenceCalls + smallPublicationCalls}; elapsedMs={smallElapsed.TotalMilliseconds:F3}; "
+                + $"largeGraph=10000; calls={largePersistenceCalls + largePublicationCalls}; elapsedMs={largeElapsed.TotalMilliseconds:F3}"
             )
 
-            Assert.That(
-                boundarySource,
-                Does.Not.Contain("GetRecursiveDirectoryVersions false"),
-                $"ReferenceActor boundary `{boundaryStartText}` must not trust cached partial recursive directory results."
-            )
+            Assert.That(smallPersistenceCalls, Is.EqualTo(iterations))
+            Assert.That(smallPublicationCalls, Is.EqualTo(iterations))
+            Assert.That(largePersistenceCalls, Is.EqualTo(iterations))
+            Assert.That(largePublicationCalls, Is.EqualTo(iterations))
+            Assert.That(smallElapsed, Is.LessThan(TimeSpan.FromSeconds(1.0)))
+            Assert.That(largeElapsed, Is.LessThan(TimeSpan.FromSeconds(1.0)))
+        }
 
-        assertBoundaryForcesRegeneration "let! boundaryResult =" "match boundaryResult with"
+    /// Verifies that an unknown publication outcome preserves the completed persistence step and propagates failure.
+    [<Test>]
+    member _.ReferenceCreatedPublicationFailureDoesNotRepeatPersistence() =
+        task {
+            let mutable persistenceCount = 0
+            let mutable publicationCount = 0
 
-        assertBoundaryForcesRegeneration
-            "let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType ="
-            "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
+            let action () =
+                persistReferenceCreatedThenPublish
+                    (fun () ->
+                        persistenceCount <- persistenceCount + 1
+                        Task.CompletedTask)
+                    (fun () ->
+                        publicationCount <- publicationCount + 1
+                        Task.FromException(InvalidOperationException("broker outcome unknown")))
 
-        assertBoundaryForcesRegeneration
-            "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
-            "let existingReferenceReturnValue () ="
+            let error = Assert.ThrowsAsync<InvalidOperationException>(Func<Task>(fun () -> action () :> Task))
+
+            Assert.That(error.Message, Is.EqualTo("broker outcome unknown"))
+            Assert.That(persistenceCount, Is.EqualTo(1))
+            Assert.That(publicationCount, Is.EqualTo(1))
+        }
+
+    /// Verifies every ReferenceType uses the same deterministic Reference Created broker envelope.
+    [<Test>]
+    member _.ReferenceCreatedEnvelopeUsesDeterministicMessageIdentity() =
+        let referenceTypes =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+                ReferenceType.Checkpoint
+                ReferenceType.Save
+                ReferenceType.Tag
+                ReferenceType.External
+                ReferenceType.Rebase
+            ]
+
+        for referenceType in referenceTypes do
+            let metadata = EventMetadata.New correlationId "reference-publisher-test"
+            metadata.Properties[ nameof RepositoryId ] <- string repositoryId
+
+            let referenceEvent =
+                {
+                    Event =
+                        ReferenceEventType.Created(
+                            referenceId,
+                            ownerId,
+                            organizationId,
+                            repositoryId,
+                            branchId,
+                            directoryVersionId,
+                            sha256Hash,
+                            blake3Hash,
+                            referenceType,
+                            referenceText,
+                            []
+                        )
+                    Metadata = metadata
+                }
+
+            let message: ServiceBusMessage = createReferenceCreatedServiceBusMessage referenceEvent
+            let body = JsonSerializer.Deserialize<GraceEvent>(message.Body.ToArray(), Grace.Shared.Constants.JsonSerializerOptions)
+
+            Assert.That(message.MessageId, Is.EqualTo($"Reference/{referenceId}/Created"))
+            Assert.That(message.CorrelationId, Is.EqualTo(correlationId))
+            Assert.That(message.Subject, Is.EqualTo("GraceEvent"))
+            Assert.That(message.ApplicationProperties["graceEventType"], Is.EqualTo("GraceEvent.ReferenceEvent"))
+
+            match body with
+            | GraceEvent.ReferenceEvent bodyEvent ->
+                Assert.That(bodyEvent.Event, Is.EqualTo(referenceEvent.Event), $"Expected {referenceType} to round-trip in the GraceEvent body.")
+            | _ -> Assert.Fail("Expected a ReferenceEvent GraceEvent body.")
+
+    /// Verifies automatic expiry identity depends only on Repository and Reference identity with pinned UUID bits.
+    [<Test>]
+    member _.AutomaticPhysicalDeletionReminderIdentityIsDeterministicAndScoped() =
+        let same = automaticPhysicalDeletionReminderId repositoryId referenceId
+        let sameAgain = automaticPhysicalDeletionReminderId repositoryId referenceId
+        let otherRepository = automaticPhysicalDeletionReminderId (Guid.Parse("77777777-bbbb-4444-8888-777777777777")) referenceId
+        let otherReference = automaticPhysicalDeletionReminderId repositoryId (Guid.Parse("88888888-bbbb-4444-8888-888888888888"))
+        let formatted = same.ToString("D")
+
+        Assert.That(sameAgain, Is.EqualTo(same))
+        Assert.That(otherRepository, Is.Not.EqualTo(same))
+        Assert.That(otherReference, Is.Not.EqualTo(same))
+        Assert.That(same, Is.EqualTo(Guid.Parse("e8642c90-5cdc-5d8d-bf9d-c387e87ffaea")))
+        Assert.That(formatted.Substring(14, 1), Is.EqualTo("5"))
+        Assert.That("89ab", Does.Contain(formatted.Substring(19, 1)))
+
+    /// Verifies retry validation ignores first-write metadata while rejecting changed stable Reference target facts.
+    [<Test>]
+    member _.AutomaticPhysicalDeletionReminderMatchUsesOnlyStableTargetFacts() =
+        let reminderId = automaticPhysicalDeletionReminderId repositoryId referenceId
+
+        let requested = automaticPhysicalDeletionReminder reminderId "corr-first" (Instant.FromUtc(2026, 8, 1, 8, 0)) "Save: automatic deletion after 7 days"
+
+        let existing =
+            { automaticPhysicalDeletionReminder reminderId "corr-existing" (Instant.FromUtc(2026, 8, 2, 8, 0)) "first durable delete reason" with
+                CreatedAt = Instant.FromUtc(2026, 7, 27, 8, 0)
+            }
+
+        Assert.That(automaticPhysicalDeletionReminderMatches requested existing, Is.True)
+
+        let existingState =
+            match existing.State with
+            | ReminderState.ReferencePhysicalDeletion state -> state
+            | _ -> failwith "Expected Reference physical-deletion state."
+
+        let conflicts =
+            [
+                "ReminderId", { existing with ReminderId = Guid.NewGuid() }
+                "ActorName", { existing with ActorName = "BranchActor" }
+                "ActorId", { existing with ActorId = "referenceactor/00000000000000000000000000000000" }
+                "OwnerId", { existing with OwnerId = Guid.NewGuid() }
+                "OrganizationId", { existing with OrganizationId = Guid.NewGuid() }
+                "RepositoryId", { existing with RepositoryId = Guid.NewGuid() }
+                "ReminderType", { existing with ReminderType = ReminderTypes.Maintenance }
+                "StateCase", { existing with State = ReminderState.EmptyReminderState }
+                "StateRepositoryId", { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with RepositoryId = Guid.NewGuid() } }
+                "BranchId", { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with BranchId = Guid.NewGuid() } }
+                "DirectoryVersionId",
+                { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with DirectoryVersionId = Guid.NewGuid() } }
+                "Sha256Hash", { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with Sha256Hash = Sha256Hash "conflicting-sha" } }
+                "Blake3Hash",
+                { existing with State = ReminderState.ReferencePhysicalDeletion { existingState with Blake3Hash = Blake3Hash "conflicting-blake3" } }
+            ]
+
+        for name, conflicting in conflicts do
+            Assert.That(automaticPhysicalDeletionReminderMatches requested conflicting, Is.False, $"Expected {name} conflict to fail closed.")
+
+    /// Verifies broker-acceptance staging depends on stable identity capability rather than ReferenceType.
+    [<Test>]
+    member _.BrokerAcceptanceCapabilityIsReferenceTypeNeutral() =
+        let referenceTypes =
+            [
+                ReferenceType.Promotion
+                ReferenceType.Commit
+                ReferenceType.Checkpoint
+                ReferenceType.Save
+                ReferenceType.Tag
+                ReferenceType.External
+                ReferenceType.Rebase
+            ]
+
+        for referenceType in referenceTypes do
+            let metadata = EventMetadata.New $"acceptance-{getDiscriminatedUnionCaseName referenceType}" "test"
+
+            metadata.Properties[
+                ReferenceCreatedRequiresBrokerAcceptanceProperty
+            ] <- "true"
+
+            Assert.That(referenceCreatedRequiresBrokerAcceptance metadata, Is.True, $"Expected {referenceType} to use the same capability.")
+
+            metadata.Properties[
+                ReferenceCreatedRequiresBrokerAcceptanceProperty
+            ] <- "false"
+
+            Assert.That(referenceCreatedRequiresBrokerAcceptance metadata, Is.False, $"Expected {referenceType} to use the same capability.")
+
+    /// Verifies Reference physical deletion performs only lifecycle callbacks for every ReferenceType.
+    [<Test>]
+    member _.ReferencePhysicalDeletionNeverChangesDirectoryVersionManifestRetention() =
+        task {
+            let referenceTypes =
+                [
+                    ReferenceType.Promotion
+                    ReferenceType.Commit
+                    ReferenceType.Checkpoint
+                    ReferenceType.Save
+                    ReferenceType.Tag
+                    ReferenceType.External
+                    ReferenceType.Rebase
+                ]
+
+            for referenceType in referenceTypes do
+                let calls = ResizeArray<string>()
+
+                do!
+                    completeReferencePhysicalDeletion
+                        (fun () ->
+                            calls.Add($"remove-root:{getDiscriminatedUnionCaseName referenceType}")
+                            Task.CompletedTask)
+                        (fun () ->
+                            calls.Add($"mark:{getDiscriminatedUnionCaseName referenceType}")
+                            Task.CompletedTask)
+                        (fun () ->
+                            calls.Add($"clear:{getDiscriminatedUnionCaseName referenceType}")
+                            Task.CompletedTask)
+
+                Assert.That(
+                    calls,
+                    Is.EqualTo<string array>(
+                        [|
+                            $"remove-root:{getDiscriminatedUnionCaseName referenceType}"
+                            $"mark:{getDiscriminatedUnionCaseName referenceType}"
+                            $"clear:{getDiscriminatedUnionCaseName referenceType}"
+                        |]
+                    )
+                )
+        }
+
+    /// Verifies an unknown Reference-root removal prevents later physical-deletion effects.
+    [<Test>]
+    member _.ReferencePhysicalDeletionStopsWhenRootRemovalIsUnknown() =
+        task {
+            let calls = ResizeArray<string>()
+
+            let deletion =
+                completeReferencePhysicalDeletion
+                    (fun () ->
+                        calls.Add("remove-root")
+                        Task.FromException(TimeoutException("exact removal response lost")))
+                    (fun () ->
+                        calls.Add("mark")
+                        Task.CompletedTask)
+                    (fun () ->
+                        calls.Add("clear")
+                        Task.CompletedTask)
+
+            let _ = Assert.ThrowsAsync<TimeoutException>(Func<Task>(fun () -> deletion :> Task))
+            Assert.That(calls, Is.EqualTo<string array>([| "remove-root" |]))
+        }

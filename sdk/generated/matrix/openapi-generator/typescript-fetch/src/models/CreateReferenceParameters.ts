@@ -14,7 +14,7 @@
 
 import { mapValues } from '../runtime';
 /**
- * Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+ * Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
  * @export
  * @interface CreateReferenceParameters
  */
@@ -84,6 +84,12 @@ export interface CreateReferenceParameters {
      * @type {string}
      * @memberof CreateReferenceParameters
      */
+    referenceId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof CreateReferenceParameters
+     */
     directoryVersionId?: string;
     /**
      * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
@@ -109,6 +115,7 @@ export interface CreateReferenceParameters {
  * Check if a given object implements the CreateReferenceParameters interface.
  */
 export function instanceOfCreateReferenceParameters(value: object): value is CreateReferenceParameters {
+    if (!('referenceId' in value) || value['referenceId'] === undefined) return false;
     return true;
 }
 
@@ -132,6 +139,7 @@ export function CreateReferenceParametersFromJSONTyped(json: any, ignoreDiscrimi
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
+        'referenceId': json['ReferenceId'],
         'directoryVersionId': json['DirectoryVersionId'] == null ? undefined : json['DirectoryVersionId'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
         'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
@@ -160,6 +168,7 @@ export function CreateReferenceParametersToJSONTyped(value?: CreateReferencePara
         'RepositoryName': value['repositoryName'],
         'BranchId': value['branchId'],
         'BranchName': value['branchName'],
+        'ReferenceId': value['referenceId'],
         'DirectoryVersionId': value['directoryVersionId'],
         'Sha256Hash': value['sha256Hash'],
         'Blake3Hash': value['blake3Hash'],

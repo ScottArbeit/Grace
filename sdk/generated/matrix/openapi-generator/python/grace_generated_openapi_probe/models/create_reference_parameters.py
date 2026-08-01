@@ -28,7 +28,7 @@ from pydantic_core import to_jsonable_python
 
 class CreateReferenceParameters(BaseModel):
     """
-    Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+    Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
@@ -40,11 +40,12 @@ class CreateReferenceParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
+    reference_id: UUID = Field(alias="ReferenceId")
     directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
     sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.", alias="Sha256Hash")
     blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.", alias="Blake3Hash")
     message: Optional[StrictStr] = Field(default=None, alias="Message")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "DirectoryVersionId", "Sha256Hash", "Blake3Hash", "Message"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ReferenceId", "DirectoryVersionId", "Sha256Hash", "Blake3Hash", "Message"]
 
     @field_validator('sha256_hash')
     def sha256_hash_validate_regular_expression(cls, value):
@@ -133,6 +134,7 @@ class CreateReferenceParameters(BaseModel):
             "RepositoryName": obj.get("RepositoryName"),
             "BranchId": obj.get("BranchId"),
             "BranchName": obj.get("BranchName"),
+            "ReferenceId": obj.get("ReferenceId"),
             "DirectoryVersionId": obj.get("DirectoryVersionId"),
             "Sha256Hash": obj.get("Sha256Hash"),
             "Blake3Hash": obj.get("Blake3Hash"),

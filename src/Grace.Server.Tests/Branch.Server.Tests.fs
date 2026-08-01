@@ -101,6 +101,7 @@ module BranchServerTestHelpers =
             parameters.BranchName <- branchName
             parameters.ParentBranchId <- $"{parentBranch.BranchId}"
             parameters.ParentBranchName <- $"{parentBranch.BranchName}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/branch/create", createJsonContent parameters)
@@ -159,6 +160,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
             parameters.Sha256Hash <- $"{branch.BasedOn.Sha256Hash}"
             parameters.Message <- "Hosted branch lifecycle route proof save"
@@ -374,6 +376,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Sha256Hash <- sha256Hash
             parameters.Message <- "Root hash hydration route proof save"
@@ -390,6 +393,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Sha256Hash <- sha256Hash
             parameters.Message <- "Root hash hydration route proof assign"
@@ -406,6 +410,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "BLAKE3 root locator route proof save"
@@ -422,6 +427,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.Sha256Hash <- sha256Hash
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "Mixed hash locator route proof save"
@@ -438,11 +444,28 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "Ambiguous BLAKE3 root locator route proof"
             parameters.CorrelationId <- generateCorrelationId ()
 
             return! Client.PostAsync(endpoint, createJsonContent parameters)
+        }
+
+    /// Builds a Commit request with a caller-owned reference identity for ambiguous BLAKE3 root validation.
+    let commitReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) blake3Hash =
+        task {
+            let parameters = Parameters.Branch.CommitReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
+            parameters.Blake3Hash <- blake3Hash
+            parameters.Message <- "Ambiguous BLAKE3 root locator route proof"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/commit", createJsonContent parameters)
         }
 
     /// Defines assign reference by BLAKE3 response behavior for the surrounding tests used by the server integration branch scenario.
@@ -453,6 +476,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersionId
             parameters.Blake3Hash <- blake3Hash
             parameters.Message <- "BLAKE3 root locator route proof assign"
@@ -587,6 +611,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- directoryVersion.DirectoryVersionId
             parameters.Sha256Hash <- $"{directoryVersion.Sha256Hash}"
             parameters.Message <- "Annotate route test save"
@@ -797,6 +822,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.DirectoryVersionId <- branch.LatestSave.DirectoryId
             parameters.Sha256Hash <- $"{branch.LatestSave.Sha256Hash}"
             parameters.Message <- "Annotate route test promotion"
@@ -815,6 +841,7 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- Guid.NewGuid()
             parameters.BasedOn <- basedOnReferenceId
             parameters.CorrelationId <- generateCorrelationId ()
 
@@ -1455,8 +1482,7 @@ type BranchServer() =
 
             do! assertAmbiguousResponse saveResponse
 
-            let! commitResponse =
-                BranchServerTestHelpers.createReferenceByBlake3ResponseAsync "/branch/commit" repositoryId commitBranch (Blake3Hash sharedPrefix)
+            let! commitResponse = BranchServerTestHelpers.commitReferenceByBlake3ResponseAsync repositoryId commitBranch (Blake3Hash sharedPrefix)
 
             do! assertAmbiguousResponse commitResponse
 

@@ -50,29 +50,58 @@
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
+          required: [ReferenceId]
           properties:
             ParentBranchId:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
             ParentBranchName:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+            ReferenceId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
             InitialPermissions:
               type: array
               items:
                 $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+    AssignParameters:
+      description: Parameters for the /branch/assign endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          required: [ReferenceId]
+          properties:
+            ReferenceId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+            DirectoryVersionId:
+              type: string
+              format: uuid
+              example: 33a4e36b-828f-4fae-9343-50b6560dc842
+            Sha256Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashOptionalPrefix'
+            Blake3Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashOptionalPrefix'
+            Message:
+              type: string
+              example: Assign release candidate.
     RebaseParameters:
       description: Parameters for the /branch/rebase endpoint.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
+          required: [ReferenceId]
           properties:
+            ReferenceId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
             BasedOn:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
     CreateReferenceParameters:
-      description: Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+      description: Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
+          required: [ReferenceId]
           properties:
+            ReferenceId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
             DirectoryVersionId:
               type: string
               format: uuid

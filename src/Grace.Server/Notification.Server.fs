@@ -31,6 +31,7 @@ open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
 open System
 open System.Collections.Generic
+open System.Diagnostics
 open System.Linq
 open System.Text.Json
 open System.Text.RegularExpressions
@@ -429,6 +430,147 @@ module Notification =
 
     /// Contains Grace Server subscriber behavior and supporting helpers.
     module Subscriber =
+
+        /// Carries only delivery metadata needed for structured diagnostics and activity correlation.
+        type GraceEventMessageMetadata = { MessageId: string; CorrelationId: string; DeliveryCount: int }
+
+        /// Supplies the parse, handler, and broker settlement effects for one testable delivery.
+        type GraceEventSettlementDependencies =
+            {
+                Parse: BinaryData -> Result<GraceEvent, string>
+                Handle: GraceEvent -> CancellationToken -> Task
+                Complete: CancellationToken -> Task
+                Abandon: CancellationToken -> Task
+                DeadLetter: string -> string -> CancellationToken -> Task
+            }
+
+        /// Distinguishes an unknown explicit settlement outcome from failures that occurred before settlement began.
+        type internal GraceEventSettlementFailureException(operation: string, innerException: Exception) =
+            inherit Exception($"GraceEvent {operation} settlement outcome is unknown.", innerException)
+
+            /// Names the one bounded settlement operation whose result is unknown.
+            member _.Operation = operation
+
+        /// Provides fixed bounded dead-letter evidence without retaining message payload or parser details.
+        [<Literal>]
+        let internal MalformedGraceEventDescription = "The Service Bus message body is not a supported GraceEvent."
+
+        /// Records one processor SDK callback with structured broker context and no custom delay or retry.
+        let internal handleProcessorErrorWith (logger: ILogger) (error: Exception) errorSource entityPath fullyQualifiedNamespace identifier =
+            logger.LogError(
+                error,
+                "Grace pub-sub processor fault. ErrorSource: {ErrorSource}; EntityPath: {EntityPath}; FullyQualifiedNamespace: {FullyQualifiedNamespace}; Identifier: {Identifier}.",
+                errorSource,
+                entityPath,
+                fullyQualifiedNamespace,
+                identifier
+            )
+
+            Task.CompletedTask
+
+        /// Completes the production processor callback after an unknown explicit settlement so the SDK cannot auto-abandon it.
+        let internal runProcessorMessageCallbackWith (logger: ILogger) (metadata: GraceEventMessageMetadata) (processDelivery: unit -> Task) =
+            task {
+                try
+                    do! processDelivery ()
+                with
+                | :? GraceEventSettlementFailureException as ex ->
+                    logger.LogError(
+                        ex,
+                        "GraceEvent {SettlementOperation} settlement failed for message {MessageId} (CorrelationId: {CorrelationId}); the processor callback completed without throwing so the SDK cannot attempt automatic abandonment.",
+                        ex.Operation,
+                        metadata.MessageId,
+                        metadata.CorrelationId
+                    )
+            }
+
+        /// Identifies deliveries whose valid Reference-created event enters manifest contribution accounting.
+        let internal isManifestContributionAccountingDelivery =
+            function
+            | GraceEvent.ReferenceEvent { Event = ReferenceEventType.Created _ } -> true
+            | _ -> false
+
+        /// Adds parsed Reference-created identity to the current manifest-accounting activity before handling begins.
+        let private enrichManifestContributionActivity graceEvent =
+            match graceEvent with
+            | GraceEvent.ReferenceEvent referenceEvent ->
+                match referenceEvent.Event with
+                | ReferenceEventType.Created (referenceId, _, _, repositoryId, _, directoryVersionId, _, _, referenceType, _, _) ->
+                    ManifestContributionTelemetry.enrichReferenceActivity $"{referenceId:D}" $"{repositoryId:D}" $"{directoryVersionId:D}" $"{referenceType}"
+                | _ -> ()
+            | _ -> ()
+
+        /// Processes one Service Bus delivery through exactly one truthful settlement intent.
+        let internal processGraceEventWith
+            (dependencies: GraceEventSettlementDependencies)
+            (metadata: GraceEventMessageMetadata)
+            (body: BinaryData)
+            (cancellationToken: CancellationToken)
+            =
+            task {
+                cancellationToken.ThrowIfCancellationRequested()
+                let stopwatch = Stopwatch.StartNew()
+
+                match dependencies.Parse body with
+                | Error _ ->
+                    cancellationToken.ThrowIfCancellationRequested()
+
+                    try
+                        do! dependencies.DeadLetter "MalformedGraceEvent" MalformedGraceEventDescription cancellationToken
+                    with
+                    | ex -> return raise (GraceEventSettlementFailureException("dead-letter", ex))
+                | Ok graceEvent ->
+                    let isManifestAccountingDelivery = isManifestContributionAccountingDelivery graceEvent
+
+                    use activity =
+                        if isManifestAccountingDelivery then
+                            ManifestContributionTelemetry.startMessageActivity metadata.MessageId metadata.CorrelationId metadata.DeliveryCount
+                        else
+                            null
+
+                    enrichManifestContributionActivity graceEvent
+
+                    let recordMessage stage outcome =
+                        if isManifestAccountingDelivery then
+                            stopwatch.Stop()
+                            ManifestContributionTelemetry.recordMessage stage outcome stopwatch.Elapsed.TotalMilliseconds
+
+                    let! handlerError =
+                        task {
+                            try
+                                do! dependencies.Handle graceEvent cancellationToken
+                                cancellationToken.ThrowIfCancellationRequested()
+                                return None
+                            with
+                            | :? OperationCanceledException as ex -> return raise ex
+                            | ex -> return Some ex
+                        }
+
+                    match handlerError with
+                    | None ->
+                        cancellationToken.ThrowIfCancellationRequested()
+
+                        try
+                            do! dependencies.Complete cancellationToken
+                        with
+                        | ex ->
+                            recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.SettlementFailed
+                            return raise (GraceEventSettlementFailureException("complete", ex))
+
+                        recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.Completed
+                    | Some _ ->
+                        cancellationToken.ThrowIfCancellationRequested()
+
+                        try
+                            do! dependencies.Abandon cancellationToken
+                        with
+                        | ex ->
+                            recordMessage ManifestContributionProcessingStage.Settle ManifestContributionMessageOutcome.SettlementFailed
+                            return raise (GraceEventSettlementFailureException("abandon", ex))
+
+                        recordMessage ManifestContributionProcessingStage.Handle ManifestContributionMessageOutcome.Abandoned
+            }
+
         /// Gets the ReferenceDto for the given ReferenceId.
         let getReferenceDto referenceId repositoryId correlationId =
             task {
@@ -887,7 +1029,6 @@ module Notification =
                     )
                 | ReferenceEvent referenceEvent ->
                     let correlationId = referenceEvent.Metadata.CorrelationId
-                    let repositoryId = Guid.Parse($"{referenceEvent.Metadata.Properties[nameof RepositoryId]}")
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ReferenceEvent notification.",
@@ -896,6 +1037,7 @@ module Notification =
                         correlationId
                     )
 
+                    do! ManifestContributionAccounting.handleReferenceEvent referenceEvent
                     do! DerivedComputation.handleReferenceEvent referenceEvent
 
                     match referenceEvent.Event with
@@ -1271,38 +1413,59 @@ module Notification =
 
             /// Coordinates handle processor error processing for Grace Server.
             let handleProcessorError (args: ProcessErrorEventArgs) =
-                task {
-                    //subscriptionLog.LogError(
-                    //    args.Exception,
-                    //    "Grace pub-sub processor fault. ErrorSource: {ErrorSource}; EntityPath: {EntityPath}.",
-                    //    args.ErrorSource,
-                    //    args.EntityPath
-                    //)
-
-                    subscriptionLog.LogWarning("Azure Service Bus not ready; pausing for five seconds to retry.")
-                    do! Task.Delay(TimeSpan.FromSeconds(5.0))
-                }
-                :> Task
+                handleProcessorErrorWith subscriptionLog args.Exception args.ErrorSource args.EntityPath args.FullyQualifiedNamespace args.Identifier
 
             /// Coordinates process grace event processing for Grace Server.
             let processGraceEvent (args: ProcessMessageEventArgs) =
                 task {
-                    try
-                        use bodyStream = args.Message.Body.ToStream()
-                        let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
+                    /// Parses one body without exposing payload or serializer diagnostics to settlement evidence.
+                    let parse (body: BinaryData) =
+                        try
+                            use bodyStream = body.ToStream()
+                            let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
 
-                        do! handleEvent graceEvent
-                        do! args.CompleteMessageAsync(args.Message, args.CancellationToken)
-                    with
-                    | ex ->
-                        subscriptionLog.LogError(
-                            ex,
-                            "Failed to process GraceEvent message {MessageId} (CorrelationId: {CorrelationId}).",
-                            args.Message.MessageId,
-                            args.Message.CorrelationId
-                        )
+                            if isNull (box graceEvent) then
+                                Error "GraceEvent JSON must not be null."
+                            else
+                                Ok graceEvent
+                        with
+                        | :? JsonException -> Error "The message body is not valid GraceEvent JSON."
+                        | :? NotSupportedException -> Error "The message body is not a supported GraceEvent."
 
-                        do! args.AbandonMessageAsync(args.Message, cancellationToken = args.CancellationToken)
+                    let dependencies =
+                        {
+                            Parse = parse
+                            Handle =
+                                fun graceEvent cancellationToken ->
+                                    task {
+                                        try
+                                            cancellationToken.ThrowIfCancellationRequested()
+                                            do! handleEvent graceEvent
+                                        with
+                                        | :? OperationCanceledException as ex -> return raise ex
+                                        | ex ->
+                                            subscriptionLog.LogError(
+                                                ex,
+                                                "GraceEvent handler failed for message {MessageId} (CorrelationId: {CorrelationId}); abandoning for broker retry.",
+                                                args.Message.MessageId,
+                                                args.Message.CorrelationId
+                                            )
+
+                                            return raise ex
+                                    }
+                                    :> Task
+                            Complete = fun cancellationToken -> args.CompleteMessageAsync(args.Message, cancellationToken)
+                            Abandon = fun cancellationToken -> args.AbandonMessageAsync(args.Message, cancellationToken = cancellationToken)
+                            DeadLetter =
+                                fun reason description cancellationToken -> args.DeadLetterMessageAsync(args.Message, reason, description, cancellationToken)
+                        }
+
+                    let metadata =
+                        { MessageId = args.Message.MessageId; CorrelationId = args.Message.CorrelationId; DeliveryCount = args.Message.DeliveryCount }
+
+                    do!
+                        runProcessorMessageCallbackWith subscriptionLog metadata (fun () ->
+                            processGraceEventWith dependencies metadata args.Message.Body args.CancellationToken)
                 }
 
             /// Implements start azure service bus processor for the server request pipeline.

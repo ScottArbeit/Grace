@@ -19,6 +19,11 @@ import {
     AnnotateParametersToJSON,
 } from '../models/AnnotateParameters';
 import {
+    type AssignParameters,
+    AssignParametersFromJSON,
+    AssignParametersToJSON,
+} from '../models/AssignParameters';
+import {
     type BranchAnnotationReturnValue,
     BranchAnnotationReturnValueFromJSON,
     BranchAnnotationReturnValueToJSON,
@@ -93,6 +98,10 @@ export interface AnnotateBranchRequest {
     annotateParameters: AnnotateParameters;
 }
 
+export interface AssignBranchRequest {
+    assignParameters: AssignParameters;
+}
+
 export interface CheckpointBranchRequest {
     createReferenceParameters: CreateReferenceParameters;
 }
@@ -103,6 +112,10 @@ export interface CommitBranchRequest {
 
 export interface CreateBranchRequest {
     createBranchParameters: CreateBranchParameters;
+}
+
+export interface CreateExternalBranchReferenceRequest {
+    createReferenceParameters: CreateReferenceParameters;
 }
 
 export interface DeleteBranchRequest {
@@ -240,6 +253,63 @@ export class BranchesApi extends runtime.BaseAPI {
      */
     async annotateBranch(requestParameters: AnnotateBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<BranchAnnotationReturnValue> {
         const response = await this.annotateBranchRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for assignBranch without sending the request
+     */
+    async assignBranchRequestOpts(requestParameters: AssignBranchRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['assignParameters'] == null) {
+            throw new runtime.RequiredError(
+                'assignParameters',
+                'Required parameter "assignParameters" was null or undefined when calling assignBranch().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/branch/assign`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: AssignParametersToJSON(requestParameters['assignParameters']),
+        };
+    }
+
+    /**
+     * Creates a promotion reference with caller-owned retry identity and assigns it to the specified branch.
+     * Assign a promotion to a branch.
+     */
+    async assignBranchRaw(requestParameters: AssignBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<BranchCommandReturnValue>> {
+        const requestOptions = await this.assignBranchRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => BranchCommandReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Creates a promotion reference with caller-owned retry identity and assigns it to the specified branch.
+     * Assign a promotion to a branch.
+     */
+    async assignBranch(requestParameters: AssignBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<BranchCommandReturnValue> {
+        const response = await this.assignBranchRaw(requestParameters, initOverrides);
         return await response.value();
     }
 
@@ -411,6 +481,63 @@ export class BranchesApi extends runtime.BaseAPI {
      */
     async createBranch(requestParameters: CreateBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<BranchCommandReturnValue> {
         const response = await this.createBranchRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for createExternalBranchReference without sending the request
+     */
+    async createExternalBranchReferenceRequestOpts(requestParameters: CreateExternalBranchReferenceRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['createReferenceParameters'] == null) {
+            throw new runtime.RequiredError(
+                'createReferenceParameters',
+                'Required parameter "createReferenceParameters" was null or undefined when calling createExternalBranchReference().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/branch/createExternal`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: CreateReferenceParametersToJSON(requestParameters['createReferenceParameters']),
+        };
+    }
+
+    /**
+     * Creates an external Reference pointing to the supplied root directory version.
+     * Create an external Reference.
+     */
+    async createExternalBranchReferenceRaw(requestParameters: CreateExternalBranchReferenceRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<BranchCommandReturnValue>> {
+        const requestOptions = await this.createExternalBranchReferenceRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => BranchCommandReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Creates an external Reference pointing to the supplied root directory version.
+     * Create an external Reference.
+     */
+    async createExternalBranchReference(requestParameters: CreateExternalBranchReferenceRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<BranchCommandReturnValue> {
+        const response = await this.createExternalBranchReferenceRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

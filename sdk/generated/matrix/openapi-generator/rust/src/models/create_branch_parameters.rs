@@ -40,13 +40,15 @@ pub struct CreateBranchParameters {
     pub parent_branch_id: Option<uuid::Uuid>,
     #[serde(rename = "ParentBranchName", skip_serializing_if = "Option::is_none")]
     pub parent_branch_name: Option<String>,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
     #[serde(rename = "InitialPermissions", skip_serializing_if = "Option::is_none")]
     pub initial_permissions: Option<Vec<models::ReferenceType>>,
 }
 
 impl CreateBranchParameters {
     /// Parameters for the /branch/create endpoint.
-    pub fn new() -> CreateBranchParameters {
+    pub fn new(reference_id: uuid::Uuid) -> CreateBranchParameters {
         CreateBranchParameters {
             correlation_id: None,
             principal: None,
@@ -60,6 +62,7 @@ impl CreateBranchParameters {
             branch_name: None,
             parent_branch_id: None,
             parent_branch_name: None,
+            reference_id,
             initial_permissions: None,
         }
     }

@@ -9464,7 +9464,10 @@ module Watch =
                                     readGraceStatusFile
                                     (fun currentStatus ->
                                         task {
-                                            let! _ = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) currentStatus
+                                            let referenceId = ReferenceId.NewGuid()
+
+                                            let! _ = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) currentStatus referenceId
+
                                             ()
                                         })
                                     envelope)

@@ -562,11 +562,47 @@ paths:
                   RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   BranchName: release-2026-06
                   ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
                   InitialPermissions:
                     - Commit
                     - Checkpoint
                     - Save
                     - Tag
+      responses:
+        '200':
+          $ref: '#/components/responses/BranchCommandResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /branch/assign:
+    post:
+      tags:
+        - Branches
+      summary: Assign a promotion to a branch.
+      description: Creates a promotion reference with caller-owned retry identity and assigns it to the specified branch.
+      operationId: AssignBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignParameters'
+            examples:
+              assignBranch:
+                summary: Assign a promotion reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
+                  Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
+                  Message: Assign release candidate.
       responses:
         '200':
           $ref: '#/components/responses/BranchCommandResponse'
@@ -598,6 +634,7 @@ paths:
                   RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   BranchName: release-2026-06
                   ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: d94dd932-16b8-4f0b-8c2f-7e7f4fe23370
                   InitialPermissions:
                     - Commit
                     - Checkpoint
@@ -634,6 +671,7 @@ paths:
                   OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
                   RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
                   Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
@@ -668,6 +706,7 @@ paths:
                   OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
                   RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
                   Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
@@ -702,6 +741,7 @@ paths:
                   OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
                   RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
                   Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
@@ -736,6 +776,7 @@ paths:
                   OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
                   RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
                   Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
@@ -770,10 +811,46 @@ paths:
                   OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
                   RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
                   Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
                   Message: Tag release candidate.
+      responses:
+        '200':
+          $ref: '#/components/responses/BranchCommandResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /branch/createExternal:
+    post:
+      tags:
+        - Branches
+      summary: Create an external Reference.
+      description: Creates an external Reference pointing to the supplied root directory version.
+      operationId: CreateExternalBranchReference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReferenceParameters'
+            examples:
+              createExternalBranchReference:
+                summary: Create an external Reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
+                  Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
+                  Message: Capture external system state.
       responses:
         '200':
           $ref: '#/components/responses/BranchCommandResponse'
@@ -3493,29 +3570,62 @@ components:
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
+          required:
+            - ReferenceId
           properties:
             ParentBranchId:
               $ref: '#/components/schemas/BranchId'
             ParentBranchName:
               $ref: '#/components/schemas/BranchName'
+            ReferenceId:
+              $ref: '#/components/schemas/ReferenceId'
             InitialPermissions:
               type: array
               items:
                 $ref: '#/components/schemas/ReferenceType'
+    AssignParameters:
+      description: Parameters for the /branch/assign endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          required:
+            - ReferenceId
+          properties:
+            ReferenceId:
+              $ref: '#/components/schemas/ReferenceId'
+            DirectoryVersionId:
+              type: string
+              format: uuid
+              example: 33a4e36b-828f-4fae-9343-50b6560dc842
+            Sha256Hash:
+              $ref: '#/components/schemas/Sha256HashOptionalPrefix'
+            Blake3Hash:
+              $ref: '#/components/schemas/Blake3HashOptionalPrefix'
+            Message:
+              type: string
+              example: Assign release candidate.
     RebaseParameters:
       description: Parameters for the /branch/rebase endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
+          required:
+            - ReferenceId
           properties:
+            ReferenceId:
+              $ref: '#/components/schemas/ReferenceId'
             BasedOn:
               $ref: '#/components/schemas/ReferenceId'
     CreateReferenceParameters:
-      description: Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+      description: Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
+          required:
+            - ReferenceId
           properties:
+            ReferenceId:
+              $ref: '#/components/schemas/ReferenceId'
             DirectoryVersionId:
               type: string
               format: uuid

@@ -410,10 +410,10 @@ module UploadSession =
         finalizedManifestContentBlockAddresses manifest
         |> HashSet<ContentBlockAddress>
 
-    /// Coordinates finalized manifest contribution ranges logic for the UploadSession actor.
-    let finalizedManifestContributionRanges (ranges: ContentBlockMetadataRange array) =
+    /// Keeps finalized physical ranges reclaimable until repository contribution accounting activates them.
+    let finalizedManifestPhysicalRanges (ranges: ContentBlockMetadataRange array) =
         ranges
-        |> Array.map (fun range -> { range with ActiveManifestCount = 1 })
+        |> Array.map (fun range -> { range with ActiveManifestCount = 0 })
 
     /// Coordinates block was uploaded logic for the UploadSession actor.
     let private blockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
@@ -876,7 +876,7 @@ module UploadSession =
                                             ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                             BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
                                             StoragePlacement = authoritativeMetadata.StoragePlacement
-                                            Ranges = finalizedManifestContributionRanges (physicalRanges.ToArray())
+                                            Ranges = finalizedManifestPhysicalRanges (physicalRanges.ToArray())
                                             ExpectedMetadataVersion = None
                                             RequireMissingMetadata = false
                                             ExpectedRanges = expectedRanges.ToArray()
@@ -903,7 +903,7 @@ module UploadSession =
                             ContentBlockAddress = confirmedBlock.ContentBlockAddress
                             BlockFormatVersion = 1s
                             StoragePlacement = confirmedBlock.StoragePlacement
-                            Ranges = finalizedManifestContributionRanges confirmedBlock.Ranges
+                            Ranges = finalizedManifestPhysicalRanges confirmedBlock.Ranges
                             ExpectedMetadataVersion = None
                             RequireMissingMetadata = false
                             ExpectedRanges = Array.empty
@@ -968,7 +968,7 @@ module UploadSession =
                 { merge with
                     BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
                     StoragePlacement = authoritativeMetadata.StoragePlacement
-                    Ranges = finalizedManifestContributionRanges activeCurrentRanges
+                    Ranges = finalizedManifestPhysicalRanges activeCurrentRanges
                     ExpectedRanges = Array.empty
                 }
 
@@ -1060,7 +1060,7 @@ module UploadSession =
                                         ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                         BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
                                         StoragePlacement = authoritativeMetadata.StoragePlacement
-                                        Ranges = finalizedManifestContributionRanges (physicalRanges.ToArray())
+                                        Ranges = finalizedManifestPhysicalRanges (physicalRanges.ToArray())
                                         ExpectedMetadataVersion = None
                                         RequireMissingMetadata = false
                                         ExpectedRanges = expectedRanges.ToArray()

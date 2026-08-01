@@ -101,6 +101,11 @@
                 <Compile Include="Artifact.Server.fs" />
                 <Compile Include="ReviewAnalysis.Server.fs" />
                 <Compile Include="Eventing.Server.fs" />
+                <Compile Include="ManifestContributionTelemetry.Server.fs" />
+                <Compile Include="RepositoryCounterRecentResult.Server.fs" />
+                <Compile Include="ManifestContributionAccounting.Server.fs" />
+                <Compile Include="ManifestContributionDiagnosis.Server.fs" />
+                <Compile Include="ManifestContributionRepair.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="NormalFileMaterialization.Server.fs" />
@@ -168,6 +173,7 @@
 		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.2.1" />
 		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.2.1" />
 		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.1" />
+		<PackageReference Include="StackExchange.Redis" Version="2.11.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="10.1.301" />

@@ -37,11 +37,13 @@ module Branch =
         inherit BranchParameters()
         member val public ParentBranchId = String.Empty with get, set
         member val public ParentBranchName: BranchName = String.Empty with get, set
+        member val public ReferenceId: ReferenceId = ReferenceId.Empty with get, set
         member val public InitialPermissions: ReferenceType seq = [ Commit; Checkpoint; Save; Tag ] with get, set
 
     /// Parameters for the /branch/assign endpoint.
     type AssignParameters() =
         inherit BranchParameters()
+        member val public ReferenceId: ReferenceId = ReferenceId.Empty with get, set
         member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public Blake3Hash: Blake3Hash = String.Empty with get, set
@@ -50,15 +52,21 @@ module Branch =
     /// Parameters for the /branch/rebase endpoint.
     type RebaseParameters() =
         inherit BranchParameters()
+        member val public ReferenceId: ReferenceId = ReferenceId.Empty with get, set
         member val public BasedOn: ReferenceId = ReferenceId.Empty with get, set
 
     /// Parameters for the various /branch/create[reference] endpoints.
     type CreateReferenceParameters() =
         inherit BranchParameters()
+        member val public ReferenceId: ReferenceId = ReferenceId.Empty with get, set
         member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
+
+    /// Parameters for /branch/commit, including the stable Reference identity used for safe retries.
+    type CommitReferenceParameters() =
+        inherit CreateReferenceParameters()
 
     /// Parameters for the /branch/setName endpoint.
     type SetBranchNameParameters() =

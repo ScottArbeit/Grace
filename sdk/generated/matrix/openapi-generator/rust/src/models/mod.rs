@@ -34,6 +34,8 @@ pub mod approval_timeout_action;
 pub use self::approval_timeout_action::ApprovalTimeoutAction;
 pub mod approve_approval_request_parameters;
 pub use self::approve_approval_request_parameters::ApproveApprovalRequestParameters;
+pub mod assign_parameters;
+pub use self::assign_parameters::AssignParameters;
 pub mod block_upload_intent;
 pub use self::block_upload_intent::BlockUploadIntent;
 pub mod branch_annotation_api_dto;

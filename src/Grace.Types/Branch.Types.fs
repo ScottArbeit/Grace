@@ -33,19 +33,55 @@ module Branch =
             branchName: BranchName *
             parentBranchId: BranchId *
             basedOn: ReferenceId *
+            referenceId: ReferenceId *
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
             initialPermissions: ReferenceType seq
-        | Rebase of basedOn: ReferenceId
+        | Rebase of referenceId: ReferenceId * basedOn: ReferenceId
         | SetName of newName: BranchName
-        | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Promote of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Commit of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Checkpoint of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Save of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | Tag of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
-        | CreateExternal of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Assign of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Promote of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Commit of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Checkpoint of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Save of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Tag of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | CreateExternal of
+            referenceId: ReferenceId *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
         | EnableAssign of enabled: bool
         | EnablePromotion of enabled: bool
         | EnableCommit of enabled: bool

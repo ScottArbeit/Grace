@@ -337,6 +337,12 @@ module Interfaces =
         /// Returns the ReferenceType for this reference.
         abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
 
+        /// Converges the existing automatic physical-deletion reminder for this Reference when its type is eligible.
+        abstract member EnsureAutomaticPhysicalDeletionReminderAsync: correlationId: CorrelationId -> Task
+
+        /// Republishes this actor's persisted Created event through its original deterministic broker envelope.
+        abstract member RepublishCreated: correlationId: CorrelationId -> Task<GraceResult<ReferenceDto>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ReferenceDto>>
 
@@ -350,6 +356,9 @@ module Interfaces =
 
         /// Creates a new reminder in the database.
         abstract member Create: reminder: ReminderDto -> correlationId: CorrelationId -> Task
+
+        /// Persists the requested reminder only when this stable Reminder actor has no durable record.
+        abstract member GetOrAdd: reminder: ReminderDto -> correlationId: CorrelationId -> Task<ReminderDto>
 
         /// Deletes the reminder from the database.
         abstract member Delete: correlationId: CorrelationId -> Task
@@ -618,6 +627,10 @@ module Interfaces =
         abstract member MergePhysicalRanges:
             merge: MergeContentBlockPhysicalRanges -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
 
+        /// Applies one deterministic manifest-retention delta without serializing a new command union case across Orleans.
+        abstract member AdjustActiveManifestCount:
+            adjust: AdjustContentBlockActiveManifestCount -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
+
     /// Defines the operations for the cluster-scoped dedupe discovery index actor.
     [<Interface>]
     type IDedupeIndexActor =
@@ -762,6 +775,10 @@ module Interfaces =
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
+        /// Atomically replaces a proven positive logical count without emitting physical contribution intents.
+        abstract member ReconcilePositiveCount:
+            command: RepositoryContentCounterRepairCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
     /// Defines the operations for the ManifestContributionWorkflow actor.
     [<Interface>]
     type IManifestContributionWorkflowActor =
@@ -790,6 +807,7 @@ module Interfaces =
             manifestAddress: ManifestAddress ->
             direction: ManifestContributionDirection ->
             ranges: ManifestContributionWorkflowRange array ->
+            counterRevision: int64 ->
             eventMetadata: EventMetadata ->
                 Task<GraceResult<ManifestContributionWorkflowDecision>>
 

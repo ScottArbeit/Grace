@@ -1,7 +1,7 @@
 
 # CreateReferenceParameters
 
-Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, /branch/tag, and /branch/createExternal.
 
 ## Properties
 
@@ -17,6 +17,7 @@ Name | Type
 `repositoryName` | string
 `branchId` | string
 `branchName` | string
+`referenceId` | string
 `directoryVersionId` | string
 `sha256Hash` | string
 `blake3Hash` | string
@@ -39,6 +40,7 @@ const example = {
   "repositoryName": null,
   "branchId": de7bf47d-23ae-4599-af68-68a317ea390d,
   "branchName": MyBranch,
+  "referenceId": c8f9bac8-d489-46c7-917f-b36b7d9efa9a,
   "directoryVersionId": 33a4e36b-828f-4fae-9343-50b6560dc842,
   "sha256Hash": 805331a98813,
   "blake3Hash": 9a35d91b2f63,

@@ -19,10 +19,37 @@ open Microsoft.Extensions.Logging
 open NodaTime
 open System
 open System.Collections.Concurrent
+open System.Runtime.ExceptionServices
 open System.Threading.Tasks
 
 /// Groups Orleans actor helpers for reminder keys, proxies, state, or workflow transitions.
 module Reminder =
+
+    /// Applies Create or GetOrAdd selection and strictly awaits the selected Reminder state write.
+    let private persistReminderWith overwrite recordExists (writeState: unit -> Task) (reminderState: ReminderWrapper) (requestedReminder: ReminderDto) =
+        task {
+            let reminder =
+                if overwrite
+                   || (not recordExists
+                       && reminderState.Reminder.ReminderId = ReminderId.Empty) then
+                    requestedReminder
+                else
+                    reminderState.Reminder
+
+            reminderState.Reminder <- reminder
+
+            if overwrite || not recordExists then do! writeState ()
+
+            return reminder
+        }
+
+    /// Persists a replacement reminder and returns the exact state submitted to storage.
+    let internal persistCreateWith (writeState: unit -> Task) (reminderState: ReminderWrapper) (reminder: ReminderDto) =
+        persistReminderWith true false writeState reminderState reminder
+
+    /// Persists a missing or pending reminder while preserving the first durable or unknown-outcome state.
+    let internal persistGetOrAddWith recordExists (writeState: unit -> Task) (reminderState: ReminderWrapper) (requestedReminder: ReminderDto) =
+        persistReminderWith false recordExists writeState reminderState requestedReminder
 
     /// Orleans implementation of the ReminderActor.
     type ReminderActor([<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderWrapper>) =
@@ -32,6 +59,40 @@ module Reminder =
 
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
+
+        /// Persists one ReminderActor operation, logging and propagating the original storage failure.
+        member private _.PersistStrictly(persist: unit -> Task<ReminderDto>, requestedReminder: ReminderDto, correlationId: CorrelationId) =
+            task {
+                try
+                    let! reminder = persist ()
+
+                    log.LogTrace(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Persisted reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        reminder.CorrelationId,
+                        reminder.ReminderId,
+                        reminder.ActorName,
+                        reminder.ActorId
+                    )
+
+                    return reminder
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Error persisting reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        requestedReminder.ReminderId,
+                        requestedReminder.ActorName,
+                        requestedReminder.ActorId
+                    )
+
+                    ExceptionDispatchInfo.Capture(ex).Throw()
+                    return Unchecked.defaultof<ReminderDto>
+            }
 
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
@@ -44,37 +105,24 @@ module Reminder =
             /// Builds the stable Orleans grain key used to address a Reminder actor.
             member this.Create (reminder: ReminderDto) (correlationId: CorrelationId) =
                 task {
-                    try
-                        reminderState.State.Reminder <- reminder
-                        do! reminderState.WriteStateAsync()
-
-                        log.LogTrace(
-                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Created reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
-                            getCurrentInstantExtended (),
-                            getMachineName,
-                            reminder.CorrelationId,
-                            reminder.ReminderId,
-                            reminder.ActorName,
-                            reminder.ActorId
+                    let! _ =
+                        this.PersistStrictly(
+                            (fun () -> persistCreateWith (fun () -> reminderState.WriteStateAsync()) reminderState.State reminder),
+                            reminder,
+                            correlationId
                         )
 
-                        return ()
-                    with
-                    | ex ->
-                        log.LogError(
-                            ex,
-                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Error creating reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
-                            getCurrentInstantExtended (),
-                            getMachineName,
-                            correlationId,
-                            reminder.ReminderId,
-                            reminder.ActorName,
-                            reminder.ActorId
-                        )
-
-                        return ()
+                    return ()
                 }
                 :> Task
+
+            /// Returns existing durable state or persists the caller's requested reminder when absent.
+            member this.GetOrAdd (reminder: ReminderDto) (correlationId: CorrelationId) =
+                this.PersistStrictly(
+                    (fun () -> persistGetOrAddWith reminderState.RecordExists (fun () -> reminderState.WriteStateAsync()) reminderState.State reminder),
+                    reminder,
+                    correlationId
+                )
 
             /// Removes or invalidates delete data from the Reminder actor state.
             member this.Delete(correlationId: CorrelationId) =

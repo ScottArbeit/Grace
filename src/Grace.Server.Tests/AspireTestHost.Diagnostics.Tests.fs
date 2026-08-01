@@ -4,10 +4,56 @@ open Grace.Server.Tests
 open Grace.Shared
 open NUnit.Framework
 open System
+open System.Threading.Tasks
 
 /// Covers aspire test host diagnostics scenarios.
 [<TestFixture>]
 type AspireTestHostDiagnosticsTests() =
+
+    /// Verifies isolated lifecycle cleanup attempts every step and preserves both failures.
+    [<Test>]
+    member _.IsolatedLifecycleCleanupAttemptsEveryStepAndPreservesFailures() =
+        let calls = ResizeArray<string>()
+
+        let disposeAsync () =
+            task {
+                calls.Add("dispose")
+                invalidOp "dispose failed"
+            }
+
+        let cleanupAsync () =
+            task {
+                calls.Add("docker")
+                invalidOp "docker cleanup failed"
+            }
+
+        let operation = Func<Task>(fun () -> AspireTestHost.FixtureLifecycle.cleanupAsync disposeAsync cleanupAsync :> Task)
+
+        let error = Assert.ThrowsAsync<AggregateException>(operation)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(String.Join("|", calls), Is.EqualTo("dispose|docker"))
+                Assert.That(error.InnerExceptions, Has.Count.EqualTo(2))
+                Assert.That(error.InnerExceptions[0].Message, Is.EqualTo("dispose failed"))
+                Assert.That(error.InnerExceptions[1].Message, Is.EqualTo("docker cleanup failed")))
+        )
+
+    /// Verifies a nonzero Docker command result is rejected as a cleanup failure.
+    [<Test>]
+    member _.DockerCleanupCommandFailureIsRejected() =
+        let result: AspireTestHost.ProcessResult = { ExitCode = Some 17; StdOut = ""; StdErr = "daemon rejected cleanup"; TimedOut = false; Error = None }
+
+        let error =
+            Assert.Throws<InvalidOperationException>(
+                Action(fun () -> AspireTestHost.FixtureLifecycle.requireProcessSuccess "docker rm -f test-container" result)
+            )
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(error.Message, Does.Contain("docker rm -f test-container exited with 17"))
+                Assert.That(error.Message, Does.Contain("daemon rejected cleanup")))
+        )
 
     /// Verifies the redacts connection string secrets but keeps actionable endpoints scenario.
     [<Test>]

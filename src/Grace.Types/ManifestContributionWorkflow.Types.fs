@@ -31,7 +31,7 @@ module ManifestContributionWorkflow =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowLifecycleState>()
 
-    /// Represents manifest contribution workflow range.
+    /// Identifies one ContentBlock whose authoritative current physical ranges receive a manifest contribution.
     [<CLIMutable; GenerateSerializer; CustomComparison; CustomEquality>]
     type ManifestContributionWorkflowRange =
         {
@@ -40,12 +40,6 @@ module ManifestContributionWorkflow =
 
             [<Id(1u)>]
             ContentBlockAddress: ContentBlockAddress
-
-            [<Id(2u)>]
-            OrdinalStart: int
-
-            [<Id(3u)>]
-            OrdinalCount: int
         }
 
         interface IComparable with
@@ -53,9 +47,7 @@ module ManifestContributionWorkflow =
             member this.CompareTo other =
                 match other with
                 | :? ManifestContributionWorkflowRange as otherRange ->
-                    compare
-                        (this.StoragePoolId, this.ContentBlockAddress, this.OrdinalStart, this.OrdinalCount)
-                        (otherRange.StoragePoolId, otherRange.ContentBlockAddress, otherRange.OrdinalStart, otherRange.OrdinalCount)
+                    compare (this.StoragePoolId, this.ContentBlockAddress) (otherRange.StoragePoolId, otherRange.ContentBlockAddress)
                 | _ -> invalidArg (nameof other) "Cannot compare ManifestContributionWorkflowRange with a different type."
 
         /// Compares the domain identity fields that define whether two values refer to the same Grace object.
@@ -64,12 +56,10 @@ module ManifestContributionWorkflow =
             | :? ManifestContributionWorkflowRange as otherRange ->
                 this.StoragePoolId = otherRange.StoragePoolId
                 && this.ContentBlockAddress = otherRange.ContentBlockAddress
-                && this.OrdinalStart = otherRange.OrdinalStart
-                && this.OrdinalCount = otherRange.OrdinalCount
             | _ -> false
 
         /// Computes a hash code from the same domain identity fields used by equality.
-        override this.GetHashCode() = HashCode.Combine(this.StoragePoolId, this.ContentBlockAddress, this.OrdinalStart, this.OrdinalCount)
+        override this.GetHashCode() = HashCode.Combine(this.StoragePoolId, this.ContentBlockAddress)
 
     /// Represents start manifest contribution workflow.
     [<GenerateSerializer>]
@@ -92,6 +82,9 @@ module ManifestContributionWorkflow =
 
             [<Id(5u)>]
             Ranges: ManifestContributionWorkflowRange array
+
+            [<Id(6u)>]
+            CounterRevision: int64
         }
 
     /// Represents manifest contribution workflow range progress.
@@ -146,7 +139,8 @@ module ManifestContributionWorkflow =
             storagePoolId: StoragePoolId *
             manifestAddress: ManifestAddress *
             direction: ManifestContributionDirection *
-            ranges: ManifestContributionWorkflowRange array
+            ranges: ManifestContributionWorkflowRange array *
+            counterRevision: int64
         | RecordRangeSucceeded of
             operationId: ManifestContributionWorkflowOperationId *
             repositoryId: RepositoryId *
@@ -196,10 +190,13 @@ module ManifestContributionWorkflow =
             ManifestAddress: ManifestAddress
             Direction: ManifestContributionDirection
             Ranges: ManifestContributionWorkflowRange array
-            CompletedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>
-            FailedRanges: Dictionary<ManifestContributionWorkflowRange, string>
+            CompletedRanges: ManifestContributionWorkflowRangeProgress array
+            FailedRanges: ManifestContributionWorkflowRangeFailure array
             LifecycleState: ManifestContributionWorkflowLifecycleState
+            StartOperationId: ManifestContributionWorkflowOperationId option
             LastOperationId: ManifestContributionWorkflowOperationId option
+            CounterRevision: int64
+            Revision: int64
         }
 
         /// Represents the deterministic default instance used when callers need an initialized contract value.
@@ -211,10 +208,13 @@ module ManifestContributionWorkflow =
                 ManifestAddress = String.Empty
                 Direction = ManifestContributionDirection.Increment
                 Ranges = Array.empty
-                CompletedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>()
-                FailedRanges = Dictionary<ManifestContributionWorkflowRange, string>()
+                CompletedRanges = Array.empty
+                FailedRanges = Array.empty
                 LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted
+                StartOperationId = None
                 LastOperationId = None
+                CounterRevision = 0L
+                Revision = 0L
             }
 
         /// Summarizes the workflow timestamps that describe clone and promotion progress.
@@ -225,14 +225,6 @@ module ManifestContributionWorkflow =
                 ManifestContributionWorkflowLifecycleState.Completed
             else
                 ManifestContributionWorkflowLifecycleState.InProgress
-
-        /// Marks the workflow clone phase as completed with its completion timestamp.
-        static member private CloneCompleted(completedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>) =
-            Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>(completedRanges)
-
-        /// Marks the workflow clone phase as failed while retaining the failure reason.
-        static member private CloneFailed(failedRanges: Dictionary<ManifestContributionWorkflowRange, string>) =
-            Dictionary<ManifestContributionWorkflowRange, string>(failedRanges)
 
         /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto workflowEvent current =
@@ -250,32 +242,42 @@ module ManifestContributionWorkflow =
                     ManifestAddress = start.ManifestAddress
                     Direction = start.Direction
                     Ranges = Array.copy start.Ranges
-                    CompletedRanges = Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>()
-                    FailedRanges = Dictionary<ManifestContributionWorkflowRange, string>()
+                    CompletedRanges = Array.empty
+                    FailedRanges = Array.empty
                     LifecycleState = lifecycle
+                    StartOperationId = Some start.OperationId
                     LastOperationId = Some start.OperationId
+                    CounterRevision = start.CounterRevision
+                    Revision = current.Revision + 1L
                 }
             | ManifestContributionWorkflowEventType.RangeSucceeded progress ->
-                let completed = ManifestContributionWorkflowDto.CloneCompleted current.CompletedRanges
-                completed[progress.Range] <- progress.OperationId
+                let completed =
+                    current.CompletedRanges
+                    |> Array.filter (fun existing -> existing.Range <> progress.Range)
+                    |> Array.append [| progress |]
 
-                let failed = ManifestContributionWorkflowDto.CloneFailed current.FailedRanges
-                failed.Remove(progress.Range) |> ignore
+                let failed =
+                    current.FailedRanges
+                    |> Array.filter (fun existing -> existing.Range <> progress.Range)
 
                 { current with
                     CompletedRanges = completed
                     FailedRanges = failed
-                    LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges completed.Count
+                    LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges completed.Length
                     LastOperationId = Some progress.OperationId
+                    Revision = current.Revision + 1L
                 }
             | ManifestContributionWorkflowEventType.RangeFailed failure ->
-                let failed = ManifestContributionWorkflowDto.CloneFailed current.FailedRanges
-                failed[failure.Range] <- failure.Message
+                let failed =
+                    current.FailedRanges
+                    |> Array.filter (fun existing -> existing.Range <> failure.Range)
+                    |> Array.append [| failure |]
 
                 { current with
                     FailedRanges = failed
-                    LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges current.CompletedRanges.Count
+                    LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges current.CompletedRanges.Length
                     LastOperationId = Some failure.OperationId
+                    Revision = current.Revision + 1L
                 }
 
     /// Represents manifest contribution workflow decision.

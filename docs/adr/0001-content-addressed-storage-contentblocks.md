@@ -349,31 +349,43 @@ accepted `FileManifest` records, `ContentBlock` payloads, `ContentBlockMetadata`
 Grace keeps repository fan-in separate from StoragePool-level content lifecycle.
 
 `RepositoryContentCounter` is repository-scoped state for one StoragePool-shared CAS target. For manifest-backed
-content, the target is the `ManifestAddress`. The counter absorbs repeated live references inside one repository:
+content, the target is `(StoragePoolId, ManifestAddress)`. The bounded counter stores `Count`, `Revision`, and one
+`LastCompletedChange`; exact relationships remain the rebuildable membership evidence. The counter absorbs repeated
+current `DirectoryVersion` relationships inside one repository:
 
 ```text
-(RepositoryId, ManifestAddress).ReferenceCount
+(RepositoryId, StoragePoolId, ManifestAddress).ReferenceCount
   0 -> 1: add the repository's manifest contribution
   1 -> 0: remove the repository's manifest contribution
   N -> N+1, where N > 0: no block fan-out
   N -> N-1, where N > 1: no block fan-out
 ```
 
-`ManifestContributionWorkflow` is keyed by `(RepositoryId, ManifestAddress)`. It is workflow state, not a relational row
-and not an upload-session child. The workflow actor owns:
+`ManifestContributionWorkflow` is keyed by `(RepositoryId, StoragePoolId, ManifestAddress)`. It is bounded workflow
+state, not a relational row and not an upload-session child. The workflow actor owns:
 
-- The manifest contribution operation ids that have already been applied.
-- Whether an increment or decrement contribution is pending, active, completed, or failed.
-- Bounded fan-out progress across the manifest's `ContentBlockRange` entries.
-- Retry state for range liveness updates.
-- The ability to resume after activation, crash, or timeout.
+- The current deterministic increment or decrement operation and counter revision.
+- Bounded pending and completed range progress across the manifest's `ContentBlockRange` entries.
+- One current terminal result needed for deterministic replay.
+- Resume behavior after activation or interruption without retaining a lifetime operation history.
 
-A save that introduces a manifest-backed `FileVersion` is complete only after the increment intent for
-`(RepositoryId, ManifestAddress)` is durably recorded. The full block-range fan-out may complete asynchronously with
-retry. Garbage collection and compaction must treat a pending contribution workflow as live enough to prevent deleting
-the manifest or ranges it is in the process of making active.
+Reference creation has one uniform foreground boundary for every `ReferenceType`: validate the root DirectoryVersion,
+persist the Reference and root identity, await Service Bus acceptance of the deterministic Created event, and return.
+Background accounting then rereads current actor state, records exact Reference-root, parent-child, and manifest
+relationships, updates repository counters, and runs required block-range fan-out. Garbage collection and compaction
+must treat pending contribution work as live enough to prevent deleting the manifest or ranges it is making active.
 
-This keeps user-facing saves responsive without letting accepted manifests outrun content retention.
+Logical deletion does not change those relationships. Physical deletion first checks for a current incoming
+relationship. If none exists, it completes each manifest decrement before removing the matching exact relationship,
+removes its parent-child relationships, verifies that all outgoing evidence is absent, and only then clears actor state.
+Retries reconstruct this work from the immutable `DirectoryVersion` and current exact relationships; no deletion ledger
+or Reference-type-specific behavior is required.
+
+Grace performs the incoming check once. A new relationship created after physical cleanup begins does not cancel the
+deletion; this narrow race is accepted in the current design.
+
+Reference physical deletion removes only that Reference's root relationship. Manifest retention remains owned by the
+referenced `DirectoryVersion`, regardless of `ReferenceType`.
 
 ## Dedupe Index Maintenance
 
@@ -428,10 +440,11 @@ bounded candidate windows and require server-side range claims.
 Grace will not model a whole batch upload as one durable upload actor. A batch is many manifest-backed file uploads.
 One actor per file keeps retry, finalization, cleanup, and idempotency boundaries smaller.
 
-### Waiting for full contribution fan-out before save completion
+### Waiting for full contribution fan-out before Reference completion
 
-Grace will not require full block-range contribution fan-out to complete before a save returns. The durable increment
-intent is the save boundary; the workflow fan-out can finish asynchronously while still blocking unsafe cleanup.
+Grace will not require full block-range contribution fan-out before any Reference-creating operation returns. Durable
+Reference persistence plus deterministic Service Bus acceptance is the foreground boundary. Exact relationship,
+counter, and workflow convergence remains asynchronous while still blocking unsafe cleanup.
 
 ## Consequences
 

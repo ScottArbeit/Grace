@@ -44,6 +44,7 @@
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
         <Compile Include="UploadSession.Types.fs" />
+        <Compile Include="ManifestContributionAccounting.Types.fs" />
         <Compile Include="RepositoryContentCounter.Types.fs" />
         <Compile Include="Usage.Types.fs" />
         <Compile Include="ManifestContributionWorkflow.Types.fs" />

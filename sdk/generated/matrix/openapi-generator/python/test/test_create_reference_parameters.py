@@ -46,6 +46,7 @@ class TestCreateReferenceParameters(unittest.TestCase):
                 repository_name = '',
                 branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d',
                 branch_name = 'MyBranch',
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
                 sha256_hash = '805331a98813',
                 blake3_hash = '9a35d91b2f63',
@@ -53,6 +54,7 @@ class TestCreateReferenceParameters(unittest.TestCase):
             )
         else:
             return CreateReferenceParameters(
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
         )
         """
 

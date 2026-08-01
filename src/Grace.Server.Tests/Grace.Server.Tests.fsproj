@@ -15,6 +15,9 @@
 
   <ItemGroup>
     <Compile Include="AspireTestHost.fs" />
+    <Compile Include="..\Grace.Server.Unit.Tests\ManifestContributionMeasurement.fs" Link="ManifestContributionMeasurement.fs" />
+    <Compile Include="..\Grace.Server.Unit.Tests\ManifestContributionDeadLetterMeasurement.fs" Link="ManifestContributionDeadLetterMeasurement.fs" />
+    <Compile Include="..\Grace.Server.Unit.Tests\ManifestContributionGroupedMeasurement.fs" Link="ManifestContributionGroupedMeasurement.fs" />
     <Compile Include="AspireTestHost.Diagnostics.Tests.fs" />
     <Compile Include="OperationalFactsPublisher.AppHost.Tests.fs" />
     <Compile Include="General.Server.Tests.fs" />
@@ -36,6 +39,17 @@
     <Compile Include="AgentSession.Server.Tests.fs" />
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
     <Compile Include="RestartDurability.Server.Tests.fs" />
+    <Compile Include="ManifestContributionAccounting.Server.Tests.fs" />
+    <Compile Include="ManifestContributionGroupedRuntime.fs" />
+    <Compile Include="ManifestContributionBaseline.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionDeadLetter.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionTopologyCardinality.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionDuplicateBacklog.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionRedisRestart.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionServerRestart.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionRepair.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionGrouped.Measurement.Tests.fs" />
+    <Compile Include="RepositoryCounterRecentResult.Integration.Server.Tests.fs" />
     <Compile Include="Policy.Server.Tests.fs" />
     <Compile Include="Queue.Integration.Server.Tests.fs" />
     <Compile Include="PromotionSet.Integration.Server.Tests.fs" />

@@ -55,6 +55,7 @@ __all__ = [
     "ApprovalScope",
     "ApprovalTimeoutAction",
     "ApproveApprovalRequestParameters",
+    "AssignParameters",
     "BlockUploadIntent",
     "BranchAnnotationApiDto",
     "BranchAnnotationReturnValue",
@@ -304,6 +305,7 @@ from grace_generated_openapi_probe.models.approval_request_status import Approva
 from grace_generated_openapi_probe.models.approval_scope import ApprovalScope as ApprovalScope
 from grace_generated_openapi_probe.models.approval_timeout_action import ApprovalTimeoutAction as ApprovalTimeoutAction
 from grace_generated_openapi_probe.models.approve_approval_request_parameters import ApproveApprovalRequestParameters as ApproveApprovalRequestParameters
+from grace_generated_openapi_probe.models.assign_parameters import AssignParameters as AssignParameters
 from grace_generated_openapi_probe.models.block_upload_intent import BlockUploadIntent as BlockUploadIntent
 from grace_generated_openapi_probe.models.branch_annotation_api_dto import BranchAnnotationApiDto as BranchAnnotationApiDto
 from grace_generated_openapi_probe.models.branch_annotation_return_value import BranchAnnotationReturnValue as BranchAnnotationReturnValue

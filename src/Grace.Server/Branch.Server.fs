@@ -714,8 +714,9 @@ module Branch =
     /// Implements reference command from root for the server request pipeline.
     let private referenceCommandFromRoot
         (context: HttpContext)
-        (createCommand: DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
+        (createCommand: ReferenceId * DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
         repositoryId
+        referenceId
         directoryVersionId
         sha256Hash
         blake3Hash
@@ -725,11 +726,11 @@ module Branch =
         task {
             match! resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId with
             | Services.UniqueMatch directoryVersion ->
-                return createCommand (directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
-            | Services.NoMatches -> return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                return createCommand (referenceId, directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
+            | Services.NoMatches -> return createCommand (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
             | Services.AmbiguousMatches _ ->
                 setAmbiguousBranchHashLookupError context sha256Hash blake3Hash correlationId
-                return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
+                return createCommand (referenceId, directoryVersionId, sha256Hash, blake3Hash, referenceText)
         }
 
     /// Validates validate reference root locator inputs before server processing continues.
@@ -741,6 +742,12 @@ module Branch =
                 parameters.Blake3Hash
             |]
             BranchError.EitherDirectoryVersionIdOrSha256HashRequired
+
+    /// Validates the caller-supplied stable identity required by every Reference producer.
+    let validateReferenceId referenceId = Guid.isNotEmpty referenceId BranchError.InvalidReferenceId
+
+    /// Preserves the focused Commit validation seam while using the Reference-wide identity rule.
+    let validateCommitReferenceId (parameters: CommitReferenceParameters) = validateReferenceId parameters.ReferenceId
 
     /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> BranchParameters>
@@ -820,6 +827,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateBranchParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         Guid.isValidAndNotEmptyGuid parameters.ParentBranchId BranchError.InvalidBranchId
                         String.isValidGraceName parameters.ParentBranchName BranchError.InvalidBranchName
                         Branch.branchExists
@@ -870,6 +878,7 @@ module Branch =
                                     (BranchName parameters.BranchName),
                                     parentBranchId,
                                     parentBranch.BasedOn.ReferenceId,
+                                    parameters.ReferenceId,
                                     graceIds.OwnerId,
                                     graceIds.OrganizationId,
                                     graceIds.RepositoryId,
@@ -882,6 +891,7 @@ module Branch =
                                     (BranchName parameters.BranchName),
                                     Constants.DefaultParentBranchId,
                                     ReferenceId.Empty, // This is fucked.
+                                    parameters.ReferenceId,
                                     graceIds.OwnerId,
                                     graceIds.OrganizationId,
                                     graceIds.RepositoryId,
@@ -917,6 +927,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: RebaseParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         Branch.referenceIdExists parameters.BasedOn graceIds.RepositoryId parameters.CorrelationId BranchError.ReferenceIdDoesNotExist
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
@@ -931,7 +942,7 @@ module Branch =
 
                 /// Implements command for the server request pipeline.
                 let command (parameters: RebaseParameters) =
-                    BranchCommand.Rebase parameters.BasedOn
+                    BranchCommand.Rebase(parameters.ReferenceId, parameters.BasedOn)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof Rebase)
@@ -948,6 +959,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: AssignParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Input.oneOfTheseValuesMustBeProvided
@@ -982,6 +994,7 @@ module Branch =
                             return
                                 Some(
                                     Assign(
+                                        parameters.ReferenceId,
                                         directoryVersion.DirectoryVersionId,
                                         directoryVersion.Sha256Hash,
                                         directoryVersion.Blake3Hash,
@@ -1035,6 +1048,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -1057,6 +1071,7 @@ module Branch =
                         context
                         Promote
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1075,8 +1090,9 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 /// Implements validations for the server request pipeline.
-                let validations (parameters: CreateReferenceParameters) =
+                let validations (parameters: CommitReferenceParameters) =
                     [|
+                        validateCommitReferenceId parameters
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -1094,11 +1110,12 @@ module Branch =
                     |]
 
                 /// Implements command for the server request pipeline.
-                let command (parameters: CreateReferenceParameters) =
+                let command (parameters: CommitReferenceParameters) =
                     referenceCommandFromRoot
                         context
                         BranchCommand.Commit
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1119,6 +1136,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1140,6 +1158,7 @@ module Branch =
                         context
                         BranchCommand.Checkpoint
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1162,6 +1181,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 4096 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1183,6 +1203,7 @@ module Branch =
                         context
                         BranchCommand.Save
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1203,6 +1224,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1224,6 +1246,7 @@ module Branch =
                         context
                         BranchCommand.Tag
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash
@@ -1244,6 +1267,7 @@ module Branch =
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
+                        validateReferenceId parameters.ReferenceId
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
@@ -1265,6 +1289,7 @@ module Branch =
                         context
                         BranchCommand.CreateExternal
                         graceIds.RepositoryId
+                        parameters.ReferenceId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
                         parameters.Blake3Hash

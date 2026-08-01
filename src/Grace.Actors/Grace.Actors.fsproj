@@ -38,6 +38,7 @@
         <Compile Include="Organization.Actor.fs" />
         <Compile Include="OrganizationName.Actor.fs" />
         <Compile Include="NamedSection.Actor.fs" />
+        <Compile Include="ManifestContributionAccounting.Actor.fs" />
         <Compile Include="DirectoryVersion.Actor.fs" />
         <Compile Include="Reference.Actor.fs" />
         <Compile Include="Branch.Actor.fs" />

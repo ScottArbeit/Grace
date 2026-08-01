@@ -39,8 +39,9 @@ class RebaseParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
+    reference_id: UUID = Field(alias="ReferenceId")
     based_on: Optional[UUID] = Field(default=None, alias="BasedOn")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "BasedOn"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ReferenceId", "BasedOn"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -103,6 +104,7 @@ class RebaseParameters(BaseModel):
             "RepositoryName": obj.get("RepositoryName"),
             "BranchId": obj.get("BranchId"),
             "BranchName": obj.get("BranchName"),
+            "ReferenceId": obj.get("ReferenceId"),
             "BasedOn": obj.get("BasedOn")
         })
         return _obj

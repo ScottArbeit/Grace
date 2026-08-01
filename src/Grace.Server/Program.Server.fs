@@ -61,6 +61,7 @@ module OrleansFsharpFix =
 module Program =
 
     [<InternalsVisibleTo("Host")>]
+    [<InternalsVisibleTo("Grace.Server.Unit.Tests")>]
     do ()
 
     /// Represents file logger used by Grace Server APIs and background services.
@@ -68,8 +69,7 @@ module Program =
         let emptyScope =
             { new IDisposable with
                 /// Releases the no-op logger scope used before real logging is configured.
-                member _.Dispose() = ()
-            }
+                member _.Dispose() = () }
 
         interface ILogger with
             /// Keeps early startup logging disabled until the configured logger factory is available.
@@ -110,8 +110,8 @@ module Program =
         let fileStream =
             try
                 new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read)
-            with
-            | :? IOException -> raise (InvalidOperationException($"Log file '{filePath}' already exists; refusing to overwrite."))
+            with :? IOException ->
+                raise (InvalidOperationException($"Log file '{filePath}' already exists; refusing to overwrite."))
 
         let writer = new StreamWriter(fileStream)
         let mutable scopeProvider: IExternalScopeProvider = new LoggerExternalScopeProvider()
@@ -150,10 +150,8 @@ module Program =
 
     // Load environment variables from .env file, if it exists.
     let envPaths =
-        [|
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env") // during debug
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env")
-        |] // during debug
+        [| Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env") // during debug
+           Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env") |] // during debug
 
     for envPath in envPaths do
         let path = Path.GetFullPath(envPath)
@@ -164,7 +162,7 @@ module Program =
             DotEnv.Load(DotEnvOptions(envFilePaths = [| path |], ignoreExceptions = true))
 
     /// Configures and builds the generic host for the Grace server application.
-    let createHostBuilder (args: string []) (configuration: IConfiguration) =
+    let createHostBuilder (args: string[]) (configuration: IConfiguration) =
         let storageEndpoints = AzureEnvironment.storageEndpoints
 
         let azureStorageConnectionString =
@@ -177,9 +175,7 @@ module Program =
             | Some value -> value
             | None -> Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
 
-        let hasAzureStorageConnectionString =
-            not
-            <| String.IsNullOrWhiteSpace azureStorageConnectionString
+        let hasAzureStorageConnectionString = not <| String.IsNullOrWhiteSpace azureStorageConnectionString
 
         let debugEnvironment = configuration[getConfigKey EnvironmentVariables.DebugEnvironment]
         let isLocalDebug = String.Equals(debugEnvironment, "Local", StringComparison.OrdinalIgnoreCase)
@@ -214,8 +210,7 @@ module Program =
                     try
                         client.GetProperties() |> ignore
                         logToConsole $"Azure Table endpoint ready after {attempt} attempt(s)."
-                    with
-                    | ex ->
+                    with ex ->
                         if sw.Elapsed >= timeout then
                             logToConsole $"Azure Table endpoint was not ready after {timeout.TotalSeconds} seconds: {ex.Message}"
                             reraise ()
@@ -237,8 +232,7 @@ module Program =
             fullPath
 
         let logFileName =
-            getCurrentInstant()
-                .ToString("yyyy-MM-dd-HH-mm-ss", CultureInfo.InvariantCulture)
+            getCurrentInstant().ToString("yyyy-MM-dd-HH-mm-ss", CultureInfo.InvariantCulture)
             + ".log"
 
         let logFilePath = Path.Combine(logDirectory, logFileName)
@@ -272,10 +266,7 @@ module Program =
                     .Configure<GrainCollectionOptions>(fun (options: GrainCollectionOptions) ->
                         options.CollectionAge <- TimeSpan.FromMinutes(15.0)
 
-                        options.ClassSpecificCollectionAge[
-                            $"{(typeof<GrainRepository.GrainRepositoryActor>)
-                                   .FullName}"
-                        ] <- TimeSpan.FromMinutes(5.0))
+                        options.ClassSpecificCollectionAge[$"{(typeof<GrainRepository.GrainRepositoryActor>).FullName}"] <- TimeSpan.FromMinutes(5.0))
                     .UseAzureStorageClustering(fun (options: AzureStorageClusteringOptions) ->
                         logToConsole
                             $"Orleans clustering using Azure Tables at {storageEndpoints.TableEndpoint}; account {storageEndpoints.AccountName}; debug env {debugEnvironment}; storage connection string present {hasAzureStorageConnectionString}; managed identity {AzureEnvironment.useManagedIdentity}; managed identity for storage {AzureEnvironment.useManagedIdentityForStorage}."
@@ -299,12 +290,13 @@ module Program =
                             options.ContainerName <- configuration[getConfigKey EnvironmentVariables.AzureCosmosDBContainerName]
                             options.DatabaseName <- configuration[getConfigKey EnvironmentVariables.AzureCosmosDBDatabaseName]
 
-                            logToConsole $"Configuring Cosmos DB grain storage with database '{options.DatabaseName}' and container '{options.ContainerName}'."
+                            logToConsole
+                                $"Configuring Cosmos DB grain storage with database '{options.DatabaseName}' and container '{options.ContainerName}'."
 
                             // All Cosmos DB resources should be created prior to starting Grace.
                             options.IsResourceCreationEnabled <- false
 
-                            options.ConfigureCosmosClient (fun (serviceProvider: IServiceProvider) ->
+                            options.ConfigureCosmosClient(fun (serviceProvider: IServiceProvider) ->
                                 let cosmosClientOptions = CosmosClientOptions()
                                 cosmosClientOptions.ApplicationName <- "Grace.Server"
                                 cosmosClientOptions.LimitToEndpoint <- false
@@ -313,9 +305,7 @@ module Program =
                                 // If we're doing local debugging, and not using managed identity, we assume we're using the Cosmos DB emulator.
                                 // The emulator uses a self-signed certificate, so we need to bypass certificate validation.
 
-                                if isLocalDebug
-                                   && not
-                                      <| AzureEnvironment.useManagedIdentityForCosmos then
+                                if isLocalDebug && not <| AzureEnvironment.useManagedIdentityForCosmos then
                                     cosmosClientOptions.LimitToEndpoint <- true
                                     cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
                                     cosmosClientOptions.EnableContentResponseOnWrite <- true
@@ -328,7 +318,9 @@ module Program =
                                             logToConsole "Creating custom HttpClient for Cosmos DB."
 
                                             let handler = new HttpClientHandler()
-                                            handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+
+                                            handler.ServerCertificateCustomValidationCallback <-
+                                                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 
                                             new HttpClient(handler, disposeHandler = true)
 
@@ -372,10 +364,9 @@ module Program =
                 )
                 |> ignore
 
-                siloBuilder.AddMemoryGrainStorage(GraceInMemoryStorage)
-                |> ignore
+                siloBuilder.AddMemoryGrainStorage(GraceInMemoryStorage) |> ignore
 
-                siloBuilder.Services.AddSerializer (fun serializerBuilder ->
+                siloBuilder.Services.AddSerializer(fun serializerBuilder ->
                     serializerBuilder.AddJsonSerializer(
                         isSupported =
                             (fun _type ->
@@ -386,14 +377,10 @@ module Program =
                     |> ignore)
                 |> ignore)
             .ConfigureLogging(fun logConfig ->
-                logConfig
-                    .SetMinimumLevel(LogLevel.Debug)
-                    .AddFilter("Orleans", LogLevel.Information)
-                    .AddFilter("Orleans.Providers", LogLevel.Debug)
+                logConfig.SetMinimumLevel(LogLevel.Debug).AddFilter("Orleans", LogLevel.Information).AddFilter("Orleans.Providers", LogLevel.Debug)
                 |> ignore
 
-                logConfig.AddProvider(fileLoggerProvider)
-                |> ignore
+                logConfig.AddProvider(fileLoggerProvider) |> ignore
 
                 logConfig.AddOpenTelemetry(fun openTelemetryOptions -> openTelemetryOptions.IncludeScopes <- true)
                 |> ignore)
@@ -403,7 +390,7 @@ module Program =
                     .UseKestrel(fun kestrelServerOptions ->
                         kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
 
-                        kestrelServerOptions.ConfigureHttpsDefaults (fun options ->
+                        kestrelServerOptions.ConfigureHttpsDefaults(fun options ->
                             options.SslProtocols <- SslProtocols.Tls12 ||| SslProtocols.Tls13
 #if DEBUG
                             options.AllowAnyClientCertificate()
@@ -422,9 +409,7 @@ module Program =
                 // Build the configuration
                 let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
 
-                let configurationBuilder =
-                    ConfigurationBuilder()
-                        .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
+                let configurationBuilder = ConfigurationBuilder().AddJsonFile("appsettings.json", true, true) // Load appsettings.json
 
                 if not <| String.IsNullOrWhiteSpace(environment) then
                     configurationBuilder.AddJsonFile($"appsettings.{environment}.json", true, true) // Load environment-specific settings
@@ -463,8 +448,7 @@ module Program =
                 do! host.RunAsync()
 
                 return 0 // Return an integer exit code
-            with
-            | ex ->
+            with ex ->
                 logToConsole $"Fatal error starting Grace Server.{Environment.NewLine}{ex.ToStringDemystified()}"
                 return -1
         })
