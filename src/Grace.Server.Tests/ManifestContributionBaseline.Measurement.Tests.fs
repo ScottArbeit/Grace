@@ -794,6 +794,33 @@ module internal BaselineRuntime =
     let recordSample (writer: EvidenceWriter) runId sampleId name value labels =
         writer.Append(MeasurementSample.Create(runId, "baseline", sampleId, name, value, labels))
 
+    /// Records the exact raw cumulative metric pair at one scenario phase boundary.
+    let recordMetricSnapshot (writer: EvidenceWriter) runId scenarioId phase observation scrape =
+        let messages, durations =
+            GroupedMeasurement.captureCompletedSettlementSnapshot scrape
+            |> Result.defaultWith (fun error -> invalidOp $"Invalid {scenarioId} {phase} {observation} metric snapshot: {error}")
+
+        let labels = Dictionary<string, string>()
+        labels["stage"] <- "settle"
+        labels["outcome"] <- "completed"
+        labels["phase"] <- phase
+        labels["observation"] <- observation
+
+        writer.Append(
+            MeasurementSample.Create(runId, scenarioId, $"{phase}-{observation}-messages", "grace_manifest_contribution_messages_total", messages, labels)
+        )
+
+        writer.Append(
+            MeasurementSample.Create(
+                runId,
+                scenarioId,
+                $"{phase}-{observation}-durations",
+                "grace_manifest_contribution_processing_duration_milliseconds_count",
+                durations,
+                labels
+            )
+        )
+
     /// Verifies every pre-summary record is bounded, complete JSON with the declared typed discriminator.
     let verifyEvidenceIntegrity (writer: EvidenceWriter) =
         let bytes = File.ReadAllBytes writer.Path
@@ -1010,7 +1037,8 @@ type ManifestContributionBaselineMeasurementTests() =
                 recordAssertion "baseline.workflow-counts" durable.WorkflowCounts durable.Detail
                 recordAssertion "baseline.physical-active-counts" durable.PhysicalActiveCounts durable.Detail
 
-                let! saveMessageDelta, saveDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 assets.Count) saveBaseline
+                let! saveMessageDelta, saveDurationDelta, saveTerminal =
+                    BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 assets.Count) saveBaseline
 
                 let persistedSaves =
                     saveEnvelopes.Count = assets.Count
@@ -1055,6 +1083,9 @@ type ManifestContributionBaselineMeasurementTests() =
                     "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                     saveDurationDelta
                     labels
+
+                BaselineRuntime.recordMetricSnapshot writer runId "baseline" "stimulus" "baseline" saveBaseline
+                BaselineRuntime.recordMetricSnapshot writer runId "baseline" "stimulus" "terminal" saveTerminal
             with
             | ex -> failures.Add(ex.ToString())
 

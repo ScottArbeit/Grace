@@ -4,6 +4,8 @@ open System
 open System.Collections.Generic
 open System.IO
 open System.Security.Cryptography
+open System.Globalization
+open System.Text.RegularExpressions
 open System.Text
 open System.Text.Json
 
@@ -106,6 +108,19 @@ module GroupedMeasurement =
     /// Lists the exact unique assertion closure required by the final raw packet.
     let requiredAssertionIds = Array.append leafAssertionIds groupedAssertionIds
 
+    /// Returns the immutable assertion closure owned by one canonical leaf scenario.
+    let requiredAssertionsForScenario scenarioId =
+        match scenarioId with
+        | "baseline" -> Baseline.requiredAssertionIds
+        | "hot-manifest" -> HotManifest.requiredAssertionIds
+        | "highly-shared" -> HighlySharedDirectoryVersion.requiredAssertionIds
+        | "duplicate-backlog" -> DuplicateBacklog.requiredAssertionIds
+        | "redis-restart" -> RedisRestart.requiredAssertionIds
+        | "server-restart" -> ServerRestart.requiredAssertionIds
+        | "repair" -> Repair.requiredAssertionIds
+        | "dead-letter" -> DeadLetter.requiredAssertionIds
+        | value -> invalidArg (nameof scenarioId) $"Unknown grouped scenario '{value}'."
+
     /// Returns Execute only when every named prerequisite has a Passed result with successful cleanup.
     let decideScenario (priorResults: GroupedScenarioResult array) scenario =
         let priorById = Dictionary<string, GroupedScenarioResult>(StringComparer.Ordinal)
@@ -152,6 +167,187 @@ module GroupedMeasurement =
                 ))
 
         results.ToArray()
+
+    /// Completes the canonical outcome ledger from observed execution without dropping failures or dependent skips.
+    let materializeResults (observedResults: GroupedScenarioResult array) =
+        let observedByScenario = Dictionary<string, ResizeArray<GroupedScenarioResult>>(StringComparer.Ordinal)
+
+        observedResults
+        |> Array.iter (fun result ->
+            match observedByScenario.TryGetValue result.ScenarioId with
+            | true, values -> values.Add result
+            | _ ->
+                let values = ResizeArray<GroupedScenarioResult>()
+                values.Add result
+                observedByScenario[result.ScenarioId] <- values)
+
+        let results = ResizeArray<GroupedScenarioResult>()
+
+        scenarioPlan
+        |> Array.iter (fun scenario ->
+            match decideScenario (results.ToArray()) scenario with
+            | Skip reason ->
+                results.Add(
+                    {
+                        ScenarioId = scenario.ScenarioId
+                        Outcome = "Skipped"
+                        AssertionIds = Array.empty
+                        RepositoryId = String.Empty
+                        IdentityIds = Array.empty
+                        CleanupSucceeded = false
+                        SideEffectsStarted = false
+                        FailureReason = reason
+                    }
+                )
+            | Execute ->
+                match observedByScenario.TryGetValue scenario.ScenarioId with
+                | true, values when values.Count = 1 -> results.Add values[0]
+                | true, values ->
+                    results.Add(
+                        {
+                            ScenarioId = scenario.ScenarioId
+                            Outcome = "Failed"
+                            AssertionIds = Array.empty
+                            RepositoryId = String.Empty
+                            IdentityIds = Array.empty
+                            CleanupSucceeded = false
+                            SideEffectsStarted = true
+                            FailureReason = $"scenario={scenario.ScenarioId}; duplicate-results={values.Count}"
+                        }
+                    )
+                | _ ->
+                    results.Add(
+                        {
+                            ScenarioId = scenario.ScenarioId
+                            Outcome = "Failed"
+                            AssertionIds = Array.empty
+                            RepositoryId = String.Empty
+                            IdentityIds = Array.empty
+                            CleanupSucceeded = false
+                            SideEffectsStarted = false
+                            FailureReason = $"scenario={scenario.ScenarioId}; outcome=Missing"
+                        }
+                    ))
+
+        results.ToArray()
+
+    /// Retains accepted leaf summaries and derives truthful failed or skipped summaries for every missing outcome.
+    let completeSummaries runId (results: GroupedScenarioResult array) (observedSummaries: ScenarioSummary array) =
+        results
+        |> Array.map (fun result ->
+            observedSummaries
+            |> Array.tryFind (fun summary ->
+                summary.ScenarioId = result.ScenarioId
+                && summary.Outcome = result.Outcome)
+            |> Option.defaultWith (fun () ->
+                let failures =
+                    if result.Outcome = "Failed" then
+                        [|
+                            if String.IsNullOrWhiteSpace result.FailureReason then
+                                $"scenario={result.ScenarioId}; outcome=Failed"
+                            else
+                                result.FailureReason
+                        |]
+                    else
+                        Array.empty
+
+                ScenarioSummary.derive
+                    runId
+                    result.ScenarioId
+                    (requiredAssertionsForScenario result.ScenarioId)
+                    Array.empty
+                    failures
+                    (result.Outcome = "Skipped")))
+
+    /// Creates one grouped assertion whose outcome is derived only from the supplied audit errors.
+    let auditAssertion runId assertionId (errors: string array) successDetail =
+        let detail = if Array.isEmpty errors then successDetail else String.Join("; ", errors)
+        MeasurementAssertion.Create(runId, "grouped", assertionId, Array.isEmpty errors, detail)
+
+    /// Rejects any failed-to-skipped chain that starts side effects after a prerequisite stops passing.
+    let auditLifecycleDependencyPropagation (results: GroupedScenarioResult array) =
+        let errors = ResizeArray<string>()
+
+        if results.Length <> scenarioIds.Length then
+            errors.Add($"outcome-count={results.Length}; expected={scenarioIds.Length}")
+        else
+            results
+            |> Array.iteri (fun index result ->
+                if result.ScenarioId <> scenarioIds[index] then
+                    errors.Add($"index={index}; scenario={result.ScenarioId}; expected={scenarioIds[index]}")
+
+                if index > 0
+                   && results[index - 1].Outcome <> "Passed" then
+                    if result.Outcome <> "Skipped" then
+                        errors.Add($"scenario={result.ScenarioId}; expected=Skipped; actual={result.Outcome}")
+
+                    if result.SideEffectsStarted then
+                        errors.Add($"scenario={result.ScenarioId}; skipped-side-effects=true"))
+
+        errors.ToArray()
+
+    /// Requires raw cumulative completed-settlement baselines and terminal observations for every canonical stimulus phase.
+    let auditRawMetricSnapshots (samples: MeasurementSample array) =
+        let errors = ResizeArray<string>()
+
+        let metricNames =
+            [|
+                "grace_manifest_contribution_messages_total"
+                "grace_manifest_contribution_processing_duration_milliseconds_count"
+            |]
+
+        scenarioIds
+        |> Array.iter (fun scenarioId ->
+            [| "baseline"; "terminal" |]
+            |> Array.iter (fun observation ->
+                metricNames
+                |> Array.iter (fun metricName ->
+                    let matches =
+                        samples
+                        |> Array.filter (fun sample ->
+                            sample.ScenarioId = scenarioId
+                            && sample.Name = metricName
+                            && sample.Labels.TryGetValue("stage") = (true, "settle")
+                            && sample.Labels.TryGetValue("outcome") = (true, "completed")
+                            && sample.Labels.TryGetValue("phase") = (true, "stimulus")
+                            && sample.Labels.TryGetValue("observation") = (true, observation))
+
+                    if matches.Length <> 1 then
+                        errors.Add($"scenario={scenarioId}; phase=stimulus; observation={observation}; metric={metricName}; count={matches.Length}"))))
+
+        errors.ToArray()
+
+    /// Captures the two exact cumulative metric values after the accepted strict parser validates the scrape.
+    let captureCompletedSettlementSnapshot scrape =
+        match OpenMetrics.evaluateCompletedSettlementDelta 0L scrape scrape with
+        | DeltaEvaluation.Invalid reason -> Error reason
+        | DeltaEvaluation.Pending -> Error "A scrape could not validate against itself."
+        | DeltaEvaluation.Complete _ ->
+            let capture metricName =
+                let pattern = $"(?m)^{Regex.Escape(metricName)}(?:\\{{[^\\r\\n]*\\}})?\\s+(?<value>[^\\s]+)"
+                let matched = Regex.Match(scrape, pattern, RegexOptions.CultureInvariant)
+                let mutable value = 0M
+
+                if matched.Success
+                   && Decimal.TryParse(
+                       matched.Groups["value"].Value,
+                       NumberStyles.AllowLeadingSign
+                       ||| NumberStyles.AllowDecimalPoint
+                       ||| NumberStyles.AllowExponent,
+                       CultureInfo.InvariantCulture,
+                       &value
+                   )
+                   && value = Decimal.Truncate value
+                   && value >= 0M
+                   && value <= decimal Int64.MaxValue then
+                    Ok(int64 value)
+                else
+                    Error $"The validated metric '{metricName}' could not be captured as an integer."
+
+            match capture "grace_manifest_contribution_messages_total", capture "grace_manifest_contribution_processing_duration_milliseconds_count" with
+            | Ok messages, Ok durations -> Ok(messages, durations)
+            | Error error, _
+            | _, Error error -> Error error
 
     /// Rejects missing, duplicate, or unknown assertion identities against the exact final closure.
     let auditAssertionIds (actualAssertionIds: string array) =

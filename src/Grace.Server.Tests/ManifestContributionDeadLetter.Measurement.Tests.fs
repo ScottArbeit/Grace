@@ -480,6 +480,9 @@ type ManifestContributionDeadLetterMeasurementTests() =
 
                 let! observedMetrics = BaselineRuntime.scrapeMetricsAsync state
 
+                BaselineRuntime.recordMetricSnapshot writer runId "dead-letter" "stimulus" "baseline" baselineMetrics
+                BaselineRuntime.recordMetricSnapshot writer runId "dead-letter" "stimulus" "terminal" observedMetrics
+
                 let telemetryUnchanged, telemetryDetail =
                     match OpenMetrics.evaluateCompletedSettlementUnchanged baselineMetrics observedMetrics with
                     | UnchangedEvaluation.Unchanged (messages, durations) -> true, $"messages={messages}; durations={durations}"

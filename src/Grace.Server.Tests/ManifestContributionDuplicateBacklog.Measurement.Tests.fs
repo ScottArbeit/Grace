@@ -304,6 +304,11 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
         labels["outcome"] <- "completed"
         writer.Append(MeasurementSample.Create(runId, ScenarioId, sampleId, name, value, labels))
 
+    /// Records the fresh-process replay baseline and its exact terminal cumulative observation.
+    let recordReplayMetricSnapshots writer runId terminal =
+        BaselineRuntime.recordMetricSnapshot writer runId ScenarioId "stimulus" "baseline" freshProcessCompletedSettlementBaseline
+        BaselineRuntime.recordMetricSnapshot writer runId ScenarioId "stimulus" "terminal" terminal
+
 /// Proves deterministic duplicate replay from a stopped-server backlog in one selected Aspire process.
 [<NonParallelizable>]
 type ManifestContributionDuplicateBacklogMeasurementTests() =
@@ -520,7 +525,8 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
 
                 let! replayObserved = BaselineRuntime.observeReferenceEnvelopesAsync state saveMessageIds "duplicate-backlog replay"
 
-                let! replayMessageDelta, replayDurationDelta, _ = DuplicateBacklogRuntime.waitForFreshProcessCompletedSettlementAsync state (int64 assets.Count)
+                let! replayMessageDelta, replayDurationDelta, replayTerminal =
+                    DuplicateBacklogRuntime.waitForFreshProcessCompletedSettlementAsync state (int64 assets.Count)
 
                 let! afterSnapshot = DuplicateBacklogRuntime.waitForSnapshotAsync state repositoryId assetArray
 
@@ -587,6 +593,8 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
                     "replay-durations"
                     "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                     replayDurationDelta
+
+                DuplicateBacklogRuntime.recordReplayMetricSnapshots writer runId replayTerminal
             with
             | ex -> failures.Add(ex.ToString())
 

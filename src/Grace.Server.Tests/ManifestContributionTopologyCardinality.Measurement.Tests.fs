@@ -427,7 +427,7 @@ module private TopologyCardinalityRuntime =
 
                     let! referenceRoots, manifests, logical, workflows, physical = waitForObservationAsync state declared assetArray
 
-                    let! messageDelta, durationDelta, _ =
+                    let! messageDelta, durationDelta, stimulusTerminal =
                         BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 declared.StimulusMessageIds.Length) saveBaseline
 
                     let observation =
@@ -482,6 +482,9 @@ module private TopologyCardinalityRuntime =
                         "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                         durationDelta
                         labels
+
+                    BaselineRuntime.recordMetricSnapshot writer runId scenarioId "stimulus" "baseline" saveBaseline
+                    BaselineRuntime.recordMetricSnapshot writer runId scenarioId "stimulus" "terminal" stimulusTerminal
 
                     expectedProducerIds <-
                         Array.concat [| [| defaultMessageId |]

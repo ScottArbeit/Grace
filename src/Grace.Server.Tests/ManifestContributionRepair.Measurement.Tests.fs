@@ -471,7 +471,7 @@ type ManifestContributionRepairMeasurementTests() =
 
                 let! referenceRootRestored = RepairRuntime.waitForRelationshipAsync state relationship true
 
-                let! repairMessageDelta, repairDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L executeBaseline
+                let! repairMessageDelta, repairDurationDelta, repairTerminal = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L executeBaseline
 
                 let! stableAfterExecute = RepairRuntime.readStableStateAsync state repositoryId asset
                 let! manifestAfterExecute = BaselineRuntime.exactRelationshipExistsAsync state manifestRelationship
@@ -574,6 +574,9 @@ type ManifestContributionRepairMeasurementTests() =
                         labels
                     )
                 )
+
+                BaselineRuntime.recordMetricSnapshot writer runId RepairRuntime.ScenarioId "stimulus" "baseline" executeBaseline
+                BaselineRuntime.recordMetricSnapshot writer runId RepairRuntime.ScenarioId "stimulus" "terminal" repairTerminal
 
                 writer.Append(
                     MeasurementSample.Create(

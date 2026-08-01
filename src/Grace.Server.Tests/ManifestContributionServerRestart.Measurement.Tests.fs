@@ -399,7 +399,7 @@ type ManifestContributionServerRestartMeasurementTests() =
                 do! ServerRestartRuntime.publishCapturedEnvelopeAsync state replayEnvelope
                 let! replayObserved = BaselineRuntime.observeReferenceEnvelopesAsync state [| saveMessageId |] "server-restart replay"
 
-                let! replayMessageDelta, replayDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L replayBaseline
+                let! replayMessageDelta, replayDurationDelta, replayTerminal = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L replayBaseline
 
                 let replayObservedIds =
                     replayObserved
@@ -452,6 +452,9 @@ type ManifestContributionServerRestartMeasurementTests() =
                     "replay-durations"
                     "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                     replayDurationDelta
+
+                BaselineRuntime.recordMetricSnapshot writer runId "server-restart" "stimulus" "baseline" replayBaseline
+                BaselineRuntime.recordMetricSnapshot writer runId "server-restart" "stimulus" "terminal" replayTerminal
             with
             | ex -> failures.Add(ex.ToString())
 

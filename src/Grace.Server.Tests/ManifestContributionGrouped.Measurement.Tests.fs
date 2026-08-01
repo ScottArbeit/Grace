@@ -127,20 +127,37 @@ type ManifestContributionGroupedMeasurementTests() =
             Directory.CreateDirectory stagingDirectory
             |> ignore
 
-            let! commitSha = BaselineRuntime.runGitAsync worktree [| "rev-parse"; "HEAD" |]
-            let! branch = BaselineRuntime.runGitAsync worktree [| "branch"; "--show-current" |]
+            let failures = ResizeArray<string>()
+            let attemptedScenarioIds = HashSet<string>(StringComparer.Ordinal)
+            let scenarioFailures = Dictionary<string, string>(StringComparer.Ordinal)
+            let mutable commitSha = String.Empty
+            let mutable branch = String.Empty
+            let mutable status = "preflight-not-completed"
+            let mutable dotnetVersion = String.Empty
+            let mutable dockerVersion = String.Empty
 
-            let! status =
-                BaselineRuntime.runGitAsync
-                    worktree
-                    [|
-                        "status"
-                        "--porcelain=v1"
-                        "--untracked-files=all"
-                    |]
+            try
+                let! observedCommitSha = BaselineRuntime.runGitAsync worktree [| "rev-parse"; "HEAD" |]
+                commitSha <- observedCommitSha
+                let! observedBranch = BaselineRuntime.runGitAsync worktree [| "branch"; "--show-current" |]
+                branch <- observedBranch
 
-            let! dotnetVersion = GroupedRuntime.runCommandAsync "dotnet" "--version"
-            let! dockerVersion = GroupedRuntime.runCommandAsync "docker" "version --format {{.Server.Version}}"
+                let! observedStatus =
+                    BaselineRuntime.runGitAsync
+                        worktree
+                        [|
+                            "status"
+                            "--porcelain=v1"
+                            "--untracked-files=all"
+                        |]
+
+                status <- observedStatus
+                let! observedDotnetVersion = GroupedRuntime.runCommandAsync "dotnet" "--version"
+                dotnetVersion <- observedDotnetVersion
+                let! observedDockerVersion = GroupedRuntime.runCommandAsync "docker" "version --format {{.Server.Version}}"
+                dockerVersion <- observedDockerVersion
+            with
+            | ex -> failures.Add($"grouped-preflight: {ex}")
 
             let metadata =
                 {
@@ -155,21 +172,30 @@ type ManifestContributionGroupedMeasurementTests() =
 
             let metadataErrors = GroupedMeasurement.auditMetadata expectedSha branch metadata
 
-            if metadataErrors.Length > 0 then invalidOp (String.Join("; ", metadataErrors))
+            metadataErrors
+            |> Array.iter (fun error -> failures.Add($"grouped-metadata: {error}"))
 
             let originalEvidenceRoot = Environment.GetEnvironmentVariable "GRACE_MCA_EVIDENCE_ROOT"
             Environment.SetEnvironmentVariable("GRACE_MCA_EVIDENCE_ROOT", stagingDirectory)
-            let failures = ResizeArray<string>()
-            let mutable continueRun = true
+            let mutable continueRun = failures.Count = 0
 
-            let invoke scenarioId (run: unit -> Task) =
+            let invoke (scenarioIds: string array) (run: unit -> Task) =
                 task {
                     if continueRun then
+                        scenarioIds
+                        |> Array.iter (attemptedScenarioIds.Add >> ignore)
+
                         try
                             do! run ()
                         with
                         | ex ->
-                            failures.Add($"scenario={scenarioId}; {ex}")
+                            let combinedScenarioId = String.Join("+", scenarioIds)
+                            let detail = $"scenario={combinedScenarioId}; {ex}"
+                            failures.Add detail
+
+                            scenarioIds
+                            |> Array.iter (fun scenarioId -> scenarioFailures[scenarioId] <- detail)
+
                             continueRun <- false
                 }
 
@@ -179,37 +205,37 @@ type ManifestContributionGroupedMeasurementTests() =
                     let! _ = ManifestContributionGroupedRuntime.beginSessionAsync bootstrapUserId
 
                     do!
-                        invoke "baseline" (fun () ->
+                        invoke [| "baseline" |] (fun () ->
                             ManifestContributionBaselineMeasurementTests()
                                 .``isolated Baseline emits truthful completed evidence`` ())
 
                     do!
-                        invoke "hot-manifest/highly-shared" (fun () ->
+                        invoke [| "hot-manifest"; "highly-shared" |] (fun () ->
                             ManifestContributionTopologyCardinalityMeasurementTests()
                                 .``isolated topology pair emits truthful completed evidence`` ())
 
                     do!
-                        invoke "duplicate-backlog" (fun () ->
+                        invoke [| "duplicate-backlog" |] (fun () ->
                             ManifestContributionDuplicateBacklogMeasurementTests()
                                 .``isolated duplicate backlog completes exactly and preserves durable state`` ())
 
                     do!
-                        invoke "redis-restart" (fun () ->
+                        invoke [| "redis-restart" |] (fun () ->
                             ManifestContributionRedisRestartMeasurementTests()
                                 .``hot manifest converges one Reference after Redis restart`` ())
 
                     do!
-                        invoke "server-restart" (fun () ->
+                        invoke [| "server-restart" |] (fun () ->
                             ManifestContributionServerRestartMeasurementTests()
                                 .``isolated persisted envelope completes after Grace Server restart`` ())
 
                     do!
-                        invoke "repair" (fun () ->
+                        invoke [| "repair" |] (fun () ->
                             ManifestContributionRepairMeasurementTests()
                                 .``repair republication restores only the missing Reference root`` ())
 
                     do!
-                        invoke "dead-letter" (fun () ->
+                        invoke [| "dead-letter" |] (fun () ->
                             ManifestContributionDeadLetterMeasurementTests()
                                 .``isolated broker witness reaches dead-letter delivery eleven`` ())
                 with
@@ -222,34 +248,103 @@ type ManifestContributionGroupedMeasurementTests() =
             finally
                 Environment.SetEnvironmentVariable("GRACE_MCA_EVIDENCE_ROOT", originalEvidenceRoot)
 
-            let evidencePaths, samples, leafAssertions, leafSummaries = GroupedRuntime.collectLeafRecords groupRunId stagingDirectory
+            let evidencePaths, samples, leafAssertions, leafSummaries =
+                try
+                    GroupedRuntime.collectLeafRecords groupRunId stagingDirectory
+                with
+                | ex ->
+                    failures.Add($"grouped-evidence-collection: {ex}")
+                    Array.empty, Array.empty, Array.empty, Array.empty
 
             let repositories =
                 ManifestContributionGroupedRuntime.registeredRepositories ()
                 |> dict
 
-            let scenarioResults =
-                GroupedMeasurement.scenarioIds
-                |> Array.map (fun scenarioId ->
-                    let summary =
-                        leafSummaries
-                        |> Array.find (fun value -> value.ScenarioId = scenarioId)
+            let observedResults = ResizeArray<GroupedScenarioResult>()
 
-                    let repositoryId = repositories[scenarioId]
+            leafSummaries
+            |> Array.iter (fun summary ->
+                let repositoryId =
+                    match repositories.TryGetValue summary.ScenarioId with
+                    | true, value -> value
+                    | _ -> String.Empty
 
+                let failureReason =
+                    if summary.Outcome = "Failed" then
+                        let failedAssertions = String.Join(",", summary.FailedAssertionIds)
+                        let runtimeFailures = String.Join("; ", summary.RuntimeFailures)
+                        $"scenario={summary.ScenarioId}; failedAssertions={failedAssertions}; runtimeFailures={runtimeFailures}"
+                    else
+                        String.Empty
+
+                observedResults.Add(
                     {
-                        ScenarioId = scenarioId
+                        ScenarioId = summary.ScenarioId
                         Outcome = summary.Outcome
                         AssertionIds = summary.RequiredAssertionIds
                         RepositoryId = repositoryId
-                        IdentityIds = [| repositoryId |]
+                        IdentityIds =
+                            if String.IsNullOrWhiteSpace repositoryId then
+                                Array.empty
+                            else
+                                [| repositoryId |]
                         CleanupSucceeded = summary.Outcome = "Passed"
                         SideEffectsStarted = true
-                        FailureReason = String.Empty
-                    })
+                        FailureReason = failureReason
+                    }
+                ))
+
+            GroupedMeasurement.scenarioIds
+            |> Array.filter (fun scenarioId ->
+                attemptedScenarioIds.Contains scenarioId
+                && (leafSummaries
+                    |> Array.exists (fun summary -> summary.ScenarioId = scenarioId)
+                    |> not))
+            |> Array.iter (fun scenarioId ->
+                let failureReason =
+                    match scenarioFailures.TryGetValue scenarioId with
+                    | true, value -> value
+                    | _ -> $"scenario={scenarioId}; terminal summary was not emitted"
+
+                let repositoryId =
+                    match repositories.TryGetValue scenarioId with
+                    | true, value -> value
+                    | _ -> String.Empty
+
+                observedResults.Add(
+                    {
+                        ScenarioId = scenarioId
+                        Outcome = "Failed"
+                        AssertionIds = Array.empty
+                        RepositoryId = repositoryId
+                        IdentityIds =
+                            if String.IsNullOrWhiteSpace repositoryId then
+                                Array.empty
+                            else
+                                [| repositoryId |]
+                        CleanupSucceeded = false
+                        SideEffectsStarted = true
+                        FailureReason = failureReason
+                    }
+                ))
+
+            let scenarioResults = GroupedMeasurement.materializeResults (observedResults.ToArray())
+            let completedLeafSummaries = GroupedMeasurement.completeSummaries groupRunId scenarioResults leafSummaries
+
+            let groupedFailures = ResizeArray<string>(failures)
+
+            scenarioResults
+            |> Array.filter (fun result ->
+                result.Outcome = "Failed"
+                && not (String.IsNullOrWhiteSpace result.FailureReason))
+            |> Array.iter (fun result -> groupedFailures.Add result.FailureReason)
+
+            let groupedFailureLedger = groupedFailures |> Seq.distinct |> Seq.toArray
 
             let outcomeErrors = GroupedMeasurement.auditScenarioOutcomes scenarioResults
             let isolationErrors = GroupedMeasurement.auditScenarioIsolation scenarioResults
+            let lifecycleErrors = GroupedMeasurement.auditLifecycleDependencyPropagation scenarioResults
+            let rawMetricErrors = GroupedMeasurement.auditRawMetricSnapshots samples
 
             let assertionAudit =
                 GroupedMeasurement.auditAssertionIds (
@@ -262,58 +357,86 @@ type ManifestContributionGroupedMeasurementTests() =
             let claimErrors = GroupedMeasurement.auditClaimBoundary GroupedMeasurement.localClaims GroupedMeasurement.azureOnlyClaims
             let groupedAssertions = ResizeArray<MeasurementAssertion>()
 
-            let add assertionId passed detail = groupedAssertions.Add(MeasurementAssertion.Create(groupRunId, "grouped", assertionId, passed, detail))
+            let addAudit assertionId errors successDetail = groupedAssertions.Add(GroupedMeasurement.auditAssertion groupRunId assertionId errors successDetail)
 
-            add "grouped.exact-epic-head-sha" (commitSha.Equals(expectedSha, StringComparison.OrdinalIgnoreCase)) $"head={commitSha}; expected={expectedSha}"
-            add "grouped.canonical-plan-order" true (String.Join(",", GroupedMeasurement.scenarioIds))
-            add "grouped.required-scenario-outcomes" (outcomeErrors.Length = 0) (String.Join("; ", outcomeErrors))
-            add "grouped.required-assertion-id-coverage" (assertionAudit.Length = 0) (String.Join("; ", assertionAudit))
+            let canonicalPlanErrors =
+                [|
+                    if metadata.ScenarioIds
+                       <> GroupedMeasurement.scenarioIds then
+                        "metadata plan is not canonical"
+                    if scenarioResults
+                       |> Array.map (fun result -> result.ScenarioId)
+                       <> GroupedMeasurement.scenarioIds then
+                        "outcome ledger plan is not canonical"
+                |]
 
-            add
-                "grouped.no-unknown-assertion-ids"
-                (assertionAudit
-                 |> Array.exists (fun value -> value.StartsWith("unknown="))
-                 |> not)
-                (String.Join("; ", assertionAudit))
+            let unknownAssertionErrors =
+                assertionAudit
+                |> Array.filter (fun value -> value.StartsWith("unknown="))
 
-            add
+            let repositoryCountErrors =
+                if repositories.Count = 8 then
+                    Array.empty
+                else
+                    [|
+                        $"repository-count={repositories.Count}; expected=8"
+                    |]
+
+            addAudit "grouped.exact-epic-head-sha" metadataErrors $"head={commitSha}; expected={expectedSha}"
+            addAudit "grouped.canonical-plan-order" canonicalPlanErrors (String.Join(",", GroupedMeasurement.scenarioIds))
+            addAudit "grouped.required-scenario-outcomes" outcomeErrors "all canonical scenarios passed with cleanup"
+            addAudit "grouped.required-assertion-id-coverage" assertionAudit "exact leaf and grouped assertion closure observed"
+            addAudit "grouped.no-unknown-assertion-ids" unknownAssertionErrors "no unknown assertion IDs observed"
+
+            addAudit
                 "grouped.cross-scenario-identity-isolation"
-                (isolationErrors.Length = 0
-                 && repositories.Count = 8)
-                (String.Join("; ", isolationErrors))
+                (Array.append isolationErrors repositoryCountErrors)
+                "eight scenario-local identities are disjoint"
 
-            add "grouped.lifecycle-dependency-propagation" (outcomeErrors.Length = 0 && failures.Count = 0) (String.Join("; ", failures))
-            add "grouped.local-vs-azure-claim-boundary" (claimErrors.Length = 0) (String.Join("; ", claimErrors))
-            add "grouped.records-bounded" true "validated against exact serialized packet records"
-            add "grouped.records-parseable" true "validated against exact serialized packet records"
-            add "grouped.artifact-hashes" true "final packet bytes are bound by artifact-hashes.json"
+            addAudit "grouped.lifecycle-dependency-propagation" lifecycleErrors "failed prerequisites propagate side-effect-free skips"
+            addAudit "grouped.local-vs-azure-claim-boundary" claimErrors "local and Azure-only claim sets are exact"
+
+            let baseRecords =
+                Array.concat [| [| box metadata |]
+                                samples |> Array.map box
+                                leafAssertions |> Array.map box
+                                completedLeafSummaries |> Array.map box |]
+
+            let bounded, parseable = GroupedRuntime.validatePlannedRecords BaselineRuntime.MaximumRecordBytes baseRecords
+
+            let boundedErrors =
+                if bounded then
+                    Array.empty
+                else
+                    [|
+                        "one or more exact serialized records exceed the byte bound"
+                    |]
+
+            let parseableErrors =
+                Array.concat [| if parseable then
+                                    Array.empty
+                                else
+                                    [|
+                                        "one or more exact serialized records are not parseable JSON"
+                                    |]
+                                rawMetricErrors |]
+
+            addAudit "grouped.records-bounded" boundedErrors "exact serialized records satisfy the byte bound"
+            addAudit "grouped.records-parseable" parseableErrors "exact serialized records parse and contain raw metric snapshots"
+
+            addAudit "grouped.artifact-hashes" [| "pending exact packet hash audit" |] "final packet bytes pass exact SHA-256 audit"
 
             let allAssertions = Array.append leafAssertions (groupedAssertions.ToArray())
 
             let groupedSummary =
-                ScenarioSummary.derive groupRunId "grouped" GroupedMeasurement.groupedAssertionIds (groupedAssertions.ToArray()) (failures.ToArray()) false
+                ScenarioSummary.derive groupRunId "grouped" GroupedMeasurement.groupedAssertionIds (groupedAssertions.ToArray()) groupedFailureLedger false
 
-            let allSummaries = Array.append leafSummaries [| groupedSummary |]
-
-            let allRecords =
-                Array.concat [| [| box metadata |]
-                                samples |> Array.map box
-                                allAssertions |> Array.map box
-                                allSummaries |> Array.map box |]
-
-            let bounded, parseable = GroupedRuntime.validatePlannedRecords BaselineRuntime.MaximumRecordBytes allRecords
-
-            if not bounded || not parseable then
-                invalidOp $"Final grouped records failed pre-write audit: bounded={bounded}; parseable={parseable}."
+            let allSummaries = Array.append completedLeafSummaries [| groupedSummary |]
 
             let runPath = Path.Combine(outputDirectory, "run.ndjson")
             let samplesPath = Path.Combine(outputDirectory, "samples.ndjson")
             let assertionsPath = Path.Combine(outputDirectory, "assertions.ndjson")
             let summariesPath = Path.Combine(outputDirectory, "summaries.ndjson")
-            GroupedRuntime.writeNdjson runPath [| box metadata |]
-            GroupedRuntime.writeNdjson samplesPath (samples |> Array.map box)
-            GroupedRuntime.writeNdjson assertionsPath (allAssertions |> Array.map box)
-            GroupedRuntime.writeNdjson summariesPath (allSummaries |> Array.map box)
 
             let packetPaths =
                 [|
@@ -323,19 +446,68 @@ type ManifestContributionGroupedMeasurementTests() =
                     summariesPath
                 |]
 
-            let hashes = GroupedMeasurement.artifactHashes packetPaths
-            File.WriteAllText(Path.Combine(outputDirectory, "artifact-hashes.json"), JsonSerializer.Serialize hashes, UTF8Encoding(false))
+            let writePacket (assertions: MeasurementAssertion array) (summaries: ScenarioSummary array) =
+                GroupedRuntime.writeNdjson runPath [| box metadata |]
+                GroupedRuntime.writeNdjson samplesPath (samples |> Array.map box)
+                GroupedRuntime.writeNdjson assertionsPath (assertions |> Array.map box)
+                GroupedRuntime.writeNdjson summariesPath (summaries |> Array.map box)
+                let hashes = GroupedMeasurement.artifactHashes packetPaths
+                File.WriteAllText(Path.Combine(outputDirectory, "artifact-hashes.json"), JsonSerializer.Serialize hashes, UTF8Encoding(false))
+
+                let ndjsonErrors =
+                    packetPaths
+                    |> Array.collect (GroupedMeasurement.auditNdjson BaselineRuntime.MaximumRecordBytes)
+
+                let hashErrors = GroupedMeasurement.auditArtifactHashes packetPaths hashes
+                ndjsonErrors, hashErrors
+
+            let firstNdjsonErrors, firstHashErrors = writePacket allAssertions allSummaries
+
+            let replaceAudit assertionId errors successDetail (assertions: MeasurementAssertion array) =
+                assertions
+                |> Array.map (fun assertion ->
+                    if assertion.AssertionId = assertionId then
+                        GroupedMeasurement.auditAssertion groupRunId assertionId errors successDetail
+                    else
+                        assertion)
+
+            let actualBoundedErrors =
+                firstNdjsonErrors
+                |> Array.filter (fun error -> error.StartsWith("oversized-line="))
+
+            let actualParseableErrors =
+                Array.concat [| firstNdjsonErrors
+                                |> Array.filter (fun error -> not (error.StartsWith("oversized-line=")))
+                                rawMetricErrors |]
+
+            let finalGroupedAssertions =
+                groupedAssertions.ToArray()
+                |> replaceAudit "grouped.records-bounded" actualBoundedErrors "final NDJSON records satisfy the byte bound"
+                |> replaceAudit "grouped.records-parseable" actualParseableErrors "final NDJSON records parse and contain raw metric snapshots"
+                |> replaceAudit "grouped.artifact-hashes" firstHashErrors "final packet bytes pass exact SHA-256 audit"
+
+            let finalAllAssertions = Array.append leafAssertions finalGroupedAssertions
+
+            let finalGroupedSummary =
+                ScenarioSummary.derive groupRunId "grouped" GroupedMeasurement.groupedAssertionIds finalGroupedAssertions groupedFailureLedger false
+
+            let finalAllSummaries = Array.append completedLeafSummaries [| finalGroupedSummary |]
+            let finalNdjsonErrors, finalHashErrors = writePacket finalAllAssertions finalAllSummaries
 
             let packetErrors =
-                Array.concat [| packetPaths
-                                |> Array.collect (GroupedMeasurement.auditNdjson BaselineRuntime.MaximumRecordBytes)
-                                GroupedMeasurement.auditArtifactHashes packetPaths hashes |]
+                Array.concat [| finalNdjsonErrors
+                                finalHashErrors
+                                GroupedMeasurement.auditAssertionIds (
+                                    finalAllAssertions
+                                    |> Array.map (fun assertion -> assertion.AssertionId)
+                                )
+                                rawMetricErrors |]
 
             TestContext.Progress.WriteLine($"MCA grouped evidence directory: {outputDirectory}")
             TestContext.Progress.Flush()
 
             Assert.That(evidencePaths.Length, Is.EqualTo(7), "Every accepted leaf fixture must emit one staging artifact.")
-            Assert.That(allAssertions.Length, Is.EqualTo(104))
+            Assert.That(finalAllAssertions.Length, Is.EqualTo(104))
             Assert.That(packetErrors, Is.Empty)
-            Assert.That(groupedSummary.Outcome, Is.EqualTo("Passed"), String.Join(Environment.NewLine, failures))
+            Assert.That(finalGroupedSummary.Outcome, Is.EqualTo("Passed"), String.Join(Environment.NewLine, groupedFailureLedger))
         }

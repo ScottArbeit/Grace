@@ -494,7 +494,8 @@ type ManifestContributionRedisRestartMeasurementTests() =
                         (explicitDurableBaseline.LogicalCount + 1L)
                         explicitDurableBaseline.WorkflowFingerprint
 
-                let! stimulusMessageDelta, stimulusDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L explicitMetricsBaseline
+                let! stimulusMessageDelta, stimulusDurationDelta, stimulusTerminal =
+                    BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L explicitMetricsBaseline
 
                 recordAssertion
                     "redis-restart.stimulus-message-delta"
@@ -532,6 +533,9 @@ type ManifestContributionRedisRestartMeasurementTests() =
                     "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                     stimulusDurationDelta
                     labels
+
+                BaselineRuntime.recordMetricSnapshot writer runId "redis-restart" "stimulus" "baseline" explicitMetricsBaseline
+                BaselineRuntime.recordMetricSnapshot writer runId "redis-restart" "stimulus" "terminal" stimulusTerminal
             with
             | ex -> failures.Add(ex.ToString())
 
