@@ -1,8 +1,10 @@
 # Manifest contribution accounting runtime
 
-Manifest contribution accounting turns a completed Save reference into exact relationship and counter updates. This
-runbook describes the current local runtime and the one supported command for publishing its canonical evidence. The
-command measures a fixed fixture; it is not a production probe or a deployment benchmark.
+Manifest contribution accounting turns every completed Reference into exact relationship and counter updates. The
+foreground contract is identical for `Promotion`, `Commit`, `Checkpoint`, `Save`, `Tag`, `External`, and `Rebase`:
+Grace persists the Reference, waits for deterministic Service Bus acceptance, and returns while accounting continues
+asynchronously. This runbook describes the current local runtime and the one supported command for publishing its
+canonical evidence. The command measures a fixed fixture; it is not a production probe or a deployment benchmark.
 
 ## Runtime topology and state ownership
 
@@ -83,8 +85,9 @@ The scenario order and cardinalities are fixture-owned and cannot be tuned:
    manifest relationships.
 3. `highly-shared` uses three References sharing one manifest relationship and one active physical contribution.
 4. `duplicate-backlog` replays a fixed duplicate Save backlog while Grace Server is stopped and proves durable state
-   remains unchanged.
-5. `redis-restart` restarts the nonauthoritative cache and proves the next Save adds exactly one logical contribution.
+   remains unchanged. Save is fixture data, not a specialized accounting path.
+5. `redis-restart` restarts the nonauthoritative cache and proves the next fixture Reference adds exactly one logical
+   contribution through the Reference-wide path.
 6. `server-restart` restarts Grace Server and proves a persisted envelope completes without duplicating state.
 7. `repair` removes one Reference root, dry-runs diagnosis, and executes exactly one republication action.
 8. `dead-letter` drives one isolated malformed delivery through the broker's fixed retry limit to delivery count 11.
@@ -138,8 +141,20 @@ Evidence uses two truthful commits:
 3. Confirm `run.json.sourceGitSha` and `raw/run.ndjson` `CommitSha` name that source commit.
 4. Commit only the generated packet as the immediately following artifact commit.
 
-Any later source, test, or documentation change makes the packet stale and requires a new clean run. The artifact
-commit and a later merge commit are never presented as the source commit exercised by the fixture.
+The accepted Product V1 packet uses these distinct identities:
+
+- clean measured source `60da9740236e36bfab770a1f246f0d993740b7fc`;
+- immediate artifact-only child `dce9fe0a2677459e521b30737c296f917f7eb701`; and
+- Epic merge `96c3c09300d3fbe0d65fad309afe2bc3983dd280`.
+
+The final audit commit is a fourth identity. Audit-only documentation and acceptance-proof changes do not make the
+packet stale because the audit proves that the measured publisher, runtime, fixture, production, public, durable, and
+generated surfaces are unchanged. Any change to one of those measured surfaces does make the packet stale and requires
+a new clean run. The artifact child, Epic merge, and final audit commit are never presented as the source exercised by
+the fixture.
+
+`run.json` records the ten-entry `localClaims` set and the six-entry `azureOnlyUnknowns` set. The independent final
+audit recomputes their exact separation rather than inferring Azure behavior from local evidence.
 
 ## Interpreting the evidence
 

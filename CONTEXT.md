@@ -444,9 +444,10 @@ physical deletion of the FileManifest whose block contribution workflow is still
 decided from the block's own active logical chunk ranges and delayed-reminder checks, not by a global workflow scan.
 
 **Repository counter vs. pending contribution state**:
-RepositoryContentCounter does not store ContributionState. When its ReferenceCount crosses zero, the counter calls
-Increment or Decrement on the CASTarget in the same Orleans transaction. ManifestContributionWorkflow owns manifest
-batch progress separately.
+RepositoryContentCounter stores bounded `Count`, `Revision`, and `LastCompletedChange`, not a lifetime
+ContributionState history. A zero transition starts deterministic `ManifestContributionWorkflow` work separately;
+Grace does not claim a cross-actor Orleans transaction between the counter and ContentBlock range updates. Exact
+relationships remain the rebuildable membership evidence, and uncertainty retains content.
 
 **Workflow progress vs. FileManifest state**:
 Grace stores ManifestContributionWorkflow batch progress in the workflow actor or record, not inside the FileManifest
@@ -664,8 +665,9 @@ Domain expert: "Use FileContentHash for the complete file and ChunkAddress for e
 
 Developer: "Is ReferenceCount the number of Save References that can reach a chunk?"
 
-Domain expert: "No. ReferenceCount counts direct live references between Grace domain objects, such as a DirectoryVersion
-referring to a child DirectoryVersion, WholeFileContent, or FileManifest."
+Domain expert: "No. Manifest accounting treats every ReferenceType uniformly. Exact relationships record direct live
+edges, and RepositoryContentCounter absorbs retained DirectoryVersion-to-manifest relationships before StoragePool
+range contribution changes."
 
 Developer: "If a common React `.js` file appears in thousands of DirectoryVersions, should Grace globally chunk-dedupe
 that source file?"
@@ -678,12 +680,12 @@ Developer: "Can two repositories globally share the same small WholeFileContent 
 Domain expert: "No. WholeFileContent is repository-scoped. StoragePool-wide global dedupe is for large manifest-backed
 files, not small or regular files."
 
-Developer: "When a Save Reference expires, do we retain and release objects?"
+Developer: "When a Reference expires, do we retain and release objects?"
 
-Domain expert: "Use Increment and Decrement. A live reference increments the object it points to; when that direct
-reference is removed, Grace decrements the target."
+Domain expert: "Use exact relationships and bounded counters. Removing a Reference removes only its root relationship;
+DirectoryVersion retention owns manifest contribution, independent of ReferenceType."
 
-Developer: "Does Grace need a StoragePool-wide sweep before it deletes expired Save content?"
+Developer: "Does Grace need a StoragePool-wide sweep before it deletes expired Reference content?"
 
 Domain expert: "No. ReferenceCounted Deletion is the normal cleanup path. Sweeps are maintenance checks for repair and
 confidence."
