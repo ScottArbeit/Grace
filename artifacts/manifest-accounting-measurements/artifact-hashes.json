@@ -1,0 +1,70 @@
+[
+  {
+    "path": "assertions.json",
+    "sha256": "d2da9a4587e9afd7318603c414cebd80d47ff676ebea6d90886e2eec15dbbb0a"
+  },
+  {
+    "path": "logs/baseline.jsonl",
+    "sha256": "050957fa40499fe40e954fc348f9f764205d587ee177b3fe6ed7c1ed3a836e5d"
+  },
+  {
+    "path": "logs/dead-letter.jsonl",
+    "sha256": "650f83f5811e17af6df3a30a1b91b839529bca29b2fcd45436143ad27a80f672"
+  },
+  {
+    "path": "logs/duplicate-backlog.jsonl",
+    "sha256": "19dec8cbde830f1d03dde830c93f407980a132ca6b46ce3034e47c6cde5fa8e5"
+  },
+  {
+    "path": "logs/highly-shared.jsonl",
+    "sha256": "7cde684072bb3217666ce4a8ad28809033085e2f7e5ba6c0d482a0e9df59a597"
+  },
+  {
+    "path": "logs/hot-manifest.jsonl",
+    "sha256": "70bc089dab8351fabe6e00d886f3b396b9bb6ccab3289ca778ab74ce99b5ae9d"
+  },
+  {
+    "path": "logs/redis-restart.jsonl",
+    "sha256": "8a39c4aab39ee0a437117034d9020fe253c64a22e9cf5e3f49a4789b2db467af"
+  },
+  {
+    "path": "logs/repair.jsonl",
+    "sha256": "6d791faf4c0eceb51c211db5f37ebfb022fe30f0f220064ddccd5236f008c6f5"
+  },
+  {
+    "path": "logs/server-restart.jsonl",
+    "sha256": "ee9bece2a9719739301c5f39e0d5b995e89ac96f9b88e09cec1bd79e186f6b86"
+  },
+  {
+    "path": "raw/artifact-hashes.json",
+    "sha256": "b996715d70c42d619d471d83c9161ab94ae06d9204fdf76520e3ca97ab331a88"
+  },
+  {
+    "path": "raw/assertions.ndjson",
+    "sha256": "c908c2ae25d29d75a1edc0c1fd78dec4d384f4c01307f7f1c156101bab78c2d8"
+  },
+  {
+    "path": "raw/run.ndjson",
+    "sha256": "22fb89da68cbf586e728888a426e8dd45fe934c83667d9107b28d5ef9016a693"
+  },
+  {
+    "path": "raw/samples.ndjson",
+    "sha256": "024d7ec670cd4e9e43c1ffbf32f9f0b65dd6770393312eb1c577e383364942f3"
+  },
+  {
+    "path": "raw/summaries.ndjson",
+    "sha256": "5cf1d79e29fda6585bc01567940f43cc3c0fe02d6288e567b41a0df83cadd5a8"
+  },
+  {
+    "path": "run.json",
+    "sha256": "f6db9c1d32e0d9be1369be9f9a6bfc5ec0441ccbdc3b2f0e1296a20b5c2a2594"
+  },
+  {
+    "path": "samples.ndjson",
+    "sha256": "024d7ec670cd4e9e43c1ffbf32f9f0b65dd6770393312eb1c577e383364942f3"
+  },
+  {
+    "path": "summary.json",
+    "sha256": "1ae660f37e065dda2dfe66fe634473b2d9da05df343edc3efe265e93dd138e2f"
+  }
+]
