@@ -105,8 +105,15 @@ function New-TestExecution {
         [string] $Branch = 'agent/test',
         [string] $RequestedOutput = './artifacts/manifest-accounting-measurements'
     )
+    $sourceSha = $Sha
+    $sourceBranch = $Branch
+    $sourceStateReader = {
+        param([string] $RepositoryRoot)
+        return @{ Sha = $sourceSha; Branch = $sourceBranch; Status = @() }
+    }.GetNewClosure()
     return @{
-        SourceGitSha = $Sha; SourceGitBranch = $Branch
+        RepositoryRoot = 'synthetic-test-repository'; SourceGitSha = $Sha; SourceGitBranch = $Branch
+        _SourceStateReader = $sourceStateReader
         Command = Get-McaInvocationCommand $RequestedOutput
         StartedAtUtc = '2026-08-01T00:00:00Z'; FinishedAtUtc = '2026-08-01T00:10:00Z'
         Machine = 'test-machine'; Os = 'test-os'; CpuCount = 4; MemoryBytes = 8589934592
@@ -252,6 +259,17 @@ try {
         }
     }
 
+    Invoke-Case 'duplicate required summary assertion ID is rejected by cardinality' {
+        $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot 'raw-duplicate-summary-required-id')
+        $records = @(Get-Content (Join-Path $raw 'summaries.ndjson') | ConvertFrom-Json -AsHashtable)
+        $records[0].RequiredAssertionIds = @($records[0].RequiredAssertionIds) + $records[0].RequiredAssertionIds[0]
+        Write-TestNdjson (Join-Path $raw 'summaries.ndjson') $records; Update-TestRawHashes $raw
+        Invoke-ExpectedPublicationFailure $raw (Join-Path $testRoot 'out-duplicate-summary-required-id') {
+            param($errorRecord)
+            Assert-True ($errorRecord.Exception.Message.Contains('summary-required-id-cardinality')) 'duplicate summary ID should fail the explicit cardinality rule'
+        }
+    }
+
     Invoke-Case 'known assertions cannot swap exact scenarios' {
         $raw = Copy-TestRawPacket $validRaw (Join-Path $testRoot 'raw-swapped-scenarios')
         $records = @(Get-Content (Join-Path $raw 'assertions.ndjson') | ConvertFrom-Json -AsHashtable)
@@ -306,6 +324,20 @@ try {
         $output = Join-Path $testRoot 'out-stale'; $failed = $false
         try { Publish-McaPacket $validRaw $output (New-TestExecution -Sha ('b' * 40)) | Out-Null } catch { $failed = $true }
         Assert-True $failed 'stale source SHA should fail'; Assert-True (-not (Test-Path $output)) 'stale packet target absent'
+    }
+
+    Invoke-Case 'changed source state immediately before publication leaves destination absent' {
+        $output = Join-Path $testRoot 'out-changed-source'
+        $execution = New-TestExecution -RequestedOutput $output
+        $execution._SourceStateReader = { param([string] $RepositoryRoot) return @{ Sha = ('a' * 40); Branch = 'agent/test'; Status = @('?? changed-after-run.txt') } }
+        $failed = $false
+        try { Publish-McaPacket $validRaw $output $execution | Out-Null }
+        catch {
+            $failed = $true
+            Assert-True ($_.Exception.Message.Contains('source-freshness')) 'changed source should fail the freshness rule'
+        }
+        Assert-True $failed 'changed source should prevent publication'
+        Assert-True (-not (Test-Path -LiteralPath $output)) 'changed source target should remain absent'
     }
 
     Invoke-Case 'record byte limit and UTF-8 byte counting' {

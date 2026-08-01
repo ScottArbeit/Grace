@@ -142,13 +142,33 @@ function Assert-McaTools {
     }
 }
 
+function Get-McaSourceState {
+    param([string] $RepositoryRoot, [scriptblock] $SourceStateReader)
+    if ($SourceStateReader) { return (& $SourceStateReader $RepositoryRoot) }
+
+    $sha = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'source-state-unavailable' 'git-head' }
+    $branch = (& git -C $RepositoryRoot branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'source-state-unavailable' 'git-branch' }
+    $status = @(& git -C $RepositoryRoot status --porcelain=v1 --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'source-state-unavailable' 'git-status' }
+    return @{ Sha = $sha; Branch = $branch; Status = $status }
+}
+
 function Get-McaCleanSource {
     param([string] $RepositoryRoot)
-    $status = & git -C $RepositoryRoot status --porcelain=v1 --untracked-files=all
-    if ($LASTEXITCODE -ne 0 -or $status) { Throw-McaFailure 'dirty-source-worktree' 'repository-root' }
-    return @{
-        Sha = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
-        Branch = (& git -C $RepositoryRoot branch --show-current).Trim()
+    $source = Get-McaSourceState $RepositoryRoot
+    if (@($source.Status).Count -ne 0) { Throw-McaFailure 'dirty-source-worktree' 'repository-root' }
+    return $source
+}
+
+function Assert-McaSourceUnchanged {
+    param([hashtable] $Execution, [string] $Boundary)
+    $sourceStateReader = if ($Execution.ContainsKey('_SourceStateReader')) { $Execution._SourceStateReader } else { $null }
+    $current = Get-McaSourceState $Execution.RepositoryRoot $sourceStateReader
+    if (@($current.Status).Count -ne 0 -or $current.Sha -cne $Execution.SourceGitSha -or
+        $current.Branch -cne $Execution.SourceGitBranch) {
+        Throw-McaFailure 'source-freshness' $Boundary
     }
 }
 
@@ -325,11 +345,17 @@ function Publish-McaPacket {
             $expectedIds = @($script:McaRequiredAssertionIdsByScenario[$summary.ScenarioId])
             $observed = @($assertions | Where-Object ScenarioId -CEQ $summary.ScenarioId)
             $observedIds = @($observed | ForEach-Object AssertionId)
+            $requiredIds = @($summary.RequiredAssertionIds)
+            $uniqueRequiredIds = @($requiredIds | Sort-Object -Unique)
+            if ($requiredIds.Count -ne $expectedIds.Count -or $requiredIds.Count -ne $observedIds.Count -or
+                $uniqueRequiredIds.Count -ne $expectedIds.Count -or $uniqueRequiredIds.Count -ne $observedIds.Count) {
+                Throw-McaFailure 'summary-required-id-cardinality' $summary.ScenarioId
+            }
             if ($summary.Outcome -cne 'Passed' -or $summary.RequiredAssertionCount -ne $expectedIds.Count -or
                 $summary.PassedAssertionCount -ne $expectedIds.Count -or @($summary.FailedAssertionIds).Count -ne 0 -or
                 @($summary.RuntimeFailures).Count -ne 0 -or
-                (Compare-Object @($summary.RequiredAssertionIds | Sort-Object) @($expectedIds | Sort-Object)) -or
-                (Compare-Object @($summary.RequiredAssertionIds | Sort-Object) @($observedIds | Sort-Object))) {
+                (Compare-Object @($requiredIds | Sort-Object) @($expectedIds | Sort-Object)) -or
+                (Compare-Object @($requiredIds | Sort-Object) @($observedIds | Sort-Object))) {
                 Throw-McaFailure 'summary-derivation' $summary.ScenarioId
             }
         }
@@ -442,6 +468,7 @@ function Publish-McaPacket {
         Write-McaJson (Join-Path $staging 'artifact-hashes.json') @($hashEntries)
         Assert-McaPublishedHashes $staging
         Assert-McaPacketSize $staging
+        Assert-McaSourceUnchanged $Execution 'pre-publication'
         if (Test-Path -LiteralPath $destinationPath) { Throw-McaFailure 'output-race' $destinationPath }
         [IO.Directory]::Move($staging, $destinationPath)
         $stagingOwned = $false
@@ -468,10 +495,18 @@ function Invoke-McaCommand {
     $actualCommand = Get-McaInvocationCommand $RequestedOutput
     $hostedCommand = 'dotnet test src/Grace.Server.Tests/Grace.Server.Tests.fsproj --configuration Release --no-build --filter FullyQualifiedName~ManifestContributionGroupedMeasurementTests'
     $evidenceRoot = Join-Path ([IO.Path]::GetTempPath()) ('grace-mca-752-' + [guid]::NewGuid().ToString('N'))
+    $execution = @{
+        RepositoryRoot = $repositoryRoot; SourceGitSha = $sha; SourceGitBranch = $branch
+        Command = $actualCommand; StartedAtUtc = $started
+        Machine = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { 'unavailable' }
+        Os = [Environment]::OSVersion.VersionString; CpuCount = [Environment]::ProcessorCount
+        MemoryBytes = [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes
+    }
     [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
     try {
         & dotnet build (Join-Path $repositoryRoot 'src/Grace.Server.Tests/Grace.Server.Tests.fsproj') --configuration Release
         if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'release-build-failed' 'Grace.Server.Tests' }
+        Assert-McaSourceUnchanged $execution 'post-build'
         $prior = @{}
         foreach ($name in @('GRACE_MCA_WORKTREE', 'GRACE_MCA_HOSTED_COMMAND', 'GRACE_MCA_EVIDENCE_ROOT', 'GRACE_MCA_EXPECTED_SHA')) { $prior[$name] = [Environment]::GetEnvironmentVariable($name) }
         try {
@@ -481,13 +516,9 @@ function Invoke-McaCommand {
             if ($LASTEXITCODE -ne 0) { Throw-McaFailure 'grouped-runtime-failed' 'ManifestContributionGroupedMeasurementTests' }
         }
         finally { foreach ($name in $prior.Keys) { [Environment]::SetEnvironmentVariable($name, $prior[$name]) } }
+        Assert-McaSourceUnchanged $execution 'post-runtime'
         $rawRunDirectory = Get-McaSingleRawRunDirectory $evidenceRoot
-        $execution = @{
-            SourceGitSha = $sha; SourceGitBranch = $branch; Command = $actualCommand; StartedAtUtc = $started
-            FinishedAtUtc = [DateTimeOffset]::UtcNow.ToString('O'); Machine = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { 'unavailable' }
-            Os = [Environment]::OSVersion.VersionString; CpuCount = [Environment]::ProcessorCount
-            MemoryBytes = [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes
-        }
+        $execution.FinishedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
         $published = Publish-McaPacket $rawRunDirectory $destination $execution
         Write-Host "Manifest contribution accounting packet: $published"
     }
