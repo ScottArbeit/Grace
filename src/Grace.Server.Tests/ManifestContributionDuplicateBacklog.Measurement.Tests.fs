@@ -304,6 +304,11 @@ grace_manifest_contribution_processing_duration_milliseconds_count{otel_scope_na
         labels["outcome"] <- "completed"
         writer.Append(MeasurementSample.Create(runId, ScenarioId, sampleId, name, value, labels))
 
+    /// Records the fresh-process replay baseline and its exact terminal cumulative observation.
+    let recordReplayMetricSnapshots writer runId terminal =
+        BaselineRuntime.recordMetricSnapshot writer runId ScenarioId "stimulus" "baseline" freshProcessCompletedSettlementBaseline
+        BaselineRuntime.recordMetricSnapshot writer runId ScenarioId "stimulus" "terminal" terminal
+
 /// Proves deterministic duplicate replay from a stopped-server backlog in one selected Aspire process.
 [<NonParallelizable>]
 type ManifestContributionDuplicateBacklogMeasurementTests() =
@@ -352,13 +357,14 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
 
             try
                 let bootstrapUserId = Guid.NewGuid().ToString("D")
-                let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
+                let! state = ManifestContributionGroupedRuntime.acquireAsync bootstrapUserId
                 host <- Some state
-                state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
+                ManifestContributionGroupedRuntime.selectBootstrapUser state bootstrapUserId
                 let! _ = AspireTestHost.drainServiceBusAsync state
                 let ownerId = Guid.NewGuid()
                 let organizationId = Guid.NewGuid()
                 let repositoryId = Guid.NewGuid()
+                ManifestContributionGroupedRuntime.registerRepository DuplicateBacklogRuntime.ScenarioId repositoryId
                 do! BaselineRuntime.createOwnerAsync state ownerId
                 do! BaselineRuntime.createOrganizationAsync state ownerId organizationId
                 let! defaultBranchId, defaultReferenceId = BaselineRuntime.createRepositoryAsync state ownerId organizationId repositoryId
@@ -519,7 +525,8 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
 
                 let! replayObserved = BaselineRuntime.observeReferenceEnvelopesAsync state saveMessageIds "duplicate-backlog replay"
 
-                let! replayMessageDelta, replayDurationDelta, _ = DuplicateBacklogRuntime.waitForFreshProcessCompletedSettlementAsync state (int64 assets.Count)
+                let! replayMessageDelta, replayDurationDelta, replayTerminal =
+                    DuplicateBacklogRuntime.waitForFreshProcessCompletedSettlementAsync state (int64 assets.Count)
 
                 let! afterSnapshot = DuplicateBacklogRuntime.waitForSnapshotAsync state repositoryId assetArray
 
@@ -586,6 +593,8 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
                     "replay-durations"
                     "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                     replayDurationDelta
+
+                DuplicateBacklogRuntime.recordReplayMetricSnapshots writer runId replayTerminal
             with
             | ex -> failures.Add(ex.ToString())
 
@@ -600,7 +609,7 @@ type ManifestContributionDuplicateBacklogMeasurementTests() =
                     | ex -> failures.Add($"cleanup-start: {ex}")
 
                 try
-                    do! AspireTestHost.stopIsolatedAsync state
+                    do! ManifestContributionGroupedRuntime.releaseAsync state
                 with
                 | ex -> failures.Add($"cleanup-host: {ex}")
             | None -> ()

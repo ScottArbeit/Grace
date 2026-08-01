@@ -241,13 +241,14 @@ type ManifestContributionRedisRestartMeasurementTests() =
 
             try
                 let bootstrapUserId = Guid.NewGuid().ToString("D")
-                let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
+                let! state = ManifestContributionGroupedRuntime.acquireAsync bootstrapUserId
                 host <- Some state
-                state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
+                ManifestContributionGroupedRuntime.selectBootstrapUser state bootstrapUserId
                 let! _ = AspireTestHost.drainServiceBusAsync state
                 let ownerId = Guid.NewGuid()
                 let organizationId = Guid.NewGuid()
                 let repositoryId = Guid.NewGuid()
+                ManifestContributionGroupedRuntime.registerRepository "redis-restart" repositoryId
                 do! BaselineRuntime.createOwnerAsync state ownerId
                 do! BaselineRuntime.createOrganizationAsync state ownerId organizationId
                 let! defaultBranchId, defaultReferenceId = BaselineRuntime.createRepositoryAsync state ownerId organizationId repositoryId
@@ -493,7 +494,8 @@ type ManifestContributionRedisRestartMeasurementTests() =
                         (explicitDurableBaseline.LogicalCount + 1L)
                         explicitDurableBaseline.WorkflowFingerprint
 
-                let! stimulusMessageDelta, stimulusDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L explicitMetricsBaseline
+                let! stimulusMessageDelta, stimulusDurationDelta, stimulusTerminal =
+                    BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L explicitMetricsBaseline
 
                 recordAssertion
                     "redis-restart.stimulus-message-delta"
@@ -531,13 +533,16 @@ type ManifestContributionRedisRestartMeasurementTests() =
                     "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                     stimulusDurationDelta
                     labels
+
+                BaselineRuntime.recordMetricSnapshot writer runId "redis-restart" "stimulus" "baseline" explicitMetricsBaseline
+                BaselineRuntime.recordMetricSnapshot writer runId "redis-restart" "stimulus" "terminal" stimulusTerminal
             with
             | ex -> failures.Add(ex.ToString())
 
             match host with
             | Some state ->
                 try
-                    do! AspireTestHost.stopIsolatedAsync state
+                    do! ManifestContributionGroupedRuntime.releaseAsync state
                 with
                 | ex -> failures.Add($"cleanup: {ex}")
             | None -> ()

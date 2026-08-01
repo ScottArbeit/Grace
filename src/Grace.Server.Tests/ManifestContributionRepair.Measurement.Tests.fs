@@ -250,9 +250,9 @@ type ManifestContributionRepairMeasurementTests() =
 
             try
                 let bootstrapUserId = Guid.NewGuid().ToString("D")
-                let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
+                let! state = ManifestContributionGroupedRuntime.acquireAsync bootstrapUserId
                 host <- Some state
-                state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
+                ManifestContributionGroupedRuntime.selectBootstrapUser state bootstrapUserId
                 let! drainedBeforeScenario = AspireTestHost.drainServiceBusAsync state
 
                 if drainedBeforeScenario <> 0 then
@@ -261,6 +261,7 @@ type ManifestContributionRepairMeasurementTests() =
                 let ownerId = Guid.NewGuid()
                 let organizationId = Guid.NewGuid()
                 let repositoryId = Guid.NewGuid()
+                ManifestContributionGroupedRuntime.registerRepository RepairRuntime.ScenarioId repositoryId
                 do! BaselineRuntime.createOwnerAsync state ownerId
                 do! BaselineRuntime.createOrganizationAsync state ownerId organizationId
                 let! defaultBranchId, defaultReferenceId = BaselineRuntime.createRepositoryAsync state ownerId organizationId repositoryId
@@ -470,7 +471,7 @@ type ManifestContributionRepairMeasurementTests() =
 
                 let! referenceRootRestored = RepairRuntime.waitForRelationshipAsync state relationship true
 
-                let! repairMessageDelta, repairDurationDelta, _ = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L executeBaseline
+                let! repairMessageDelta, repairDurationDelta, repairTerminal = BaselineRuntime.waitForCompletedSettlementDeltaAsync state 1L executeBaseline
 
                 let! stableAfterExecute = RepairRuntime.readStableStateAsync state repositoryId asset
                 let! manifestAfterExecute = BaselineRuntime.exactRelationshipExistsAsync state manifestRelationship
@@ -574,6 +575,9 @@ type ManifestContributionRepairMeasurementTests() =
                     )
                 )
 
+                BaselineRuntime.recordMetricSnapshot writer runId RepairRuntime.ScenarioId "stimulus" "baseline" executeBaseline
+                BaselineRuntime.recordMetricSnapshot writer runId RepairRuntime.ScenarioId "stimulus" "terminal" repairTerminal
+
                 writer.Append(
                     MeasurementSample.Create(
                         runId,
@@ -590,7 +594,7 @@ type ManifestContributionRepairMeasurementTests() =
             match host with
             | Some state ->
                 try
-                    do! AspireTestHost.stopIsolatedAsync state
+                    do! ManifestContributionGroupedRuntime.releaseAsync state
                 with
                 | ex -> failures.Add($"cleanup: {ex}")
             | None -> ()

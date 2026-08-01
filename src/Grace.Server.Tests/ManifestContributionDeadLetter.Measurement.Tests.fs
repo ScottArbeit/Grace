@@ -428,9 +428,9 @@ type ManifestContributionDeadLetterMeasurementTests() =
 
             try
                 let bootstrapUserId = Guid.NewGuid().ToString("D")
-                let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
+                let! state = ManifestContributionGroupedRuntime.acquireAsync bootstrapUserId
                 host <- Some state
-                state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
+                ManifestContributionGroupedRuntime.selectBootstrapUser state bootstrapUserId
                 let testSubscriptionIsolated = not (state.ServiceBusTestSubscription.Equals(state.ServiceBusServerSubscription, StringComparison.Ordinal))
 
                 if not testSubscriptionIsolated then
@@ -438,6 +438,7 @@ type ManifestContributionDeadLetterMeasurementTests() =
 
                 let fixtureCorrelationId = generateCorrelationId ()
                 let! fixtureInventory = DeadLetterRuntime.createDefaultReferenceProducerAsync state fixtureCorrelationId
+                ManifestContributionGroupedRuntime.registerRepository "dead-letter" fixtureInventory.RepositoryId
 
                 let! producerInventory = DeadLetterRuntime.inventoryDefaultReferenceProducerAsync state fixtureInventory
 
@@ -479,6 +480,9 @@ type ManifestContributionDeadLetterMeasurementTests() =
 
                 let! observedMetrics = BaselineRuntime.scrapeMetricsAsync state
 
+                BaselineRuntime.recordMetricSnapshot writer runId "dead-letter" "stimulus" "baseline" baselineMetrics
+                BaselineRuntime.recordMetricSnapshot writer runId "dead-letter" "stimulus" "terminal" observedMetrics
+
                 let telemetryUnchanged, telemetryDetail =
                     match OpenMetrics.evaluateCompletedSettlementUnchanged baselineMetrics observedMetrics with
                     | UnchangedEvaluation.Unchanged (messages, durations) -> true, $"messages={messages}; durations={durations}"
@@ -504,7 +508,7 @@ type ManifestContributionDeadLetterMeasurementTests() =
             match host with
             | Some state ->
                 try
-                    do! AspireTestHost.stopIsolatedAsync state
+                    do! ManifestContributionGroupedRuntime.releaseAsync state
                 with
                 | ex -> failures.Add($"cleanup: {ex}")
             | None -> ()

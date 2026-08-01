@@ -39,9 +39,11 @@
     <Compile Include="ManifestContributionTelemetry.Server.Tests.fs" />
     <Compile Include="ManifestContributionMeasurement.fs" />
     <Compile Include="ManifestContributionDeadLetterMeasurement.fs" />
+    <Compile Include="ManifestContributionGroupedMeasurement.fs" />
     <Compile Include="ManifestContributionMeasurement.Tests.fs" />
     <Compile Include="ManifestContributionDeadLetterMeasurement.Tests.fs" />
     <Compile Include="ManifestContributionServerRestart.Measurement.Tests.fs" />
+    <Compile Include="ManifestContributionGroupedMeasurement.Tests.fs" />
     <Compile Include="Notification.Server.Tests.fs" />
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />
     <Compile Include="PromotionSet.DirectoryHash.Tests.fs" />

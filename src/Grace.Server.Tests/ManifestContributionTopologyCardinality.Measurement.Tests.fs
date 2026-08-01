@@ -321,6 +321,7 @@ module private TopologyCardinalityRuntime =
             else
                 try
                     let repositoryId = Guid.NewGuid()
+                    ManifestContributionGroupedRuntime.registerRepository scenarioId repositoryId
                     let! repositoryBaseline = BaselineRuntime.scrapeMetricsAsync state
                     let! defaultBranchId, defaultReferenceId = BaselineRuntime.createRepositoryAsync state ownerId organizationId repositoryId
 
@@ -426,7 +427,7 @@ module private TopologyCardinalityRuntime =
 
                     let! referenceRoots, manifests, logical, workflows, physical = waitForObservationAsync state declared assetArray
 
-                    let! messageDelta, durationDelta, _ =
+                    let! messageDelta, durationDelta, stimulusTerminal =
                         BaselineRuntime.waitForCompletedSettlementDeltaAsync state (int64 declared.StimulusMessageIds.Length) saveBaseline
 
                     let observation =
@@ -481,6 +482,9 @@ module private TopologyCardinalityRuntime =
                         "grace_manifest_contribution_processing_duration_milliseconds_count.delta"
                         durationDelta
                         labels
+
+                    BaselineRuntime.recordMetricSnapshot writer runId scenarioId "stimulus" "baseline" saveBaseline
+                    BaselineRuntime.recordMetricSnapshot writer runId scenarioId "stimulus" "terminal" stimulusTerminal
 
                     expectedProducerIds <-
                         Array.concat [| [| defaultMessageId |]
@@ -582,9 +586,9 @@ type ManifestContributionTopologyCardinalityMeasurementTests() =
 
             try
                 let bootstrapUserId = Guid.NewGuid().ToString("D")
-                let! state = AspireTestHost.startIsolatedAsync bootstrapUserId
+                let! state = ManifestContributionGroupedRuntime.acquireAsync bootstrapUserId
                 host <- Some state
-                state.Client.DefaultRequestHeaders.Add("x-grace-user-id", bootstrapUserId)
+                ManifestContributionGroupedRuntime.selectBootstrapUser state bootstrapUserId
                 let! _ = AspireTestHost.drainServiceBusAsync state
                 let ownerId = Guid.NewGuid()
                 let organizationId = Guid.NewGuid()
@@ -666,7 +670,7 @@ type ManifestContributionTopologyCardinalityMeasurementTests() =
             match host with
             | Some state ->
                 try
-                    do! AspireTestHost.stopIsolatedAsync state
+                    do! ManifestContributionGroupedRuntime.releaseAsync state
                 with
                 | ex ->
                     executions
