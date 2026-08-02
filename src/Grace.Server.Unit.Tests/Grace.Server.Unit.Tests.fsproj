@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Include="TestCommon.fs" />
+    <Compile Include="CosmosWarmup.Server.Tests.fs" />
     <Compile Include="AuthMapping.Unit.Tests.fs" />
     <Compile Include="Authorization.Unit.Tests.fs" />
     <Compile Include="CreatorScopeAdminGrant.Unit.Tests.fs" />
@@ -48,6 +49,7 @@
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />
     <Compile Include="PromotionSet.DirectoryHash.Tests.fs" />
     <Compile Include="Diff.Actor.Tests.fs" />
+    <Compile Include="PersonalAccessToken.Actor.Tests.fs" />
     <Compile Include="UploadSession.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />

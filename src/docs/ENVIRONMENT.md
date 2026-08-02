@@ -128,25 +128,27 @@ These are script parameters (not environment variables):
 
 - `-SkipAuthProbe`: skip auth preflight (`/authenticate/oidc/config`, `/authenticate/me`).
 - `-NoTokenBootstrap`: skip PAT creation.
-- `-TokenBootstrapMaxAttempts`: set max token bootstrap attempts.
-- `-TokenBootstrapInitialBackoffSeconds`: set initial retry backoff.
 - `-StartupTimeoutSeconds`: set health wait timeout.
 - `-CleanupWaitSeconds`: set process cleanup wait timeout.
+
+PAT bootstrap sends one create request after the health and auth readiness checks pass. A failed or uncertain create is
+not replayed because token creation is non-idempotent. The failure diagnostics preserve the endpoint error so a storage
+failure is not replaced by a later duplicate-name response.
 
 PowerShell:
 
 ```powershell
 pwsh ./scripts/start-debuglocal.ps1 `
-  -TokenBootstrapMaxAttempts 5 `
-  -TokenBootstrapInitialBackoffSeconds 2
+  -StartupTimeoutSeconds 300 `
+  -CleanupWaitSeconds 10
 ```
 
 bash / zsh:
 
 ```bash
 pwsh ./scripts/start-debuglocal.ps1 \
-  --TokenBootstrapMaxAttempts 5 \
-  --TokenBootstrapInitialBackoffSeconds 2
+  --StartupTimeoutSeconds 300 \
+  --CleanupWaitSeconds 10
 ```
 
 ## DebugLocal Diagnostics Artifacts
