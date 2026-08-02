@@ -21,8 +21,6 @@ param(
   [string] $TokenName = "local-dev",
   [int]    $TokenDays = 30,
   [int]    $StartupTimeoutSeconds = 240,
-  [int]    $TokenBootstrapMaxAttempts = 4,
-  [int]    $TokenBootstrapInitialBackoffSeconds = 1,
   [int]    $CleanupWaitSeconds = 5,
   [switch] $NoBuild,
   [switch] $NoTokenBootstrap,
@@ -215,7 +213,9 @@ function Get-WebFailureInfo(
   [string] $BootstrapUserId
 ) {
   $message = "Unknown error."
-  if ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.Exception -and -not [string]::IsNullOrWhiteSpace($ErrorRecord.Exception.Message)) {
+  if ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.ErrorDetails -and -not [string]::IsNullOrWhiteSpace($ErrorRecord.ErrorDetails.Message)) {
+    $message = $ErrorRecord.ErrorDetails.Message.Trim()
+  } elseif ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.Exception -and -not [string]::IsNullOrWhiteSpace($ErrorRecord.Exception.Message)) {
     $message = $ErrorRecord.Exception.Message.Trim()
   }
 
@@ -259,6 +259,11 @@ function Get-WebFailureInfo(
     $hint = "$hint You can bypass this preflight with -SkipAuthProbe if intentionally testing without auth probe."
   }
 
+  if ($Stage -eq "token bootstrap" -and $retryable) {
+    $retryable = $false
+    $hint = "The PAT create outcome may be uncertain, so the request was not replayed. Inspect the preserved failure and server logs before retrying with a new token name."
+  }
+
   return New-FailureInfo `
     -Stage $Stage `
     -Classification $classification `
@@ -266,13 +271,6 @@ function Get-WebFailureInfo(
     -Retryable $retryable `
     -Message $message `
     -Hint $hint
-}
-
-function Get-RetryBackoffSeconds([int] $InitialBackoffSeconds, [int] $AttemptNumber) {
-  $safeInitialBackoff = [Math]::Max($InitialBackoffSeconds, 1)
-  $power = [Math]::Max($AttemptNumber - 1, 0)
-  $delay = [Math]::Min($safeInitialBackoff * [Math]::Pow(2, $power), 20)
-  return [int][Math]::Max([Math]::Round($delay), 1)
 }
 
 function Invoke-AuthProbe(
@@ -308,61 +306,43 @@ function Invoke-AuthProbe(
   Write-Detail "Auth readiness probe passed." "Green"
 }
 
-function Invoke-TokenBootstrapWithRetry(
+function Invoke-TokenBootstrap(
   [string] $GraceServerUri,
   [string] $BootstrapUserId,
-  [string] $RequestBodyJson,
-  [int] $MaxAttempts,
-  [int] $InitialBackoffSeconds
+  [string] $RequestBodyJson
 ) {
   $tokenUri = "$GraceServerUri/authenticate/token/create"
   $headers = @{ "x-grace-user-id" = $BootstrapUserId }
-  $safeMaxAttempts = [Math]::Max($MaxAttempts, 1)
-  $safeInitialBackoff = [Math]::Max($InitialBackoffSeconds, 1)
   $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
-  for ($attempt = 1; $attempt -le $safeMaxAttempts; $attempt++) {
-    Write-Detail "Token bootstrap attempt $attempt/$safeMaxAttempts -> POST $tokenUri"
+  Write-Detail "Token bootstrap -> POST $tokenUri"
 
-    try {
-      $response = Invoke-RestMethod `
-        -Method Post `
-        -Uri $tokenUri `
-        -Headers $headers `
-        -ContentType "application/json" `
-        -Body $RequestBodyJson `
-        -TimeoutSec 20
+  try {
+    $response = Invoke-RestMethod `
+      -Method Post `
+      -Uri $tokenUri `
+      -Headers $headers `
+      -ContentType "application/json" `
+      -Body $RequestBodyJson `
+      -TimeoutSec 20
 
-      $stopwatch.Stop()
-      return [pscustomobject]@{
-        Response       = $response
-        Attempts       = $attempt
-        ElapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
-      }
-    } catch {
-      $failure = Get-WebFailureInfo -ErrorRecord $_ -Stage "token bootstrap" -GraceServerUri $GraceServerUri -BootstrapUserId $BootstrapUserId
-      Set-LastFailureInfo -FailureInfo $failure
-
-      $statusSegment = if ($null -eq $failure.StatusCode) { "no-http-status" } else { [string]$failure.StatusCode }
-      Write-Detail "Attempt $attempt failed (classification=$($failure.Classification), status=$statusSegment)." "Yellow"
-
-      $isLastAttempt = $attempt -ge $safeMaxAttempts
-      if (-not $failure.Retryable -or $isLastAttempt) {
-        $stopwatch.Stop()
-        $retrySegment = if ($failure.Retryable) { "retryable" } else { "non-retryable" }
-        throw (
-          "Token bootstrap failed after $attempt attempt(s) in $([Math]::Round($stopwatch.Elapsed.TotalSeconds, 2))s " +
-          "(classification=$($failure.Classification), status=$statusSegment, $retrySegment). $($failure.Hint)"
-        )
-      }
-
-      $delaySeconds = Get-RetryBackoffSeconds -InitialBackoffSeconds $safeInitialBackoff -AttemptNumber $attempt
-      Write-Detail "Transient failure detected. Retrying in $delaySeconds second(s)." "Yellow"
-      Start-Sleep -Seconds $delaySeconds
+    $stopwatch.Stop()
+    return [pscustomobject]@{
+      Response       = $response
+      Attempts       = 1
+      ElapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
     }
-  }
+  } catch {
+    $failure = Get-WebFailureInfo -ErrorRecord $_ -Stage "token bootstrap" -GraceServerUri $GraceServerUri -BootstrapUserId $BootstrapUserId
+    Set-LastFailureInfo -FailureInfo $failure
+    $stopwatch.Stop()
 
-  throw "Token bootstrap exhausted unexpectedly without a terminal response."
+    $statusSegment = if ($null -eq $failure.StatusCode) { "no-http-status" } else { [string]$failure.StatusCode }
+    throw (
+      "Token bootstrap failed after one non-replayed request in $([Math]::Round($stopwatch.Elapsed.TotalSeconds, 2))s " +
+      "(classification=$($failure.Classification), status=$statusSegment). Failure: $($failure.Message) $($failure.Hint)"
+    )
+  }
 }
 
 function Get-DebugLocalDotnetProcesses([string] $ProjectPath, [string] $LaunchProfile) {
@@ -614,8 +594,6 @@ try {
   Write-Detail "Launch profile: $LaunchProfile"
   Write-Detail "Grace server URI: $GraceServerUri"
   Write-Detail "Startup timeout (seconds): $StartupTimeoutSeconds"
-  Write-Detail "Token max attempts: $TokenBootstrapMaxAttempts"
-  Write-Detail "Token initial backoff (seconds): $TokenBootstrapInitialBackoffSeconds"
   Write-Detail "NoBuild: $NoBuild"
   Write-Detail "NoTokenBootstrap: $NoTokenBootstrap"
   Write-Detail "SkipAuthProbe: $SkipAuthProbe"
@@ -766,12 +744,10 @@ try {
     Write-Detail "Token name: $requestedTokenName"
     Write-Detail "Token lifetime (days): $TokenDays"
 
-    $tokenBootstrapResult = Invoke-TokenBootstrapWithRetry `
+    $tokenBootstrapResult = Invoke-TokenBootstrap `
       -GraceServerUri $GraceServerUri `
       -BootstrapUserId $resolvedBootstrapUserId `
-      -RequestBodyJson $requestBody `
-      -MaxAttempts $TokenBootstrapMaxAttempts `
-      -InitialBackoffSeconds $TokenBootstrapInitialBackoffSeconds
+      -RequestBodyJson $requestBody
 
     Write-Detail "Token bootstrap completed in $($tokenBootstrapResult.Attempts) attempt(s), $($tokenBootstrapResult.ElapsedSeconds)s total." "Green"
 

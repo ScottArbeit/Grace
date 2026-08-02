@@ -1,7 +1,6 @@
 namespace Grace.Actors
 
 open Grace.Actors.Constants
-open Grace.Actors.Context
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
@@ -12,6 +11,7 @@ open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
 open Orleans.Runtime
+open Orleans.Storage
 open System
 open System.Security.Cryptography
 open System.Threading.Tasks
@@ -46,7 +46,8 @@ module PersonalAccessToken =
     /// Implements the Orleans grain for personal access token actor.
     type PersonalAccessTokenActor
         (
-            [<PersistentState(StateName.PersonalAccessToken, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<PersonalAccessTokenState>
+            [<PersistentState(StateName.PersonalAccessToken, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<PersonalAccessTokenState>,
+            loggerFactory: ILoggerFactory
         ) =
         inherit Grain()
 
@@ -58,15 +59,22 @@ module PersonalAccessToken =
             tokenState <- if state.RecordExists then state.State else PersonalAccessTokenState.Empty
             Task.CompletedTask
 
-        /// Persists the updated PersonalAccessToken actor state through the Orleans storage provider.
-        member private this.SaveState() =
+        /// Persists a proposed PAT state before making it visible to later actor calls.
+        member private this.SaveState(proposedState: PersonalAccessTokenState) =
             task {
-                state.State <- tokenState
+                state.State <- proposedState
 
-                if tokenState.Tokens |> List.isEmpty then
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.ClearStateAsync())
-                else
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.WriteStateAsync())
+                try
+                    if proposedState.Tokens |> List.isEmpty then
+                        do! state.ClearStateAsync()
+                    else
+                        do! state.WriteStateAsync()
+
+                    tokenState <- proposedState
+                with
+                | ex ->
+                    state.State <- tokenState
+                    return raise ex
             }
 
         /// Builds the personal-access-token result returned after token state changes.
@@ -126,23 +134,47 @@ module PersonalAccessToken =
                             GroupIds = groupIds
                         }
 
-                    tokenState <- { tokenState with Tokens = record :: tokenState.Tokens }
-                    do! this.SaveState()
+                    let proposedState = { tokenState with Tokens = record :: tokenState.Tokens }
 
-                    let userId = this.GetPrimaryKeyString()
-                    let token = formatToken userId tokenId secret
-                    let summary = this.Summarize record
-                    let result = { Token = token; Summary = summary }
+                    let! persistenceResult =
+                        task {
+                            try
+                                do! this.SaveState proposedState
+                                return Ok()
+                            with
+                            | :? InconsistentStateException ->
+                                do! state.ReadStateAsync()
+                                tokenState <- if state.RecordExists then state.State else PersonalAccessTokenState.Empty
 
-                    log.LogInformation(
-                        "{CurrentInstant}: Created PAT for user {UserId}. CorrelationId: {CorrelationId}; TokenId: {TokenId}.",
-                        getCurrentInstantExtended (),
-                        userId,
-                        correlationId,
-                        tokenId
-                    )
+                                let persistedDuplicate =
+                                    tokenState.Tokens
+                                    |> List.exists (fun token -> token.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
 
-                    return Ok result
+                                if persistedDuplicate then
+                                    return Error(GraceError.Create "Token name already exists." correlationId)
+                                else
+                                    let refreshedProposal = { tokenState with Tokens = record :: tokenState.Tokens }
+                                    do! this.SaveState refreshedProposal
+                                    return Ok()
+                        }
+
+                    match persistenceResult with
+                    | Error error -> return Error error
+                    | Ok () ->
+                        let userId = this.GetPrimaryKeyString()
+                        let token = formatToken userId tokenId secret
+                        let summary = this.Summarize record
+                        let result = { Token = token; Summary = summary }
+
+                        log.LogInformation(
+                            "{CurrentInstant}: Created PAT for user {UserId}. CorrelationId: {CorrelationId}; TokenId: {TokenId}.",
+                            getCurrentInstantExtended (),
+                            userId,
+                            correlationId,
+                            tokenId
+                        )
+
+                        return Ok result
             }
 
         /// Returns list tokens data from the PersonalAccessToken actor state or related storage.
@@ -180,8 +212,8 @@ module PersonalAccessToken =
                         tokenState.Tokens
                         |> List.filter (fun token -> token.TokenId <> tokenId)
 
-                    tokenState <- { tokenState with Tokens = updated :: remaining }
-                    do! this.SaveState()
+                    let proposedState = { tokenState with Tokens = updated :: remaining }
+                    do! this.SaveState proposedState
                     return Ok(this.Summarize updated)
             }
 
@@ -211,8 +243,8 @@ module PersonalAccessToken =
                                 tokenState.Tokens
                                 |> List.filter (fun token -> token.TokenId <> tokenId)
 
-                            tokenState <- { tokenState with Tokens = updated :: remaining }
-                            do! this.SaveState()
+                            let proposedState = { tokenState with Tokens = updated :: remaining }
+                            do! this.SaveState proposedState
 
                             let result = { TokenId = record.TokenId; UserId = this.GetPrimaryKeyString(); Claims = record.Claims; GroupIds = record.GroupIds }
 
