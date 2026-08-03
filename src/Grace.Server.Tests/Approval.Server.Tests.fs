@@ -746,8 +746,8 @@ type ApprovalApiIntegrationTests() =
     [<TestCase("role:BranchApprovalResponder", "repo", "RepositoryApprovalResponder")>]
     member _.ResponseRejectsMismatchedSplitApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string) =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let repositoryId = $"{Guid.NewGuid()}"
+            let branchId = $"{Guid.NewGuid()}"
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
 
