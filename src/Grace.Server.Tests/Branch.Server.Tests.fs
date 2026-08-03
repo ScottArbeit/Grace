@@ -863,6 +863,40 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue.Token
         }
 
+    /// Runs an SDK assertion against a real temporary repository configuration and restores process-global configuration state.
+    let withExplicitSdkConfigurationForServerAsync (testBody: unit -> Task<'T>) =
+        task {
+            let root = Path.Combine(Path.GetTempPath(), $"grace-branch-sdk-{Guid.NewGuid():N}")
+            let configurationDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+            let configurationPath = Path.Combine(configurationDirectory, Constants.GraceConfigFileName)
+            let previousDirectory = Environment.CurrentDirectory
+
+            try
+                Directory.CreateDirectory(configurationDirectory)
+                |> ignore
+
+                let configuration = GraceConfiguration()
+                configuration.ServerUri <- graceServerBaseAddress
+                saveConfigFile configurationPath configuration
+                Environment.CurrentDirectory <- root
+                resetConfiguration ()
+
+                let loadedConfiguration = Current()
+                Assert.That(loadedConfiguration.ServerUri, Is.EqualTo(graceServerBaseAddress))
+
+                return! testBody ()
+            finally
+                Grace.SDK.Auth.clearTokenProvider ()
+                Environment.CurrentDirectory <- previousDirectory
+                resetConfiguration ()
+
+                if Directory.Exists(root) then
+                    try
+                        Directory.Delete(root, true)
+                    with
+                    | _ -> ()
+        }
+
     /// Defines configure SDK for server behavior for the surrounding tests used by the server integration branch scenario.
     let configureSdkForServerAsync () =
         task {
@@ -1837,7 +1871,7 @@ type BranchServer() =
         }
 
     /// Verifies the annotate route and SDK return envelope for server known reference scenario.
-    [<Test>]
+    [<Test; NonParallelizable>]
     member _.AnnotateRouteAndSdkReturnEnvelopeForServerKnownReference() =
         task {
             let repositoryId = repositoryIds[0]
@@ -1858,19 +1892,19 @@ type BranchServer() =
             Assert.That(returnValue.ReturnValue.Lines, Is.Not.Empty)
             Assert.That(returnValue.Properties[ "Path" ].ToString(), Is.EqualTo("/branch/annotate"))
 
-            do! BranchServerTestHelpers.configureSdkForServerAsync ()
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+                        parameters.CorrelationId <- generateCorrelationId ()
+                        let! sdkResult = Grace.SDK.Branch.Annotate parameters
 
-            try
-                parameters.CorrelationId <- generateCorrelationId ()
-                let! sdkResult = Grace.SDK.Branch.Annotate parameters
-
-                match sdkResult with
-                | Ok sdkReturnValue ->
-                    Assert.That(sdkReturnValue.ReturnValue.TargetReferenceId, Is.EqualTo(parameters.TargetReferenceId))
-                    Assert.That(sdkReturnValue.ReturnValue.Path, Is.EqualTo(fileVersion.RelativePath))
-                | Error error -> Assert.Fail($"Expected SDK Branch.Annotate success, got {error.Error}.")
-            finally
-                Grace.SDK.Auth.clearTokenProvider ()
+                        match sdkResult with
+                        | Ok sdkReturnValue ->
+                            Assert.That(sdkReturnValue.ReturnValue.TargetReferenceId, Is.EqualTo(parameters.TargetReferenceId))
+                            Assert.That(sdkReturnValue.ReturnValue.Path, Is.EqualTo(fileVersion.RelativePath))
+                        | Error error -> Assert.Fail($"Expected SDK Branch.Annotate success, got {error.Error}.")
+                    })
         }
 
     /// Verifies the annotate route returns grace error for bad parameters scenario.

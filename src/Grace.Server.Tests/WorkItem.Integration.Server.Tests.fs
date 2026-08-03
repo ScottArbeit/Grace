@@ -12,6 +12,7 @@ open Grace.Types.Common
 open Grace.Types.WorkItem
 open NUnit.Framework
 open System
+open System.IO
 open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
@@ -550,6 +551,40 @@ module private WorkItemIntegrationHelpers =
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> response
             return returnValue.ReturnValue.Token
+        }
+
+    /// Runs an SDK assertion against a real temporary repository configuration and restores process-global configuration state.
+    let withExplicitSdkConfigurationForServerAsync (testBody: unit -> Task<'T>) =
+        task {
+            let root = Path.Combine(Path.GetTempPath(), $"grace-workitem-sdk-{Guid.NewGuid():N}")
+            let configurationDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+            let configurationPath = Path.Combine(configurationDirectory, Constants.GraceConfigFileName)
+            let previousDirectory = Environment.CurrentDirectory
+
+            try
+                Directory.CreateDirectory(configurationDirectory)
+                |> ignore
+
+                let configuration = GraceConfiguration()
+                configuration.ServerUri <- graceServerBaseAddress
+                saveConfigFile configurationPath configuration
+                Environment.CurrentDirectory <- root
+                resetConfiguration ()
+
+                let loadedConfiguration = Current()
+                Assert.That(loadedConfiguration.ServerUri, Is.EqualTo(graceServerBaseAddress))
+
+                return! testBody ()
+            finally
+                Grace.SDK.Auth.clearTokenProvider ()
+                Environment.CurrentDirectory <- previousDirectory
+                resetConfiguration ()
+
+                if Directory.Exists(root) then
+                    try
+                        Directory.Delete(root, true)
+                    with
+                    | _ -> ()
         }
 
     /// Defines configure SDK for server behavior for the surrounding tests used by the server integration work Item Integration scenario.
@@ -1228,14 +1263,11 @@ type WorkItemSdkSmokeIntegrationTests() =
 
     /// Runs with SDK authentication with the configured test context.
     let runWithSdkAuthentication (testBody: unit -> Task<unit>) =
-        task {
-            do! WorkItemIntegrationHelpers.configureSdkForServerAsync ()
-
-            try
-                do! testBody ()
-            finally
-                Grace.SDK.Auth.clearTokenProvider ()
-        }
+        WorkItemIntegrationHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+            task {
+                do! WorkItemIntegrationHelpers.configureSdkForServerAsync ()
+                return! testBody ()
+            })
 
     /// Verifies the SDK work item link apis round trip scenario.
     [<Test>]
@@ -1518,22 +1550,20 @@ type WorkItemSdkSmokeIntegrationTests() =
                         match notFoundResult with
                         | Ok _ -> Assert.Fail("Expected not-found error for unknown WorkItemNumber.")
                         | Error error -> Assert.That(error.Error, Does.Contain(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
+
+                        Grace.SDK.Auth.clearTokenProvider ()
+
+                        let unauthorizedParameters = Parameters.WorkItem.GetWorkItemLinksParameters()
+                        unauthorizedParameters.OwnerId <- ownerId
+                        unauthorizedParameters.OrganizationId <- organizationId
+                        unauthorizedParameters.RepositoryId <- repositoryId
+                        unauthorizedParameters.WorkItemId <- workItemId
+                        unauthorizedParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! unauthorizedResult = Grace.SDK.WorkItem.GetLinks unauthorizedParameters
+
+                        match unauthorizedResult with
+                        | Ok _ -> Assert.Fail("Expected authorization error when SDK token provider is not configured.")
+                        | Error _ -> ()
                     })
-
-            let configuration = Current()
-            configuration.ServerUri <- graceServerBaseAddress
-            Grace.SDK.Auth.clearTokenProvider ()
-
-            let unauthorizedParameters = Parameters.WorkItem.GetWorkItemLinksParameters()
-            unauthorizedParameters.OwnerId <- ownerId
-            unauthorizedParameters.OrganizationId <- organizationId
-            unauthorizedParameters.RepositoryId <- repositoryId
-            unauthorizedParameters.WorkItemId <- workItemId
-            unauthorizedParameters.CorrelationId <- generateCorrelationId ()
-
-            let! unauthorizedResult = Grace.SDK.WorkItem.GetLinks unauthorizedParameters
-
-            match unauthorizedResult with
-            | Ok _ -> Assert.Fail("Expected authorization error when SDK token provider is not configured.")
-            | Error _ -> ()
         }

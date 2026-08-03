@@ -86,6 +86,25 @@ module private ApprovalTestHelpers =
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
+    /// Creates a repository and returns its fresh repository and default branch scope identities.
+    let createRepositoryScopeAsync () =
+        task {
+            let repositoryId = $"{Guid.NewGuid()}"
+            let parameters = Parameters.Repository.CreateRepositoryParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.RepositoryName <- $"ApprovalRepository{Guid.NewGuid():N}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/repository/create", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
+            let returnValue = deserialize<GraceReturnValue<string>> responseText
+            let branchId = Common.requireGuidProperty (nameof BranchId) returnValue.Properties[nameof BranchId]
+            return repositoryId, $"{branchId}"
+        }
+
     /// Builds create policy parameters for route calls.
     let createPolicyParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Approval.CreateApprovalPolicyParameters()
@@ -703,8 +722,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.ResponseRejectsResponderRoleCallerWhenSelectorDoesNotMatch() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId "group:release-managers"
 
@@ -724,8 +742,7 @@ type ApprovalApiIntegrationTests() =
     [<TestCase("role:ApprovalResponder", "branch", "BranchApprovalResponder", true)>]
     member _.ResponseAcceptsApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string, grantAtBranch: bool) =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
 
@@ -746,8 +763,7 @@ type ApprovalApiIntegrationTests() =
     [<TestCase("role:BranchApprovalResponder", "repo", "RepositoryApprovalResponder")>]
     member _.ResponseRejectsMismatchedSplitApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string) =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
 
@@ -772,8 +788,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.BodySuppliedScopeEscalationDoesNotBypassStoredScope() =
         task {
-            let repositoryId = repositoryIds[0]
-            let allowedBranchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, allowedBranchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let storedBranchId = $"{Guid.NewGuid()}"
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId storedBranchId $"user:{userId}"
@@ -793,8 +808,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.DuplicateResponseIsIdempotentAfterTerminalDecision() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
 
@@ -815,8 +829,7 @@ type ApprovalApiIntegrationTests() =
     [<Test>]
     member _.RequestHistoryReturnsActorBackedEventsFromStoredRepositoryPartition() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
+            let! repositoryId, branchId = ApprovalTestHelpers.createRepositoryScopeAsync ()
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
 
