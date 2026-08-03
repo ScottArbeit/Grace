@@ -11,6 +11,7 @@
   <Project Path="Grace.Actors/Grace.Actors.fsproj" />
   <Project Path="Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj" />
   <Project Path="Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" />
+  <Project Path="Grace.CLI.LocalStateDb.Worker/Grace.CLI.LocalStateDb.Worker.fsproj" />
   <Project Path="Grace.CLI.Tests/Grace.CLI.Tests.fsproj" />
   <Project Path="Grace.CLI/Grace.CLI.fsproj" />
   <Project Path="Grace.Load/Grace.Load.fsproj" />

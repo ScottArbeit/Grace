@@ -74,23 +74,23 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
-        <PackageReference Include="Azure.Storage.Blobs" Version="12.29.0" />
+        <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.2" />
+        <PackageReference Include="Azure.Storage.Blobs" Version="12.29.1" />
         <PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.26.0" />
         <PackageReference Include="Azure.Storage.Common" Version="12.28.0" />
         <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
         <PackageReference Include="FSharpPlus" Version="1.9.1" />
         <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.11" />
-        <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.9" />
-        <PackageReference Include="Microsoft.Orleans.Core" Version="10.2.0" />
-        <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.2.0" />
-        <PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="10.2.0" />
-        <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="10.2.0" />
-        <PackageReference Include="Microsoft.Orleans.Streaming.AzureStorage" Version="10.2.0" />
+        <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.62.0" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
+        <PackageReference Include="Microsoft.Orleans.Core" Version="10.2.2" />
+        <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.2.2" />
+        <PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="10.2.2" />
+        <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="10.2.2" />
+        <PackageReference Include="Microsoft.Orleans.Streaming.AzureStorage" Version="10.2.2" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
         <PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
-        <PackageReference Include="NodaTime" Version="3.3.2" />
+        <PackageReference Include="NodaTime" Version="3.3.3" />
         <PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.4.0" />
     </ItemGroup>
 
@@ -105,7 +105,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Update="FSharp.Core" Version="10.1.301" />
+        <PackageReference Update="FSharp.Core" Version="10.1.302" />
     </ItemGroup>
 
 </Project>

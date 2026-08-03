@@ -1,7 +1,6 @@
 namespace Grace.Shared
 
 open Microsoft.Extensions.Caching.Memory
-open Microsoft.FSharp.NativeInterop
 open Microsoft.FSharp.Reflection
 open NodaTime
 open NodaTime.Text
@@ -22,8 +21,6 @@ open System.Reflection
 open System.Collections.Concurrent
 open System.Buffers
 open Microsoft.Extensions.ObjectPool
-
-#nowarn "9"
 
 /// Contains combinators helpers.
 module Combinators =
@@ -535,15 +532,6 @@ module Utilities =
         elif isBinary then "application/octet-stream"
         else "application/text"
 
-    // Borrowed with appreciation from https://bartoszsypytkowski.com/writing-high-performance-f-code/.
-    /// Allocates a stack buffer for small temporary spans.
-    let inline stackalloc<'a when 'a: unmanaged> (length: int) : Span<'a> =
-        let p =
-            NativePtr.stackalloc<'a> length
-            |> NativePtr.toVoidPtr
-
-        Span<'a>(p, length)
-
     let propertyLookupByType = ConcurrentDictionary<Type, PropertyInfo array>()
 
     /// Builds a dictionary from the property names and values of a set of parameters from the validated inputs used by this contract.
@@ -589,12 +577,12 @@ module Utilities =
 
     /// Gets an HttpClient instance from an enhanced, custom HttpClientFactory.
     let getHttpClient (correlationId: string) =
-        let traceIdBytes = stackalloc<byte> 16
-        let parentIdBytes = stackalloc<byte> 8
-        Random.Shared.NextBytes(traceIdBytes)
-        Random.Shared.NextBytes(parentIdBytes)
-        let traceId = byteArrayToString (traceIdBytes)
-        let parentId = byteArrayToString (parentIdBytes)
+        let traceIdBytes = Array.zeroCreate<byte> 16
+        let parentIdBytes = Array.zeroCreate<byte> 8
+        Random.Shared.NextBytes(Span<byte>(traceIdBytes))
+        Random.Shared.NextBytes(Span<byte>(parentIdBytes))
+        let traceId = byteArrayToString (Span<byte>(traceIdBytes))
+        let parentId = byteArrayToString (Span<byte>(parentIdBytes))
 
         let httpClient = new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
 

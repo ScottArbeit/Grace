@@ -43,7 +43,7 @@ module Services =
             member this.Return(hashInstance: IncrementalHash) =
                 // Reset the hash instance so it can be reused.
                 // We're calling GetHashAndReset() to reset - there's no Reset() function.
-                let throwaway = stackalloc<byte> SHA256.HashSizeInBytes
+                let throwaway = Array.zeroCreate<byte> SHA256.HashSizeInBytes
                 hashInstance.GetHashAndReset(throwaway) |> ignore
                 true // Indicates that the object is okay to be returned to the pool
 
@@ -76,7 +76,7 @@ module Services =
                     else
                         moreToRead <- false
 
-                let blake3Bytes = stackalloc<byte> Hash.Size
+                let blake3Bytes = Array.zeroCreate<byte> Hash.Size
                 hasher.Finalize(blake3Bytes)
 
                 return FileContentHash(byteArrayToString blake3Bytes)
@@ -157,7 +157,7 @@ module Services =
                         moreToRead <- false
 
                 // Get the SHA-256 hash as a byte array.
-                let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
+                let sha256Bytes = Array.zeroCreate<byte> SHA256.HashSizeInBytes
                 hasher.GetHashAndReset(sha256Bytes) |> ignore
 
                 // Convert the SHA-256 value from a byte[] to a string, and return it.
@@ -197,12 +197,12 @@ module Services =
                     else
                         moreToRead <- false
 
-                let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
+                let sha256Bytes = Array.zeroCreate<byte> SHA256.HashSizeInBytes
 
                 sha256Hasher.GetHashAndReset(sha256Bytes)
                 |> ignore
 
-                let blake3Bytes = stackalloc<byte> Hash.Size
+                let blake3Bytes = Array.zeroCreate<byte> Hash.Size
                 blake3Hasher.Finalize(blake3Bytes)
 
                 return Sha256Hash(byteArrayToString sha256Bytes), Blake3Hash(byteArrayToString blake3Bytes)
@@ -306,7 +306,7 @@ module Services =
         let preimageBytes = Encoding.UTF8.GetBytes preimage
         use hasher = Hasher.New()
         hasher.Update(preimageBytes.AsSpan())
-        let blake3Bytes = stackalloc<byte> Hash.Size
+        let blake3Bytes = Array.zeroCreate<byte> Hash.Size
         hasher.Finalize(blake3Bytes)
         Blake3Hash(byteArrayToString blake3Bytes)
 
