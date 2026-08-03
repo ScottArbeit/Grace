@@ -165,9 +165,13 @@ module CurrentStateCaptureCliTests =
         configuration.GraceStatusFile <- Path.Combine(configuration.GraceDirectory, Constants.GraceLocalStateDbFileName)
         configuration.GraceObjectCacheFile <- configuration.GraceStatusFile
         configuration.ConfigurationDirectory <- configuration.GraceDirectory
-        configuration.IsPopulated <- true
-        updateConfiguration configuration
-        configuration
+
+        Directory.CreateDirectory(configuration.ConfigurationDirectory)
+        |> ignore
+
+        saveConfigFile (Path.Combine(configuration.ConfigurationDirectory, Constants.GraceConfigFileName)) configuration
+        resetConfiguration ()
+        Current()
 
     /// Runs the supplied action with temp repo applied.
     let private withTempRepo (action: string -> GraceConfiguration -> unit) =

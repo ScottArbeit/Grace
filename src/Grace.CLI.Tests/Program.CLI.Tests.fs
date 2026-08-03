@@ -1879,6 +1879,42 @@ module HelpDoesNotReadConfigTests =
 
             standardOut |> should not' (contain "Elapsed:"))
 
+    /// Verifies that quiet configuration lookup reports a missing repository without creating configuration files.
+    [<Test>]
+    let ``configuration lookup reports missing config without creating files`` () =
+        withTempDir (fun root ->
+            match tryCurrent () with
+            | Error (ConfigurationFileNotFound message) -> message |> should contain "graceconfig.json"
+            | Error (ConfigurationFileMalformed _) -> failwith "Expected a missing configuration result."
+            | Ok _ -> failwith "Expected configuration lookup to fail in an empty directory."
+
+            File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
+            |> should equal false)
+
+    /// Verifies that agent bootstrap remains config-independent through the public CLI entry point.
+    [<Test>]
+    let ``agent bootstrap succeeds without config through program entry point`` () =
+        withTempDir (fun root ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "agent"
+                                                  "bootstrap"
+                                                  "--agent-id"
+                                                  "11111111-1111-1111-1111-111111111111"
+                                                  "--display-name"
+                                                  "Codex"
+                                                  "--output"
+                                                  "Silent" |]
+
+            exitCode |> should equal 0
+            standardOut |> should equal String.Empty
+            standardError |> should equal String.Empty
+
+            File.Exists(Path.Combine(root, ".grace", "agent-session-state.json"))
+            |> should equal true
+
+            File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
+            |> should equal false)
+
     /// Verifies that missing config in json equals mode emits one error document on stdout.
     [<Test>]
     let ``missing config in json equals mode emits one error document on stdout`` () =

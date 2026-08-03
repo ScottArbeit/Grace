@@ -4,6 +4,7 @@ open FsUnit
 open Grace.CLI
 open Grace.Shared.Client.Configuration
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.IO
 
@@ -37,6 +38,23 @@ module AgentCommandTests =
     let private invoke (args: string array) =
         let parseResult = GraceCommand.rootCommand.Parse(args)
         parseResult.Invoke()
+
+    /// Runs the public CLI entry point while capturing output for test assertions.
+    let private runWithCapturedOutput (args: string array) =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+        let settings = AnsiConsoleSettings()
+        settings.Out <- AnsiConsoleOutput(writer)
+        let originalAnsiConsole = AnsiConsole.Console
+
+        try
+            Console.SetOut(writer)
+            AnsiConsole.Console <- AnsiConsole.Create(settings)
+            let exitCode = GraceCommand.main args
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            AnsiConsole.Console <- originalAnsiConsole
 
     /// Runs the supplied action with temp dir applied.
     let private withTempDir (action: string -> unit) =
@@ -167,16 +185,17 @@ module AgentCommandTests =
     [<Test>]
     let ``agent work start reports actionable missing config`` () =
         withTempDir (fun _ ->
-            let exitCode =
-                invoke [| "agent"
-                          "work"
-                          "start"
-                          "--work-item-id"
-                          "42"
-                          "--output"
-                          "Silent" |]
+            let exitCode, output =
+                runWithCapturedOutput [| "agent"
+                                         "work"
+                                         "start"
+                                         "--work-item-id"
+                                         "42"
+                                         "--output"
+                                         "Silent" |]
 
-            exitCode |> should equal -1)
+            exitCode |> should equal -1
+            output |> should contain "graceconfig.json")
 
     /// Verifies that agent work start rejects stale local state mismatch.
     [<Test>]

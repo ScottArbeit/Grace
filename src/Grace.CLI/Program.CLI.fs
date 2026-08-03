@@ -1473,10 +1473,19 @@ module GraceCommand =
                         let isAllowed =
                             let command = parseResult.CommandResult.Command
 
-                            Seq.append [ command ] (command.Parents.OfType<Command>())
-                            |> Seq.exists (fun cmd ->
-                                allowedCommands
-                                |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
+                            let commandLineage = Seq.append [ command ] (command.Parents.OfType<Command>())
+
+                            let isAgentBootstrap =
+                                (commandLineage
+                                 |> Seq.exists (fun cmd -> cmd.Name.Equals("agent", comparison)))
+                                && (commandLineage
+                                    |> Seq.exists (fun cmd -> cmd.Name.Equals("bootstrap", comparison)))
+
+                            isAgentBootstrap
+                            || (commandLineage
+                                |> Seq.exists (fun cmd ->
+                                    allowedCommands
+                                    |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison))))
                             || (tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive
                                 |> Option.exists (fun topLevel ->
                                     allowedCommands
