@@ -432,6 +432,9 @@ module WatchTests =
                 with
                 | _ -> ()
 
+    /// Resets process-global Watch test state while a real repository configuration is active.
+    let private resetWatchTestStateWithExplicitConfiguration () = withTempRepo ignore
+
     /// Clears default empty ignore entries so replacement tests exercise eligible repository paths.
     let private clearWatchIgnoreEntries () =
         let configuration = Current()
@@ -1096,15 +1099,17 @@ module WatchTests =
         let scheduler = new Watch.WatchObservationCandidateScheduler(quietWindow, StringComparison.Ordinal)
         let fullPath = Path.Combine(Path.GetTempPath(), "grace-watch-candidate", "scope-replacement.txt")
         let firstSeenAt = DateTime(2026, 7, 12, 1, 0, 0, DateTimeKind.Utc)
-        let current = Current()
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+        let rootDirectory = Path.GetDirectoryName(fullPath)
 
         let scope rootDirectoryId (rootSha256Hash: string) (rootBlake3Hash: string) : Watch.WatchObservationScope =
             {
-                RepositoryId = current.RepositoryId
-                RepositoryName = current.RepositoryName
-                BranchId = current.BranchId
-                BranchName = current.BranchName
-                RootDirectory = current.RootDirectory
+                RepositoryId = repositoryId
+                RepositoryName = "scope-replacement-repository"
+                BranchId = branchId
+                BranchName = "scope-replacement-branch"
+                RootDirectory = rootDirectory
                 PathComparison = StringComparison.Ordinal
                 RootDirectoryId = rootDirectoryId
                 RootDirectorySha256Hash = Sha256Hash rootSha256Hash
@@ -17857,59 +17862,56 @@ module WatchTests =
     let ``materialization resync recovery rejects mismatched or unreadable durable identity after clean publication`` () =
         /// Runs one deterministic clean-recovery attempt against a final durable-status result that must remain fail-closed.
         let verifyFailClosed durableStatusRead =
-            try
-                withTempRepo (fun _ ->
-                    Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
-                    Watch.requestGraceWatchExplicitResyncForWatchTests "materialization clean proof failed"
+            withTempRepo (fun _ ->
+                Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+                Watch.requestGraceWatchExplicitResyncForWatchTests "materialization clean proof failed"
 
-                    let expectedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
-                    let mutable finalDurableStatusReadCount = 0
-                    let readStatus () = Task.FromResult(expectedStatus)
-                    let upload _ _ = Task.FromResult(())
-                    let updateGraceStatus _ _ = Task.FromResult(Some expectedStatus)
-                    let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
-                    let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
-                    let applyIncremental _ _ _ = Task.FromResult(())
+                let expectedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+                let mutable finalDurableStatusReadCount = 0
+                let readStatus () = Task.FromResult(expectedStatus)
+                let upload _ _ = Task.FromResult(())
+                let updateGraceStatus _ _ = Task.FromResult(Some expectedStatus)
+                let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+                let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
+                let applyIncremental _ _ _ = Task.FromResult(())
 
-                    Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () ->
-                        finalDurableStatusReadCount <- finalDurableStatusReadCount + 1
-                        durableStatusRead ())
+                Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () ->
+                    finalDurableStatusReadCount <- finalDurableStatusReadCount + 1
+                    durableStatusRead ())
 
-                    (Watch.processChangedFilesWithClients
-                        readStatus
-                        readStatus
-                        upload
-                        updateGraceStatus
-                        scanForDifferences
-                        updateGraceStatusFromDifferences
-                        applyIncremental
-                        Services.updateGraceWatchInterprocessFile)
-                        .GetAwaiter()
-                        .GetResult()
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    Services.updateGraceWatchInterprocessFile)
+                    .GetAwaiter()
+                    .GetResult()
 
-                    finalDurableStatusReadCount |> should equal 1
+                finalDurableStatusReadCount |> should equal 1
 
-                    Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+                Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
+                |> should equal true
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal true
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                let inspection = Services.inspectGraceWatchStatus().Result
+
+                match inspection.Status with
+                | Some publishedStatus ->
+                    publishedStatus.HasPendingWatchWork
                     |> should equal true
 
-                    Watch.isGraceWatchResyncPendingForWatchTests ()
-                    |> should equal true
-
-                    Watch.currentGraceWatchRuntimeModeForWatchTests ()
-                    |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
-
-                    let inspection = Services.inspectGraceWatchStatus().Result
-
-                    match inspection.Status with
-                    | Some publishedStatus ->
-                        publishedStatus.HasPendingWatchWork
-                        |> should equal true
-
-                        publishedStatus.IsWorkingTreeClean
-                        |> should equal false
-                    | None -> Assert.Fail("Expected dirty Watch IPC when clean recovery durable identity is unproven."))
-            finally
-                Watch.clearPendingWatchWorkForTests ()
+                    publishedStatus.IsWorkingTreeClean
+                    |> should equal false
+                | None -> Assert.Fail("Expected dirty Watch IPC when clean recovery durable identity is unproven."))
 
         let advancedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
 
@@ -20128,44 +20130,45 @@ module WatchTests =
     /// Verifies that a newer lifecycle request survives while an older request is still reading a BranchDto that has no Reference.
     [<Test; Category("CurrentBranchCatchUp")>]
     let ``current branch catch-up preserves newer generation after older BranchDto no-reference completion`` () =
-        let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
-        let readStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        withTempRepo (fun _ ->
+            let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
+            let readStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
 
-        let olderBranchRead =
-            TaskCompletionSource<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let olderBranchRead =
+                TaskCompletionSource<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>(TaskCreationOptions.RunContinuationsAsynchronously)
 
-        let getOlderBranch () =
-            readStarted.TrySetResult(()) |> ignore
+            let getOlderBranch () =
+                readStarted.TrySetResult(()) |> ignore
 
-            olderBranchRead.Task
+                olderBranchRead.Task
 
-        let processReference _ =
-            Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                InvalidOperationException("A BranchDto with no Reference must not enter the coordinator.")
-            )
+            let processReference _ =
+                Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
+                    InvalidOperationException("A BranchDto with no Reference must not enter the coordinator.")
+                )
 
-        scheduler.Request() |> should equal 1L
+            scheduler.Request() |> should equal 1L
 
-        let olderRun = Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests scheduler getOlderBranch processReference
+            let olderRun = Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests scheduler getOlderBranch processReference
 
-        readStarted.Task.GetAwaiter().GetResult()
+            readStarted.Task.GetAwaiter().GetResult()
 
-        scheduler.Request() |> should equal 2L
+            scheduler.Request() |> should equal 2L
 
-        olderBranchRead.SetResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "older-no-reference"))
-        olderRun.GetAwaiter().GetResult()
+            olderBranchRead.SetResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "older-no-reference"))
+            olderRun.GetAwaiter().GetResult()
 
-        scheduler.PendingGeneration
-        |> should equal (Some 2L)
+            scheduler.PendingGeneration
+            |> should equal (Some 2L)
 
-        (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-            scheduler
-            (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-no-reference")))
-            processReference)
-            .GetAwaiter()
-            .GetResult()
+            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+                scheduler
+                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "newer-no-reference")))
+                processReference)
+                .GetAwaiter()
+                .GetResult()
 
-        scheduler.PendingGeneration |> should equal None
+            scheduler.PendingGeneration |> should equal None)
 
     /// Verifies that a newer lifecycle request survives an older same-root coordinator result.
     [<Test; Category("CurrentBranchCatchUp")>]
@@ -20332,15 +20335,16 @@ module WatchTests =
         scheduler.PendingGeneration
         |> should equal (Some 1L)
 
-        (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
-            scheduler
-            (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "refresh-recovery")))
-            (fun _ ->
-                Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
-                    InvalidOperationException("A missing latest Reference must not enter the coordinator.")
-                )))
-            .GetAwaiter()
-            .GetResult()
+        withTempRepo (fun _ ->
+            (Watch.runCurrentBranchReferenceCatchUpIfDueWithClientsForWatchTests
+                scheduler
+                (fun () -> Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "refresh-recovery")))
+                (fun _ ->
+                    Task.FromException<Watch.CurrentBranchMaterializationCoordinatorOutcome>(
+                        InvalidOperationException("A missing latest Reference must not enter the coordinator.")
+                    )))
+                .GetAwaiter()
+                .GetResult())
 
         scheduler.PendingGeneration |> should equal None
 
@@ -22835,7 +22839,7 @@ module WatchTests =
             |> Array.map (fun fileVersion -> string fileVersion.RelativePath)
             |> should equal [| "README.txt" |]
         finally
-            Watch.clearPendingWatchWorkForTests ()
+            resetWatchTestStateWithExplicitConfiguration ()
 
     /// Verifies reserved namespace and repository containment use the active worktree case policy without prefix matches.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary")>]
@@ -22890,7 +22894,7 @@ module WatchTests =
             Watch.isPathWithinDirectoryForWatchTests root rootCaseVariant
             |> should equal true
         finally
-            Watch.clearPendingWatchWorkForTests ()
+            resetWatchTestStateWithExplicitConfiguration ()
 
     /// Verifies retained-tree validation resolves disk casing through the active policy before comparing status paths.
     [<Test; Category("CurrentBranchMaterializationApplyBoundary"); Category("CurrentBranchMaterializationRetainedTreePathComparison")>]
