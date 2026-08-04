@@ -619,6 +619,12 @@ not Grace review state and are not part of this process.
 After the reviewer completes, freeze the finding set for that head. Classify each finding as fix now, invalid, waived,
 or deferred to a named future epic leaf. Record the reason and evidence for every non-fix disposition.
 
+When a required PR check fails, inspect the newest failed workflow for the same current head before adding it to the
+finding set or assigning a worker. Read the failed job logs and identify each failed test, assertion, exception, or
+infrastructure error. For each result, record the producer, reproduction, owned-diff causal link, and classification:
+in-scope fix now, unrelated repository failure, CI/environmental failure, stale result, or invalid expectation. Do not
+route an unrelated failure to the current issue, and do not call a failure a flake without the log evidence.
+
 Route each fix-now finding to a fresh implementation or fix worker. Serialize fix workers for one PR unless the
 completed review contains findings with provably disjoint write sets. A fix worker owns the code change, proof, commit,
 push, and handoff. The orchestrator starts the new-head review/check pair immediately after the pushed head is verified,
@@ -714,7 +720,7 @@ diagnostic tools, not routine pre-commit or pre-push requirements.
 | Before push | Confirm local evidence is current; no routine broad local gate |
 | PR current revision | GitHub `Validate`, authoritative broad gate |
 | Review fix | Focused regression proof, then GitHub `Validate` |
-| CI failure | Inspect CI evidence and reproduce narrowly; escalate to Fast or Full as needed |
+| CI failure | Inspect newest current-head failed workflow logs; classify every failure, reproduce only grounded in-scope failures narrowly, and escalate to Fast or Full as needed |
 | Merge | Current CI green, current review satisfied, residual risks recorded |
 
 Use the local scripts only when their escalation role is justified:

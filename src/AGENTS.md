@@ -93,6 +93,9 @@ update the issue before editing the new paths.
   context, and require it to read and follow the installed `dev-process/CODE_REVIEW.md`.
 - Run that review concurrently with required PR checks, wait for both, and treat both results as stale when the head
   changes. Route valid fix-now findings to a fresh implementation/fix subagent, then repeat both gates on the new head.
+- When a required PR check fails, inspect the newest failed workflow for that current head before assigning a fix
+  worker. Classify each failed job/test from its actual error and separate an owned-diff failure from unrelated CI or
+  repository failures; only the former is a fix route for the issue.
 - When a worker handoff needs PR coordination, start the fresh reviewer immediately after verifying the pushed head.
   Creating the first PR is the only prerequisite; after that, start review before editing issue/PR status or adding
   comments, and perform those GitHub updates while review and checks run.

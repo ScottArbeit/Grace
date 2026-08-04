@@ -188,6 +188,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   A fresh finding belongs to that completed review on the exact head. Findings from earlier heads are stale unless the
   current review repeats them. Route valid fix-now findings to a fresh implementation/fix subagent; do not make code
   changes from the orchestrator role.
+- When a required PR check fails, inspect the most recent failed workflow for the current head before classifying or
+  assigning a fix. Identify every failed test or job, its failing assertion or error, and whether it is caused by the
+  PR's owned diff. Record unrelated failures as such; route only a grounded in-scope failure to a fresh fix worker.
 - For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
   assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
   reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
