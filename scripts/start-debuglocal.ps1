@@ -781,6 +781,19 @@ try {
     Write-Host "Copy/paste (PowerShell):" -ForegroundColor Cyan
     Write-Host "  `$env:GRACE_SERVER_URI = `"$GraceServerUri`""
     Write-Host "  `$env:GRACE_TOKEN      = `"$token`""
+
+    $powerShellEnvironmentCommands = @"
+`$env:GRACE_SERVER_URI = "$GraceServerUri"
+`$env:GRACE_TOKEN      = "$token"
+"@
+
+    try {
+      Set-Clipboard -Value $powerShellEnvironmentCommands -ErrorAction Stop
+      Write-Detail "Copied PowerShell environment commands to the clipboard." "Green"
+    } catch {
+      Write-Detail "Could not copy PowerShell environment commands to the clipboard: $($_.Exception.Message)" "Yellow"
+    }
+
     Write-Host ""
     Write-Host "Copy/paste (bash/zsh):" -ForegroundColor Cyan
     Write-Host "  export GRACE_SERVER_URI=`"$GraceServerUri`""
