@@ -9,6 +9,68 @@ open System
 [<TestFixture>]
 [<NonParallelizable>]
 module CommandParsingTests =
+    /// Parses arguments after applying the selected platform output-value policy.
+    let private parseWithOutputPolicy isCaseInsensitive args =
+        GraceCommand.normalizeOutputArguments args isCaseInsensitive
+        |> GraceCommand.rootCommand.Parse
+
+    /// Verifies that direct lowercase verbose output selects the existing Verbose behavior.
+    [<Test>]
+    let ``direct lowercase verbose output selects Verbose behavior`` () =
+        let parseResult =
+            parseWithOutputPolicy
+                true
+                [|
+                    "branch"
+                    "get"
+                    "--output"
+                    "verbose"
+                |]
+
+        parseResult.Errors.Count |> should equal 0
+        parseResult |> Common.verbose |> should equal true
+
+    /// Verifies that unknown output values retain native canonical parser diagnostics.
+    [<Test>]
+    let ``unknown output value retains native parser error`` () =
+        let parseResult =
+            parseWithOutputPolicy
+                true
+                [|
+                    "branch"
+                    "get"
+                    "--output=Jsonish"
+                |]
+
+        parseResult.Errors.Count |> should equal 1
+
+        parseResult.Errors[0].Message
+        |> should contain "Jsonish"
+
+        parseResult.Errors[0].Message
+        |> should contain "Normal"
+
+        parseResult.Errors[0].Message
+        |> should contain "Verbose"
+
+    /// Verifies that case-sensitive policy still rejects non-canonical output casing.
+    [<Test>]
+    let ``case-sensitive output policy retains exact-case parser behavior`` () =
+        let parseResult =
+            parseWithOutputPolicy
+                false
+                [|
+                    "branch"
+                    "get"
+                    "--output"
+                    "verbose"
+                |]
+
+        parseResult.Errors.Count |> should equal 1
+
+        parseResult.Errors[0].Message
+        |> should contain "verbose"
+
     /// Runs the supplied action with environment variable applied.
     let private withEnvironmentVariable (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
@@ -1933,6 +1995,23 @@ module HelpDoesNotReadConfigTests =
             assertJsonErrorOutput standardOut
             |> should contain "graceconfig.json")
 
+    /// Verifies that the status alias accepts direct lowercase verbose output and selects human-readable verbose mode.
+    [<Test>]
+    let ``status accepts direct lowercase verbose output`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "status"
+                                                  "--output"
+                                                  "verbose" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+            standardOut |> should contain "graceconfig.json"
+            standardOut |> should contain "Elapsed:"
+
+            standardOut
+            |> should not' (contain "Argument 'verbose' not recognized"))
+
     /// Verifies that missing config in mixed case json equals mode emits one error document on stdout.
     [<Test>]
     let ``missing config in mixed-case json equals mode emits one error document on stdout`` () =
@@ -2054,13 +2133,14 @@ module HelpDoesNotReadConfigTests =
 
             assertJsonErrorOutput standardOut |> ignore)
 
-    /// Verifies that lowercase json value is rejected with json error envelope.
+    /// Verifies that lowercase json selects the JSON error envelope on case-insensitive platforms.
     [<Test>]
-    let ``lowercase json value is rejected with json error envelope`` () =
+    let ``lowercase json value selects json error envelope`` () =
         withTempDir (fun _ ->
             /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
-                runWithCapturedStdoutAndStderr [| "--output=json"
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "json"
                                                   "repository"
                                                   "init" |]
 
@@ -2068,7 +2148,7 @@ module HelpDoesNotReadConfigTests =
             standardError |> should equal String.Empty
 
             assertJsonErrorOutput standardOut
-            |> should contain "json")
+            |> should contain "graceconfig.json")
 
     /// Verifies that catch all exception in json mode emits one error document on stdout.
     [<Test>]
