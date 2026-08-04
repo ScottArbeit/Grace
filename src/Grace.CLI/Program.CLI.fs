@@ -1014,6 +1014,63 @@ module GraceCommand =
         else
             false
 
+    /// Canonicalizes documented output values before parser validation on platforms with case-insensitive CLI policy.
+    let internal normalizeOutputArguments (args: string array) (isCaseInsensitive: bool) =
+        let normalizedArgs = args |> Array.copy
+
+        if isCaseInsensitive then
+            let canonicalOutputFormats = listCases<OutputFormat> () |> Seq.toArray
+
+            /// Maps a recognized output spelling to the canonical value advertised by CLI help.
+            let tryCanonicalOutputFormat value =
+                canonicalOutputFormats
+                |> Array.tryFind (fun canonical -> canonical.Equals(value, StringComparison.InvariantCultureIgnoreCase))
+
+            /// Walks option tokens until the end-of-options marker while preserving unrelated arguments.
+            let rec normalize index =
+                if index < normalizedArgs.Length
+                   && normalizedArgs[index] <> "--" then
+                    let token = normalizedArgs[index]
+                    let equalsIndex = token.IndexOf('=')
+
+                    if equalsIndex > 0 then
+                        let optionName = token.Substring(0, equalsIndex)
+
+                        if
+                            optionName.Equals(OptionName.Output, StringComparison.InvariantCultureIgnoreCase)
+                            || optionName.Equals("-o", StringComparison.InvariantCultureIgnoreCase)
+                        then
+                            let suppliedValue = token.Substring(equalsIndex + 1)
+
+                            match tryCanonicalOutputFormat suppliedValue with
+                            | Some canonical -> normalizedArgs[index] <- $"{optionName}={canonical}"
+                            | None -> ()
+
+                        normalize (index + 1)
+                    elif
+                        token.Equals(OptionName.Output, StringComparison.InvariantCultureIgnoreCase)
+                        || token.Equals("-o", StringComparison.InvariantCultureIgnoreCase)
+                    then
+                        if index + 1 < normalizedArgs.Length then
+                            let nextToken = normalizedArgs[index + 1]
+
+                            if nextToken.StartsWith("-", StringComparison.Ordinal) then
+                                normalize (index + 1)
+                            else
+                                match tryCanonicalOutputFormat nextToken with
+                                | Some canonical -> normalizedArgs[index + 1] <- canonical
+                                | None -> ()
+
+                                normalize (index + 2)
+                        else
+                            normalize (index + 1)
+                    else
+                        normalize (index + 1)
+
+            normalize 0
+
+        normalizedArgs
+
     /// Models feedback section values passed between the parser and program handlers.
     type FeedbackSection(action: HelpAction) =
         inherit SynchronousCommandLineAction()
@@ -1143,7 +1200,7 @@ module GraceCommand =
                         properCasedArgs
                 | None -> properCasedArgs
 
-        let mutable argvNormalized = normalizeArgsForHistory args
+        let mutable argvNormalized = normalizeArgsForHistory (normalizeOutputArguments args isCaseInsensitive)
 
         (task {
             let mutable parseResult: ParseResult = null
