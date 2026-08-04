@@ -93,6 +93,9 @@ update the issue before editing the new paths.
   context, and require it to read and follow the installed `dev-process/CODE_REVIEW.md`.
 - Run that review concurrently with required PR checks, wait for both, and treat both results as stale when the head
   changes. Route valid fix-now findings to a fresh implementation/fix subagent, then repeat both gates on the new head.
+- When a worker handoff needs PR coordination, start the fresh reviewer immediately after verifying the pushed head.
+  Creating the first PR is the only prerequisite; after that, start review before editing issue/PR status or adding
+  comments, and perform those GitHub updates while review and checks run.
 - For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
   assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
   reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
@@ -111,9 +114,9 @@ update the issue before editing the new paths.
   cycles, pause before assigning another routine fix worker. Audit the timeline, separate stale/duplicate/invalid
   sessions from fresh findings, and decide whether a missing invariant, sibling-issue deferral, or structural ledger is
   needed before continuing.
-- After each fix subagent completes a review-requested fix, record the outcome, fix commit, validation evidence,
-  finding disposition, and the prevention line required by `docs/Development process.md`; update the PR body's
-  `Review Status` section and start a new review subagent plus required checks on the new head.
+- After each fix subagent completes a review-requested fix, start the new review subagent plus required checks on the
+  verified head first. Then record the outcome, fix commit, validation evidence, finding disposition, prevention line,
+  and PR `Review Status` while those gates run.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and

@@ -178,6 +178,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - Start the review subagent after the current head is pushed and run it concurrently with required PR checks. Wait for
   both the review verdict and the checks. A result from either gate becomes stale when the head changes; restart both
   gates for the new head.
+- When a worker handoff requires PR coordination, favor the review start over tracker latency: create the PR first only
+  when no PR exists, then start the fresh current-head reviewer immediately after the pushed head is verified. Do this
+  before editing the issue, PR body, review status, or follow-up comments; record those GitHub updates while the review
+  and required checks run. For an existing PR after a fix push, start the reviewer before every GitHub update.
 - The review subagent is read-only. It returns the structured verdict, findings, accepted risks, deferred hardening,
   proof gaps, and merge-readiness evidence required by `CODE_REVIEW.md`; the orchestrator records the result in the PR.
 - For Grace PR review-fix routing, wait for the current-head review subagent to finish before deciding the action set.
@@ -209,11 +213,11 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   structural stabilization ledger before the next review request.
 - Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
   fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
-  review surface. After a fix worker pushes, record only the fresh findings it addressed, update `Review Status`, then
-  start a new fresh review subagent and required checks for the new head.
-- After each fix subagent completes a review-requested fix and hands off, the orchestrator records the outcome, fix
-  commit, validation evidence, finding disposition, and required prevention line in the PR before starting the new-head
-  gates.
+  review surface. After a fix worker pushes, start the new fresh review subagent and required checks for the verified
+  head before recording the fresh finding disposition or updating `Review Status`.
+- After each fix subagent completes a review-requested fix and hands off, the orchestrator starts the new-head review
+  gate first, then records the outcome, fix commit, validation evidence, finding disposition, and required prevention
+  line in the PR while review and checks run.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup
