@@ -1051,16 +1051,19 @@ module GraceCommand =
                         token.Equals(OptionName.Output, StringComparison.InvariantCultureIgnoreCase)
                         || token.Equals("-o", StringComparison.InvariantCultureIgnoreCase)
                     then
-                        if index + 1 < normalizedArgs.Length
-                           && normalizedArgs[index + 1] = "--" then
-                            normalize (index + 1)
-                        else
-                            if index + 1 < normalizedArgs.Length then
-                                match tryCanonicalOutputFormat normalizedArgs[index + 1] with
+                        if index + 1 < normalizedArgs.Length then
+                            let nextToken = normalizedArgs[index + 1]
+
+                            if nextToken.StartsWith("-", StringComparison.Ordinal) then
+                                normalize (index + 1)
+                            else
+                                match tryCanonicalOutputFormat nextToken with
                                 | Some canonical -> normalizedArgs[index + 1] <- canonical
                                 | None -> ()
 
-                            normalize (index + 2)
+                                normalize (index + 2)
+                        else
+                            normalize (index + 1)
                     else
                         normalize (index + 1)
 

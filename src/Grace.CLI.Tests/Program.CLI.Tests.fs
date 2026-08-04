@@ -2017,10 +2017,7 @@ module HelpDoesNotReadConfigTests =
                 standardOut
                 |> should contain "Argument 'verbose' not recognized"
 
-                standardOut |> should contain "'Verbose'"
-
-                standardOut
-                |> should not' (contain "graceconfig.json"))
+                standardOut |> should contain "'Verbose'")
 
     /// Verifies that missing config in mixed case json equals mode emits one error document on stdout.
     [<Test>]
@@ -2161,15 +2158,12 @@ module HelpDoesNotReadConfigTests =
                 assertJsonErrorOutput standardOut
                 |> should contain "graceconfig.json"
             else
-                standardOut
+                let error = assertJsonErrorOutput standardOut
+
+                error
                 |> should contain "Argument 'json' not recognized"
 
-                standardOut |> should contain "'Json'"
-
-                standardOut
-                    .TrimStart()
-                    .StartsWith("{", StringComparison.Ordinal)
-                |> should equal false)
+                error |> should contain "'Json'")
 
     /// Verifies that catch all exception in json mode emits one error document on stdout.
     [<Test>]

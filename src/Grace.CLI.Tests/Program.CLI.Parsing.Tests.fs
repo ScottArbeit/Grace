@@ -107,6 +107,26 @@ module CommandTokenParsingTests =
                 "-o=Verbose"
             |]
 
+    let private malformedSplitOutputRecovery =
+        [
+            TestCaseData([| "--output"; "--output=vErBoSe" |], [| "--output"; "--output=Verbose" |])
+                .SetName("malformed long output before long equals output")
+            TestCaseData([| "--output"; "-o"; "vErBoSe" |], [| "--output"; "-o"; "Verbose" |])
+                .SetName("malformed long output before short split output")
+            TestCaseData([| "-o"; "-o"; "vErBoSe" |], [| "-o"; "-o"; "Verbose" |])
+                .SetName("malformed short output before short split output")
+            TestCaseData([| "-o"; "--output=vErBoSe" |], [| "-o"; "--output=Verbose" |])
+                .SetName("malformed short output before long equals output")
+        ]
+
+    /// Verifies that a malformed split option does not hide a later recognized output option.
+    [<TestCaseSource(nameof malformedSplitOutputRecovery)>]
+    let ``malformed split output resumes normalization at the later option`` outputTokens expectedTokens =
+        let args = Array.append outputTokens [| "repository"; "init" |]
+
+        GraceCommand.normalizeOutputArguments args true
+        |> should equal (Array.append expectedTokens [| "repository"; "init" |])
+
     /// Verifies that top level command returns none for empty args.
     [<Test>]
     let ``top level command returns none for empty args`` () =
