@@ -403,7 +403,7 @@ Definition of done:
 - Tests or docs updated
 - Coding and fix work completed through implementation subagents, with the main agent acting as orchestrator
 - Worker completed a review-prevention self-review over the actual diff before handoff
-- A fresh Terra Medium review subagent following `dev-process/CODE_REVIEW.md` reported no blocking findings for the
+- A fresh Terra High review subagent following `dev-process/CODE_REVIEW.md` reported no blocking findings for the
   latest PR commit
 - Required PR checks passed for that same latest commit
 - Ready-for-review pull request opened and linked
@@ -592,7 +592,7 @@ report:
 For every PR revision that may be merged:
 
 1. Read the installed `dev-process/CODE_REVIEW.md` instructions.
-1. Start exactly one fresh review subagent with `model: gpt-5.6-terra`, `reasoning_effort: medium`, and
+1. Start exactly one fresh review subagent with `model: gpt-5.6-terra`, `reasoning_effort: high`, and
    `fork_turns: none`.
 1. Because the reviewer receives no forked conversation, provide the complete review context: repository and worktree,
    issue and PR links, base and head SHAs, intended behavior, owned and forbidden paths, validation evidence, known
@@ -669,7 +669,7 @@ Use this handoff shape:
 
 ### Orchestrator Follow-Up
 
-- Start one fresh Terra Medium review subagent with no forked turns.
+- Start one fresh Terra High review subagent with `fork_turns: none`.
 - Run it concurrently with required GitHub checks.
 - Record the same-head verdict, checks, findings, and dispositions.
 ```
@@ -844,7 +844,7 @@ Then verify:
 - no unexpected deletions were introduced during the update
 - focused proof was rerun when conflict resolution or relevant base changes could affect the slice
 
-Push the refreshed revision, run one fresh Terra Medium review subagent following `dev-process/CODE_REVIEW.md`
+Push the refreshed revision, run one fresh Terra High review subagent following `dev-process/CODE_REVIEW.md`
 concurrently with the required GitHub checks, and wait for both. A review verdict or CI result on an older revision is
 useful history, but it does not satisfy the completion review gate.
 

@@ -173,7 +173,7 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   ready-for-review pull request. Keep it open while the step is still in progress so review findings, fixes, validation
   evidence, and the final current-head verdict can be recorded on the pull request instead of only on the issue.
 - For every Grace PR head, start exactly one fresh review subagent with model `gpt-5.6-terra`, reasoning effort
-  `medium`, and `fork_turns: none`. Give it the full issue, PR, worktree, branch, base, head SHA, validation, and
+  `high`, and `fork_turns: none`. Give it the full issue, PR, worktree, branch, base, head SHA, validation, and
   quality-contract context, and require it to read and follow the installed `dev-process/CODE_REVIEW.md`.
 - Start the review subagent after the current head is pushed and run it concurrently with required PR checks. Wait for
   both the review verdict and the checks. A result from either gate becomes stale when the head changes; restart both

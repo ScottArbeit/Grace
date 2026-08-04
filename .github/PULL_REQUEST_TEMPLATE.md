@@ -97,7 +97,7 @@ validation.
 ## Review Status
 
 - Current head SHA:
-- Fresh review subagent: `gpt-5.6-terra`, `reasoning_effort: medium`, `fork_turns: none`
+- Fresh review subagent: `gpt-5.6-terra`, `reasoning_effort: high`, `fork_turns: none`
 - `dev-process/CODE_REVIEW.md` followed:
 - Review verdict for current head:
 - Required PR checks for current head:

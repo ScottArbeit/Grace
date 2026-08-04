@@ -98,7 +98,7 @@ When acting as the main implementation orchestrator, follow the repo policy:
   resolution, labels, checklists, merge state, and cleanup records. The orchestrator can start the next independent
   worker from a sufficient handoff before finishing wrap-up for the previous worker when dependencies and write sets
   make that safe.
-- For every current PR head, start one fresh review subagent with model `gpt-5.6-terra`, reasoning effort `medium`, and
+- For every current PR head, start one fresh review subagent with model `gpt-5.6-terra`, reasoning effort `high`, and
   `fork_turns: none`. Give it complete issue, PR, worktree, branch, base, head, validation, and quality-contract context,
   and require it to read and follow the installed `dev-process/CODE_REVIEW.md`.
 - Run the review subagent concurrently with required GitHub checks. Wait for both. If the head changes, both results

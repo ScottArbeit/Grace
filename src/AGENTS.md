@@ -88,7 +88,7 @@ update the issue before editing the new paths.
 - After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
   ready-for-review pull request. Keep it open while the step is still in progress so review findings, fixes, validation
   evidence, and the final current-head verdict can be recorded on the pull request instead of only on the issue.
-- For every Grace PR head, start one fresh review subagent with model `gpt-5.6-terra`, reasoning effort `medium`, and
+- For every Grace PR head, start one fresh review subagent with model `gpt-5.6-terra`, reasoning effort `high`, and
   `fork_turns: none`. Give it the full issue, PR, worktree, branch, base, head SHA, validation, and quality-contract
   context, and require it to read and follow the installed `dev-process/CODE_REVIEW.md`.
 - Run that review concurrently with required PR checks, wait for both, and treat both results as stale when the head
