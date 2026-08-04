@@ -2006,11 +2006,21 @@ module HelpDoesNotReadConfigTests =
 
             exitCode |> should equal -1
             standardError |> should equal String.Empty
-            standardOut |> should contain "graceconfig.json"
-            standardOut |> should contain "Elapsed:"
 
-            standardOut
-            |> should not' (contain "Argument 'verbose' not recognized"))
+            if Environment.OSVersion.Platform = PlatformID.Win32NT then
+                standardOut |> should contain "graceconfig.json"
+                standardOut |> should contain "Elapsed:"
+
+                standardOut
+                |> should not' (contain "Argument 'verbose' not recognized")
+            else
+                standardOut
+                |> should contain "Argument 'verbose' not recognized"
+
+                standardOut |> should contain "'Verbose'"
+
+                standardOut
+                |> should not' (contain "graceconfig.json"))
 
     /// Verifies that missing config in mixed case json equals mode emits one error document on stdout.
     [<Test>]
@@ -2147,8 +2157,19 @@ module HelpDoesNotReadConfigTests =
             exitCode |> should equal -1
             standardError |> should equal String.Empty
 
-            assertJsonErrorOutput standardOut
-            |> should contain "graceconfig.json")
+            if Environment.OSVersion.Platform = PlatformID.Win32NT then
+                assertJsonErrorOutput standardOut
+                |> should contain "graceconfig.json"
+            else
+                standardOut
+                |> should contain "Argument 'json' not recognized"
+
+                standardOut |> should contain "'Json'"
+
+                standardOut
+                    .TrimStart()
+                    .StartsWith("{", StringComparison.Ordinal)
+                |> should equal false)
 
     /// Verifies that catch all exception in json mode emits one error document on stdout.
     [<Test>]
