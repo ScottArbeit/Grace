@@ -543,6 +543,11 @@ After the first implementation worker pushes the issue branch, the orchestrator 
 request. Keep the PR open while implementation, validation, review, and fixes continue so the current state remains
 visible on the issue and PR.
 
+For wall-clock efficiency, start the fresh current-head reviewer immediately after the pushed head is verified. Creating
+the first pull request is the sole prerequisite when none exists. Once a PR exists, start review before editing the
+issue, PR body, `Review Status`, or follow-up comments; perform those GitHub coordination updates while the reviewer
+and required checks run. After a fix push, do not wait for tracker updates before starting the new-head reviewer.
+
 ### Execution Budget
 
 Grace limits implementation and fix workers, not runtime proof:
@@ -600,7 +605,8 @@ For every PR revision that may be merged:
 1. Tell the reviewer to read `dev-process/CODE_REVIEW.md`, inspect the full current-head diff, remain read-only, and
    return its structured verdict and findings to the orchestrator. The reviewer must not edit files, push commits, or
    change GitHub state.
-1. Run the fresh review concurrently with the required GitHub PR checks.
+1. Start the reviewer before updating issue/PR text or comments for the worker handoff. Run it concurrently with the
+   required GitHub PR checks, then record tracker and review-status updates while both gates run.
 1. Wait for both the review verdict and the required checks. They satisfy the gate only when both apply to the same
    head SHA and both pass.
 
@@ -615,7 +621,8 @@ or deferred to a named future epic leaf. Record the reason and evidence for ever
 
 Route each fix-now finding to a fresh implementation or fix worker. Serialize fix workers for one PR unless the
 completed review contains findings with provably disjoint write sets. A fix worker owns the code change, proof, commit,
-push, and handoff. The orchestrator records the disposition and starts the new-head review/check pair.
+push, and handoff. The orchestrator starts the new-head review/check pair immediately after the pushed head is verified,
+then records the disposition and PR/issue status while those gates run.
 
 For an epic-branch PR, a valid finding may be deferred only when it is explicitly outside the current leaf, a future
 leaf owns it, and that future issue is updated with the finding and proof obligation. Never defer a finding that makes
@@ -642,7 +649,8 @@ status-map workflow.
 ### Ready For Review Handoff
 
 An implementation or fix worker hands off when its current slice is committed, pushed, and supported by focused proof.
-The orchestrator then owns the independent review/check gate.
+The orchestrator then owns the independent review/check gate. If no PR exists, open it, then start review immediately;
+otherwise start review before any GitHub status or comment update for the handoff.
 
 Use this handoff shape:
 
@@ -669,9 +677,10 @@ Use this handoff shape:
 
 ### Orchestrator Follow-Up
 
-- Start one fresh Terra High review subagent with `fork_turns: none`.
+- If necessary, create the PR; then start one fresh Terra High review subagent with `fork_turns: none` before tracker
+  updates.
 - Run it concurrently with required GitHub checks.
-- Record the same-head verdict, checks, findings, and dispositions.
+- Record the same-head verdict, checks, findings, and dispositions while those gates run.
 ```
 
 ### Review/Fix Record Template
@@ -844,9 +853,10 @@ Then verify:
 - no unexpected deletions were introduced during the update
 - focused proof was rerun when conflict resolution or relevant base changes could affect the slice
 
-Push the refreshed revision, run one fresh Terra High review subagent following `dev-process/CODE_REVIEW.md`
-concurrently with the required GitHub checks, and wait for both. A review verdict or CI result on an older revision is
-useful history, but it does not satisfy the completion review gate.
+Push the refreshed revision, immediately run one fresh Terra High review subagent following
+`dev-process/CODE_REVIEW.md` before any tracker update, then run it concurrently with the required GitHub checks. Add
+the issue/PR status and evidence updates while those gates run, and wait for both. A review verdict or CI result on an
+older revision is useful history, but it does not satisfy the completion review gate.
 
 Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
 maintainer explicitly asks for a draft.
