@@ -128,6 +128,16 @@ module Organization =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
+    /// Builds the organization create request from the single identity resolved for verbose output and server submission.
+    let internal buildCreateParameters (graceIds: GraceIds) =
+        Parameters.Organization.CreateOrganizationParameters(
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            CorrelationId = graceIds.CorrelationId
+        )
+
     // Create subcommand.
     /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
@@ -137,42 +147,16 @@ module Organization =
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
-                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = resolveCreateGraceIds OptionName.OrganizationId parseResult
 
-                    // In a Create() command, if --organization-id is implicit, that's actually the old OrganizationId taken from graceconfig.json,
-                    //   and we need to set OrganizationId to a new Guid.
-                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
-
-                    if parseResult
-                        .GetResult(
-                            Options.organizationId
-                        )
-                        .Implicit then
-                        let organizationId = Guid.NewGuid()
-                        graceIds <- { graceIds with OrganizationId = organizationId; OrganizationIdString = $"{organizationId}" }
+                    if parseResult |> verbose then
+                        printParseResultWithResolvedValues parseResult (Some graceIds)
 
                     let validateIncomingParameters = parseResult |> CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let organizationId =
-                            if parseResult
-                                .GetResult(
-                                    Options.organizationId
-                                )
-                                .Implicit then
-                                Guid.NewGuid().ToString()
-                            else
-                                graceIds.OrganizationIdString
-
-                        let parameters =
-                            Parameters.Organization.CreateOrganizationParameters(
-                                OwnerId = graceIds.OwnerIdString,
-                                OwnerName = graceIds.OwnerName,
-                                OrganizationId = organizationId,
-                                OrganizationName = graceIds.OrganizationName,
-                                CorrelationId = getCorrelationId parseResult
-                            )
+                        let parameters = buildCreateParameters graceIds
 
                         if parseResult |> hasOutput then
                             let! result =

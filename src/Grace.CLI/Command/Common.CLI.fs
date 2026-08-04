@@ -744,21 +744,73 @@ module Common =
             OptionName.BranchName
         ]
 
+    /// Describes how an omitted hierarchy identity is presented before command-time resolution.
+    type internal HierarchyIdentityDefaultDisplay = { OptionAlias: string; CurrentDisplay: string; CreateDisplay: string; CreateParentCommand: string }
+
+    /// Defines the shared, configuration-independent hierarchy identity presentation used by help and verbose output.
+    let internal hierarchyIdentityDefaultDisplays =
+        [
+            { OptionAlias = OptionName.OwnerId; CurrentDisplay = "current OwnerId"; CreateDisplay = "new Guid"; CreateParentCommand = "owner" }
+            {
+                OptionAlias = OptionName.OrganizationId
+                CurrentDisplay = "current OrganizationId"
+                CreateDisplay = "new Guid"
+                CreateParentCommand = "organization"
+            }
+            { OptionAlias = OptionName.RepositoryId; CurrentDisplay = "current RepositoryId"; CreateDisplay = "new Guid"; CreateParentCommand = "repository" }
+            { OptionAlias = OptionName.BranchId; CurrentDisplay = "current BranchId"; CreateDisplay = "new Guid"; CreateParentCommand = "branch" }
+        ]
+
+    /// Returns the symbolic human display for an omitted GUID option without resolving configuration or generating an identity.
+    let private tryGetImplicitGuidDisplay (parseResult: ParseResult) (option: Option) (value: obj) =
+        let optionResult = parseResult.GetResult(option.Name) :?> OptionResult
+
+        if isNull optionResult
+           || not optionResult.Implicit
+           || not (value :? Guid)
+           || unbox<Guid> value <> Guid.Empty then
+            None
+        else
+            match hierarchyIdentityDefaultDisplays
+                  |> List.tryFind (fun display -> display.OptionAlias = option.Name)
+                with
+            | Some display ->
+                let isCreate = parseResult.CommandResult.Command.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
+
+                let createsThisIdentity =
+                    isCreate
+                    && parseResult
+                        .CommandResult
+                        .Command
+                        .Parents
+                        .OfType<Command>()
+                        .Any(fun parent -> parent.Name.Equals(display.CreateParentCommand, StringComparison.OrdinalIgnoreCase))
+
+                if createsThisIdentity then
+                    Some display.CreateDisplay
+                else
+                    Some display.CurrentDisplay
+            | None -> Some "not supplied"
+
     /// Resolves shared CLI should show resolved values values from parse results, configuration, or Grace identifiers.
     let private shouldShowResolvedValues (parseResult: ParseResult) =
         resolvedValueOptionNames
         |> List.exists (isOptionPresent parseResult)
 
     /// Tries to map build resolved values text and returns a GraceError instead of throwing on unsupported input.
-    let private tryBuildResolvedValuesText (parseResult: ParseResult) =
+    let private tryBuildResolvedValuesText (parseResult: ParseResult) (resolvedGraceIds: GraceIds option) =
         if
             isNull parseResult
-            || not (configurationFileExists ())
+            || (resolvedGraceIds.IsNone
+                && not (configurationFileExists ()))
             || not (shouldShowResolvedValues parseResult)
         then
             None
         else
-            let graceIds = Services.getNormalizedIdsAndNames parseResult
+            let graceIds =
+                resolvedGraceIds
+                |> Option.defaultWith (fun () -> Services.getNormalizedIdsAndNames parseResult)
+
             let sb = stringBuilderPool.Get()
 
             try
@@ -788,8 +840,8 @@ module Common =
             finally
                 stringBuilderPool.Return sb
 
-    /// Prints the ParseResult with markup.
-    let printParseResult (parseResult: ParseResult) =
+    /// Prints the ParseResult with symbolic implicit GUIDs and optional command-resolved hierarchy values.
+    let printParseResultWithResolvedValues (parseResult: ParseResult) (resolvedGraceIds: GraceIds option) =
         if not <| isNull parseResult then
             let sb = stringBuilderPool.Get()
 
@@ -814,23 +866,35 @@ module Common =
                         with
                         | :? InvalidOperationException -> None
 
+                let mutable synopsis = parseResult.ToString()
+
                 for option in optionList do
                     match tryGetValue option with
                     | Some value ->
-                        if option.ValueType.IsArray then
-                            sb.AppendLine($"{option.Name}: {serialize value}")
+                        match tryGetImplicitGuidDisplay parseResult option value with
+                        | Some display ->
+                            synopsis <- synopsis.Replace($"{option.Name} <{value}>", $"{option.Name} <{display}>", StringComparison.Ordinal)
+
+                            sb.AppendLine($"{option.Name}: {display}")
                             |> ignore
-                        else
-                            sb.AppendLine($"{option.Name}: {value}") |> ignore
+                        | None ->
+                            if option.ValueType.IsArray then
+                                sb.AppendLine($"{option.Name}: {serialize value}")
+                                |> ignore
+                            else
+                                sb.AppendLine($"{option.Name}: {value}") |> ignore
+                    | None when option.ValueType = typeof<Guid> ->
+                        sb.AppendLine($"{option.Name}: not supplied")
+                        |> ignore
                     | None -> ()
 
-                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets synopsis}[/]")
                 AnsiConsole.WriteLine()
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]Parameter values:[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (sb.ToString())}[/]")
                 AnsiConsole.WriteLine()
 
-                match tryBuildResolvedValuesText parseResult with
+                match tryBuildResolvedValuesText parseResult resolvedGraceIds with
                 | Some resolvedValues ->
                     AnsiConsole.MarkupLine($"[{Colors.Verbose}]Resolved values:[/]")
                     AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets resolvedValues}[/]")
@@ -838,6 +902,30 @@ module Common =
                 | None -> ()
             finally
                 stringBuilderPool.Return sb
+
+    /// Prints the ParseResult with markup using configuration-backed hierarchy resolution when available.
+    let printParseResult (parseResult: ParseResult) = printParseResultWithResolvedValues parseResult None
+
+    /// Resolves one create-owned hierarchy identity exactly once while preserving explicit IDs and all parsed names.
+    let internal resolveCreateGraceIdsWith (newGuid: unit -> Guid) (createdIdOptionName: string) (parseResult: ParseResult) =
+        let graceIds = Services.getNormalizedIdsAndNames parseResult
+        let optionResult = parseResult.GetResult(createdIdOptionName) :?> OptionResult
+
+        if isNull optionResult || not optionResult.Implicit then
+            graceIds
+        else
+            let createdId = newGuid ()
+            let createdIdString = createdId.ToString()
+
+            match createdIdOptionName with
+            | OptionName.OwnerId -> { graceIds with OwnerId = createdId; OwnerIdString = createdIdString }
+            | OptionName.OrganizationId -> { graceIds with OrganizationId = createdId; OrganizationIdString = createdIdString }
+            | OptionName.RepositoryId -> { graceIds with RepositoryId = createdId; RepositoryIdString = createdIdString }
+            | OptionName.BranchId -> { graceIds with BranchId = createdId; BranchIdString = createdIdString }
+            | _ -> invalidArg (nameof createdIdOptionName) $"{createdIdOptionName} is not a create-owned hierarchy identity option."
+
+    /// Resolves one create-owned hierarchy identity for command output, local reporting, and request construction.
+    let resolveCreateGraceIds createdIdOptionName parseResult = resolveCreateGraceIdsWith Guid.NewGuid createdIdOptionName parseResult
 
     /// Prints AnsiConsole markup to the console.
     let writeMarkup (markup: IRenderable) =
