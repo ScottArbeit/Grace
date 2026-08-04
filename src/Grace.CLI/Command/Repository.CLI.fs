@@ -263,6 +263,26 @@ module Repository =
             if parseResult < 0.0f || parseResult > 1.0f then
                 optionResult.AddError("The confidence threshold must be between 0.0 and 1.0."))
 
+    /// Builds the repository create request from the single identity resolved for verbose output and server submission.
+    let internal buildCreateParameters (graceIds: GraceIds) =
+        let ownerId = if graceIds.HasOwner then graceIds.OwnerIdString else $"{Current().OwnerId}"
+
+        let organizationId =
+            if graceIds.HasOrganization then
+                graceIds.OrganizationIdString
+            else
+                $"{Current().OrganizationId}"
+
+        Repository.CreateRepositoryParameters(
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            OwnerId = ownerId,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = organizationId,
+            OrganizationName = graceIds.OrganizationName,
+            CorrelationId = graceIds.CorrelationId
+        )
+
     // Create subcommand.
     /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
@@ -272,15 +292,10 @@ module Repository =
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
-                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = resolveCreateGraceIds OptionName.RepositoryId parseResult
 
-                    // In a Create() command, if --repository-id is implicit, that's actually the old RepositoryId taken from graceconfig.json,
-                    //   and we need to set RepositoryId to a new Guid.
-                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
-
-                    if parseResult.GetResult(Options.ownerId).Implicit then
-                        let repositoryId = Guid.NewGuid()
-                        graceIds <- { graceIds with RepositoryId = repositoryId; RepositoryIdString = $"{repositoryId}" }
+                    if parseResult |> verbose then
+                        printParseResultWithResolvedValues parseResult (Some graceIds)
 
                     let validateIncomingParameters =
                         parseResult
@@ -288,33 +303,7 @@ module Repository =
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let repositoryIdOption = parseResult.GetResult(Options.repositoryId)
-
-                        let repositoryId =
-                            if isNull repositoryIdOption
-                               || repositoryIdOption.Implicit then
-                                Guid.NewGuid().ToString()
-                            else
-                                graceIds.RepositoryIdString
-
-                        let ownerId = if graceIds.HasOwner then graceIds.OwnerIdString else $"{Current().OwnerId}"
-
-                        let organizationId =
-                            if graceIds.HasOrganization then
-                                graceIds.OrganizationIdString
-                            else
-                                $"{Current().OrganizationId}"
-
-                        let parameters =
-                            Repository.CreateRepositoryParameters(
-                                RepositoryId = repositoryId,
-                                RepositoryName = graceIds.RepositoryName,
-                                OwnerId = ownerId,
-                                OwnerName = graceIds.OwnerName,
-                                OrganizationId = organizationId,
-                                OrganizationName = graceIds.OrganizationName,
-                                CorrelationId = getCorrelationId parseResult
-                            )
+                        let parameters = buildCreateParameters graceIds
 
                         if parseResult |> hasOutput then
                             let! result =

@@ -259,6 +259,7 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client
@@ -431,6 +432,7 @@ module HelpDoesNotReadConfigTests =
             action tempDir
         finally
             Environment.CurrentDirectory <- originalDir
+            resetConfiguration ()
 
             if Directory.Exists(tempDir) then
                 try
@@ -2137,6 +2139,206 @@ module HelpDoesNotReadConfigTests =
             output |> should contain $"{orgId}"
             output |> should contain $"{repoId}"
             output |> should contain $"{branchId}")
+
+    /// Verifies that verbose create output describes deferred hierarchy identities instead of the empty parser sentinel.
+    [<Test>]
+    let ``verbose repository create describes implicit hierarchy identities symbolically`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "repository"
+                        "create"
+                        "--repository-name"
+                        "truthful-identities"
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds = Common.resolveCreateGraceIdsWith (fun () -> Guid.Parse("99999999-9999-9999-9999-999999999999")) OptionName.RepositoryId parseResult
+
+            let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+            output
+            |> should contain "owner-id: current OwnerId"
+
+            output
+            |> should contain "organization-id: current OrganizationId"
+
+            output |> should contain "repository-id: new Guid"
+
+            output
+            |> should not' (contain "00000000-0000-0000-0000-000000000000"))
+
+    /// Verifies that every hierarchy create request reuses the exact ID shown in resolved verbose output.
+    [<Test>]
+    let ``hierarchy create requests reuse their single resolved identity`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+            let createdId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+            let cases =
+                [
+                    [|
+                        "owner"
+                        "create"
+                        "--owner-name"
+                        "owner-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.OwnerId,
+                    "OwnerId",
+                    (fun _ graceIds ->
+                        (Grace.CLI.Command.Owner.buildCreateParameters graceIds)
+                            .OwnerId)
+                    [|
+                        "organization"
+                        "create"
+                        "--organization-name"
+                        "organization-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.OrganizationId,
+                    "OrganizationId",
+                    (fun _ graceIds ->
+                        (Grace.CLI.Command.Organization.buildCreateParameters graceIds)
+                            .OrganizationId)
+                    [|
+                        "repository"
+                        "create"
+                        "--repository-name"
+                        "repository-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.RepositoryId,
+                    "RepositoryId",
+                    (fun _ graceIds ->
+                        (Grace.CLI.Command.Repository.buildCreateParameters graceIds)
+                            .RepositoryId)
+                    [|
+                        "branch"
+                        "create"
+                        "--branch-name"
+                        "branch-name"
+                        "--output"
+                        "Verbose"
+                    |],
+                    OptionName.BranchId,
+                    "BranchId",
+                    (fun parseResult graceIds ->
+                        (Grace.CLI.Command.Branch.buildCreateParameters parseResult graceIds String.Empty String.Empty)
+                            .BranchId)
+                ]
+
+            for args, createdIdOptionName, resolvedLabel, requestId in cases do
+                let parseResult = GraceCommand.rootCommand.Parse(args)
+                parseResult.Errors.Count |> should equal 0
+                let mutable generatedCount = 0
+
+                let graceIds =
+                    Common.resolveCreateGraceIdsWith
+                        (fun () ->
+                            generatedCount <- generatedCount + 1
+                            createdId)
+                        createdIdOptionName
+                        parseResult
+
+                generatedCount |> should equal 1
+
+                let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+                output
+                |> should contain $"{resolvedLabel}: {createdId}"
+
+                requestId parseResult graceIds
+                |> should equal (createdId.ToString())
+
+                output
+                |> should contain $"{createdIdOptionName}: new Guid"
+
+                output
+                |> should not' (contain $"{resolvedLabel}: {Guid.Empty}"))
+
+    /// Verifies that an explicit create ID remains unchanged and bypasses ID generation.
+    [<Test>]
+    let ``explicit repository create identity is displayed and sent unchanged`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+            let explicitId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "repository"
+                        "create"
+                        "--repository-name"
+                        "explicit-identity"
+                        "--repository-id"
+                        explicitId.ToString()
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds =
+                Common.resolveCreateGraceIdsWith
+                    (fun () ->
+                        Assert.Fail("Explicit identity must not generate a replacement GUID.")
+                        Guid.Empty)
+                    OptionName.RepositoryId
+                    parseResult
+
+            let parameters = Grace.CLI.Command.Repository.buildCreateParameters graceIds
+            let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+            parameters.RepositoryId
+            |> should equal (explicitId.ToString())
+
+            output
+            |> should contain $"--repository-id: {explicitId}"
+
+            output
+            |> should contain $"RepositoryId: {explicitId}"
+
+            output
+            |> should not' (contain "--repository-id: new Guid"))
+
+    /// Verifies that omitted non-hierarchy GUID inputs are described as absent rather than as semantic zero GUIDs.
+    [<Test>]
+    let ``verbose output describes unrelated omitted guid inputs as not supplied`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "branch"
+                        "create"
+                        "--branch-name"
+                        "child"
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds = Common.resolveCreateGraceIdsWith (fun () -> Guid.NewGuid()) OptionName.BranchId parseResult
+            let output = captureOutput (fun () -> Common.printParseResultWithResolvedValues parseResult (Some graceIds))
+
+            output
+            |> should contain "--parent-branch-id: not supplied"
+
+            output
+            |> should not' (contain $"--parent-branch-id: {Guid.Empty}"))
 
     /// Verifies that get normalized ids and names falls back to config ids.
     [<Test>]

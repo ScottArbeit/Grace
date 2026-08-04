@@ -52,9 +52,6 @@ module GraceCommand =
 
     exception private IntrospectionExit of int
 
-    /// Defines structured data exchanged by CLI helpers.
-    type OptionToUpdate = { optionAlias: string; display: string; displayOnCreate: string; createParentCommand: string }
-
     /// Defines root parser delete grace watch ipc file if owned behavior for Grace CLI startup and help output.
     let private deleteGraceWatchIpcFileIfOwned () =
         if graceWatchStatusUpdateTime <> Instant.MinValue then
@@ -1302,33 +1299,13 @@ module GraceCommand =
                         //   "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]"
                         //   i.e. whatever the generated Guid value on create might be.
                         let optionsToUpdate =
-                            [
-                                {
-                                    optionAlias = OptionName.CorrelationId
-                                    display = "new NanoId"
-                                    displayOnCreate = "new NanoId"
-                                    createParentCommand = String.Empty
-                                }
-                                { optionAlias = OptionName.OwnerId; display = "current OwnerId"; displayOnCreate = "new Guid"; createParentCommand = "owner" }
-                                {
-                                    optionAlias = OptionName.OrganizationId
-                                    display = "current OrganizationId"
-                                    displayOnCreate = "new Guid"
-                                    createParentCommand = "organization"
-                                }
-                                {
-                                    optionAlias = OptionName.RepositoryId
-                                    display = "current RepositoryId"
-                                    displayOnCreate = "new Guid"
-                                    createParentCommand = "repository"
-                                }
-                                {
-                                    optionAlias = OptionName.BranchId
-                                    display = "current BranchId"
-                                    displayOnCreate = "new Guid"
-                                    createParentCommand = "branch"
-                                }
-                            ]
+                            {
+                                OptionAlias = OptionName.CorrelationId
+                                CurrentDisplay = "new NanoId"
+                                CreateDisplay = "new NanoId"
+                                CreateParentCommand = String.Empty
+                            }
+                            :: Common.hierarchyIdentityDefaultDisplays
 
                         let isCreate = helpCommand.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
 
@@ -1340,17 +1317,17 @@ module GraceCommand =
                                 let useCreateDisplay =
                                     isCreate
                                     && not
-                                       <| String.IsNullOrWhiteSpace(optionToUpdate.createParentCommand)
+                                       <| String.IsNullOrWhiteSpace(optionToUpdate.CreateParentCommand)
                                     && parentCommands.Any (fun parent ->
-                                        parent.Name.Equals(optionToUpdate.createParentCommand, StringComparison.OrdinalIgnoreCase))
+                                        parent.Name.Equals(optionToUpdate.CreateParentCommand, StringComparison.OrdinalIgnoreCase))
 
                                 let defaultValueText =
                                     if useCreateDisplay then
-                                        optionToUpdate.displayOnCreate
+                                        optionToUpdate.CreateDisplay
                                     else
-                                        optionToUpdate.display
+                                        optionToUpdate.CurrentDisplay
 
-                                optionToUpdate.optionAlias, defaultValueText)
+                                optionToUpdate.OptionAlias, defaultValueText)
                             |> dict
 
                         use writer = new StringWriter()

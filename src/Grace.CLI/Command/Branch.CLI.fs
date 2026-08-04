@@ -578,6 +578,29 @@ module Branch =
             let referenceId = parseResult.GetValue(Options.referenceId)
             if referenceId = ReferenceId.Empty then ReferenceId.NewGuid() else referenceId
 
+    /// Builds the branch create request from the single identity resolved for verbose output and server submission.
+    let internal buildCreateParameters (parseResult: ParseResult) (graceIds: GraceIds) (parentBranchId: string) (parentBranchName: string) =
+        let initialPermissions =
+            match parseResult.GetValue(Options.initialPermissions) with
+            | null -> Array.empty<ReferenceType>
+            | permissions -> permissions
+
+        CreateBranchParameters(
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            BranchId = graceIds.BranchIdString,
+            BranchName = graceIds.BranchName,
+            ParentBranchId = parentBranchId,
+            ParentBranchName = parentBranchName,
+            ReferenceId = getOrCreateReferenceId parseResult,
+            InitialPermissions = initialPermissions,
+            CorrelationId = graceIds.CorrelationId
+        )
+
     // Create subcommand.
     /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
@@ -587,7 +610,10 @@ module Branch =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
-                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = resolveCreateGraceIds OptionName.BranchId parseResult
+
+                    if parseResult |> verbose then
+                        printParseResultWithResolvedValues parseResult (Some graceIds)
 
                     let validateIncomingParameters =
                         parseResult
@@ -596,14 +622,6 @@ module Branch =
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        // In a Create() command, if --branch-id is implicit, that's the current branch taken from graceconfig.json, and the
-                        //   current branch, by default, is the parent branch of the new one. Therefore, we need to set BranchId to a new Guid.
-                        let mutable graceIds = parseResult |> getNormalizedIdsAndNames
-
-                        if parseResult.GetResult(Options.branchId).Implicit then
-                            let branchId = Guid.NewGuid()
-                            graceIds <- { graceIds with BranchId = branchId; BranchIdString = $"{branchId}" }
-
                         let parentBranchId = parseResult.GetValue(Options.parentBranchId)
                         let parentBranchNameResult = parseResult.GetResult(Options.parentBranchName)
                         let parentBranchIdResult = parseResult.GetResult(Options.parentBranchId)
@@ -676,27 +694,7 @@ module Branch =
                                         return String.Empty
                             }
 
-                        let initialPermissions =
-                            match parseResult.GetValue(Options.initialPermissions) with
-                            | null -> Array.empty<ReferenceType>
-                            | permissions -> permissions
-
-                        let parameters =
-                            CreateBranchParameters(
-                                RepositoryId = graceIds.RepositoryIdString,
-                                RepositoryName = graceIds.RepositoryName,
-                                OwnerId = graceIds.OwnerIdString,
-                                OwnerName = graceIds.OwnerName,
-                                OrganizationId = graceIds.OrganizationIdString,
-                                OrganizationName = graceIds.OrganizationName,
-                                BranchId = graceIds.BranchIdString,
-                                BranchName = graceIds.BranchName,
-                                ParentBranchId = parentBranchIdString,
-                                ParentBranchName = parentBranchName,
-                                ReferenceId = getOrCreateReferenceId parseResult,
-                                InitialPermissions = initialPermissions,
-                                CorrelationId = graceIds.CorrelationId
-                            )
+                        let parameters = buildCreateParameters parseResult graceIds parentBranchIdString parentBranchName
 
                         let! result =
                             if parseResult |> hasOutput then
