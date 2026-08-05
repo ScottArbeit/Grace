@@ -1530,6 +1530,133 @@ module WatchTests =
             Watch.localObservationCandidateSnapshotForWatchTests ()
             |> should equal Array.empty<Watch.WatchObservationCandidate>)
 
+    /// Verifies that Grace object-cache callbacks never capture stale root scope or request recovery work.
+    [<Test; Category("WatchInternalAdmission")>]
+    let ``raw internal cache callback is rejected before stale root scope admission`` () =
+        withTempRepo (fun root ->
+            let acceptedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let replacementStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let internalPath = Path.Combine(root, Constants.GraceConfigDirectory, "objects", "cached-user-file.txt")
+
+            activateWatchIgnoreSnapshot ()
+            Watch.setGraceStatusForWatchTests acceptedStatus
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(acceptedStatus))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(acceptedStatus))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            Watch.OnCreated(createdEvent internalPath)
+            Watch.OnChanged(changedEvent internalPath)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            Watch.setGraceStatusForWatchTests replacementStatus
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(replacementStatus))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(replacementStatus))
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.MaxValue
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that stale root rejection remains fail-closed for an ordinary user callback.
+    [<Test; Category("WatchInternalAdmission")>]
+    let ``raw user callback still rejects stale root scope`` () =
+        withTempRepo (fun root ->
+            let acceptedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let replacementStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let userPath = Path.Combine(root, "ordinary-user-file.txt")
+
+            File.WriteAllText(userPath, "ordinary user edit")
+            activateWatchIgnoreSnapshot ()
+            Watch.setGraceStatusForWatchTests acceptedStatus
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(acceptedStatus))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(acceptedStatus))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            Watch.OnChanged(changedEvent userPath)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.exactlyOne
+            |> fun candidate ->
+                candidate.Scope
+                |> Option.map (fun scope -> scope.RootDirectoryId)
+                |> should equal (Some acceptedStatus.RootDirectoryId)
+
+            Watch.setGraceStatusForWatchTests replacementStatus
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(replacementStatus))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(replacementStatus))
+            Watch.processDueLocalObservationCandidatesForWatchTests DateTime.MaxValue
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (true, true)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            let pending = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies missing internal paths and mixed rename endpoints use case-insensitive callback admission on Windows.
+    [<Test; Category("WatchInternalAdmission")>]
+    let ``raw internal deleted and renamed paths are suppressed without filesystem state`` () =
+        withTempRepo (fun root ->
+            let internalDeletedRelativePath = Path.Combine(Constants.GraceConfigDirectory.ToUpperInvariant(), "OBJECTS", "missing.bin")
+            let internalDeletedPath = Path.Combine(root, internalDeletedRelativePath)
+            let userFromInternalRelativePath = "user-from-internal.txt"
+            let userToInternalRelativePath = "user-to-internal.txt"
+            let internalRenameRelativePath = Path.Combine(Constants.GraceConfigDirectory.ToUpperInvariant(), "OBJECTS", "renamed.bin")
+
+            activateWatchIgnoreSnapshot ()
+            Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            File.Exists(internalDeletedPath)
+            |> should equal false
+
+            Watch.OnDeleted(deletedEvent internalDeletedPath)
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            Watch.OnRenamed(RenamedEventArgs(WatcherChangeTypes.Renamed, root, userFromInternalRelativePath, internalRenameRelativePath))
+
+            Watch.OnRenamed(RenamedEventArgs(WatcherChangeTypes.Renamed, root, internalRenameRelativePath, userToInternalRelativePath))
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.map (fun candidate -> candidate.FullPath, candidate.Kind)
+            |> Array.sortBy fst
+            |> should
+                equal
+                [|
+                    Path.Combine(root, userFromInternalRelativePath), Watch.CreatedOrChanged
+                    Path.Combine(root, userToInternalRelativePath), Watch.Deleted
+                |])
+
     /// Verifies first production candidate acceptance immediately replaces clean IPC and duplicate acceptance does not rewrite it.
     [<Test>]
     let ``raw candidate acceptance immediately publishes dirty IPC without duplicate rewrites`` () =

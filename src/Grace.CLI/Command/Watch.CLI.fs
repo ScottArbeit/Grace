@@ -1168,6 +1168,17 @@ module Watch =
         || fullPath.Equals(statusFile + "-shm", watchPathComparison)
         || fullPath.Equals(statusFile + "-journal", watchPathComparison)
 
+    /// Identifies Grace-owned paths using only the Watch-lifetime namespace snapshot, without consulting final filesystem state.
+    let private isGraceInternalRawObservationPath fullPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
+
+    /// Preserves status coordination while rejecting other Grace-owned paths before raw candidate scope capture.
+    let private tryClassifyRawLocalObservation fallbackKind fullPath =
+        if isGraceStatusArtifact fullPath then Some GraceStatusArtifact
+        elif isGraceInternalRawObservationPath fullPath then None
+        else Some fallbackKind
+
     /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
     let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
         let normalizedRelativePath = normalizeRelativePath relativePath
@@ -7480,23 +7491,20 @@ module Watch =
                 signalRConnection.InvokeAsync("RegisterParentBranch", branchId, parentBranchId, cancellationToken))
             cancellationToken
 
+    /// Admits one raw callback through the shared Grace-internal namespace guard before scheduling or direct test processing.
+    let private admitRawLocalObservation fallbackKind fullPath seenAt =
+        match tryClassifyRawLocalObservation fallbackKind fullPath with
+        | None -> logObservationSuppressed fullPath
+        | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
+        | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
+        | Some _ -> logObservationSuppressed fullPath
+
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
-            let kind =
-                if isGraceStatusArtifact args.FullPath then
-                    GraceStatusArtifact
-                else
-                    CreatedOrChanged
-
-            if isLocalObservationCandidateSchedulingActive () then
-                acceptLocalObservationCandidate kind args.FullPath DateTime.UtcNow
-            elif useImmediateLocalObservationProcessingForWatchTests () then
-                processLocalObservationImmediately kind args.FullPath
-            else
-                logObservationSuppressed args.FullPath
+            admitRawLocalObservation CreatedOrChanged args.FullPath DateTime.UtcNow
         else
             logObservationSuppressed args.FullPath
 
@@ -7505,17 +7513,7 @@ module Watch =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
-            let kind = if isGraceStatusArtifact args.FullPath then GraceStatusArtifact else Changed
-
-            if isLocalObservationCandidateSchedulingActive () then
-                acceptLocalObservationCandidate kind args.FullPath DateTime.UtcNow
-            elif useImmediateLocalObservationProcessingForWatchTests ()
-                 && kind = GraceStatusArtifact then
-                processLocalObservationImmediately kind args.FullPath
-            elif useImmediateLocalObservationProcessingForWatchTests () then
-                processLocalObservationImmediately kind args.FullPath
-            elif not (useImmediateLocalObservationProcessingForWatchTests ()) then
-                logObservationSuppressed args.FullPath
+            admitRawLocalObservation Changed args.FullPath DateTime.UtcNow
         else
             logObservationSuppressed args.FullPath
 
@@ -7556,14 +7554,7 @@ module Watch =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
-            let kind = if isGraceStatusArtifact args.FullPath then GraceStatusArtifact else Deleted
-
-            if isLocalObservationCandidateSchedulingActive () then
-                acceptLocalObservationCandidate kind args.FullPath DateTime.UtcNow
-            elif useImmediateLocalObservationProcessingForWatchTests () then
-                processLocalObservationImmediately kind args.FullPath
-            else
-                logObservationSuppressed args.FullPath
+            admitRawLocalObservation Deleted args.FullPath DateTime.UtcNow
         else
             logObservationSuppressed args.FullPath
 
@@ -7573,21 +7564,8 @@ module Watch =
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
             let seenAt = DateTime.UtcNow
-
-            let kind =
-                if isGraceStatusArtifact args.FullPath then
-                    GraceStatusArtifact
-                else
-                    CreatedOrChanged
-
-            if isLocalObservationCandidateSchedulingActive () then
-                acceptLocalObservationCandidate Deleted args.OldFullPath seenAt
-                acceptLocalObservationCandidate kind args.FullPath seenAt
-            elif useImmediateLocalObservationProcessingForWatchTests () then
-                processLocalObservationImmediately Deleted args.OldFullPath
-                processLocalObservationImmediately kind args.FullPath
-            else
-                logObservationSuppressed args.FullPath
+            admitRawLocalObservation Deleted args.OldFullPath seenAt
+            admitRawLocalObservation CreatedOrChanged args.FullPath seenAt
         else
             logObservationSuppressed args.FullPath
 
