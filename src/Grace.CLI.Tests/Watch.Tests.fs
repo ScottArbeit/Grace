@@ -1632,6 +1632,7 @@ module WatchTests =
             let internalRenameRelativePath = Path.Combine(Constants.GraceConfigDirectory.ToUpperInvariant(), "OBJECTS", "renamed.bin")
 
             activateWatchIgnoreSnapshot ()
+            Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
             Watch.setLocalObservationCandidateSchedulingForWatchTests true
 
             File.Exists(internalDeletedPath)
