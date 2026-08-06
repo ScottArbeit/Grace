@@ -2930,6 +2930,46 @@ module LocalStateDbTests =
                 |> should be (lessThan 1500L)
             })
 
+    /// Verifies that each committed status transaction returns and persists one monotonic local-status revision.
+    [<Test>]
+    let ``status transactions advance and return committed local-status revision`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let! initialRevision = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+                initialRevision |> should equal 0L
+
+                let status = createTestStatus (Guid.NewGuid()) "revision-root" 100L
+
+                let! replacementRevision = LocalStateDb.replaceStatusSnapshotWithRevision configuration.GraceStatusFile status
+                replacementRevision |> should equal 1L
+
+                let! incrementalRevision = LocalStateDb.applyStatusIncrementalWithRevision configuration.GraceStatusFile status Seq.empty Seq.empty
+
+                incrementalRevision |> should equal 2L
+
+                let! durableRevision = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+
+                durableRevision
+                |> should equal incrementalRevision
+            })
+
+    /// Verifies malformed local-status revision metadata is rejected instead of becoming an incremental baseline.
+    [<Test>]
+    let ``local-status revision reader rejects malformed durable evidence`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeNonQuery connection $"UPDATE meta SET value = 'invalid' WHERE key = '{LocalStateDb.LocalStatusRevisionMetaKey}';"
+
+                let operation = Func<Task>(fun () -> LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile :> Task)
+
+                Assert.ThrowsAsync<InvalidDataException>(operation)
+                |> ignore
+            })
+
     /// Verifies that replace status snapshot is atomic (rollback on failure).
     [<Test>]
     let ``replaceStatusSnapshot is atomic (rollback on failure)`` () =
@@ -2954,6 +2994,7 @@ module LocalStateDbTests =
                     }
 
                 do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile statusA
+                let! revisionBeforeFailure = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
 
                 use connection = openRawConnection configuration.GraceStatusFile
 
@@ -2988,6 +3029,11 @@ module LocalStateDbTests =
                 |> should equal statusA.LastSuccessfulFileUpload
 
                 readBack.Index.Count |> should equal 1
+
+                let! revisionAfterFailure = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+
+                revisionAfterFailure
+                |> should equal revisionBeforeFailure
             })
 
     /// Verifies that apply status incremental is atomic (rollback on failure).
@@ -3018,6 +3064,7 @@ module LocalStateDbTests =
                     }
 
                 do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile statusA
+                let! revisionBeforeFailure = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
 
                 use connection = openRawConnection configuration.GraceStatusFile
 
@@ -3052,6 +3099,11 @@ module LocalStateDbTests =
                 |> Seq.collect (fun dv -> dv.Files)
                 |> Seq.exists (fun file -> file.RelativePath = "src/file.txt")
                 |> should equal false
+
+                let! revisionAfterFailure = LocalStateDb.readLocalStatusRevision configuration.GraceStatusFile
+
+                revisionAfterFailure
+                |> should equal revisionBeforeFailure
             })
 
     /// Verifies that concurrent ensure db initialized calls do not deadlock or corrupt.

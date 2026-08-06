@@ -7420,14 +7420,12 @@ module WatchTests =
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
-    /// Verifies that delayed GraceStatus artifact observations still publish refresh work after switch completion.
+    /// Verifies delayed local-state callbacks remain revision signals and cannot gain candidate scope after a root change.
     [<Test>]
-    let ``update marker deletion preserves delayed GraceStatus artifact refresh observation`` () =
-        withTempRepo (fun _ ->
+    let ``delayed local-state callback stays out of candidate scope after root change`` () =
+        withTempRepo (fun root ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
-            let updateMarkerFile = Services.updateInProgressFileName ()
-            let markerCompletedUtc = DateTime.UtcNow
             let graceStatusFile = Current().GraceStatusFile
 
             Services.setGraceWatchHasPendingWorkForStatus false
@@ -7436,23 +7434,31 @@ module WatchTests =
                 .GetAwaiter()
                 .GetResult()
 
-            Directory.CreateDirectory(Path.GetDirectoryName(graceStatusFile))
-            |> ignore
-
-            File.WriteAllText(graceStatusFile, "Grace-owned local state refresh")
-            File.SetLastWriteTimeUtc(graceStatusFile, markerCompletedUtc.AddSeconds(-1.0))
-            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+            Watch.setKnownLocalStatusRevisionForWatchTests 4L
 
             Watch.OnChanged(changedEvent graceStatusFile)
 
-            Watch.graceStatusHasChangedForWatchTests ()
+            Current().RootDirectory <- Path.Combine(root, "new-root")
+            Watch.processDueLocalObservationCandidatesForWatchTests (DateTime.UtcNow.AddMinutes(1.0))
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.isEmpty
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+            |> should equal None
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
             |> should equal true
 
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
-            |> should equal true
+            |> should equal false
 
             readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
-            |> should equal false)
+            |> should equal true)
 
     /// Builds GraceStatus around explicit file versions so tests can model content-equivalent uploads.
     let private graceStatusTrackingFileVersions (trackedFiles: LocalFileVersion array) =
@@ -16719,9 +16725,9 @@ module WatchTests =
                 readWatchStatusJsonStringProperty "RootDirectoryId"
                 |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}")
 
-    /// Verifies that a pending GraceStatus artifact refresh publishes dirty IPC before the timer reloads status.
+    /// Verifies that local-state artifact callbacks remain quiet until their committed revision is checked.
     [<Test>]
-    let ``watch grace status artifact change publishes dirty ipc`` () =
+    let ``watch local-state artifact callbacks do not publish pending ipc`` () =
         withTempRepo (fun _ ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
@@ -16738,48 +16744,175 @@ module WatchTests =
             readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
             |> should equal true
 
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+            let cleanIpc = File.ReadAllText(Services.IpcFileName())
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            let callbackOutput =
+                captureAnsiConsoleOutput (fun () ->
+                    for suffix in
+                        [|
+                            String.Empty
+                            "-wal"
+                            "-shm"
+                            "-journal"
+                        |] do
+                        Watch.OnChanged(changedEvent (Current().GraceStatusFile + suffix)))
+
+            callbackOutput |> should equal String.Empty
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.isEmpty
             |> should equal true
 
-            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false
+
+            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+            |> should equal None
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal cleanIpc
 
             Services.getGraceWatchStatus().Result
-            |> should equal None)
+            |> Option.isSome
+            |> should equal true)
 
-    /// Verifies that a blocked dirty IPC write can retry while the GraceStatus refresh flag is already pending.
+    /// Verifies duplicate SQLite callbacks coalesce into one quiet revision read for a Watch-owned commit.
     [<Test>]
-    let ``watch grace status artifact change retries dirty ipc while refresh is pending`` () =
+    let ``watch duplicate local-state callbacks perform one quiet revision check`` () =
         withTempRepo (fun _ ->
-            let status = graceStatusTracking Array.empty<string> Array.empty<string>
-            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let mutable reads = 0
+            let mutable advances = 0
+            let mutable failures = 0
 
-            Services.setGraceWatchHasPendingWorkForStatus false
+            Watch.setKnownLocalStatusRevisionForWatchTests 7L
 
-            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-shm"))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () ->
+                    reads <- reads + 1
+                    Task.FromResult(7L))
+                (fun () -> advances <- advances + 1)
+                (fun _ -> failures <- failures + 1))
                 .GetAwaiter()
                 .GetResult()
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
-            |> should equal false
+            reads |> should equal 1
+            advances |> should equal 0
+            failures |> should equal 0
 
-            use blockedIpc = new FileStream(Services.IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal false)
 
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
-            blockedIpc.Dispose()
+    /// Verifies a greater external revision schedules exactly one controlled status refresh without immediate IPC work.
+    [<Test>]
+    let ``watch external local-status revision schedules one controlled refresh`` () =
+        withTempRepo (fun _ ->
+            let initialStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let initialDirectoryIds = HashSet<DirectoryVersionId>(initialStatus.Index.Keys)
+            let updatedStatus = { initialStatus with RootDirectorySha256Hash = Sha256Hash "external-revision-root" }
+            let mutable publications = 0
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
-            |> should equal false
+            Services.setGraceWatchHasPendingWorkForStatus false
 
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+            (Services.updateGraceWatchInterprocessFile initialStatus (Some initialDirectoryIds))
+                .GetAwaiter()
+                .GetResult()
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            let initialIpc = File.ReadAllText(Services.IpcFileName())
+            Watch.setKnownLocalStatusRevisionForWatchTests 11L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-journal"))
+
+            (Watch.processLocalStatusRevisionCheckWithRefreshForWatchTests (fun () -> Task.FromResult(12L)) (fun reason -> Assert.Fail(reason)))
+                .GetAwaiter()
+                .GetResult()
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal initialIpc
+
+            Watch.graceStatusHasChangedForWatchTests ()
             |> should equal true
 
-            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
-            |> should equal false)
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests updatedStatus (fun status directoryIds ->
+                publications <- publications + 1
+                Services.updateGraceWatchInterprocessFile status directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            publications |> should equal 1
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal false
+
+            readWatchStatusJsonStringProperty "RootDirectorySha256Hash"
+            |> should equal $"{updatedStatus.RootDirectorySha256Hash}")
+
+    /// Verifies an external revision committed after Watch's own revision remains visible to the coalesced timer check.
+    [<Test>]
+    let ``watch own revision followed by external revision preserves newer commit`` () =
+        withTempRepo (fun _ ->
+            let mutable advances = 0
+            Watch.setKnownLocalStatusRevisionForWatchTests 20L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () -> Task.FromResult(21L))
+                (fun () -> advances <- advances + 1)
+                (fun reason -> Assert.Fail(reason)))
+                .GetAwaiter()
+                .GetResult()
+
+            advances |> should equal 1)
+
+    /// Verifies regressed local-status evidence remains pending and enters the fail-closed path.
+    [<Test>]
+    let ``watch regressed local-status revision fails closed and retries`` () =
+        withTempRepo (fun _ ->
+            let mutable failure = None
+            Watch.setKnownLocalStatusRevisionForWatchTests 30L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () -> Task.FromResult(29L))
+                (fun () -> Assert.Fail("A regressed revision must not be accepted."))
+                (fun reason -> failure <- Some reason))
+                .GetAwaiter()
+                .GetResult()
+
+            failure |> Option.isSome |> should equal true
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal true)
+
+    /// Verifies unreadable local-status revision evidence remains pending and enters the fail-closed path.
+    [<Test>]
+    let ``watch unreadable local-status revision fails closed and retries`` () =
+        withTempRepo (fun _ ->
+            let mutable failure = None
+            Watch.setKnownLocalStatusRevisionForWatchTests 40L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () -> Task.FromException<int64>(InvalidDataException("invalid revision metadata")))
+                (fun () -> Assert.Fail("Unreadable revision evidence must not be accepted."))
+                (fun reason -> failure <- Some reason))
+                .GetAwaiter()
+                .GetResult()
+
+            failure
+            |> Option.exists (fun reason -> reason.Contains("invalid revision metadata", StringComparison.Ordinal))
+            |> should equal true
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal true)
 
     /// Verifies that a consumed GraceStatus refresh can publish clean IPC during the same timer tick.
     [<Test>]
