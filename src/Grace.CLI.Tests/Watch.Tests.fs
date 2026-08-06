@@ -427,10 +427,12 @@ module WatchTests =
             Watch.resetWatchIgnoreSnapshotForWatchTests ()
             deleteWatchStatusFileIfExists ()
             Watch.clearPendingWatchWorkForTests ()
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             Watch.setLocalObservationCandidateSchedulingForWatchTests false
             action tempDir
         finally
             Watch.clearPendingWatchWorkForTests ()
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             Watch.resetWatchIgnoreSnapshotForWatchTests ()
             Services.clearShouldIgnoreCache ()
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
@@ -7420,14 +7422,12 @@ module WatchTests =
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
-    /// Verifies that delayed GraceStatus artifact observations still publish refresh work after switch completion.
+    /// Verifies delayed local-state callbacks remain revision signals and cannot gain candidate scope after a root change.
     [<Test>]
-    let ``update marker deletion preserves delayed GraceStatus artifact refresh observation`` () =
-        withTempRepo (fun _ ->
+    let ``delayed local-state callback stays out of candidate scope after root change`` () =
+        withTempRepo (fun root ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
-            let updateMarkerFile = Services.updateInProgressFileName ()
-            let markerCompletedUtc = DateTime.UtcNow
             let graceStatusFile = Current().GraceStatusFile
 
             Services.setGraceWatchHasPendingWorkForStatus false
@@ -7436,23 +7436,31 @@ module WatchTests =
                 .GetAwaiter()
                 .GetResult()
 
-            Directory.CreateDirectory(Path.GetDirectoryName(graceStatusFile))
-            |> ignore
-
-            File.WriteAllText(graceStatusFile, "Grace-owned local state refresh")
-            File.SetLastWriteTimeUtc(graceStatusFile, markerCompletedUtc.AddSeconds(-1.0))
-            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+            Watch.setKnownLocalStatusRevisionForWatchTests 4L
 
             Watch.OnChanged(changedEvent graceStatusFile)
 
-            Watch.graceStatusHasChangedForWatchTests ()
+            Current().RootDirectory <- Path.Combine(root, "new-root")
+            Watch.processDueLocalObservationCandidatesForWatchTests (DateTime.UtcNow.AddMinutes(1.0))
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.isEmpty
+            |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+            |> should equal None
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
             |> should equal true
 
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
-            |> should equal true
+            |> should equal false
 
             readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
-            |> should equal false)
+            |> should equal true)
 
     /// Builds GraceStatus around explicit file versions so tests can model content-equivalent uploads.
     let private graceStatusTrackingFileVersions (trackedFiles: LocalFileVersion array) =
@@ -16719,9 +16727,9 @@ module WatchTests =
                 readWatchStatusJsonStringProperty "RootDirectoryId"
                 |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}")
 
-    /// Verifies that a pending GraceStatus artifact refresh publishes dirty IPC before the timer reloads status.
+    /// Verifies that local-state artifact callbacks remain quiet until their committed revision is checked.
     [<Test>]
-    let ``watch grace status artifact change publishes dirty ipc`` () =
+    let ``watch local-state artifact callbacks do not publish pending ipc`` () =
         withTempRepo (fun _ ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
@@ -16738,21 +16746,52 @@ module WatchTests =
             readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
             |> should equal true
 
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+            let cleanIpc = File.ReadAllText(Services.IpcFileName())
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            let callbackOutput =
+                captureAnsiConsoleOutput (fun () ->
+                    for suffix in
+                        [|
+                            String.Empty
+                            "-wal"
+                            "-shm"
+                            "-journal"
+                        |] do
+                        Watch.OnChanged(changedEvent (Current().GraceStatusFile + suffix)))
+
+            callbackOutput |> should equal String.Empty
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.isEmpty
             |> should equal true
 
-            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false
+
+            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+            |> should equal None
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal cleanIpc
 
             Services.getGraceWatchStatus().Result
-            |> should equal None)
+            |> Option.isSome
+            |> should equal true)
 
-    /// Verifies that a blocked dirty IPC write can retry while the GraceStatus refresh flag is already pending.
+    /// Verifies startup establishes the durable revision before SQLite artifact callbacks can be admitted.
     [<Test>]
-    let ``watch grace status artifact change retries dirty ipc while refresh is pending`` () =
+    let ``watch startup records durable revision before admitting local-state callbacks`` () =
         withTempRepo (fun _ ->
+            let mutable initializationReadCompleted = false
+            let mutable callbacksObservedInitialization = false
+            let mutable revisionReads = 0
+            let mutable failures = 0
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
             let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
 
@@ -16762,24 +16801,277 @@ module WatchTests =
                 .GetAwaiter()
                 .GetResult()
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
-            |> should equal false
+            let initialIpc = File.ReadAllText(Services.IpcFileName())
+            let initialScope = Watch.lastPublishedWatchObservationScopeForWatchTests ()
 
-            use blockedIpc = new FileStream(Services.IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            (Watch.initializeLocalStatusRevisionBeforeArtifactCallbacksForWatchTests
+                (fun () ->
+                    revisionReads <- revisionReads + 1
+                    initializationReadCompleted <- true
+                    Task.FromResult(6L))
+                (fun () ->
+                    task {
+                        callbacksObservedInitialization <- initializationReadCompleted
 
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
-            blockedIpc.Dispose()
+                        let callbackOutput = captureAnsiConsoleOutput (fun () -> Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal")))
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
-            |> should equal false
+                        callbackOutput |> should equal String.Empty
 
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+                        Watch.localObservationCandidateSnapshotForWatchTests ()
+                        |> Array.isEmpty
+                        |> should equal true
 
-            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                        Watch.pendingWatchWorkEvidenceForWatchTests ()
+                        |> should equal (false, false)
+
+                        Watch.isGraceWatchResyncPendingForWatchTests ()
+                        |> should equal false
+
+                        Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                        |> should equal None
+
+                        Watch.lastPublishedWatchObservationScopeForWatchTests ()
+                        |> should equal initialScope
+
+                        File.ReadAllText(Services.IpcFileName())
+                        |> should equal initialIpc
+                    })
+                (fun _ -> failures <- failures + 1))
+                .GetAwaiter()
+                .GetResult()
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () ->
+                    revisionReads <- revisionReads + 1
+                    Task.FromResult(6L))
+                (fun () -> Assert.Fail("The startup revision callback must clear silently."))
+                (fun reason -> Assert.Fail(reason)))
+                .GetAwaiter()
+                .GetResult()
+
+            callbacksObservedInitialization
             |> should equal true
 
-            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            revisionReads |> should equal 2
+            failures |> should equal 0
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
             |> should equal false)
+
+    /// Verifies a Watch-owned commit cannot hide a later external commit observed by the coalesced timer read.
+    [<Test>]
+    let ``watch owned revision commit then external revision commit schedules only controlled refresh`` () =
+        withTempRepo (fun _ ->
+            let mutable durableRevision = 19L
+            let mutable failures = 0
+            let mutable publications = 0
+            let initialStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let initialDirectoryIds = HashSet<DirectoryVersionId>(initialStatus.Index.Keys)
+            let updatedStatus = { initialStatus with RootDirectorySha256Hash = Sha256Hash "external-race-root" }
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile initialStatus (Some initialDirectoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            let initialIpc = File.ReadAllText(Services.IpcFileName())
+            let initialScope = Watch.lastPublishedWatchObservationScopeForWatchTests ()
+
+            (Watch.initializeLocalStatusRevisionBeforeArtifactCallbacksForWatchTests
+                (fun () -> Task.FromResult(durableRevision))
+                (fun () -> task { return () })
+                (fun _ -> failures <- failures + 1))
+                .GetAwaiter()
+                .GetResult()
+
+            (Watch.runWatchOwnedLocalStatusWriteForWatchTests (fun () ->
+                durableRevision <- 20L
+                Task.FromResult(durableRevision)))
+                .GetAwaiter()
+                .GetResult()
+
+            let callbackOutput = captureAnsiConsoleOutput (fun () -> Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-shm")))
+
+            callbackOutput |> should equal String.Empty
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.isEmpty
+            |> should equal true
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false)
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+            |> should equal None
+
+            Watch.lastPublishedWatchObservationScopeForWatchTests ()
+            |> should equal initialScope
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal initialIpc
+
+            durableRevision <- 21L
+
+            (Watch.processLocalStatusRevisionCheckWithRefreshForWatchTests (fun () -> Task.FromResult(durableRevision)) (fun _ -> failures <- failures + 1))
+                .GetAwaiter()
+                .GetResult()
+
+            failures |> should equal 0
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal true
+
+            publications |> should equal 0
+
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests updatedStatus (fun status directoryIds ->
+                publications <- publications + 1
+                Services.updateGraceWatchInterprocessFile status directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            publications |> should equal 1
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal false
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal false)
+
+    /// Verifies duplicate SQLite callbacks coalesce into one quiet revision read for a Watch-owned commit.
+    [<Test>]
+    let ``watch duplicate local-state callbacks perform one quiet revision check`` () =
+        withTempRepo (fun _ ->
+            let mutable reads = 0
+            let mutable advances = 0
+            let mutable failures = 0
+
+            Watch.setKnownLocalStatusRevisionForWatchTests 7L
+
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-shm"))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () ->
+                    reads <- reads + 1
+                    Task.FromResult(7L))
+                (fun () -> advances <- advances + 1)
+                (fun _ -> failures <- failures + 1))
+                .GetAwaiter()
+                .GetResult()
+
+            reads |> should equal 1
+            advances |> should equal 0
+            failures |> should equal 0
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal false)
+
+    /// Verifies a greater external revision schedules exactly one controlled status refresh without immediate IPC work.
+    [<Test>]
+    let ``watch external local-status revision schedules one controlled refresh`` () =
+        withTempRepo (fun _ ->
+            let initialStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let initialDirectoryIds = HashSet<DirectoryVersionId>(initialStatus.Index.Keys)
+            let updatedStatus = { initialStatus with RootDirectorySha256Hash = Sha256Hash "external-revision-root" }
+            let mutable publications = 0
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile initialStatus (Some initialDirectoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            let initialIpc = File.ReadAllText(Services.IpcFileName())
+            Watch.setKnownLocalStatusRevisionForWatchTests 11L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-journal"))
+
+            (Watch.processLocalStatusRevisionCheckWithRefreshForWatchTests (fun () -> Task.FromResult(12L)) (fun reason -> Assert.Fail(reason)))
+                .GetAwaiter()
+                .GetResult()
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal initialIpc
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal true
+
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests updatedStatus (fun status directoryIds ->
+                publications <- publications + 1
+                Services.updateGraceWatchInterprocessFile status directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            publications |> should equal 1
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal false
+
+            readWatchStatusJsonStringProperty "RootDirectorySha256Hash"
+            |> should equal $"{updatedStatus.RootDirectorySha256Hash}")
+
+    /// Verifies an external revision committed after Watch's own revision remains visible to the coalesced timer check.
+    [<Test>]
+    let ``watch own revision followed by external revision preserves newer commit`` () =
+        withTempRepo (fun _ ->
+            let mutable advances = 0
+            Watch.setKnownLocalStatusRevisionForWatchTests 20L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () -> Task.FromResult(21L))
+                (fun () -> advances <- advances + 1)
+                (fun reason -> Assert.Fail(reason)))
+                .GetAwaiter()
+                .GetResult()
+
+            advances |> should equal 1)
+
+    /// Verifies regressed local-status evidence remains pending and enters the fail-closed path.
+    [<Test>]
+    let ``watch regressed local-status revision fails closed and retries`` () =
+        withTempRepo (fun _ ->
+            let mutable failure = None
+            Watch.setKnownLocalStatusRevisionForWatchTests 30L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () -> Task.FromResult(29L))
+                (fun () -> Assert.Fail("A regressed revision must not be accepted."))
+                (fun reason -> failure <- Some reason))
+                .GetAwaiter()
+                .GetResult()
+
+            failure |> Option.isSome |> should equal true
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal true)
+
+    /// Verifies unreadable local-status revision evidence remains pending and enters the fail-closed path.
+    [<Test>]
+    let ``watch unreadable local-status revision fails closed and retries`` () =
+        withTempRepo (fun _ ->
+            let mutable failure = None
+            Watch.setKnownLocalStatusRevisionForWatchTests 40L
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () -> Task.FromException<int64>(InvalidDataException("invalid revision metadata")))
+                (fun () -> Assert.Fail("Unreadable revision evidence must not be accepted."))
+                (fun reason -> failure <- Some reason))
+                .GetAwaiter()
+                .GetResult()
+
+            failure
+            |> Option.exists (fun reason -> reason.Contains("invalid revision metadata", StringComparison.Ordinal))
+            |> should equal true
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal true)
 
     /// Verifies that a consumed GraceStatus refresh can publish clean IPC during the same timer tick.
     [<Test>]
@@ -19968,6 +20260,381 @@ module WatchTests =
             Blake3Hash = rootBlake3Hash
             ReferenceType = referenceType
         }
+
+    /// Builds an exact local self-reference payload with every suppression identity field populated.
+    let private localSelfReferenceNotification repositoryId branchId correlationId =
+        { validCurrentBranchReferenceNotification
+              repositoryId
+              branchId
+              ReferenceType.Save
+              (Guid.NewGuid())
+              (Sha256Hash "self-reference-root-sha256")
+              (Blake3Hash "self-reference-root-blake3") with
+            CorrelationId = correlationId
+        }
+
+    /// Verifies that a notification arriving before save completion waits at the ledger and is consumed only after exact promotion.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger waits for successful reference promotion before consuming early echo`` () =
+        let nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+        let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+        let payload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "early-self-reference"
+        let intent = ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+        let consumption = ledger.TryConsume(payload)
+
+        consumption.IsCompleted |> should equal false
+
+        ledger.Complete(intent, payload.ReferenceId)
+
+        consumption.GetAwaiter().GetResult()
+        |> should equal true
+
+        ledger.Count |> should equal 1
+
+    /// Verifies that both delivery paths can silently recognize the same completed local Reference during its bounded lifetime.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger recognizes exact completed duplicate deliveries`` () =
+        let nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+        let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+        let payload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "duplicate-self-reference"
+        let intent = ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+        ledger.Complete(intent, payload.ReferenceId)
+
+        ledger
+            .TryConsume(payload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal true
+
+        ledger
+            .TryConsume(payload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal true
+
+        ledger.Count |> should equal 1
+
+    /// Verifies that exact identity fields are all required and a failed save never leaves suppressible evidence.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger preserves mismatches and failed save notifications as ordinary work`` () =
+        let nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+        let payload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "mismatch-self-reference"
+
+        let mismatchCases =
+            [|
+                { payload with CorrelationId = "other-correlation" }
+                { payload with ReferenceId = Guid.NewGuid() }
+                { payload with DirectoryId = Guid.NewGuid() }
+                { payload with Sha256Hash = Sha256Hash "other-sha256" }
+                { payload with Blake3Hash = Blake3Hash "other-blake3" }
+                { payload with RepositoryId = Guid.NewGuid() }
+                { payload with BranchId = Guid.NewGuid() }
+            |]
+
+        for mismatch in mismatchCases do
+            let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+
+            let intent =
+                ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+
+            ledger.Complete(intent, payload.ReferenceId)
+
+            ledger
+                .TryConsume(mismatch)
+                .GetAwaiter()
+                .GetResult()
+            |> should equal false
+
+            ledger.Count |> should equal 1
+
+        let failedLedger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+
+        let failedIntent =
+            failedLedger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+
+        failedLedger.Fail(failedIntent)
+
+        failedLedger
+            .TryConsume(payload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        failedLedger.Count |> should equal 0
+
+    /// Verifies that expiry, capacity eviction, restart, and branch-transition reset cannot suppress retained identities.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger is short lived bounded and cleared across process or branch lifetimes`` () =
+        let mutable nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+
+        let payloads =
+            [|
+                localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "bounded-self-reference-1"
+                localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "bounded-self-reference-2"
+                localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "bounded-self-reference-3"
+            |]
+
+        let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(2, TimeSpan.FromSeconds(30.0), (fun () -> nowUtc))
+
+        let handles =
+            payloads
+            |> Array.map (fun payload ->
+                let handle =
+                    ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+
+                ledger.Complete(handle, payload.ReferenceId)
+                handle)
+
+        ledger.Count |> should equal 2
+
+        ledger
+            .TryConsume(payloads[0])
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        ledger
+            .TryConsume(payloads[1])
+            .GetAwaiter()
+            .GetResult()
+        |> should equal true
+
+        nowUtc <- nowUtc.AddMinutes(1.0)
+
+        ledger
+            .TryConsume(payloads[2])
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        ledger.Count |> should equal 0
+
+        let restartedLedger = Watch.LocalCurrentBranchReferenceEchoLedger(2, TimeSpan.FromSeconds(30.0), (fun () -> nowUtc))
+        let restartedPayload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "restarted-self-reference"
+
+        let restartedIntent =
+            restartedLedger.Begin(
+                restartedPayload.RepositoryId,
+                restartedPayload.BranchId,
+                restartedPayload.DirectoryId,
+                restartedPayload.Sha256Hash,
+                restartedPayload.Blake3Hash,
+                restartedPayload.CorrelationId
+            )
+
+        restartedLedger.Complete(restartedIntent, restartedPayload.ReferenceId)
+        restartedLedger.Clear()
+
+        restartedLedger
+            .TryConsume(restartedPayload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        handles |> should haveLength 3
+
+    /// Verifies that exact direct SignalR echoes stop before every coordinator side effect or callback seam.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``exact direct self-reference echo is consumed before coordinator work`` () =
+        withTempRepo (fun root ->
+            Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ()
+
+            try
+                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+                let payload = localSelfReferenceNotification repositoryId branchId "direct-self-reference"
+                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
+                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
+                let mutable coordinatorCalls = 0
+                let mutable handlerResult = Unchecked.defaultof<Services.LatestCurrentBranchReferenceDecision option>
+
+                let callbackOutput =
+                    captureAnsiConsoleOutput (fun () ->
+                        handlerResult <-
+                            (Watch.handleCurrentBranchReferenceNotificationWithClientsForWatchTests
+                                (fun () ->
+                                    coordinatorCalls <- coordinatorCalls + 1
+                                    Task.FromResult(Error(GraceError.Create "Exact self echo reached BranchDto fetch." payload.CorrelationId)))
+                                (fun () ->
+                                    coordinatorCalls <- coordinatorCalls + 1
+                                    Task.FromResult(None))
+                                payload)
+                                .GetAwaiter()
+                                .GetResult())
+
+                coordinatorCalls |> should equal 0
+                handlerResult |> should equal None
+                callbackOutput |> should equal String.Empty
+
+                Watch.localCurrentBranchReferenceEchoLedgerCountForWatchTests ()
+                |> should equal 1
+            finally
+                Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
+
+    /// Verifies that BranchDto lifecycle catch-up restores the local correlation and uses the same coordinator suppression gate.
+    [<Test; Category("CurrentBranchSelfReferenceEcho"); Category("CurrentBranchCatchUp")>]
+    let ``exact lifecycle catch-up self-reference uses shared coordinator gate`` () =
+        withTempRepo (fun root ->
+            Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ()
+
+            try
+                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+                let payload = localSelfReferenceNotification repositoryId branchId "catch-up-self-reference"
+                let branchDto = branchDtoWithLatestCurrentBranchReference payload
+                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
+                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
+                let mutable coordinatorCalls = 0
+                let observedCorrelations = ResizeArray<CorrelationId>()
+
+                let unexpected name =
+                    coordinatorCalls <- coordinatorCalls + 1
+                    Task.FromException<'T>(InvalidOperationException($"Exact catch-up self echo reached {name}."))
+
+                let processReference catchUpPayload =
+                    task {
+                        observedCorrelations.Add(catchUpPayload.CorrelationId)
+
+                        let! outcome =
+                            Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                                (fun () -> unexpected "BranchDto fetch")
+                                (fun () -> unexpected "local-status inspection")
+                                (fun _ -> coordinatorCalls <- coordinatorCalls + 1)
+                                (fun _ _ -> unexpected "safe-point wait")
+                                (fun _ _ -> unexpected "IPC reestablishment")
+                                (fun _ _ -> unexpected "materialization apply")
+                                catchUpPayload
+
+                        return outcome.Value
+                    }
+
+                let result, outcome =
+                    (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
+                        (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-self-reference-source")))
+                        processReference)
+                        .GetAwaiter()
+                        .GetResult()
+
+                result
+                |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
+
+                outcome.Value.Reason
+                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed
+
+                observedCorrelations.ToArray()
+                |> should equal [| payload.CorrelationId |]
+
+                coordinatorCalls |> should equal 0
+            finally
+                Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
+
+    /// Verifies that lifecycle and direct delivery order cannot expose an exact completed local Reference to coordinator or Watch work.
+    [<TestCase(true); TestCase(false); Category("CurrentBranchSelfReferenceEcho"); Category("CurrentBranchCatchUp")>]
+    let ``exact self-reference stays silent across lifecycle and direct duplicate delivery order`` lifecycleFirst =
+        withTempRepo (fun root ->
+            Watch.clearPendingWatchWorkForTests ()
+
+            try
+                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+                let payload = localSelfReferenceNotification repositoryId branchId "duplicate-delivery-self-reference"
+                let branchDto = branchDtoWithLatestCurrentBranchReference payload
+                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
+                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
+
+                let pendingBefore = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+                let candidatesBefore = Watch.localObservationCandidateSnapshotForWatchTests ()
+
+                let catchUpGenerationBefore = Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+
+                let coordinatorEffects = ResizeArray<string>()
+
+                /// Fails the test if either delivery enters any injected coordinator side-effect seam.
+                let unexpected name =
+                    coordinatorEffects.Add(name)
+                    Task.FromException<'T>(InvalidOperationException($"Exact duplicate self echo reached {name}."))
+
+                /// Routes the real direct-notification seam while capturing any user-visible Watch output.
+                let runDirectDelivery () =
+                    let mutable result = Unchecked.defaultof<Services.LatestCurrentBranchReferenceDecision option>
+
+                    let output =
+                        captureAnsiConsoleOutput (fun () ->
+                            result <-
+                                (Watch.handleCurrentBranchReferenceNotificationWithClientsForWatchTests
+                                    (fun () -> unexpected "direct BranchDto fetch")
+                                    (fun () -> unexpected "direct local-status read")
+                                    payload)
+                                    .GetAwaiter()
+                                    .GetResult())
+
+                    result, output
+
+                /// Routes the BranchDto-derived lifecycle seam through the same coordinator and captures any Watch output.
+                let runLifecycleDelivery () =
+                    /// Sends the BranchDto-derived payload through the production coordinator admission gate.
+                    let processReference catchUpPayload =
+                        task {
+                            let! outcome =
+                                Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                                    (fun () -> unexpected "lifecycle BranchDto fetch")
+                                    (fun () -> unexpected "lifecycle local-status inspection")
+                                    (fun _ -> coordinatorEffects.Add("lifecycle degraded resync"))
+                                    (fun _ _ -> unexpected "lifecycle safe-point wait")
+                                    (fun _ _ -> unexpected "lifecycle IPC reestablishment")
+                                    (fun _ _ -> unexpected "lifecycle materialization apply")
+                                    catchUpPayload
+
+                            return outcome.Value
+                        }
+
+                    let mutable result =
+                        Unchecked.defaultof<Watch.CurrentBranchReferenceCatchUpResult * Watch.CurrentBranchMaterializationCoordinatorOutcome option>
+
+                    let output =
+                        captureAnsiConsoleOutput (fun () ->
+                            result <-
+                                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
+                                    (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "duplicate-delivery-catch-up-source")))
+                                    processReference)
+                                    .GetAwaiter()
+                                    .GetResult())
+
+                    result, output
+
+                let directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput =
+                    if lifecycleFirst then
+                        let (lifecycleResult, lifecycleOutcome), lifecycleOutput = runLifecycleDelivery ()
+                        let directResult, directOutput = runDirectDelivery ()
+                        directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput
+                    else
+                        let directResult, directOutput = runDirectDelivery ()
+                        let (lifecycleResult, lifecycleOutcome), lifecycleOutput = runLifecycleDelivery ()
+                        directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput
+
+                directResult |> should equal None
+                directOutput |> should equal String.Empty
+
+                lifecycleResult
+                |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
+
+                lifecycleOutcome.Value.Reason
+                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed
+
+                lifecycleOutput |> should equal String.Empty
+
+                coordinatorEffects.ToArray() |> should be Empty
+
+                Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+                |> should equal pendingBefore
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> should equal candidatesBefore
+
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal catchUpGenerationBefore
+
+                Watch.localCurrentBranchReferenceEchoLedgerCountForWatchTests ()
+                |> should equal 1
+            finally
+                Watch.clearPendingWatchWorkForTests ())
 
     /// Verifies that lifecycle catch-up derives the exact coordinator input from BranchDto rather than a prior notification.
     [<Test; Category("CurrentBranchCatchUp")>]

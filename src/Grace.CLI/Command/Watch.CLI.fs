@@ -66,6 +66,235 @@ module Watch =
     /// Reads Grace Watch runtime mode for tests that exercise confidence-loss transitions.
     let internal currentGraceWatchRuntimeModeForWatchTests () = currentGraceWatchRuntimeMode ()
 
+    /// Identifies one process-local save attempt without exposing its mutable ledger entry.
+    [<Struct>]
+    type internal LocalCurrentBranchReferenceEchoIntentHandle = private LocalCurrentBranchReferenceEchoIntentHandle of Guid
+
+    /// Carries the exact locally emitted root identity that a returned Reference may later complete.
+    type private LocalCurrentBranchReferenceEchoIntentIdentity =
+        {
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            DirectoryId: DirectoryVersionId
+            Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
+            CorrelationId: CorrelationId
+        }
+
+    /// Holds one bounded local intent while notification-before-response ordering settles.
+    type private LocalCurrentBranchReferenceEchoEntry =
+        {
+            Token: Guid
+            Identity: LocalCurrentBranchReferenceEchoIntentIdentity
+            ExpiresAtUtc: DateTime
+            Completion: TaskCompletionSource<ReferenceId option>
+            mutable ReferenceId: ReferenceId option
+        }
+
+    /// Tracks exact current-process save References long enough to silence every matching SignalR or lifecycle delivery.
+    type internal LocalCurrentBranchReferenceEchoLedger(capacity: int, lifetime: TimeSpan, utcNow: unit -> DateTime) =
+        let ledgerLock = obj ()
+        let entries = Dictionary<Guid, LocalCurrentBranchReferenceEchoEntry>()
+        let insertionOrder = LinkedList<Guid>()
+
+        do
+            if capacity <= 0 then
+                invalidArg (nameof capacity) "The local self-reference ledger capacity must be positive."
+
+            if lifetime <= TimeSpan.Zero then
+                invalidArg (nameof lifetime) "The local self-reference ledger lifetime must be positive."
+
+        /// Removes one entry and releases any early notification to ordinary coordinator handling.
+        let removeEntry token =
+            match entries.TryGetValue(token) with
+            | true, entry ->
+                entries.Remove(token) |> ignore
+                insertionOrder.Remove(token) |> ignore
+
+                entry.Completion.TrySetResult(None) |> ignore
+            | _ -> ()
+
+        /// Removes expired intents in insertion order before any admission decision uses them.
+        let pruneExpired nowUtc =
+            let mutable pruning = true
+
+            while pruning && not (isNull insertionOrder.First) do
+                let token = insertionOrder.First.Value
+
+                match entries.TryGetValue(token) with
+                | true, entry when entry.ExpiresAtUtc <= nowUtc -> removeEntry token
+                | true, _ -> pruning <- false
+                | _ -> insertionOrder.RemoveFirst()
+
+        /// Reports whether a notification exactly matches the save identity known before the server assigns its response.
+        let intentMatchesPayload identity (payload: CurrentBranchReferenceNotification) =
+            identity.RepositoryId = payload.RepositoryId
+            && identity.BranchId = payload.BranchId
+            && identity.DirectoryId = payload.DirectoryId
+            && identity.Sha256Hash = payload.Sha256Hash
+            && identity.Blake3Hash = payload.Blake3Hash
+            && String.Equals(identity.CorrelationId, payload.CorrelationId, StringComparison.Ordinal)
+
+        /// Reports whether BranchDto-derived catch-up names the exact completed local Reference and root.
+        let completedReferenceMatchesPayload (entry: LocalCurrentBranchReferenceEchoEntry) (payload: CurrentBranchReferenceNotification) =
+            entry.ReferenceId = Some payload.ReferenceId
+            && entry.Identity.RepositoryId = payload.RepositoryId
+            && entry.Identity.BranchId = payload.BranchId
+            && entry.Identity.DirectoryId = payload.DirectoryId
+            && entry.Identity.Sha256Hash = payload.Sha256Hash
+            && entry.Identity.Blake3Hash = payload.Blake3Hash
+
+        /// Records an exact local save intent before its server publication can race the response.
+        member _.Begin(repositoryId, branchId, directoryId, sha256Hash, blake3Hash, correlationId) =
+            lock ledgerLock (fun () ->
+                pruneExpired (utcNow ())
+
+                while entries.Count >= capacity
+                      && not (isNull insertionOrder.First) do
+                    removeEntry insertionOrder.First.Value
+
+                let token = Guid.NewGuid()
+
+                let entry =
+                    {
+                        Token = token
+                        Identity =
+                            {
+                                RepositoryId = repositoryId
+                                BranchId = branchId
+                                DirectoryId = directoryId
+                                Sha256Hash = sha256Hash
+                                Blake3Hash = blake3Hash
+                                CorrelationId = correlationId
+                            }
+                        ExpiresAtUtc = (utcNow ()).Add(lifetime)
+                        Completion = TaskCompletionSource<ReferenceId option>(TaskCreationOptions.RunContinuationsAsynchronously)
+                        ReferenceId = None
+                    }
+
+                entries.Add(token, entry)
+                insertionOrder.AddLast(token) |> ignore
+                LocalCurrentBranchReferenceEchoIntentHandle token)
+
+        /// Promotes a local intent only after the save response and local status application both succeed.
+        member _.Complete(LocalCurrentBranchReferenceEchoIntentHandle token, referenceId) =
+            lock ledgerLock (fun () ->
+                pruneExpired (utcNow ())
+
+                match entries.TryGetValue(token) with
+                | true, entry when referenceId <> ReferenceId.Empty ->
+                    entry.ReferenceId <- Some referenceId
+
+                    entry.Completion.TrySetResult(Some referenceId)
+                    |> ignore
+                | true, _ -> removeEntry token
+                | _ -> ())
+
+        /// Removes a failed or uncertain save intent so its later notification follows ordinary coordinator behavior.
+        member _.Fail(LocalCurrentBranchReferenceEchoIntentHandle token) = lock ledgerLock (fun () -> removeEntry token)
+
+        /// Restores the original correlation for a BranchDto-derived form of an exact completed local Reference.
+        member _.TryFindCompletedCorrelation(payload: CurrentBranchReferenceNotification) =
+            lock ledgerLock (fun () ->
+                pruneExpired (utcNow ())
+
+                entries.Values
+                |> Seq.tryFind (fun entry -> completedReferenceMatchesPayload entry payload)
+                |> Option.map (fun entry -> entry.Identity.CorrelationId))
+
+        /// Recognizes an exact completed local notification without retiring evidence needed by its other delivery path.
+        member _.TryConsume(payload: CurrentBranchReferenceNotification) =
+            task {
+                let pendingCompletion =
+                    lock ledgerLock (fun () ->
+                        pruneExpired (utcNow ())
+
+                        entries.Values
+                        |> Seq.tryFind (fun entry -> intentMatchesPayload entry.Identity payload)
+                        |> Option.map (fun entry -> entry.Token, entry.ExpiresAtUtc, entry.Completion.Task))
+
+                match pendingCompletion with
+                | None -> return false
+                | Some (token, expiresAtUtc, completionTask) ->
+                    let remainingLifetime = expiresAtUtc - utcNow ()
+
+                    let! completedBeforeExpiry =
+                        task {
+                            if remainingLifetime <= TimeSpan.Zero then
+                                return false
+                            else
+                                let! completedTask = Task.WhenAny(completionTask :> Task, Task.Delay(remainingLifetime))
+                                return Object.ReferenceEquals(completedTask, completionTask)
+                        }
+
+                    if not completedBeforeExpiry then
+                        lock ledgerLock (fun () -> removeEntry token)
+                        return false
+                    else
+                        let! completedReferenceId = completionTask
+
+                        return
+                            lock ledgerLock (fun () ->
+                                pruneExpired (utcNow ())
+
+                                match completedReferenceId, entries.TryGetValue(token) with
+                                | Some referenceId, (true, entry) when
+                                    referenceId = payload.ReferenceId
+                                    && completedReferenceMatchesPayload entry payload
+                                    ->
+                                    true
+                                | _ -> false)
+            }
+
+        /// Discards all process-local evidence and releases notifications waiting on incomplete saves.
+        member _.Clear() =
+            lock ledgerLock (fun () ->
+                let tokens = insertionOrder |> Seq.toArray
+
+                for token in tokens do
+                    removeEntry token)
+
+        /// Reports retained entries after pruning for deterministic capacity and expiry tests.
+        member _.Count =
+            lock ledgerLock (fun () ->
+                pruneExpired (utcNow ())
+                entries.Count)
+
+    let private localCurrentBranchReferenceEchoLedger = LocalCurrentBranchReferenceEchoLedger(64, TimeSpan.FromMinutes(2.0), (fun () -> DateTime.UtcNow))
+
+    /// Begins a production local save intent using the repository identity and complete root version being published.
+    let private beginLocalCurrentBranchReferenceIntent (rootDirectoryVersion: LocalDirectoryVersion) correlationId =
+        let current = Current()
+
+        localCurrentBranchReferenceEchoLedger.Begin(
+            current.RepositoryId,
+            current.BranchId,
+            rootDirectoryVersion.DirectoryVersionId,
+            rootDirectoryVersion.Sha256Hash,
+            rootDirectoryVersion.Blake3Hash,
+            correlationId
+        )
+
+    /// Records the identity carried by a test notification before simulating save completion.
+    let internal recordLocalCurrentBranchReferenceIntentForWatchTests (payload: CurrentBranchReferenceNotification) =
+        localCurrentBranchReferenceEchoLedger.Begin(
+            payload.RepositoryId,
+            payload.BranchId,
+            payload.DirectoryId,
+            payload.Sha256Hash,
+            payload.Blake3Hash,
+            payload.CorrelationId
+        )
+
+    /// Promotes a focused-test intent with the server-created Reference identity.
+    let internal completeLocalCurrentBranchReferenceIntentForWatchTests intent referenceId = localCurrentBranchReferenceEchoLedger.Complete(intent, referenceId)
+
+    /// Clears process-local self-reference evidence between focused Watch test lifetimes.
+    let internal resetLocalCurrentBranchReferenceEchoLedgerForWatchTests () = localCurrentBranchReferenceEchoLedger.Clear()
+
+    /// Reports retained production-ledger entries for false-positive-resistant coordinator tests.
+    let internal localCurrentBranchReferenceEchoLedgerCountForWatchTests () = localCurrentBranchReferenceEchoLedger.Count
+
     /// Provides the fallback path comparison until the repository volume can be probed.
     let private defaultWatchPathComparison () =
         if OperatingSystem.IsWindows() then
@@ -524,6 +753,10 @@ module Watch =
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
     let mutable private graceStatusRefreshGeneration = 0L
+    let mutable private localStatusRevisionCheckGeneration = 0L
+    let mutable private lastKnownLocalStatusRevision = 0L
+    let mutable private localStatusRevisionInitialized = 0
+    let private localStatusRevisionGate = new SemaphoreSlim(1, 1)
     let private watchStatusPublishLock = obj ()
     let mutable private lastPublishedHasPendingWatchWork: bool option = None
 
@@ -818,7 +1051,6 @@ module Watch =
         | CreatedOrChanged
         | Changed
         | Deleted
-        | GraceStatusArtifact
 
     /// Captures the immutable repository and root identity that owned a raw local observation at admission.
     type internal WatchObservationScope =
@@ -1169,11 +1401,8 @@ module Watch =
         let snapshot = currentWatchIgnoreSnapshot ()
         isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
 
-    /// Preserves status coordination while rejecting other Grace-owned paths before raw candidate scope capture.
-    let private tryClassifyRawLocalObservation fallbackKind fullPath =
-        if isGraceStatusArtifact fullPath then Some GraceStatusArtifact
-        elif isGraceInternalRawObservationPath fullPath then None
-        else Some fallbackKind
+    /// Rejects Grace-owned paths before raw candidate scope capture.
+    let private tryClassifyRawLocalObservation fallbackKind fullPath = if isGraceInternalRawObservationPath fullPath then None else Some fallbackKind
 
     /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
     let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
@@ -3267,6 +3496,120 @@ module Watch =
 
         graceStatusHasChanged <- true
 
+    /// Coalesces status DB, WAL, SHM, and journal callbacks without creating ordinary filesystem work.
+    let private recordLocalStatusRevisionCheckObservation () =
+        Interlocked.Increment(&localStatusRevisionCheckGeneration)
+        |> ignore
+
+    /// Records the latest trusted revision established at startup, committed by Watch, or accepted from an external writer.
+    let private recordKnownLocalStatusRevision revision =
+        Volatile.Write(&lastKnownLocalStatusRevision, revision)
+        Volatile.Write(&localStatusRevisionInitialized, 1)
+
+    /// Runs a Watch-owned status transaction and records its committed revision under the timer check gate.
+    let private runWatchOwnedLocalStatusWrite writeStatus =
+        task {
+            do! localStatusRevisionGate.WaitAsync()
+
+            try
+                let! committedRevision = writeStatus ()
+                recordKnownLocalStatusRevision committedRevision
+            finally
+                localStatusRevisionGate.Release() |> ignore
+        }
+
+    /// Reads one coalesced revision signal and routes external advances or untrusted evidence without publishing from callbacks.
+    let private processLocalStatusRevisionCheck readRevision revisionAdvanced revisionUntrusted =
+        task {
+            if
+                Volatile.Read(&localStatusRevisionCheckGeneration)
+                <> 0L
+            then
+                do! localStatusRevisionGate.WaitAsync()
+
+                try
+                    let observedGeneration = Volatile.Read(&localStatusRevisionCheckGeneration)
+
+                    if observedGeneration <> 0L then
+                        let! revisionResult =
+                            task {
+                                try
+                                    let! revision = readRevision ()
+                                    return Ok revision
+                                with
+                                | ex -> return Error ex
+                            }
+
+                        match revisionResult with
+                        | Error ex -> revisionUntrusted $"local-status revision could not be read: {ex.Message}"
+                        | Ok durableRevision ->
+                            if Volatile.Read(&localStatusRevisionInitialized) = 0 then
+                                revisionUntrusted "local-status revision was not established before callback processing"
+                            else
+                                let knownRevision = Volatile.Read(&lastKnownLocalStatusRevision)
+
+                                if durableRevision < knownRevision then
+                                    revisionUntrusted $"local-status revision regressed from {knownRevision} to {durableRevision}"
+                                else
+                                    if durableRevision > knownRevision then
+                                        recordKnownLocalStatusRevision durableRevision
+                                        revisionAdvanced ()
+
+                                    Interlocked.CompareExchange(&localStatusRevisionCheckGeneration, 0L, observedGeneration)
+                                    |> ignore
+                finally
+                    localStatusRevisionGate.Release() |> ignore
+        }
+
+    /// Establishes the durable revision that owns startup status before filesystem callbacks are enabled.
+    let private initializeLocalStatusRevision readRevision revisionUntrusted =
+        task {
+            try
+                let! revision = readRevision ()
+                recordKnownLocalStatusRevision revision
+            with
+            | ex -> revisionUntrusted $"local-status revision could not be established at startup: {ex.Message}"
+        }
+
+    /// Establishes the durable startup revision before enabling any source of local-state artifact callbacks.
+    let private initializeLocalStatusRevisionBeforeArtifactCallbacks readRevision admitCallbacks revisionUntrusted =
+        task {
+            do! initializeLocalStatusRevision readRevision revisionUntrusted
+            do! admitCallbacks ()
+        }
+
+    /// Applies a Watch-owned incremental status mutation and remembers its committed local-status revision.
+    let private applyGraceStatusIncrementalAndRecordRevision graceStatus directoryVersions differences =
+        runWatchOwnedLocalStatusWrite (fun () ->
+            Grace.CLI.LocalStateDb.applyStatusIncrementalWithRevision (Current().GraceStatusFile) graceStatus directoryVersions differences)
+
+    /// Replaces a Watch-owned status snapshot and remembers its committed local-status revision.
+    let private writeGraceStatusFileAndRecordRevision graceStatus =
+        runWatchOwnedLocalStatusWrite (fun () -> Grace.CLI.LocalStateDb.replaceStatusSnapshotWithRevision (Current().GraceStatusFile) graceStatus)
+
+    /// Exposes deterministic local-status revision processing without starting the foreground timer.
+    let internal processLocalStatusRevisionCheckForWatchTests readRevision revisionAdvanced revisionUntrusted =
+        processLocalStatusRevisionCheck readRevision revisionAdvanced revisionUntrusted
+
+    /// Exercises the production external-revision transition while keeping revision reads and failure handling deterministic.
+    let internal processLocalStatusRevisionCheckWithRefreshForWatchTests readRevision revisionUntrusted =
+        processLocalStatusRevisionCheck readRevision recordGraceStatusRefreshObservation revisionUntrusted
+
+    /// Exercises startup revision initialization and callback admission in production order with deterministic clients.
+    let internal initializeLocalStatusRevisionBeforeArtifactCallbacksForWatchTests readRevision admitCallbacks revisionUntrusted =
+        initializeLocalStatusRevisionBeforeArtifactCallbacks readRevision admitCallbacks revisionUntrusted
+
+    /// Exercises the production gate that records a Watch-owned committed local-status revision.
+    let internal runWatchOwnedLocalStatusWriteForWatchTests writeStatus = runWatchOwnedLocalStatusWrite writeStatus
+
+    /// Establishes a known local-status revision for callback and restart tests.
+    let internal setKnownLocalStatusRevisionForWatchTests revision = recordKnownLocalStatusRevision revision
+
+    /// Reports whether SQLite artifact callbacks still owe one coalesced revision check.
+    let internal localStatusRevisionCheckPendingForWatchTests () =
+        Volatile.Read(&localStatusRevisionCheckGeneration)
+        <> 0L
+
     /// Clears exactly the Grace Status refresh generation consumed by a successful publication.
     let private tryClearGraceStatusRefreshGeneration observedGeneration =
         if Interlocked.CompareExchange(&graceStatusRefreshGeneration, 0L, observedGeneration) = observedGeneration then
@@ -3812,19 +4155,9 @@ module Watch =
         | Some _ -> publishPendingWatchWorkTransitionIfNeeded ()
         | None -> ()
 
-    /// Records that durable Grace Status changed and immediately advertises pending Watch work to other commands.
-    let private markGraceStatusChangedAndPublishPendingWorkTransition () =
-        recordGraceStatusRefreshObservation ()
-
-        publishPendingWatchWorkTransitionIfNeeded ()
-
     /// Applies a due create or rename candidate after its quiet window has separated raw callbacks from filesystem work.
     let private applyCreatedOrChangedLocalObservationCandidate fullPath observedAt =
-        if updateNotInProgress ()
-           && isGraceStatusArtifact fullPath then
-            markGraceStatusChangedAndPublishPendingWorkTransition ()
-            false
-        elif isDelayedGraceOwnedFileObservation fullPath observedAt then
+        if isDelayedGraceOwnedFileObservation fullPath observedAt then
             false
         elif Directory.Exists(fullPath) then
             let queuedDirectoryWork = enqueueFinalDirectoryWork fullPath
@@ -3864,38 +4197,33 @@ module Watch =
 
     /// Applies a due delete candidate after the current marker and final filesystem state can be examined safely.
     let private applyDeletedLocalObservationCandidate fullPath observedAt =
-        if updateNotInProgress ()
-           && isGraceStatusArtifact fullPath then
-            markGraceStatusChangedAndPublishPendingWorkTransition ()
+        let canceledFileUpload = cancelPendingUploadsForDeletedPath fullPath
+
+        if isDelayedGraceOwnedFileObservation fullPath observedAt
+           && not canceledFileUpload then
             false
-        else
-            let canceledFileUpload = cancelPendingUploadsForDeletedPath fullPath
+        elif enqueueStatusUpdateTrigger fullPath then
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                let invalidatedRelativePath = RelativePath relativePath
 
-            if isDelayedGraceOwnedFileObservation fullPath observedAt
-               && not canceledFileUpload then
-                false
-            elif enqueueStatusUpdateTrigger fullPath then
+                if
+                    canceledFileUpload
+                    || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
+                then
+                    clearProcessedFileRelativePathsPendingStatusForPaths [ invalidatedRelativePath ]
+                    removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+            | None -> ()
+
+            if canceledFileUpload then
                 match repositoryRelativePath fullPath with
-                | Some relativePath ->
-                    let invalidatedRelativePath = RelativePath relativePath
-
-                    if
-                        canceledFileUpload
-                        || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
-                    then
-                        clearProcessedFileRelativePathsPendingStatusForPaths [ invalidatedRelativePath ]
-                        removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+                | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
                 | None -> ()
 
-                if canceledFileUpload then
-                    match repositoryRelativePath fullPath with
-                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
-                    | None -> ()
-
-                logToAnsiConsole Colors.Deleted $"I saw that {fullPath} was deleted."
-                true
-            else
-                false
+            logToAnsiConsole Colors.Deleted $"I saw that {fullPath} was deleted."
+            true
+        else
+            false
 
     /// Claims every due candidate, then reconciles IPC from the complete post-claim pending state even when no local work was queued.
     let private processDueLocalObservationCandidates now =
@@ -3952,9 +4280,6 @@ module Watch =
 
                                         removalQueuedWork || finalQueuedWork
                                     | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                                    | GraceStatusArtifact ->
-                                        markGraceStatusChangedAndPublishPendingWorkTransition ()
-                                        false
 
                         queuedPendingWork <- queuedPendingWork || candidateQueuedWork
                     | None -> ()
@@ -3979,11 +4304,6 @@ module Watch =
                 | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
                 | Changed -> applyChangedLocalObservationCandidate fullPath observedAt
                 | Deleted -> applyDeletedLocalObservationCandidate fullPath observedAt
-                | GraceStatusArtifact ->
-                    if updateNotInProgress () then
-                        markGraceStatusChangedAndPublishPendingWorkTransition ()
-
-                    false
 
             if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
 
@@ -4376,6 +4696,8 @@ module Watch =
 
     /// Completes a Grace-owned branch transition, then records any failed target activation after releasing the status publication monitor.
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
+        localCurrentBranchReferenceEchoLedger.Clear()
+
         let deferredTransitionConfigurationReloadReason =
             lock watchStatusPublishLock (fun () ->
                 let mutable deferredConfigurationReloadReason = None
@@ -4537,6 +4859,7 @@ module Watch =
     /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
         clearLocalObservationCandidateScheduler ()
+        localCurrentBranchReferenceEchoLedger.Clear()
         setLocalObservationCandidateSchedulingActive false
         Volatile.Write(&markerCompletionConfidenceLossActive, 0)
         Volatile.Write(&localObservationConfidenceLossActive, 0)
@@ -4572,6 +4895,12 @@ module Watch =
 
         Interlocked.Exchange(&graceStatusRefreshGeneration, 0L)
         |> ignore
+
+        Interlocked.Exchange(&localStatusRevisionCheckGeneration, 0L)
+        |> ignore
+
+        Volatile.Write(&lastKnownLocalStatusRevision, 0L)
+        Volatile.Write(&localStatusRevisionInitialized, 0)
 
         stableFileIdentityNowForWatch <- fun () -> DateTime.UtcNow
 
@@ -6080,7 +6409,7 @@ module Watch =
         }
 
     /// Applies one BranchDto-confirmed Reference through exact targets and object-cache-only file content.
-    let private applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients payload acceptedStatus =
+    let private applyCurrentBranchReferenceMaterializationWithAcceptedStatus clients (payload: CurrentBranchReferenceNotification) acceptedStatus =
         task {
             configureWatchPathComparisonForCurrentRepository ()
 
@@ -6198,7 +6527,7 @@ module Watch =
         }
 
     /// Applies one BranchDto-confirmed current-branch Reference without downloading missing object content.
-    let private applyCurrentBranchReferenceMaterialization payload acceptedStatus =
+    let private applyCurrentBranchReferenceMaterialization (payload: CurrentBranchReferenceNotification) acceptedStatus =
         applyCurrentBranchReferenceMaterializationWithAcceptedStatusForWatchTests
             {
                 GetRemoteDirectoryVersions =
@@ -6229,7 +6558,7 @@ module Watch =
                             | Error error -> return Error error
                         }
                 ReadGraceStatus = readGraceStatusFile
-                WriteGraceStatus = writeGraceStatusFile
+                WriteGraceStatus = writeGraceStatusFileAndRecordRevision
                 RequestResync = requestGraceWatchExplicitResync
                 TryCreateUpdateMarker = tryCreateCurrentBranchMaterializationMarkerForWatchTests
                 IsUpdateMarkerOwned = currentBranchMaterializationMarkerIsOwned
@@ -6272,6 +6601,8 @@ module Watch =
         | WaitingForSafePoint = 4
         /// Watch could not trust local IPC/status authority even after degraded resync revalidation.
         | WaitingForDegradedResync = 5
+        /// The exact completed Reference was emitted by this Watch process and never entered coordinator work.
+        | LocalSelfEchoConsumed = 6
 
     /// Carries the terminal coordinator result for one exact same-branch Reference notification.
     type internal CurrentBranchMaterializationCoordinatorOutcome =
@@ -6887,7 +7218,15 @@ module Watch =
         (clients: CurrentBranchMaterializationCoordinatorClients)
         (payload: CurrentBranchReferenceNotification)
         =
-        WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+        task {
+            let! localSelfEchoConsumed = localCurrentBranchReferenceEchoLedger.TryConsume(payload)
+
+            if localSelfEchoConsumed then
+                return
+                    { ReferenceId = payload.ReferenceId; Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed; Decision = None }
+            else
+                return! WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+        }
 
     /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
     let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
@@ -7025,20 +7364,25 @@ module Watch =
         else
             latestReference
             |> Option.map (fun reference ->
-                ({ CurrentBranchReferenceNotification.Default with
-                     ReferenceId = reference.ReferenceId
-                     OwnerId = reference.OwnerId
-                     OrganizationId = reference.OrganizationId
-                     RepositoryId = reference.RepositoryId
-                     BranchId = reference.BranchId
-                     BranchName = branchDto.BranchName
-                     DirectoryId = reference.DirectoryId
-                     Sha256Hash = reference.Sha256Hash
-                     Blake3Hash = reference.Blake3Hash
-                     ReferenceType = reference.ReferenceType
-                     ReferenceText = reference.ReferenceText
-                     CorrelationId = correlationId
-                 }: CurrentBranchReferenceNotification))
+                let payload =
+                    ({ CurrentBranchReferenceNotification.Default with
+                         ReferenceId = reference.ReferenceId
+                         OwnerId = reference.OwnerId
+                         OrganizationId = reference.OrganizationId
+                         RepositoryId = reference.RepositoryId
+                         BranchId = reference.BranchId
+                         BranchName = branchDto.BranchName
+                         DirectoryId = reference.DirectoryId
+                         Sha256Hash = reference.Sha256Hash
+                         Blake3Hash = reference.Blake3Hash
+                         ReferenceType = reference.ReferenceType
+                         ReferenceText = reference.ReferenceText
+                         CorrelationId = correlationId
+                     }: CurrentBranchReferenceNotification)
+
+                match localCurrentBranchReferenceEchoLedger.TryFindCompletedCorrelation(payload) with
+                | Some localCorrelationId -> { payload with CorrelationId = localCorrelationId }
+                | None -> payload)
 
     /// Re-reads BranchDto and sends its exact latest Reference through the existing serialized materialization lane.
     let private catchUpCurrentBranchReferenceWithClients
@@ -7480,11 +7824,14 @@ module Watch =
 
     /// Admits one raw callback through the shared Grace-internal namespace guard before scheduling or direct test processing.
     let private admitRawLocalObservation fallbackKind fullPath seenAt =
-        match tryClassifyRawLocalObservation fallbackKind fullPath with
-        | None -> ()
-        | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
-        | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
-        | Some _ -> ()
+        if isGraceStatusArtifact fullPath then
+            recordLocalStatusRevisionCheckObservation ()
+        else
+            match tryClassifyRawLocalObservation fallbackKind fullPath with
+            | None -> ()
+            | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
+            | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
+            | Some _ -> ()
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
@@ -7809,32 +8156,73 @@ module Watch =
 
                             // If there are changes either to files or just to directories, create a save reference.
                             if (differences.Count > 0) then
-                                let! saveReferenceResult =
-                                    if statusSideEffectStillAllowed "save reference creation" then
-                                        createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId
+                                let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
+                                let saveReferenceCreationAllowed = statusSideEffectStillAllowed "save reference creation"
+
+                                let localReferenceIntent =
+                                    if saveReferenceCreationAllowed then
+                                        Some(beginLocalCurrentBranchReferenceIntent rootDirectoryVersion correlationId)
                                     else
-                                        Task.FromResult(Error(GraceError.Create "Watch confidence lost before save reference creation." correlationId))
+                                        None
+
+                                let! saveReferenceResult =
+                                    task {
+                                        try
+                                            if saveReferenceCreationAllowed then
+                                                return! createSaveReference rootDirectoryVersion message correlationId
+                                            else
+                                                return Error(GraceError.Create "Watch confidence lost before save reference creation." correlationId)
+                                        with
+                                        | ex ->
+                                            localReferenceIntent
+                                            |> Option.iter localCurrentBranchReferenceEchoLedger.Fail
+
+                                            return raise ex
+                                    }
 
                                 match saveReferenceResult with
                                 | Ok returnValue ->
+                                    let completedLocalReferenceId =
+                                        match parseCreatedReferenceId correlationId returnValue with
+                                        | Ok referenceId -> Some referenceId
+                                        | Error _ -> None
+
                                     let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
 
                                     if statusSideEffectStillAllowed "local status application" then
-                                        // Apply incremental changes to the Grace Status DB.
-                                        do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+                                        try
+                                            // Apply incremental changes to the Grace Status DB.
+                                            do! applyGraceStatusIncrementalAndRecordRevision newGraceStatusWithUpdatedTime newDirectoryVersions differences
 
-                                        for fileVersion in directoryUploadedFileVersions do
-                                            let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+                                            match localReferenceIntent, completedLocalReferenceId with
+                                            | Some intent, Some referenceId -> localCurrentBranchReferenceEchoLedger.Complete(intent, referenceId)
+                                            | Some intent, None -> localCurrentBranchReferenceEchoLedger.Fail(intent)
+                                            | _ -> ()
 
-                                            uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
-                                            |> ignore
+                                            for fileVersion in directoryUploadedFileVersions do
+                                                let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
 
-                                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
-                                        graceStatusHasChanged <- currentGraceStatusRefreshGeneration () <> 0L // We *just* changed it ourselves, but a newer observed refresh must still be processed.
-                                        return Some newGraceStatusWithUpdatedTime
+                                                uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
+                                                |> ignore
+
+                                            //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                                            graceStatusHasChanged <- currentGraceStatusRefreshGeneration () <> 0L // We *just* changed it ourselves, but a newer observed refresh must still be processed.
+                                            return Some newGraceStatusWithUpdatedTime
+                                        with
+                                        | ex ->
+                                            localReferenceIntent
+                                            |> Option.iter localCurrentBranchReferenceEchoLedger.Fail
+
+                                            return raise ex
                                     else
+                                        localReferenceIntent
+                                        |> Option.iter localCurrentBranchReferenceEchoLedger.Fail
+
                                         return None
                                 | Error error ->
+                                    localReferenceIntent
+                                    |> Option.iter localCurrentBranchReferenceEchoLedger.Fail
+
                                     logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                                     return None
                             else
@@ -8908,7 +9296,7 @@ module Watch =
             updateGraceStatus
             scanForDifferencesWithWatchIgnoreSnapshot
             updateGraceStatusFromDifferences
-            applyGraceStatusIncremental
+            applyGraceStatusIncrementalAndRecordRevision
             updateGraceWatchInterprocessFile
 
     /// Coordinates queue startup difference for watch behavior for this CLI command path.
@@ -9273,6 +9661,13 @@ module Watch =
                         member _.Dispose() = retireLocalObservationCandidateScheduler ()
                     }
 
+                localCurrentBranchReferenceEchoLedger.Clear()
+
+                use localCurrentBranchReferenceEchoLifetime =
+                    { new IDisposable with
+                        member _.Dispose() = localCurrentBranchReferenceEchoLedger.Clear()
+                    }
+
                 try
                     if isCheckRequested parseResult then
                         let! watchStatusInspection = inspectGraceWatchStatus ()
@@ -9374,12 +9769,19 @@ module Watch =
                     graceStatus <- status
                     updateGraceStatusDirectoryIds graceStatus
 
-                    // Create the inter-process communication file.
-                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
+                    do!
+                        initializeLocalStatusRevisionBeforeArtifactCallbacks
+                            (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                            (fun () ->
+                                task {
+                                    // Create the inter-process communication file.
+                                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
 
-                    // Enable the FileSystemWatcher.
-                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
-                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
+                                    // Enable the FileSystemWatcher only after the durable local-status revision is established.
+                                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
+                                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
+                                })
+                            (fun reason -> requestGraceWatchExplicitResync reason)
 
                     let timerTimeSpan = TimeSpan.FromSeconds(1.0)
 
@@ -9573,6 +9975,12 @@ module Watch =
                             processWatchTimerLocalRecoveryWithCatchUp
                                 (fun () ->
                                     task {
+                                        do!
+                                            processLocalStatusRevisionCheck
+                                                (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                                                recordGraceStatusRefreshObservation
+                                                requestGraceWatchExplicitResync
+
                                         // Grace Status may have changed from branch switch, or other commands.
                                         if graceStatusHasChanged then
                                             let refreshGeneration = currentGraceStatusRefreshGeneration ()
