@@ -37,6 +37,20 @@ module WatchTests =
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Captures direct Watch callback output written through Spectre.Console.
+    let private captureAnsiConsoleOutput (action: unit -> unit) =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+            action ()
+            writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
     /// Runs with captured output for test scenarios.
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
@@ -1531,7 +1545,7 @@ module WatchTests =
             |> should equal Array.empty<Watch.WatchObservationCandidate>)
 
     /// Verifies that Grace object-cache callbacks never capture stale root scope or request recovery work.
-    [<Test; Category("WatchInternalAdmission")>]
+    [<Test; Category("WatchInternalAdmission"); Category("WatchSilentObservation")>]
     let ``raw internal cache callback is rejected before stale root scope admission`` () =
         withTempRepo (fun root ->
             let acceptedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
@@ -1544,8 +1558,12 @@ module WatchTests =
             Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(acceptedStatus))
             Watch.setLocalObservationCandidateSchedulingForWatchTests true
 
-            Watch.OnCreated(createdEvent internalPath)
-            Watch.OnChanged(changedEvent internalPath)
+            let output =
+                captureAnsiConsoleOutput (fun () ->
+                    Watch.OnCreated(createdEvent internalPath)
+                    Watch.OnChanged(changedEvent internalPath))
+
+            output |> should equal String.Empty
 
             Watch.localObservationCandidateSnapshotForWatchTests ()
             |> should equal Array.empty<Watch.WatchObservationCandidate>
@@ -1574,6 +1592,18 @@ module WatchTests =
 
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
+
+    /// Verifies that explicit filesystem watcher failures remain visible while discarded observations become silent.
+    [<Test; Category("WatchInternalAdmission"); Category("WatchSilentObservation")>]
+    let ``filesystem watcher errors retain explicit resync diagnostics`` () =
+        withTempRepo (fun _ ->
+            let output = captureAnsiConsoleOutput (fun () -> Watch.OnError(ErrorEventArgs(InternalBufferOverflowException("watch buffer overflow"))))
+
+            output
+            |> should contain "FileSystemWatcher threw an"
+
+            output |> should contain "watch buffer overflow"
+            output |> should contain "resynchronizing before")
 
     /// Verifies that stale root rejection remains fail-closed for an ordinary user callback.
     [<Test; Category("WatchInternalAdmission")>]
@@ -19564,15 +19594,26 @@ module WatchTests =
 
             applyFromDifferencesCalls |> should equal 1)
 
-    /// Verifies that suspended mode does not queue or apply filesystem observations.
-    [<Test>]
-    let ``suspended runtime mode does not apply observations`` () =
+    /// Verifies that suspended mode silently leaves filesystem observation state unchanged.
+    [<Test; Category("WatchSilentObservation")>]
+    let ``suspended runtime mode silently discards observations`` () =
         withTempRepo (fun root ->
             Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.Suspended
 
             let filePath = Path.Combine(root, "suspended-observation.txt")
             File.WriteAllText(filePath, "suspended observation")
-            Watch.OnChanged(changedEvent filePath)
+
+            let pendingBefore = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+            let candidatesBefore = Watch.localObservationCandidateSnapshotForWatchTests ()
+            let output = captureAnsiConsoleOutput (fun () -> Watch.OnChanged(changedEvent filePath))
+
+            output |> should equal String.Empty
+
+            Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+            |> should equal pendingBefore
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal candidatesBefore
 
             Watch
                 .pendingWatchWorkSnapshotForTests()

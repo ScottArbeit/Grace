@@ -307,10 +307,6 @@ module Watch =
 
         recordWatchLifecycleEventForWatch <- fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
-    /// Reports that a filesystem observation was ignored because the current runtime mode cannot capture it.
-    let private logObservationSuppressed fullPath =
-        logToAnsiConsole Colors.Verbose $"Grace Watch ignored filesystem observation for {fullPath} while runtime mode is {currentGraceWatchRuntimeMode ()}."
-
     let private uploadedFileVersions = ConcurrentDictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
 
     /// Reads uploaded file version identity data needed by the command workflow without changing remote state.
@@ -3829,7 +3825,6 @@ module Watch =
             markGraceStatusChangedAndPublishPendingWorkTransition ()
             false
         elif isDelayedGraceOwnedFileObservation fullPath observedAt then
-            logObservationSuppressed fullPath
             false
         elif Directory.Exists(fullPath) then
             let queuedDirectoryWork = enqueueFinalDirectoryWork fullPath
@@ -3878,7 +3873,6 @@ module Watch =
 
             if isDelayedGraceOwnedFileObservation fullPath observedAt
                && not canceledFileUpload then
-                logObservationSuppressed fullPath
                 false
             elif enqueueStatusUpdateTrigger fullPath then
                 match repositoryRelativePath fullPath with
@@ -3912,13 +3906,11 @@ module Watch =
         for dueCandidate in dueCandidates do
             if localObservationIncrementalWorkBlocked () then
                 match tryClaimLocalObservationCandidate scheduler dueCandidate now with
-                | Some candidate ->
-                    claimedCandidate <- true
-                    logObservationSuppressed candidate.FullPath
+                | Some _ -> claimedCandidate <- true
                 | None -> ()
             else
                 match tryGetActiveGraceUpdateMarkerObservationBoundary () with
-                | ActiveMarker markerObservedAt when dueCandidate.LastSeenAt < markerObservedAt -> logObservationSuppressed dueCandidate.FullPath
+                | ActiveMarker markerObservedAt when dueCandidate.LastSeenAt < markerObservedAt -> ()
                 | markerBoundary ->
                     match tryClaimLocalObservationCandidate scheduler dueCandidate now with
                     | Some candidate ->
@@ -3928,11 +3920,8 @@ module Watch =
                             match markerBoundary with
                             | AmbiguousMarkerBoundary reason ->
                                 recordLocalObservationConfidenceLoss reason
-                                logObservationSuppressed candidate.FullPath
                                 false
-                            | ActiveMarker _ ->
-                                logObservationSuppressed candidate.FullPath
-                                false
+                            | ActiveMarker _ -> false
                             | NoActiveMarker ->
                                 match candidate.Scope with
                                 | Some scope when not (watchObservationScopeMatchesCurrent scope) ->
@@ -3981,7 +3970,7 @@ module Watch =
     /// Applies an observation immediately only for direct callback harnesses that did not start the Watch lifetime.
     let private processLocalObservationImmediately kind fullPath =
         if localObservationIncrementalWorkBlocked () then
-            logObservationSuppressed fullPath
+            ()
         else
             let observedAt = DateTime.UtcNow
 
@@ -3993,8 +3982,6 @@ module Watch =
                 | GraceStatusArtifact ->
                     if updateNotInProgress () then
                         markGraceStatusChangedAndPublishPendingWorkTransition ()
-                    else
-                        logObservationSuppressed fullPath
 
                     false
 
@@ -7494,28 +7481,24 @@ module Watch =
     /// Admits one raw callback through the shared Grace-internal namespace guard before scheduling or direct test processing.
     let private admitRawLocalObservation fallbackKind fullPath seenAt =
         match tryClassifyRawLocalObservation fallbackKind fullPath with
-        | None -> logObservationSuppressed fullPath
+        | None -> ()
         | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
         | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
-        | Some _ -> logObservationSuppressed fullPath
+        | Some _ -> ()
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
-            logObservationSuppressed args.FullPath
+            ()
         elif updateNotInProgress () then
             admitRawLocalObservation CreatedOrChanged args.FullPath DateTime.UtcNow
-        else
-            logObservationSuppressed args.FullPath
 
     /// Coordinates on changed behavior for this CLI command path.
     let OnChanged (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
-            logObservationSuppressed args.FullPath
+            ()
         elif updateNotInProgress () then
             admitRawLocalObservation Changed args.FullPath DateTime.UtcNow
-        else
-            logObservationSuppressed args.FullPath
 
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
     let private enqueueDirectoryContentsForUpload directoryPath = tryEnqueueDirectoryContentsForUpload directoryPath
@@ -7552,22 +7535,18 @@ module Watch =
     /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
-            logObservationSuppressed args.FullPath
+            ()
         elif updateNotInProgress () then
             admitRawLocalObservation Deleted args.FullPath DateTime.UtcNow
-        else
-            logObservationSuppressed args.FullPath
 
     /// Coordinates on renamed behavior for this CLI command path.
     let OnRenamed (args: RenamedEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
-            logObservationSuppressed args.FullPath
+            ()
         elif updateNotInProgress () then
             let seenAt = DateTime.UtcNow
             admitRawLocalObservation Deleted args.OldFullPath seenAt
             admitRawLocalObservation CreatedOrChanged args.FullPath seenAt
-        else
-            logObservationSuppressed args.FullPath
 
     /// Coordinates on error behavior for this CLI command path.
     let OnError (args: ErrorEventArgs) =
