@@ -20261,6 +20261,248 @@ module WatchTests =
             ReferenceType = referenceType
         }
 
+    /// Builds an exact local self-reference payload with every suppression identity field populated.
+    let private localSelfReferenceNotification repositoryId branchId correlationId =
+        { validCurrentBranchReferenceNotification
+              repositoryId
+              branchId
+              ReferenceType.Save
+              (Guid.NewGuid())
+              (Sha256Hash "self-reference-root-sha256")
+              (Blake3Hash "self-reference-root-blake3") with
+            CorrelationId = correlationId
+        }
+
+    /// Verifies that a notification arriving before save completion waits at the ledger and is consumed only after exact promotion.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger waits for successful reference promotion before consuming early echo`` () =
+        let nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+        let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+        let payload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "early-self-reference"
+        let intent = ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+        let consumption = ledger.TryConsume(payload)
+
+        consumption.IsCompleted |> should equal false
+
+        ledger.Complete(intent, payload.ReferenceId)
+
+        consumption.GetAwaiter().GetResult()
+        |> should equal true
+
+        ledger.Count |> should equal 0
+
+    /// Verifies that exact identity fields are all required and a failed save never leaves suppressible evidence.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger preserves mismatches and failed save notifications as ordinary work`` () =
+        let nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+        let payload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "mismatch-self-reference"
+
+        let mismatchCases =
+            [|
+                { payload with CorrelationId = "other-correlation" }
+                { payload with ReferenceId = Guid.NewGuid() }
+                { payload with DirectoryId = Guid.NewGuid() }
+                { payload with Sha256Hash = Sha256Hash "other-sha256" }
+                { payload with Blake3Hash = Blake3Hash "other-blake3" }
+                { payload with RepositoryId = Guid.NewGuid() }
+                { payload with BranchId = Guid.NewGuid() }
+            |]
+
+        for mismatch in mismatchCases do
+            let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+
+            let intent =
+                ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+
+            ledger.Complete(intent, payload.ReferenceId)
+
+            ledger
+                .TryConsume(mismatch)
+                .GetAwaiter()
+                .GetResult()
+            |> should equal false
+
+            ledger.Count |> should equal 1
+
+        let failedLedger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+
+        let failedIntent =
+            failedLedger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+
+        failedLedger.Fail(failedIntent)
+
+        failedLedger
+            .TryConsume(payload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        failedLedger.Count |> should equal 0
+
+    /// Verifies that expiry, capacity eviction, restart, and branch-transition reset cannot suppress retained identities.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger is short lived bounded and cleared across process or branch lifetimes`` () =
+        let mutable nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+
+        let payloads =
+            [|
+                localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "bounded-self-reference-1"
+                localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "bounded-self-reference-2"
+                localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "bounded-self-reference-3"
+            |]
+
+        let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(2, TimeSpan.FromSeconds(30.0), (fun () -> nowUtc))
+
+        let handles =
+            payloads
+            |> Array.map (fun payload ->
+                let handle =
+                    ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+
+                ledger.Complete(handle, payload.ReferenceId)
+                handle)
+
+        ledger.Count |> should equal 2
+
+        ledger
+            .TryConsume(payloads[0])
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        ledger
+            .TryConsume(payloads[1])
+            .GetAwaiter()
+            .GetResult()
+        |> should equal true
+
+        nowUtc <- nowUtc.AddMinutes(1.0)
+
+        ledger
+            .TryConsume(payloads[2])
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        ledger.Count |> should equal 0
+
+        let restartedLedger = Watch.LocalCurrentBranchReferenceEchoLedger(2, TimeSpan.FromSeconds(30.0), (fun () -> nowUtc))
+        let restartedPayload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "restarted-self-reference"
+
+        let restartedIntent =
+            restartedLedger.Begin(
+                restartedPayload.RepositoryId,
+                restartedPayload.BranchId,
+                restartedPayload.DirectoryId,
+                restartedPayload.Sha256Hash,
+                restartedPayload.Blake3Hash,
+                restartedPayload.CorrelationId
+            )
+
+        restartedLedger.Complete(restartedIntent, restartedPayload.ReferenceId)
+        restartedLedger.Clear()
+
+        restartedLedger
+            .TryConsume(restartedPayload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal false
+
+        handles |> should haveLength 3
+
+    /// Verifies that exact direct SignalR echoes stop before every coordinator side effect or callback seam.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``exact direct self-reference echo is consumed before coordinator work`` () =
+        withTempRepo (fun root ->
+            Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ()
+
+            try
+                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+                let payload = localSelfReferenceNotification repositoryId branchId "direct-self-reference"
+                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
+                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
+                let mutable coordinatorCalls = 0
+                let mutable handlerResult = Unchecked.defaultof<Services.LatestCurrentBranchReferenceDecision option>
+
+                let callbackOutput =
+                    captureAnsiConsoleOutput (fun () ->
+                        handlerResult <-
+                            (Watch.handleCurrentBranchReferenceNotificationWithClientsForWatchTests
+                                (fun () ->
+                                    coordinatorCalls <- coordinatorCalls + 1
+                                    Task.FromResult(Error(GraceError.Create "Exact self echo reached BranchDto fetch." payload.CorrelationId)))
+                                (fun () ->
+                                    coordinatorCalls <- coordinatorCalls + 1
+                                    Task.FromResult(None))
+                                payload)
+                                .GetAwaiter()
+                                .GetResult())
+
+                coordinatorCalls |> should equal 0
+                handlerResult |> should equal None
+                callbackOutput |> should equal String.Empty
+
+                Watch.localCurrentBranchReferenceEchoLedgerCountForWatchTests ()
+                |> should equal 0
+            finally
+                Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
+
+    /// Verifies that BranchDto lifecycle catch-up restores the local correlation and uses the same coordinator suppression gate.
+    [<Test; Category("CurrentBranchSelfReferenceEcho"); Category("CurrentBranchCatchUp")>]
+    let ``exact lifecycle catch-up self-reference uses shared coordinator gate`` () =
+        withTempRepo (fun root ->
+            Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ()
+
+            try
+                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+                let payload = localSelfReferenceNotification repositoryId branchId "catch-up-self-reference"
+                let branchDto = branchDtoWithLatestCurrentBranchReference payload
+                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
+                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
+                let mutable coordinatorCalls = 0
+                let observedCorrelations = ResizeArray<CorrelationId>()
+
+                let unexpected name =
+                    coordinatorCalls <- coordinatorCalls + 1
+                    Task.FromException<'T>(InvalidOperationException($"Exact catch-up self echo reached {name}."))
+
+                let processReference catchUpPayload =
+                    task {
+                        observedCorrelations.Add(catchUpPayload.CorrelationId)
+
+                        let! outcome =
+                            Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                                (fun () -> unexpected "BranchDto fetch")
+                                (fun () -> unexpected "local-status inspection")
+                                (fun _ -> coordinatorCalls <- coordinatorCalls + 1)
+                                (fun _ _ -> unexpected "safe-point wait")
+                                (fun _ _ -> unexpected "IPC reestablishment")
+                                (fun _ _ -> unexpected "materialization apply")
+                                catchUpPayload
+
+                        return outcome.Value
+                    }
+
+                let result, outcome =
+                    (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
+                        (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "catch-up-self-reference-source")))
+                        processReference)
+                        .GetAwaiter()
+                        .GetResult()
+
+                result
+                |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
+
+                outcome.Value.Reason
+                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed
+
+                observedCorrelations.ToArray()
+                |> should equal [| payload.CorrelationId |]
+
+                coordinatorCalls |> should equal 0
+            finally
+                Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
+
     /// Verifies that lifecycle catch-up derives the exact coordinator input from BranchDto rather than a prior notification.
     [<Test; Category("CurrentBranchCatchUp")>]
     let ``current branch catch-up routes BranchDto latest reference through coordinator`` () =
