@@ -20289,7 +20289,30 @@ module WatchTests =
         consumption.GetAwaiter().GetResult()
         |> should equal true
 
-        ledger.Count |> should equal 0
+        ledger.Count |> should equal 1
+
+    /// Verifies that both delivery paths can silently recognize the same completed local Reference during its bounded lifetime.
+    [<Test; Category("CurrentBranchSelfReferenceEcho")>]
+    let ``local self-reference ledger recognizes exact completed duplicate deliveries`` () =
+        let nowUtc = DateTime(2026, 8, 6, 12, 0, 0, DateTimeKind.Utc)
+        let ledger = Watch.LocalCurrentBranchReferenceEchoLedger(4, TimeSpan.FromMinutes(2.0), (fun () -> nowUtc))
+        let payload = localSelfReferenceNotification (Guid.NewGuid()) (Guid.NewGuid()) "duplicate-self-reference"
+        let intent = ledger.Begin(payload.RepositoryId, payload.BranchId, payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash, payload.CorrelationId)
+        ledger.Complete(intent, payload.ReferenceId)
+
+        ledger
+            .TryConsume(payload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal true
+
+        ledger
+            .TryConsume(payload)
+            .GetAwaiter()
+            .GetResult()
+        |> should equal true
+
+        ledger.Count |> should equal 1
 
     /// Verifies that exact identity fields are all required and a failed save never leaves suppressible evidence.
     [<Test; Category("CurrentBranchSelfReferenceEcho")>]
@@ -20443,7 +20466,7 @@ module WatchTests =
                 callbackOutput |> should equal String.Empty
 
                 Watch.localCurrentBranchReferenceEchoLedgerCountForWatchTests ()
-                |> should equal 0
+                |> should equal 1
             finally
                 Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
 
@@ -20502,6 +20525,116 @@ module WatchTests =
                 coordinatorCalls |> should equal 0
             finally
                 Watch.resetLocalCurrentBranchReferenceEchoLedgerForWatchTests ())
+
+    /// Verifies that lifecycle and direct delivery order cannot expose an exact completed local Reference to coordinator or Watch work.
+    [<TestCase(true); TestCase(false); Category("CurrentBranchSelfReferenceEcho"); Category("CurrentBranchCatchUp")>]
+    let ``exact self-reference stays silent across lifecycle and direct duplicate delivery order`` lifecycleFirst =
+        withTempRepo (fun root ->
+            Watch.clearPendingWatchWorkForTests ()
+
+            try
+                let repositoryId, branchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+                let payload = localSelfReferenceNotification repositoryId branchId "duplicate-delivery-self-reference"
+                let branchDto = branchDtoWithLatestCurrentBranchReference payload
+                let intent = Watch.recordLocalCurrentBranchReferenceIntentForWatchTests payload
+                Watch.completeLocalCurrentBranchReferenceIntentForWatchTests intent payload.ReferenceId
+
+                let pendingBefore = Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+                let candidatesBefore = Watch.localObservationCandidateSnapshotForWatchTests ()
+
+                let catchUpGenerationBefore = Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+
+                let coordinatorEffects = ResizeArray<string>()
+
+                /// Fails the test if either delivery enters any injected coordinator side-effect seam.
+                let unexpected name =
+                    coordinatorEffects.Add(name)
+                    Task.FromException<'T>(InvalidOperationException($"Exact duplicate self echo reached {name}."))
+
+                /// Routes the real direct-notification seam while capturing any user-visible Watch output.
+                let runDirectDelivery () =
+                    let mutable result = Unchecked.defaultof<Services.LatestCurrentBranchReferenceDecision option>
+
+                    let output =
+                        captureAnsiConsoleOutput (fun () ->
+                            result <-
+                                (Watch.handleCurrentBranchReferenceNotificationWithClientsForWatchTests
+                                    (fun () -> unexpected "direct BranchDto fetch")
+                                    (fun () -> unexpected "direct local-status read")
+                                    payload)
+                                    .GetAwaiter()
+                                    .GetResult())
+
+                    result, output
+
+                /// Routes the BranchDto-derived lifecycle seam through the same coordinator and captures any Watch output.
+                let runLifecycleDelivery () =
+                    /// Sends the BranchDto-derived payload through the production coordinator admission gate.
+                    let processReference catchUpPayload =
+                        task {
+                            let! outcome =
+                                Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                                    (fun () -> unexpected "lifecycle BranchDto fetch")
+                                    (fun () -> unexpected "lifecycle local-status inspection")
+                                    (fun _ -> coordinatorEffects.Add("lifecycle degraded resync"))
+                                    (fun _ _ -> unexpected "lifecycle safe-point wait")
+                                    (fun _ _ -> unexpected "lifecycle IPC reestablishment")
+                                    (fun _ _ -> unexpected "lifecycle materialization apply")
+                                    catchUpPayload
+
+                            return outcome.Value
+                        }
+
+                    let mutable result =
+                        Unchecked.defaultof<Watch.CurrentBranchReferenceCatchUpResult * Watch.CurrentBranchMaterializationCoordinatorOutcome option>
+
+                    let output =
+                        captureAnsiConsoleOutput (fun () ->
+                            result <-
+                                (Watch.catchUpCurrentBranchReferenceWithClientsForWatchTests
+                                    (fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto "duplicate-delivery-catch-up-source")))
+                                    processReference)
+                                    .GetAwaiter()
+                                    .GetResult())
+
+                    result, output
+
+                let directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput =
+                    if lifecycleFirst then
+                        let (lifecycleResult, lifecycleOutcome), lifecycleOutput = runLifecycleDelivery ()
+                        let directResult, directOutput = runDirectDelivery ()
+                        directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput
+                    else
+                        let directResult, directOutput = runDirectDelivery ()
+                        let (lifecycleResult, lifecycleOutcome), lifecycleOutput = runLifecycleDelivery ()
+                        directResult, directOutput, lifecycleResult, lifecycleOutcome, lifecycleOutput
+
+                directResult |> should equal None
+                directOutput |> should equal String.Empty
+
+                lifecycleResult
+                |> should equal Watch.CurrentBranchReferenceCatchUpResult.Processed
+
+                lifecycleOutcome.Value.Reason
+                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed
+
+                lifecycleOutput |> should equal String.Empty
+
+                coordinatorEffects.ToArray() |> should be Empty
+
+                Watch.pendingWatchWorkSnapshotWithoutCandidateDrainForTests ()
+                |> should equal pendingBefore
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> should equal candidatesBefore
+
+                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                |> should equal catchUpGenerationBefore
+
+                Watch.localCurrentBranchReferenceEchoLedgerCountForWatchTests ()
+                |> should equal 1
+            finally
+                Watch.clearPendingWatchWorkForTests ())
 
     /// Verifies that lifecycle catch-up derives the exact coordinator input from BranchDto rather than a prior notification.
     [<Test; Category("CurrentBranchCatchUp")>]

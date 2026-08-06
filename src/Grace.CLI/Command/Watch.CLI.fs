@@ -91,7 +91,7 @@ module Watch =
             mutable ReferenceId: ReferenceId option
         }
 
-    /// Tracks only exact current-process save References long enough to consume their SignalR or lifecycle echo.
+    /// Tracks exact current-process save References long enough to silence every matching SignalR or lifecycle delivery.
     type internal LocalCurrentBranchReferenceEchoLedger(capacity: int, lifetime: TimeSpan, utcNow: unit -> DateTime) =
         let ledgerLock = obj ()
         let entries = Dictionary<Guid, LocalCurrentBranchReferenceEchoEntry>()
@@ -104,15 +104,14 @@ module Watch =
             if lifetime <= TimeSpan.Zero then
                 invalidArg (nameof lifetime) "The local self-reference ledger lifetime must be positive."
 
-        /// Removes one entry and releases any early notification waiting for its terminal save result.
-        let removeEntry token completion =
+        /// Removes one entry and releases any early notification to ordinary coordinator handling.
+        let removeEntry token =
             match entries.TryGetValue(token) with
             | true, entry ->
                 entries.Remove(token) |> ignore
                 insertionOrder.Remove(token) |> ignore
 
-                entry.Completion.TrySetResult(completion)
-                |> ignore
+                entry.Completion.TrySetResult(None) |> ignore
             | _ -> ()
 
         /// Removes expired intents in insertion order before any admission decision uses them.
@@ -123,7 +122,7 @@ module Watch =
                 let token = insertionOrder.First.Value
 
                 match entries.TryGetValue(token) with
-                | true, entry when entry.ExpiresAtUtc <= nowUtc -> removeEntry token None
+                | true, entry when entry.ExpiresAtUtc <= nowUtc -> removeEntry token
                 | true, _ -> pruning <- false
                 | _ -> insertionOrder.RemoveFirst()
 
@@ -152,7 +151,7 @@ module Watch =
 
                 while entries.Count >= capacity
                       && not (isNull insertionOrder.First) do
-                    removeEntry insertionOrder.First.Value None
+                    removeEntry insertionOrder.First.Value
 
                 let token = Guid.NewGuid()
 
@@ -188,11 +187,11 @@ module Watch =
 
                     entry.Completion.TrySetResult(Some referenceId)
                     |> ignore
-                | true, _ -> removeEntry token None
+                | true, _ -> removeEntry token
                 | _ -> ())
 
         /// Removes a failed or uncertain save intent so its later notification follows ordinary coordinator behavior.
-        member _.Fail(LocalCurrentBranchReferenceEchoIntentHandle token) = lock ledgerLock (fun () -> removeEntry token None)
+        member _.Fail(LocalCurrentBranchReferenceEchoIntentHandle token) = lock ledgerLock (fun () -> removeEntry token)
 
         /// Restores the original correlation for a BranchDto-derived form of an exact completed local Reference.
         member _.TryFindCompletedCorrelation(payload: CurrentBranchReferenceNotification) =
@@ -203,7 +202,7 @@ module Watch =
                 |> Seq.tryFind (fun entry -> completedReferenceMatchesPayload entry payload)
                 |> Option.map (fun entry -> entry.Identity.CorrelationId))
 
-        /// Consumes one exact completed local notification before it can enter materialization coordination.
+        /// Recognizes an exact completed local notification without retiring evidence needed by its other delivery path.
         member _.TryConsume(payload: CurrentBranchReferenceNotification) =
             task {
                 let pendingCompletion =
@@ -229,7 +228,7 @@ module Watch =
                         }
 
                     if not completedBeforeExpiry then
-                        lock ledgerLock (fun () -> removeEntry token None)
+                        lock ledgerLock (fun () -> removeEntry token)
                         return false
                     else
                         let! completedReferenceId = completionTask
@@ -243,7 +242,6 @@ module Watch =
                                     referenceId = payload.ReferenceId
                                     && completedReferenceMatchesPayload entry payload
                                     ->
-                                    removeEntry token (Some referenceId)
                                     true
                                 | _ -> false)
             }
@@ -254,7 +252,7 @@ module Watch =
                 let tokens = insertionOrder |> Seq.toArray
 
                 for token in tokens do
-                    removeEntry token None)
+                    removeEntry token)
 
         /// Reports retained entries after pruning for deterministic capacity and expiry tests.
         member _.Count =
