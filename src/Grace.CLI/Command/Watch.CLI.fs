@@ -3342,6 +3342,13 @@ module Watch =
             | ex -> revisionUntrusted $"local-status revision could not be established at startup: {ex.Message}"
         }
 
+    /// Establishes the durable startup revision before enabling any source of local-state artifact callbacks.
+    let private initializeLocalStatusRevisionBeforeArtifactCallbacks readRevision admitCallbacks revisionUntrusted =
+        task {
+            do! initializeLocalStatusRevision readRevision revisionUntrusted
+            do! admitCallbacks ()
+        }
+
     /// Applies a Watch-owned incremental status mutation and remembers its committed local-status revision.
     let private applyGraceStatusIncrementalAndRecordRevision graceStatus directoryVersions differences =
         runWatchOwnedLocalStatusWrite (fun () ->
@@ -3358,6 +3365,13 @@ module Watch =
     /// Exercises the production external-revision transition while keeping revision reads and failure handling deterministic.
     let internal processLocalStatusRevisionCheckWithRefreshForWatchTests readRevision revisionUntrusted =
         processLocalStatusRevisionCheck readRevision recordGraceStatusRefreshObservation revisionUntrusted
+
+    /// Exercises startup revision initialization and callback admission in production order with deterministic clients.
+    let internal initializeLocalStatusRevisionBeforeArtifactCallbacksForWatchTests readRevision admitCallbacks revisionUntrusted =
+        initializeLocalStatusRevisionBeforeArtifactCallbacks readRevision admitCallbacks revisionUntrusted
+
+    /// Exercises the production gate that records a Watch-owned committed local-status revision.
+    let internal runWatchOwnedLocalStatusWriteForWatchTests writeStatus = runWatchOwnedLocalStatusWrite writeStatus
 
     /// Establishes a known local-status revision for callback and restart tests.
     let internal setKnownLocalStatusRevisionForWatchTests revision = recordKnownLocalStatusRevision revision
@@ -9461,16 +9475,18 @@ module Watch =
                     updateGraceStatusDirectoryIds graceStatus
 
                     do!
-                        initializeLocalStatusRevision
+                        initializeLocalStatusRevisionBeforeArtifactCallbacks
                             (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                            (fun () ->
+                                task {
+                                    // Create the inter-process communication file.
+                                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
+
+                                    // Enable the FileSystemWatcher only after the durable local-status revision is established.
+                                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
+                                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
+                                })
                             (fun reason -> requestGraceWatchExplicitResync reason)
-
-                    // Create the inter-process communication file.
-                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
-
-                    // Enable the FileSystemWatcher.
-                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
-                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
 
                     let timerTimeSpan = TimeSpan.FromSeconds(1.0)
 

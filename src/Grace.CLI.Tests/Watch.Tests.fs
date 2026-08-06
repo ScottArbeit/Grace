@@ -427,10 +427,12 @@ module WatchTests =
             Watch.resetWatchIgnoreSnapshotForWatchTests ()
             deleteWatchStatusFileIfExists ()
             Watch.clearPendingWatchWorkForTests ()
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             Watch.setLocalObservationCandidateSchedulingForWatchTests false
             action tempDir
         finally
             Watch.clearPendingWatchWorkForTests ()
+            Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
             Watch.resetWatchIgnoreSnapshotForWatchTests ()
             Services.clearShouldIgnoreCache ()
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
@@ -16781,6 +16783,163 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> Option.isSome
             |> should equal true)
+
+    /// Verifies startup establishes the durable revision before SQLite artifact callbacks can be admitted.
+    [<Test>]
+    let ``watch startup records durable revision before admitting local-state callbacks`` () =
+        withTempRepo (fun _ ->
+            let mutable initializationReadCompleted = false
+            let mutable callbacksObservedInitialization = false
+            let mutable revisionReads = 0
+            let mutable failures = 0
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            let initialIpc = File.ReadAllText(Services.IpcFileName())
+            let initialScope = Watch.lastPublishedWatchObservationScopeForWatchTests ()
+
+            (Watch.initializeLocalStatusRevisionBeforeArtifactCallbacksForWatchTests
+                (fun () ->
+                    revisionReads <- revisionReads + 1
+                    initializationReadCompleted <- true
+                    Task.FromResult(6L))
+                (fun () ->
+                    task {
+                        callbacksObservedInitialization <- initializationReadCompleted
+
+                        let callbackOutput = captureAnsiConsoleOutput (fun () -> Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal")))
+
+                        callbackOutput |> should equal String.Empty
+
+                        Watch.localObservationCandidateSnapshotForWatchTests ()
+                        |> Array.isEmpty
+                        |> should equal true
+
+                        Watch.pendingWatchWorkEvidenceForWatchTests ()
+                        |> should equal (false, false)
+
+                        Watch.isGraceWatchResyncPendingForWatchTests ()
+                        |> should equal false
+
+                        Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+                        |> should equal None
+
+                        Watch.lastPublishedWatchObservationScopeForWatchTests ()
+                        |> should equal initialScope
+
+                        File.ReadAllText(Services.IpcFileName())
+                        |> should equal initialIpc
+                    })
+                (fun _ -> failures <- failures + 1))
+                .GetAwaiter()
+                .GetResult()
+
+            (Watch.processLocalStatusRevisionCheckForWatchTests
+                (fun () ->
+                    revisionReads <- revisionReads + 1
+                    Task.FromResult(6L))
+                (fun () -> Assert.Fail("The startup revision callback must clear silently."))
+                (fun reason -> Assert.Fail(reason)))
+                .GetAwaiter()
+                .GetResult()
+
+            callbacksObservedInitialization
+            |> should equal true
+
+            revisionReads |> should equal 2
+            failures |> should equal 0
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal false)
+
+    /// Verifies a Watch-owned commit cannot hide a later external commit observed by the coalesced timer read.
+    [<Test>]
+    let ``watch owned revision commit then external revision commit schedules only controlled refresh`` () =
+        withTempRepo (fun _ ->
+            let mutable durableRevision = 19L
+            let mutable failures = 0
+            let mutable publications = 0
+            let initialStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let initialDirectoryIds = HashSet<DirectoryVersionId>(initialStatus.Index.Keys)
+            let updatedStatus = { initialStatus with RootDirectorySha256Hash = Sha256Hash "external-race-root" }
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile initialStatus (Some initialDirectoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            let initialIpc = File.ReadAllText(Services.IpcFileName())
+            let initialScope = Watch.lastPublishedWatchObservationScopeForWatchTests ()
+
+            (Watch.initializeLocalStatusRevisionBeforeArtifactCallbacksForWatchTests
+                (fun () -> Task.FromResult(durableRevision))
+                (fun () -> task { return () })
+                (fun _ -> failures <- failures + 1))
+                .GetAwaiter()
+                .GetResult()
+
+            (Watch.runWatchOwnedLocalStatusWriteForWatchTests (fun () ->
+                durableRevision <- 20L
+                Task.FromResult(durableRevision)))
+                .GetAwaiter()
+                .GetResult()
+
+            let callbackOutput = captureAnsiConsoleOutput (fun () -> Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-shm")))
+
+            callbackOutput |> should equal String.Empty
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> Array.isEmpty
+            |> should equal true
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false)
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
+            |> should equal None
+
+            Watch.lastPublishedWatchObservationScopeForWatchTests ()
+            |> should equal initialScope
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal initialIpc
+
+            durableRevision <- 21L
+
+            (Watch.processLocalStatusRevisionCheckWithRefreshForWatchTests (fun () -> Task.FromResult(durableRevision)) (fun _ -> failures <- failures + 1))
+                .GetAwaiter()
+                .GetResult()
+
+            failures |> should equal 0
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal true
+
+            publications |> should equal 0
+
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests updatedStatus (fun status directoryIds ->
+                publications <- publications + 1
+                Services.updateGraceWatchInterprocessFile status directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            publications |> should equal 1
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal false
+
+            Watch.localStatusRevisionCheckPendingForWatchTests ()
+            |> should equal false)
 
     /// Verifies duplicate SQLite callbacks coalesce into one quiet revision read for a Watch-owned commit.
     [<Test>]
