@@ -524,6 +524,10 @@ module Watch =
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
     let mutable private graceStatusRefreshGeneration = 0L
+    let mutable private localStatusRevisionCheckGeneration = 0L
+    let mutable private lastKnownLocalStatusRevision = 0L
+    let mutable private localStatusRevisionInitialized = 0
+    let private localStatusRevisionGate = new SemaphoreSlim(1, 1)
     let private watchStatusPublishLock = obj ()
     let mutable private lastPublishedHasPendingWatchWork: bool option = None
 
@@ -818,7 +822,6 @@ module Watch =
         | CreatedOrChanged
         | Changed
         | Deleted
-        | GraceStatusArtifact
 
     /// Captures the immutable repository and root identity that owned a raw local observation at admission.
     type internal WatchObservationScope =
@@ -1169,11 +1172,8 @@ module Watch =
         let snapshot = currentWatchIgnoreSnapshot ()
         isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
 
-    /// Preserves status coordination while rejecting other Grace-owned paths before raw candidate scope capture.
-    let private tryClassifyRawLocalObservation fallbackKind fullPath =
-        if isGraceStatusArtifact fullPath then Some GraceStatusArtifact
-        elif isGraceInternalRawObservationPath fullPath then None
-        else Some fallbackKind
+    /// Rejects Grace-owned paths before raw candidate scope capture.
+    let private tryClassifyRawLocalObservation fallbackKind fullPath = if isGraceInternalRawObservationPath fullPath then None else Some fallbackKind
 
     /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
     let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
@@ -3267,6 +3267,120 @@ module Watch =
 
         graceStatusHasChanged <- true
 
+    /// Coalesces status DB, WAL, SHM, and journal callbacks without creating ordinary filesystem work.
+    let private recordLocalStatusRevisionCheckObservation () =
+        Interlocked.Increment(&localStatusRevisionCheckGeneration)
+        |> ignore
+
+    /// Records the latest trusted revision established at startup, committed by Watch, or accepted from an external writer.
+    let private recordKnownLocalStatusRevision revision =
+        Volatile.Write(&lastKnownLocalStatusRevision, revision)
+        Volatile.Write(&localStatusRevisionInitialized, 1)
+
+    /// Runs a Watch-owned status transaction and records its committed revision under the timer check gate.
+    let private runWatchOwnedLocalStatusWrite writeStatus =
+        task {
+            do! localStatusRevisionGate.WaitAsync()
+
+            try
+                let! committedRevision = writeStatus ()
+                recordKnownLocalStatusRevision committedRevision
+            finally
+                localStatusRevisionGate.Release() |> ignore
+        }
+
+    /// Reads one coalesced revision signal and routes external advances or untrusted evidence without publishing from callbacks.
+    let private processLocalStatusRevisionCheck readRevision revisionAdvanced revisionUntrusted =
+        task {
+            if
+                Volatile.Read(&localStatusRevisionCheckGeneration)
+                <> 0L
+            then
+                do! localStatusRevisionGate.WaitAsync()
+
+                try
+                    let observedGeneration = Volatile.Read(&localStatusRevisionCheckGeneration)
+
+                    if observedGeneration <> 0L then
+                        let! revisionResult =
+                            task {
+                                try
+                                    let! revision = readRevision ()
+                                    return Ok revision
+                                with
+                                | ex -> return Error ex
+                            }
+
+                        match revisionResult with
+                        | Error ex -> revisionUntrusted $"local-status revision could not be read: {ex.Message}"
+                        | Ok durableRevision ->
+                            if Volatile.Read(&localStatusRevisionInitialized) = 0 then
+                                revisionUntrusted "local-status revision was not established before callback processing"
+                            else
+                                let knownRevision = Volatile.Read(&lastKnownLocalStatusRevision)
+
+                                if durableRevision < knownRevision then
+                                    revisionUntrusted $"local-status revision regressed from {knownRevision} to {durableRevision}"
+                                else
+                                    if durableRevision > knownRevision then
+                                        recordKnownLocalStatusRevision durableRevision
+                                        revisionAdvanced ()
+
+                                    Interlocked.CompareExchange(&localStatusRevisionCheckGeneration, 0L, observedGeneration)
+                                    |> ignore
+                finally
+                    localStatusRevisionGate.Release() |> ignore
+        }
+
+    /// Establishes the durable revision that owns startup status before filesystem callbacks are enabled.
+    let private initializeLocalStatusRevision readRevision revisionUntrusted =
+        task {
+            try
+                let! revision = readRevision ()
+                recordKnownLocalStatusRevision revision
+            with
+            | ex -> revisionUntrusted $"local-status revision could not be established at startup: {ex.Message}"
+        }
+
+    /// Establishes the durable startup revision before enabling any source of local-state artifact callbacks.
+    let private initializeLocalStatusRevisionBeforeArtifactCallbacks readRevision admitCallbacks revisionUntrusted =
+        task {
+            do! initializeLocalStatusRevision readRevision revisionUntrusted
+            do! admitCallbacks ()
+        }
+
+    /// Applies a Watch-owned incremental status mutation and remembers its committed local-status revision.
+    let private applyGraceStatusIncrementalAndRecordRevision graceStatus directoryVersions differences =
+        runWatchOwnedLocalStatusWrite (fun () ->
+            Grace.CLI.LocalStateDb.applyStatusIncrementalWithRevision (Current().GraceStatusFile) graceStatus directoryVersions differences)
+
+    /// Replaces a Watch-owned status snapshot and remembers its committed local-status revision.
+    let private writeGraceStatusFileAndRecordRevision graceStatus =
+        runWatchOwnedLocalStatusWrite (fun () -> Grace.CLI.LocalStateDb.replaceStatusSnapshotWithRevision (Current().GraceStatusFile) graceStatus)
+
+    /// Exposes deterministic local-status revision processing without starting the foreground timer.
+    let internal processLocalStatusRevisionCheckForWatchTests readRevision revisionAdvanced revisionUntrusted =
+        processLocalStatusRevisionCheck readRevision revisionAdvanced revisionUntrusted
+
+    /// Exercises the production external-revision transition while keeping revision reads and failure handling deterministic.
+    let internal processLocalStatusRevisionCheckWithRefreshForWatchTests readRevision revisionUntrusted =
+        processLocalStatusRevisionCheck readRevision recordGraceStatusRefreshObservation revisionUntrusted
+
+    /// Exercises startup revision initialization and callback admission in production order with deterministic clients.
+    let internal initializeLocalStatusRevisionBeforeArtifactCallbacksForWatchTests readRevision admitCallbacks revisionUntrusted =
+        initializeLocalStatusRevisionBeforeArtifactCallbacks readRevision admitCallbacks revisionUntrusted
+
+    /// Exercises the production gate that records a Watch-owned committed local-status revision.
+    let internal runWatchOwnedLocalStatusWriteForWatchTests writeStatus = runWatchOwnedLocalStatusWrite writeStatus
+
+    /// Establishes a known local-status revision for callback and restart tests.
+    let internal setKnownLocalStatusRevisionForWatchTests revision = recordKnownLocalStatusRevision revision
+
+    /// Reports whether SQLite artifact callbacks still owe one coalesced revision check.
+    let internal localStatusRevisionCheckPendingForWatchTests () =
+        Volatile.Read(&localStatusRevisionCheckGeneration)
+        <> 0L
+
     /// Clears exactly the Grace Status refresh generation consumed by a successful publication.
     let private tryClearGraceStatusRefreshGeneration observedGeneration =
         if Interlocked.CompareExchange(&graceStatusRefreshGeneration, 0L, observedGeneration) = observedGeneration then
@@ -3812,19 +3926,9 @@ module Watch =
         | Some _ -> publishPendingWatchWorkTransitionIfNeeded ()
         | None -> ()
 
-    /// Records that durable Grace Status changed and immediately advertises pending Watch work to other commands.
-    let private markGraceStatusChangedAndPublishPendingWorkTransition () =
-        recordGraceStatusRefreshObservation ()
-
-        publishPendingWatchWorkTransitionIfNeeded ()
-
     /// Applies a due create or rename candidate after its quiet window has separated raw callbacks from filesystem work.
     let private applyCreatedOrChangedLocalObservationCandidate fullPath observedAt =
-        if updateNotInProgress ()
-           && isGraceStatusArtifact fullPath then
-            markGraceStatusChangedAndPublishPendingWorkTransition ()
-            false
-        elif isDelayedGraceOwnedFileObservation fullPath observedAt then
+        if isDelayedGraceOwnedFileObservation fullPath observedAt then
             false
         elif Directory.Exists(fullPath) then
             let queuedDirectoryWork = enqueueFinalDirectoryWork fullPath
@@ -3864,38 +3968,33 @@ module Watch =
 
     /// Applies a due delete candidate after the current marker and final filesystem state can be examined safely.
     let private applyDeletedLocalObservationCandidate fullPath observedAt =
-        if updateNotInProgress ()
-           && isGraceStatusArtifact fullPath then
-            markGraceStatusChangedAndPublishPendingWorkTransition ()
+        let canceledFileUpload = cancelPendingUploadsForDeletedPath fullPath
+
+        if isDelayedGraceOwnedFileObservation fullPath observedAt
+           && not canceledFileUpload then
             false
-        else
-            let canceledFileUpload = cancelPendingUploadsForDeletedPath fullPath
+        elif enqueueStatusUpdateTrigger fullPath then
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                let invalidatedRelativePath = RelativePath relativePath
 
-            if isDelayedGraceOwnedFileObservation fullPath observedAt
-               && not canceledFileUpload then
-                false
-            elif enqueueStatusUpdateTrigger fullPath then
+                if
+                    canceledFileUpload
+                    || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
+                then
+                    clearProcessedFileRelativePathsPendingStatusForPaths [ invalidatedRelativePath ]
+                    removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+            | None -> ()
+
+            if canceledFileUpload then
                 match repositoryRelativePath fullPath with
-                | Some relativePath ->
-                    let invalidatedRelativePath = RelativePath relativePath
-
-                    if
-                        canceledFileUpload
-                        || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
-                    then
-                        clearProcessedFileRelativePathsPendingStatusForPaths [ invalidatedRelativePath ]
-                        removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+                | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
                 | None -> ()
 
-                if canceledFileUpload then
-                    match repositoryRelativePath fullPath with
-                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
-                    | None -> ()
-
-                logToAnsiConsole Colors.Deleted $"I saw that {fullPath} was deleted."
-                true
-            else
-                false
+            logToAnsiConsole Colors.Deleted $"I saw that {fullPath} was deleted."
+            true
+        else
+            false
 
     /// Claims every due candidate, then reconciles IPC from the complete post-claim pending state even when no local work was queued.
     let private processDueLocalObservationCandidates now =
@@ -3952,9 +4051,6 @@ module Watch =
 
                                         removalQueuedWork || finalQueuedWork
                                     | Deleted -> applyDeletedLocalObservationCandidate candidate.FullPath candidate.LastSeenAt
-                                    | GraceStatusArtifact ->
-                                        markGraceStatusChangedAndPublishPendingWorkTransition ()
-                                        false
 
                         queuedPendingWork <- queuedPendingWork || candidateQueuedWork
                     | None -> ()
@@ -3979,11 +4075,6 @@ module Watch =
                 | CreatedOrChanged -> applyCreatedOrChangedLocalObservationCandidate fullPath observedAt
                 | Changed -> applyChangedLocalObservationCandidate fullPath observedAt
                 | Deleted -> applyDeletedLocalObservationCandidate fullPath observedAt
-                | GraceStatusArtifact ->
-                    if updateNotInProgress () then
-                        markGraceStatusChangedAndPublishPendingWorkTransition ()
-
-                    false
 
             if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
 
@@ -4572,6 +4663,12 @@ module Watch =
 
         Interlocked.Exchange(&graceStatusRefreshGeneration, 0L)
         |> ignore
+
+        Interlocked.Exchange(&localStatusRevisionCheckGeneration, 0L)
+        |> ignore
+
+        Volatile.Write(&lastKnownLocalStatusRevision, 0L)
+        Volatile.Write(&localStatusRevisionInitialized, 0)
 
         stableFileIdentityNowForWatch <- fun () -> DateTime.UtcNow
 
@@ -6229,7 +6326,7 @@ module Watch =
                             | Error error -> return Error error
                         }
                 ReadGraceStatus = readGraceStatusFile
-                WriteGraceStatus = writeGraceStatusFile
+                WriteGraceStatus = writeGraceStatusFileAndRecordRevision
                 RequestResync = requestGraceWatchExplicitResync
                 TryCreateUpdateMarker = tryCreateCurrentBranchMaterializationMarkerForWatchTests
                 IsUpdateMarkerOwned = currentBranchMaterializationMarkerIsOwned
@@ -7480,11 +7577,14 @@ module Watch =
 
     /// Admits one raw callback through the shared Grace-internal namespace guard before scheduling or direct test processing.
     let private admitRawLocalObservation fallbackKind fullPath seenAt =
-        match tryClassifyRawLocalObservation fallbackKind fullPath with
-        | None -> ()
-        | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
-        | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
-        | Some _ -> ()
+        if isGraceStatusArtifact fullPath then
+            recordLocalStatusRevisionCheckObservation ()
+        else
+            match tryClassifyRawLocalObservation fallbackKind fullPath with
+            | None -> ()
+            | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
+            | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
+            | Some _ -> ()
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
@@ -7821,7 +7921,7 @@ module Watch =
 
                                     if statusSideEffectStillAllowed "local status application" then
                                         // Apply incremental changes to the Grace Status DB.
-                                        do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+                                        do! applyGraceStatusIncrementalAndRecordRevision newGraceStatusWithUpdatedTime newDirectoryVersions differences
 
                                         for fileVersion in directoryUploadedFileVersions do
                                             let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
@@ -8908,7 +9008,7 @@ module Watch =
             updateGraceStatus
             scanForDifferencesWithWatchIgnoreSnapshot
             updateGraceStatusFromDifferences
-            applyGraceStatusIncremental
+            applyGraceStatusIncrementalAndRecordRevision
             updateGraceWatchInterprocessFile
 
     /// Coordinates queue startup difference for watch behavior for this CLI command path.
@@ -9374,12 +9474,19 @@ module Watch =
                     graceStatus <- status
                     updateGraceStatusDirectoryIds graceStatus
 
-                    // Create the inter-process communication file.
-                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
+                    do!
+                        initializeLocalStatusRevisionBeforeArtifactCallbacks
+                            (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                            (fun () ->
+                                task {
+                                    // Create the inter-process communication file.
+                                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
 
-                    // Enable the FileSystemWatcher.
-                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
-                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
+                                    // Enable the FileSystemWatcher only after the durable local-status revision is established.
+                                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
+                                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
+                                })
+                            (fun reason -> requestGraceWatchExplicitResync reason)
 
                     let timerTimeSpan = TimeSpan.FromSeconds(1.0)
 
@@ -9573,6 +9680,12 @@ module Watch =
                             processWatchTimerLocalRecoveryWithCatchUp
                                 (fun () ->
                                     task {
+                                        do!
+                                            processLocalStatusRevisionCheck
+                                                (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                                                recordGraceStatusRefreshObservation
+                                                requestGraceWatchExplicitResync
+
                                         // Grace Status may have changed from branch switch, or other commands.
                                         if graceStatusHasChanged then
                                             let refreshGeneration = currentGraceStatusRefreshGeneration ()

@@ -25,6 +25,10 @@ module LocalStateDb =
     [<Literal>]
     let WatchJournalAppliedThroughSequenceMetaKey = "AppliedThroughSequence"
 
+    /// Identifies the monotonic metadata value that coordinates committed local-status changes across Grace processes.
+    [<Literal>]
+    let LocalStatusRevisionMetaKey = "LocalStatusRevision"
+
     /// Keeps a bounded diagnostic tail of already-applied Watch journal rows.
     [<Literal>]
     let WatchJournalRetainedAppliedRows = 1024L
@@ -91,11 +95,34 @@ module LocalStateDb =
                     do! operation ()
                 with
                 | :? SqliteException as ex when isBusyOrLocked ex ->
-                    if attempt >= retryDelaysMs.Length then return raise ex
-                    let jitter = Random.Shared.Next(0, 50)
-                    let delayMs = retryDelaysMs[attempt] + jitter
-                    do! Task.Delay(delayMs)
-                    return! run (attempt + 1)
+                    if attempt >= retryDelaysMs.Length then
+                        return raise ex
+                    else
+                        let jitter = Random.Shared.Next(0, 50)
+                        let delayMs = retryDelaysMs[attempt] + jitter
+                        do! Task.Delay(delayMs)
+                        return! run (attempt + 1)
+                | ex -> return raise ex
+            }
+
+        run 0
+
+    /// Retries a local-state transaction that returns its exact committed revision.
+    let private executeWithRevisionRetry (operation: unit -> Task<int64>) =
+        /// Runs the revision-returning transaction until it commits or reaches the bounded busy retry limit.
+        let rec run attempt =
+            task {
+                try
+                    return! operation ()
+                with
+                | :? SqliteException as ex when isBusyOrLocked ex ->
+                    if attempt >= retryDelaysMs.Length then
+                        return raise ex
+                    else
+                        let jitter = Random.Shared.Next(0, 50)
+                        let delayMs = retryDelaysMs[attempt] + jitter
+                        do! Task.Delay(delayMs)
+                        return! run (attempt + 1)
                 | ex -> return raise ex
             }
 
@@ -1232,6 +1259,42 @@ module LocalStateDb =
             parameters.AddWithValue("$key", WatchJournalAppliedThroughSequenceMetaKey)
             |> ignore)
 
+    /// Persists the initial local-status revision without treating schema initialization as a status mutation.
+    let private insertLocalStatusRevisionIfMissing (connection: SqliteConnection) =
+        executeNonQueryWithParams connection "INSERT OR IGNORE INTO meta (key, value) VALUES ($key, '0');" (fun parameters ->
+            parameters.AddWithValue("$key", LocalStatusRevisionMetaKey)
+            |> ignore)
+
+    /// Parses a persisted local-status revision only when it preserves the monotonic nonnegative counter invariant.
+    let private tryParseLocalStatusRevision (value: string) =
+        match Int64.TryParse(value) with
+        | true, revision when revision >= 0L -> Some revision
+        | _ -> None
+
+    /// Reads the committed local-status revision and rejects missing, duplicate, or malformed metadata.
+    let private readLocalStatusRevisionInternal (connection: SqliteConnection) =
+        if countMetaValues connection LocalStatusRevisionMetaKey
+           <> 1 then
+            raise (InvalidDataException($"{LocalStatusRevisionMetaKey} must have exactly one metadata row."))
+
+        match tryGetMetaValue connection LocalStatusRevisionMetaKey with
+        | Some value ->
+            match tryParseLocalStatusRevision value with
+            | Some revision -> revision
+            | None -> raise (InvalidDataException($"{LocalStatusRevisionMetaKey} must be a non-negative 64-bit integer."))
+        | None -> raise (InvalidDataException($"{LocalStatusRevisionMetaKey} is missing."))
+
+    /// Advances the local-status revision inside the transaction that owns the corresponding status mutation.
+    let private incrementLocalStatusRevision (connection: SqliteConnection) =
+        let currentRevision = readLocalStatusRevisionInternal connection
+
+        if currentRevision = Int64.MaxValue then
+            raise (InvalidDataException($"{LocalStatusRevisionMetaKey} cannot advance beyond Int64.MaxValue."))
+
+        let committedRevision = currentRevision + 1L
+        setMetaValue connection LocalStatusRevisionMetaKey $"{committedRevision}"
+        committedRevision
+
     /// Parses Watch journal recovery metadata only when it preserves the nonnegative sequence invariant.
     let private tryParseWatchJournalAppliedThroughSequence (value: string) =
         match Int64.TryParse(value) with
@@ -1592,6 +1655,7 @@ module LocalStateDb =
                                                     logTrace "status_meta ensuring default row"
                                                     insertStatusMetaIfMissing connection
                                                     insertWatchJournalAppliedThroughIfMissing connection
+                                                    insertLocalStatusRevisionIfMissing connection
 
                                                     if not (hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection) then
                                                         recreate <- true
@@ -2704,6 +2768,14 @@ module LocalStateDb =
             LastSuccessfulDirectoryVersionUpload: Instant
         }
 
+    /// Reads the committed local-status revision used to coalesce SQLite artifact callbacks.
+    let readLocalStatusRevision (dbPath: string) =
+        task {
+            do! ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            return readLocalStatusRevisionInternal connection
+        }
+
     /// Reads status meta internal data needed by the CLI workflow.
     let private readStatusMetaInternal (connection: SqliteConnection) =
         use cmd = connection.CreateCommand()
@@ -2813,12 +2885,12 @@ module LocalStateDb =
                 |> ignore)
 
     /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
-    let replaceStatusSnapshot (dbPath: string) (graceStatus: GraceStatus) =
+    let replaceStatusSnapshotWithRevision (dbPath: string) (graceStatus: GraceStatus) =
         task {
             do! ensureDbInitialized dbPath
 
             return!
-                executeWithRetry (fun () ->
+                executeWithRevisionRetry (fun () ->
                     task {
                         let connection = openConnection dbPath
 
@@ -2925,7 +2997,9 @@ module LocalStateDb =
                                         fileCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
                                         fileCommand.ExecuteNonQuery() |> ignore))
 
+                                let committedRevision = incrementLocalStatusRevision connection
                                 executeNonQuery connection "COMMIT;"
+                                return committedRevision
                             with
                             | ex ->
                                 executeNonQuery connection "ROLLBACK;"
@@ -2933,6 +3007,13 @@ module LocalStateDb =
                         finally
                             connection.Dispose()
                     })
+        }
+
+    /// Replaces the local status snapshot while preserving the existing unit-returning caller contract.
+    let replaceStatusSnapshot (dbPath: string) (graceStatus: GraceStatus) =
+        task {
+            let! _ = replaceStatusSnapshotWithRevision dbPath graceStatus
+            return ()
         }
 
     /// Persists upsert object cache changes in the local SQLite state database.
@@ -3180,7 +3261,7 @@ module LocalStateDb =
                     })
         }
 
-    let applyStatusIncremental
+    let applyStatusIncrementalWithRevision
         (dbPath: string)
         (newGraceStatus: GraceStatus)
         (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>)
@@ -3190,7 +3271,7 @@ module LocalStateDb =
             do! ensureDbInitialized dbPath
 
             return!
-                executeWithRetry (fun () ->
+                executeWithRevisionRetry (fun () ->
                     task {
                         let connection = openConnection dbPath
 
@@ -3322,7 +3403,9 @@ module LocalStateDb =
                                             directoryDeleteCommand.Parameters["$relative_path"].Value <- difference.RelativePath
                                             directoryDeleteCommand.ExecuteNonQuery() |> ignore)
 
+                                let committedRevision = incrementLocalStatusRevision connection
                                 executeNonQuery connection "COMMIT;"
+                                return committedRevision
                             with
                             | ex ->
                                 executeNonQuery connection "ROLLBACK;"
@@ -3330,6 +3413,18 @@ module LocalStateDb =
                         finally
                             connection.Dispose()
                     })
+        }
+
+    /// Applies an incremental local status mutation while preserving the existing unit-returning caller contract.
+    let applyStatusIncremental
+        (dbPath: string)
+        (newGraceStatus: GraceStatus)
+        (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>)
+        (differences: IEnumerable<FileSystemDifference>)
+        =
+        task {
+            let! _ = applyStatusIncrementalWithRevision dbPath newGraceStatus newDirectoryVersions differences
+            return ()
         }
 
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
