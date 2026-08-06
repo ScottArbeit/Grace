@@ -82,6 +82,7 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**getBranch**](docs/BranchesApi.md#getbranch) | **POST** /branch/get | Get a branch.
 *BranchesApi* | [**getBranchReference**](docs/BranchesApi.md#getbranchreference) | **POST** /branch/getReference | Get a branch reference.
 *BranchesApi* | [**getParentBranch**](docs/BranchesApi.md#getparentbranch) | **POST** /branch/getParentBranch | Get the parent branch.
+*BranchesApi* | [**getReferenceMaterializationBoundary**](docs/BranchesApi.md#getreferencematerializationboundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 *BranchesApi* | [**listBranchCheckpoints**](docs/BranchesApi.md#listbranchcheckpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 *BranchesApi* | [**listBranchCommits**](docs/BranchesApi.md#listbranchcommits) | **POST** /branch/getCommits | List branch commits.
 *BranchesApi* | [**listBranchPromotions**](docs/BranchesApi.md#listbranchpromotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -270,6 +271,7 @@ All URIs are relative to *http://localhost:5000*
 - [GetOrganizationParameters](docs/GetOrganizationParameters.md)
 - [GetOwnerParameters](docs/GetOwnerParameters.md)
 - [GetParameters](docs/GetParameters.md)
+- [GetReferenceMaterializationBoundaryParameters](docs/GetReferenceMaterializationBoundaryParameters.md)
 - [GetReferenceParameters](docs/GetReferenceParameters.md)
 - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
 - [GetReferencesParameters](docs/GetReferencesParameters.md)
@@ -318,6 +320,8 @@ All URIs are relative to *http://localhost:5000*
 - [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
 - [ReferenceDto](docs/ReferenceDto.md)
 - [ReferenceListReturnValue](docs/ReferenceListReturnValue.md)
+- [ReferenceMaterializationBoundaryApiDto](docs/ReferenceMaterializationBoundaryApiDto.md)
+- [ReferenceMaterializationBoundaryReturnValue](docs/ReferenceMaterializationBoundaryReturnValue.md)
 - [ReferenceParameters](docs/ReferenceParameters.md)
 - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
 - [ReferenceType](docs/ReferenceType.md)

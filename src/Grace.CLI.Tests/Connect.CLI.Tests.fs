@@ -10,10 +10,26 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Threading.Tasks
 
 /// Groups connect coverage for the CLI test project.
 [<NonParallelizable>]
 module ConnectTests =
+    /// A no-download Connect never enters the retrieval path that can persist a remote boundary.
+    [<Test>]
+    let ``connect no download does not invoke materialization`` () =
+        task {
+            let mutable invoked = false
+
+            let! result =
+                Connect.retrieveWhenRequested false (fun () ->
+                    invoked <- true
+                    Task.FromResult 0)
+
+            Assert.That(result, Is.EqualTo(None))
+            Assert.That(invoked, Is.False)
+        }
+
     /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()

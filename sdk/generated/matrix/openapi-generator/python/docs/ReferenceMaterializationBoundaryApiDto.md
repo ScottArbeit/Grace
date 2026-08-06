@@ -1,0 +1,35 @@
+# ReferenceMaterializationBoundaryApiDto
+
+Exact materialized root identity coupled to an opaque server-ordered branch event cursor.
+
+## Properties
+
+Name | Type | Description | Notes
+------------ | ------------- | ------------- | -------------
+**repository_id** | **UUID** |  | 
+**branch_id** | **UUID** |  | 
+**directory_id** | **UUID** |  | 
+**sha256_hash** | **str** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | 
+**blake3_hash** | **str** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | 
+**event_cursor** | **str** | Opaque cursor interpreted only by Grace Server. | 
+
+## Example
+
+```python
+from grace_generated_openapi_probe.models.reference_materialization_boundary_api_dto import ReferenceMaterializationBoundaryApiDto
+
+# TODO update the JSON string below
+json = "{}"
+# create an instance of ReferenceMaterializationBoundaryApiDto from a JSON string
+reference_materialization_boundary_api_dto_instance = ReferenceMaterializationBoundaryApiDto.from_json(json)
+# print the JSON string representation of the object
+print(ReferenceMaterializationBoundaryApiDto.to_json())
+
+# convert the object into a dict
+reference_materialization_boundary_api_dto_dict = reference_materialization_boundary_api_dto_instance.to_dict()
+# create an instance of ReferenceMaterializationBoundaryApiDto from a dict
+reference_materialization_boundary_api_dto_from_dict = ReferenceMaterializationBoundaryApiDto.from_dict(reference_materialization_boundary_api_dto_dict)
+```
+[[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

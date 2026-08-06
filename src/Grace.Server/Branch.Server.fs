@@ -91,6 +91,59 @@ module Branch =
                     .Log(logLevel, eventId, state, ex, formatter)
         }
 
+    /// Identifies one Reference-bearing position in the durable branch event stream.
+    type internal ReferenceMaterializationBoundaryCandidate =
+        {
+            EventPosition: int64
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            Reference: Reference.ReferenceDto
+            EstablishesBranchBase: bool
+        }
+
+    /// Encodes a branch event position without exposing cursor interpretation to clients.
+    let internal referenceEventCursor eventPosition = $"branch-event-v1:{eventPosition}"
+
+    /// Selects a root and ordered boundary from one immutable branch-event snapshot.
+    let internal trySelectReferenceMaterializationBoundary
+        (parameters: GetReferenceMaterializationBoundaryParameters)
+        (candidates: ReferenceMaterializationBoundaryCandidate array)
+        =
+        let selected =
+            if parameters.DirectoryVersionId
+               <> DirectoryVersionId.Empty then
+                candidates
+                |> Array.tryFindBack (fun candidate -> candidate.Reference.DirectoryId = parameters.DirectoryVersionId)
+            elif not (String.IsNullOrWhiteSpace parameters.ReferenceId) then
+                match Guid.TryParse parameters.ReferenceId with
+                | true, referenceId ->
+                    candidates
+                    |> Array.tryFindBack (fun candidate -> candidate.Reference.ReferenceId = referenceId)
+                | _ -> None
+            elif not (String.IsNullOrWhiteSpace parameters.ReferenceType) then
+                match discriminatedUnionFromString<ReferenceType> parameters.ReferenceType with
+                | Some referenceType ->
+                    candidates
+                    |> Array.tryFindBack (fun candidate -> candidate.Reference.ReferenceType = referenceType)
+                | None -> None
+            else
+                candidates
+                |> Array.tryFindBack (fun candidate -> candidate.Reference.ReferenceType = ReferenceType.Promotion)
+                |> Option.orElseWith (fun () ->
+                    candidates
+                    |> Array.tryFindBack (fun candidate -> candidate.EstablishesBranchBase))
+
+        selected
+        |> Option.map (fun candidate ->
+            { Reference.ReferenceMaterializationBoundaryDto.Default with
+                RepositoryId = candidate.RepositoryId
+                BranchId = candidate.BranchId
+                DirectoryId = candidate.Reference.DirectoryId
+                Sha256Hash = candidate.Reference.Sha256Hash
+                Blake3Hash = candidate.Reference.Blake3Hash
+                EventCursor = referenceEventCursor candidate.EventPosition
+            })
+
     /// Implements annotation error for the server request pipeline.
     let private annotationError correlationId message = GraceError.Create message correlationId
 
@@ -1606,6 +1659,102 @@ module Branch =
                     return!
                         context
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
+            }
+
+    /// Resolves Reference-bearing candidates from one durable branch-event snapshot.
+    let private getReferenceMaterializationBoundaryCandidates repositoryId branchId correlationId (branchEvents: IReadOnlyList<BranchEvent>) =
+        let candidate position establishesBranchBase (referenceDto: Reference.ReferenceDto) =
+            if referenceDto.RepositoryId = repositoryId
+               && (establishesBranchBase
+                   || referenceDto.BranchId = branchId) then
+                Some
+                    {
+                        EventPosition = int64 position
+                        RepositoryId = repositoryId
+                        BranchId = branchId
+                        Reference = referenceDto
+                        EstablishesBranchBase = establishesBranchBase
+                    }
+            else
+                None
+
+        let resolveReference position establishesBranchBase referenceId =
+            task {
+                if referenceId = ReferenceId.Empty then
+                    return None
+                else
+                    let referenceActor = Grace.Actors.Extensions.ActorProxy.Reference.CreateActorProxy referenceId repositoryId correlationId
+                    let! referenceDto = referenceActor.Get correlationId
+                    return candidate position establishesBranchBase referenceDto
+            }
+
+        task {
+            let tasks =
+                branchEvents
+                |> Seq.mapi (fun position branchEvent ->
+                    task {
+                        match branchEvent.Event with
+                        | BranchEventType.Created (_, _, _, basedOn, _, _, eventRepositoryId, _) when eventRepositoryId = repositoryId ->
+                            return! resolveReference position true basedOn
+                        | BranchEventType.Rebased basedOn -> return! resolveReference position true basedOn
+                        | BranchEventType.Assigned (referenceDto, _, _, _, _)
+                        | BranchEventType.Promoted (referenceDto, _, _, _, _)
+                        | BranchEventType.Committed (referenceDto, _, _, _, _)
+                        | BranchEventType.Checkpointed (referenceDto, _, _, _, _)
+                        | BranchEventType.Saved (referenceDto, _, _, _, _)
+                        | BranchEventType.Tagged (referenceDto, _, _, _, _)
+                        | BranchEventType.ExternalCreated (referenceDto, _, _, _, _) -> return candidate position false referenceDto
+                        | _ -> return None
+                    })
+                |> Seq.toArray
+
+            let! results = Task.WhenAll tasks
+            return results |> Array.choose id
+        }
+
+    /// Returns the selected root together with its opaque position in the durable branch event stream.
+    let GetReferenceMaterializationBoundary: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters =
+                        context
+                        |> parse<GetReferenceMaterializationBoundaryParameters>
+
+                    let repositoryId = graceIds.RepositoryId
+                    let branchId = graceIds.BranchId
+                    let actorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                    let! branchEvents = actorProxy.GetEvents correlationId
+
+                    let! candidates = getReferenceMaterializationBoundaryCandidates repositoryId branchId correlationId branchEvents
+
+                    match trySelectReferenceMaterializationBoundary parameters candidates with
+                    | Some boundary ->
+                        let returnValue =
+                            (GraceReturnValue.Create boundary correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, repositoryId)
+                                .enhance(nameof BranchId, branchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok returnValue
+                    | None ->
+                        let error =
+                            (GraceError.Create "The selected root has no ordered Reference event boundary in this branch." correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, repositoryId)
+                                .enhance(nameof BranchId, branchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result400BadRequest error
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
     /// Gets the events handled by this branch.

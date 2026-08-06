@@ -606,3 +606,77 @@ type BranchActorReferenceRetryTests() =
 
         Assert.That(candidates, Has.Length.EqualTo(1))
         Assert.That(candidates[0], Is.EqualTo(currentPromotion))
+
+/// Proves Connect boundary selection follows durable branch-event order instead of Reference timestamps.
+[<Parallelizable(ParallelScope.All)>]
+type ReferenceMaterializationBoundarySelectionTests() =
+    let repositoryId = Guid.Parse("11111111-8020-4000-8000-111111111111")
+    let branchId = Guid.Parse("22222222-8020-4000-8000-222222222222")
+
+    let candidate position referenceId directoryId referenceType establishesBranchBase : Grace.Server.Branch.ReferenceMaterializationBoundaryCandidate =
+        {
+            EventPosition = position
+            RepositoryId = repositoryId
+            BranchId = branchId
+            Reference =
+                { ReferenceDto.Default with
+                    ReferenceId = referenceId
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    DirectoryId = directoryId
+                    Sha256Hash = Sha256Hash $"sha-{position}"
+                    Blake3Hash = Blake3Hash $"blake3-{position}"
+                    ReferenceType = referenceType
+                    CreatedAt = Instant.FromUnixTimeSeconds(100L - position)
+                }
+            EstablishesBranchBase = establishesBranchBase
+        }
+
+    /// A later event wins even when its wall-clock timestamp is older.
+    [<Test>]
+    member _.ReferenceTypeSelectionUsesEventPosition() =
+        let parameters = GetReferenceMaterializationBoundaryParameters()
+        parameters.ReferenceType <- "Save"
+        let olderId = Guid.Parse("33333333-8020-4000-8000-333333333333")
+        let laterId = Guid.Parse("44444444-8020-4000-8000-444444444444")
+        let laterRoot = Guid.Parse("55555555-8020-4000-8000-555555555555")
+
+        let result =
+            Grace.Server.Branch.trySelectReferenceMaterializationBoundary
+                parameters
+                [|
+                    candidate 2L olderId (Guid.NewGuid()) ReferenceType.Save false
+                    candidate 7L laterId laterRoot ReferenceType.Save false
+                |]
+
+        Assert.That(result.IsSome, Is.True)
+        Assert.That(result.Value.DirectoryId, Is.EqualTo(laterRoot))
+        Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:7"))
+
+    /// Cross-root selectors cannot receive a cursor for an unrelated branch event.
+    [<Test>]
+    member _.UnknownDirectorySelectionHasNoBoundary() =
+        let parameters = GetReferenceMaterializationBoundaryParameters()
+        parameters.DirectoryVersionId <- Guid.Parse("66666666-8020-4000-8000-666666666666")
+
+        let result =
+            Grace.Server.Branch.trySelectReferenceMaterializationBoundary
+                parameters
+                [|
+                    candidate 3L (Guid.NewGuid()) (Guid.Parse("77777777-8020-4000-8000-777777777777")) ReferenceType.Commit false
+                |]
+
+        Assert.That(result, Is.EqualTo(None))
+
+    /// Default selection prefers the latest promotion, then the branch base recorded by Created or Rebased.
+    [<Test>]
+    member _.DefaultSelectionUsesPromotionThenBranchBase() =
+        let parameters = GetReferenceMaterializationBoundaryParameters()
+        let branchBase = candidate 0L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Commit true
+        let promotion = candidate 5L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Promotion false
+
+        let promoted = Grace.Server.Branch.trySelectReferenceMaterializationBoundary parameters [| branchBase; promotion |]
+        let basedOnly = Grace.Server.Branch.trySelectReferenceMaterializationBoundary parameters [| branchBase |]
+
+        Assert.That(promoted.Value.DirectoryId, Is.EqualTo(promotion.Reference.DirectoryId))
+        Assert.That(basedOnly.Value.DirectoryId, Is.EqualTo(branchBase.Reference.DirectoryId))

@@ -22,6 +22,7 @@ open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.IO
 open System.Threading.Tasks
+open System.Threading
 open System.CommandLine
 open Spectre.Console
 open Azure.Storage.Blobs
@@ -438,6 +439,52 @@ module Connect =
                 | None -> return Error(GraceError.Create "No downloadable version found for this branch." graceIds.CorrelationId)
         }
 
+    /// Resolves one server-ordered boundary together with the exact root selected for materialization.
+    let private resolveTargetMaterializationBoundary
+        (parseResult: ParseResult)
+        (graceIds: GraceIds)
+        (ownerDto: OwnerDto)
+        (organizationDto: OrganizationDto)
+        (repositoryDto: RepositoryDto)
+        (branchDto: BranchDto)
+        =
+        task {
+            let parameters =
+                Parameters.Branch.GetReferenceMaterializationBoundaryParameters(
+                    OwnerId = $"{ownerDto.OwnerId}",
+                    OwnerName = ownerDto.OwnerName,
+                    OrganizationId = $"{organizationDto.OrganizationId}",
+                    OrganizationName = organizationDto.OrganizationName,
+                    RepositoryId = $"{repositoryDto.RepositoryId}",
+                    RepositoryName = repositoryDto.RepositoryName,
+                    BranchId = $"{branchDto.BranchId}",
+                    BranchName = branchDto.BranchName,
+                    CorrelationId = graceIds.CorrelationId
+                )
+
+            match getDirectoryVersionSelection parseResult with
+            | UseDirectoryVersionId directoryVersionId -> parameters.DirectoryVersionId <- directoryVersionId
+            | UseReferenceId referenceId -> parameters.ReferenceId <- $"{referenceId}"
+            | UseReferenceType referenceType -> parameters.ReferenceType <- getDiscriminatedUnionCaseName referenceType
+            | UseDefault -> ()
+
+            match! Branch.GetReferenceMaterializationBoundary parameters with
+            | Error error -> return Error error
+            | Ok returnValue ->
+                let boundary = returnValue.ReturnValue
+
+                if boundary.RepositoryId
+                   <> repositoryDto.RepositoryId
+                   || boundary.BranchId <> branchDto.BranchId
+                   || boundary.DirectoryId = DirectoryVersionId.Empty
+                   || String.IsNullOrWhiteSpace(string boundary.Sha256Hash)
+                   || String.IsNullOrWhiteSpace(string boundary.Blake3Hash)
+                   || String.IsNullOrWhiteSpace boundary.EventCursor then
+                    return Error(GraceError.Create "The server returned an invalid materialization boundary." graceIds.CorrelationId)
+                else
+                    return Ok boundary
+        }
+
     /// Coordinates existing file matches remote version behavior for this CLI command path.
     let internal existingFileMatchesRemoteVersion localSha256Hash localBlake3Hash (fileVersion: FileVersion) =
         not (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash))
@@ -744,13 +791,17 @@ module Connect =
         (organizationDto: OrganizationDto)
         (repositoryDto: RepositoryDto)
         (branchDto: BranchDto)
+        (cancellationToken: CancellationToken)
         =
         task {
-            let! directoryVersionResult = resolveTargetDirectoryVersionId parseResult graceIds ownerDto organizationDto repositoryDto branchDto
+            cancellationToken.ThrowIfCancellationRequested()
+            let! boundaryResult = resolveTargetMaterializationBoundary parseResult graceIds ownerDto organizationDto repositoryDto branchDto
 
-            match directoryVersionResult with
+            match boundaryResult with
             | Error error -> return (Error error |> renderOutput parseResult)
-            | Ok directoryVersionId ->
+            | Ok boundary ->
+                let directoryVersionId = boundary.DirectoryId
+
                 let getDirectoryContentsParameters =
                     Parameters.DirectoryVersion.GetParameters(
                         OwnerId = $"{ownerDto.OwnerId}",
@@ -812,13 +863,15 @@ module Connect =
                         // Download the .zip file to temp directory.
                         let blobClient = BlobClient(uriWithSharedAccessSignature)
 
-                        let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024)
+                        let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024, cancellationToken = cancellationToken)
                         extractZipEntries parseResult fileVersionsByRelativePath filesToSkip zipFile
+                        cancellationToken.ThrowIfCancellationRequested()
 
                         writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
                         let! previousGraceStatus = readGraceStatusFile ()
                         let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-                        do! writeGraceStatusFile graceStatus
+                        cancellationToken.ThrowIfCancellationRequested()
+                        do! writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary
 
                         writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
                         do! upsertObjectCache graceStatus.Index.Values
@@ -827,8 +880,18 @@ module Connect =
                 | (_, Error error) -> return (Error error |> renderOutput parseResult)
         }
 
+    /// Runs the materialization branch only when Connect explicitly requested retrieval.
+    let internal retrieveWhenRequested shouldRetrieve retrieve =
+        task {
+            if shouldRetrieve then
+                let! exitCode = retrieve ()
+                return Some exitCode
+            else
+                return None
+        }
+
     /// Routes the connect command from parsed options through validation, the SDK call, and result rendering.
-    let private connectImpl (parseResult: ParseResult) : Task<int> =
+    let private connectImpl (parseResult: ParseResult) (cancellationToken: CancellationToken) : Task<int> =
         task {
             if parseResult |> verbose then printParseResult parseResult
             ensureConfigurationFileExists ()
@@ -878,19 +941,20 @@ module Connect =
 
                                 let retrieveDefaultBranch = parseResult.GetValue(Options.retrieveDefaultBranch)
 
-                                if retrieveDefaultBranch then
-                                    let! retrieveExitCode = retrieveDefaultBranchAndWrite parseResult graceIds ownerDto organizationDto repositoryDto branchDto
+                                let! retrieveExitCode =
+                                    retrieveWhenRequested retrieveDefaultBranch (fun () ->
+                                        retrieveDefaultBranchAndWrite parseResult graceIds ownerDto organizationDto repositoryDto branchDto cancellationToken)
 
-                                    if retrieveExitCode = 0 then
-                                        let output = toConnectDto ownerDto organizationDto repositoryDto branchDto true
+                                match retrieveExitCode with
+                                | Some 0 ->
+                                    let output = toConnectDto ownerDto organizationDto repositoryDto branchDto true
 
-                                        return
-                                            GraceReturnValue.Create output (getCorrelationId parseResult)
-                                            |> Ok
-                                            |> renderOutput parseResult
-                                    else
-                                        return retrieveExitCode
-                                else
+                                    return
+                                        GraceReturnValue.Create output (getCorrelationId parseResult)
+                                        |> Ok
+                                        |> renderOutput parseResult
+                                | Some exitCode -> return exitCode
+                                | None ->
                                     let output = toConnectDto ownerDto organizationDto repositoryDto branchDto false
 
                                     return
@@ -909,7 +973,7 @@ module Connect =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 try
-                    return! connectImpl parseResult
+                    return! connectImpl parseResult cancellationToken
                 with
                 | :? OperationCanceledException -> return -1
                 | ex ->

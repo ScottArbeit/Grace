@@ -64,6 +64,11 @@ import {
     GetBranchParametersToJSON,
 } from '../models/GetBranchParameters';
 import {
+    type GetReferenceMaterializationBoundaryParameters,
+    GetReferenceMaterializationBoundaryParametersFromJSON,
+    GetReferenceMaterializationBoundaryParametersToJSON,
+} from '../models/GetReferenceMaterializationBoundaryParameters';
+import {
     type GetReferenceParameters,
     GetReferenceParametersFromJSON,
     GetReferenceParametersToJSON,
@@ -88,6 +93,11 @@ import {
     ReferenceListReturnValueFromJSON,
     ReferenceListReturnValueToJSON,
 } from '../models/ReferenceListReturnValue';
+import {
+    type ReferenceMaterializationBoundaryReturnValue,
+    ReferenceMaterializationBoundaryReturnValueFromJSON,
+    ReferenceMaterializationBoundaryReturnValueToJSON,
+} from '../models/ReferenceMaterializationBoundaryReturnValue';
 import {
     type ReferenceReturnValue,
     ReferenceReturnValueFromJSON,
@@ -152,6 +162,10 @@ export interface GetBranchReferenceRequest {
 
 export interface GetParentBranchRequest {
     getBranchParameters: GetBranchParameters;
+}
+
+export interface GetReferenceMaterializationBoundaryRequest {
+    getReferenceMaterializationBoundaryParameters: GetReferenceMaterializationBoundaryParameters;
 }
 
 export interface ListBranchCheckpointsRequest {
@@ -1051,6 +1065,63 @@ export class BranchesApi extends runtime.BaseAPI {
      */
     async getParentBranch(requestParameters: GetParentBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<BranchReturnValue> {
         const response = await this.getParentBranchRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for getReferenceMaterializationBoundary without sending the request
+     */
+    async getReferenceMaterializationBoundaryRequestOpts(requestParameters: GetReferenceMaterializationBoundaryRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['getReferenceMaterializationBoundaryParameters'] == null) {
+            throw new runtime.RequiredError(
+                'getReferenceMaterializationBoundaryParameters',
+                'Required parameter "getReferenceMaterializationBoundaryParameters" was null or undefined when calling getReferenceMaterializationBoundary().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/branch/getReferenceMaterializationBoundary`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: GetReferenceMaterializationBoundaryParametersToJSON(requestParameters['getReferenceMaterializationBoundaryParameters']),
+        };
+    }
+
+    /**
+     * Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+     * Resolve a Connect materialization boundary.
+     */
+    async getReferenceMaterializationBoundaryRaw(requestParameters: GetReferenceMaterializationBoundaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ReferenceMaterializationBoundaryReturnValue>> {
+        const requestOptions = await this.getReferenceMaterializationBoundaryRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ReferenceMaterializationBoundaryReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+     * Resolve a Connect materialization boundary.
+     */
+    async getReferenceMaterializationBoundary(requestParameters: GetReferenceMaterializationBoundaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ReferenceMaterializationBoundaryReturnValue> {
+        const response = await this.getReferenceMaterializationBoundaryRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

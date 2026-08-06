@@ -19,6 +19,7 @@ Method | HTTP request | Description
 [**get_branch**](BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 [**get_branch_reference**](BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 [**get_parent_branch**](BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+[**get_reference_materialization_boundary**](BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 [**list_branch_checkpoints**](BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 [**list_branch_commits**](BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 [**list_branch_promotions**](BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -469,6 +470,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::BranchReturnValue**](BranchReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_reference_materialization_boundary
+
+> models::ReferenceMaterializationBoundaryReturnValue get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+Resolve a Connect materialization boundary.
+
+Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**get_reference_materialization_boundary_parameters** | [**GetReferenceMaterializationBoundaryParameters**](GetReferenceMaterializationBoundaryParameters.md) |  | [required] |
+
+### Return type
+
+[**models::ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
 
 ### Authorization
 

@@ -66,6 +66,7 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**get_branch**](docs/BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 *BranchesApi* | [**get_branch_reference**](docs/BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 *BranchesApi* | [**get_parent_branch**](docs/BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+*BranchesApi* | [**get_reference_materialization_boundary**](docs/BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 *BranchesApi* | [**list_branch_checkpoints**](docs/BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 *BranchesApi* | [**list_branch_commits**](docs/BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 *BranchesApi* | [**list_branch_promotions**](docs/BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -254,6 +255,7 @@ Class | Method | HTTP request | Description
  - [GetOrganizationParameters](docs/GetOrganizationParameters.md)
  - [GetOwnerParameters](docs/GetOwnerParameters.md)
  - [GetParameters](docs/GetParameters.md)
+ - [GetReferenceMaterializationBoundaryParameters](docs/GetReferenceMaterializationBoundaryParameters.md)
  - [GetReferenceParameters](docs/GetReferenceParameters.md)
  - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
  - [GetReferencesParameters](docs/GetReferencesParameters.md)
@@ -302,6 +304,8 @@ Class | Method | HTTP request | Description
  - [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
  - [ReferenceDto](docs/ReferenceDto.md)
  - [ReferenceListReturnValue](docs/ReferenceListReturnValue.md)
+ - [ReferenceMaterializationBoundaryApiDto](docs/ReferenceMaterializationBoundaryApiDto.md)
+ - [ReferenceMaterializationBoundaryReturnValue](docs/ReferenceMaterializationBoundaryReturnValue.md)
  - [ReferenceParameters](docs/ReferenceParameters.md)
  - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
  - [ReferenceType](docs/ReferenceType.md)

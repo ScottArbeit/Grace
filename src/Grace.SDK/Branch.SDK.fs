@@ -103,6 +103,13 @@ type Branch() =
     static member public GetReference(parameters: GetReferenceParameters) =
         postServer<GetReferenceParameters, ReferenceDto> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReference)}")
 
+    /// Resolves the exact root and opaque branch event cursor used by Connect materialization.
+    static member public GetReferenceMaterializationBoundary(parameters: GetReferenceMaterializationBoundaryParameters) =
+        postServer<GetReferenceMaterializationBoundaryParameters, ReferenceMaterializationBoundaryDto> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"branch/{nameof (Branch.GetReferenceMaterializationBoundary)}"
+        )
+
     /// Gets the references from a branch.
     static member public GetReferences(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReferences)}")

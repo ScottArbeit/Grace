@@ -102,6 +102,12 @@ module Branch =
     type GetReferenceParameters() =
         inherit BranchQueryParameters()
 
+    /// Selects the branch root whose server-ordered Reference boundary will accompany Connect materialization.
+    type GetReferenceMaterializationBoundaryParameters() =
+        inherit BranchQueryParameters()
+        member val public DirectoryVersionId: DirectoryVersionId = DirectoryVersionId.Empty with get, set
+        member val public ReferenceType = String.Empty with get, set
+
     /// Parameters for the /branch/getReferences and /branch/get[reference] endpoints.
     type GetReferencesParameters() =
         inherit BranchParameters()
