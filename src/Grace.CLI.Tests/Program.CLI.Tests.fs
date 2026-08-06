@@ -2235,6 +2235,60 @@ module HelpDoesNotReadConfigTests =
             output |> should contain $"{repoId}"
             output |> should contain $"{branchId}")
 
+    /// Verifies that verbose parse output shows the exact implicit or explicit correlation ID used by the command.
+    [<Test>]
+    let ``verbose parse result shows effective correlation id`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let implicitParseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "branch"
+                        "status"
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            implicitParseResult.Errors.Count |> should equal 0
+
+            let implicitCorrelationId = Common.getCorrelationId implicitParseResult
+            let implicitOutput = captureOutput (fun () -> Common.printParseResult implicitParseResult)
+
+            implicitOutput
+            |> should contain $"--correlation-id <{implicitCorrelationId}>"
+
+            implicitOutput
+            |> should contain $"--correlation-id: {implicitCorrelationId}"
+
+            implicitOutput
+            |> should not' (contain "--correlation-id <>")
+
+            let explicitCorrelationId = "verbose-correlation-id"
+
+            let explicitParseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "branch"
+                        "status"
+                        "--correlation-id"
+                        explicitCorrelationId
+                        "--output"
+                        "Verbose"
+                    |]
+                )
+
+            explicitParseResult.Errors.Count |> should equal 0
+
+            let explicitOutput = captureOutput (fun () -> Common.printParseResult explicitParseResult)
+
+            explicitOutput
+            |> should contain $"--correlation-id <{explicitCorrelationId}>"
+
+            explicitOutput
+            |> should contain $"--correlation-id: {explicitCorrelationId}")
+
     /// Verifies that verbose create output describes deferred hierarchy identities instead of the empty parser sentinel.
     [<Test>]
     let ``verbose repository create describes implicit hierarchy identities symbolically`` () =

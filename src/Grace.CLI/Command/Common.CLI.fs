@@ -869,24 +869,37 @@ module Common =
                 let mutable synopsis = parseResult.ToString()
 
                 for option in optionList do
-                    match tryGetValue option with
-                    | Some value ->
-                        match tryGetImplicitGuidDisplay parseResult option value with
-                        | Some display ->
-                            synopsis <- synopsis.Replace($"{option.Name} <{value}>", $"{option.Name} <{display}>", StringComparison.Ordinal)
+                    if option.Name = OptionName.CorrelationId then
+                        let correlationId = getCorrelationId parseResult
 
-                            sb.AppendLine($"{option.Name}: {display}")
-                            |> ignore
-                        | None ->
-                            if option.ValueType.IsArray then
-                                sb.AppendLine($"{option.Name}: {serialize value}")
-                                |> ignore
-                            else
-                                sb.AppendLine($"{option.Name}: {value}") |> ignore
-                    | None when option.ValueType = typeof<Guid> ->
-                        sb.AppendLine($"{option.Name}: not supplied")
+                        synopsis <-
+                            synopsis.Replace(
+                                $"{option.Name} <{parseResult.GetValue(option.Name)}>",
+                                $"{option.Name} <{correlationId}>",
+                                StringComparison.Ordinal
+                            )
+
+                        sb.AppendLine($"{option.Name}: {correlationId}")
                         |> ignore
-                    | None -> ()
+                    else
+                        match tryGetValue option with
+                        | Some value ->
+                            match tryGetImplicitGuidDisplay parseResult option value with
+                            | Some display ->
+                                synopsis <- synopsis.Replace($"{option.Name} <{value}>", $"{option.Name} <{display}>", StringComparison.Ordinal)
+
+                                sb.AppendLine($"{option.Name}: {display}")
+                                |> ignore
+                            | None ->
+                                if option.ValueType.IsArray then
+                                    sb.AppendLine($"{option.Name}: {serialize value}")
+                                    |> ignore
+                                else
+                                    sb.AppendLine($"{option.Name}: {value}") |> ignore
+                        | None when option.ValueType = typeof<Guid> ->
+                            sb.AppendLine($"{option.Name}: not supplied")
+                            |> ignore
+                        | None -> ()
 
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets synopsis}[/]")
                 AnsiConsole.WriteLine()

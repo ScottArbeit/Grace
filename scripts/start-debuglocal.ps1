@@ -157,6 +157,23 @@ function Resolve-PathFromRepoRoot([string] $RepoRoot, [string] $PathValue) {
   return (Resolve-Path (Join-Path $RepoRoot $PathValue)).Path
 }
 
+function Get-LatestGraceServerLogPath() {
+  try {
+    $userProfilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    $serverLogDirectory = Join-Path $userProfilePath ".grace\aspire\logs"
+
+    if (-not (Test-Path -LiteralPath $serverLogDirectory -PathType Container)) {
+      return $null
+    }
+
+    return Get-ChildItem -LiteralPath $serverLogDirectory -File -Filter "*.log" |
+      Sort-Object -Property LastWriteTimeUtc -Descending |
+      Select-Object -First 1 -ExpandProperty FullName
+  } catch {
+    return $null
+  }
+}
+
 function New-FailureInfo(
   [string] $Stage,
   [string] $Classification,
@@ -819,6 +836,13 @@ try {
 
   if (-not [string]::IsNullOrWhiteSpace($stderrLog)) {
     Write-Detail "AppHost stderr log: $stderrLog"
+  }
+
+  $serverLogPath = Get-LatestGraceServerLogPath
+  if ([string]::IsNullOrWhiteSpace($serverLogPath)) {
+    Write-Detail "Grace.Server log: could not locate a log file under '$([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile))\.grace\aspire\logs'." "Yellow"
+  } else {
+    Write-Detail "Grace.Server log: $serverLogPath"
   }
 } catch {
   $capturedError = $_
