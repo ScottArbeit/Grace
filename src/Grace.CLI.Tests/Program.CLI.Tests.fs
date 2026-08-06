@@ -974,7 +974,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Schema")
                 .GetProperty("Status")
                 .GetString()
-            |> should equal "metadata-incomplete"
+            |> should equal "schema-ready"
 
             rootElement.GetProperty("Schema").GetProperty(
                 "SuccessSchema"
@@ -1024,7 +1024,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Document")
                 .GetProperty("ReturnValue")
                 .GetString()
-            |> should equal "Signed out.")
+            |> should equal "example")
 
     /// Verifies that root login alias emits schema introspection.
     [<Test>]
@@ -1099,9 +1099,9 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "authenticate.logout")
 
-    /// Verifies that examples for missing dto metadata emit explicit unsupported document.
+    /// Verifies that examples for existing DTO results emit a successful Grace envelope.
     [<Test>]
-    let ``examples for missing dto metadata emit explicit unsupported document`` () =
+    let ``examples for DTO results emit type-derived success envelope`` () =
         withTempDir (fun _ ->
             /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
@@ -1120,19 +1120,22 @@ module HelpDoesNotReadConfigTests =
             let examples = rootElement.GetProperty("Examples")
 
             examples[ 0 ].GetProperty("Name").GetString()
-            |> should equal "metadata-incomplete"
+            |> should equal "success-envelope-shape"
 
-            examples[0]
-                .GetProperty("Document")
-                .GetProperty("Status")
-                .GetString()
-            |> should equal "metadata-incomplete"
+            examples[0].GetProperty("Document").GetProperty(
+                "ReturnValue"
+            )
+                .GetProperty(
+                "WorkItemId"
+            )
+                .ValueKind
+            |> should equal JsonValueKind.String
 
-            examples[0]
-                .GetProperty("Document")
-                .GetProperty("CommandId")
-                .GetString()
-            |> should equal "workitem.show")
+            examples[0].GetProperty("Document").GetProperty(
+                "Properties"
+            )
+                .ValueKind
+            |> should equal JsonValueKind.Array)
 
     /// Verifies that nested command schema resolves full command id.
     [<Test>]

@@ -100,12 +100,22 @@ An error emits a `GraceError` document:
     "Mutating": true,
     "EnvelopeContract": "ExistingGraceResultEnvelope: ReuseExistingApiOrSdkDto",
     "JsonMode": "ExistingBehavior",
-    "Schema": "FutureInertIntrospection",
-    "Examples": "FutureInertIntrospection",
+    "Schema": "ExistingBehavior",
+    "Examples": "ExistingBehavior",
     "Select": "ExistingBehavior"
   }
 }
 ```
+
+For every routed command with an existing JSON success envelope, the registry stores its declared result type.
+`--schema` derives the nested `ReturnValue` schema from that type and Grace's shared JSON options. `--examples`
+constructs a deterministic representative value and serializes it with the same options. Both commands preserve the
+outer `GraceReturnValue<T>` success envelope and the `GraceError` error envelope shown above.
+
+The schema describes the JSON shape Grace already emits; it does not rename or remodel result types for presentation.
+For example, `grace refs` is the alias for `grace branch get-references`, whose result remains
+`BranchDto * ReferenceDto array`. Its `ReturnValue` schema and example are therefore two-element JSON arrays: the
+branch object followed by the reference array.
 
 ## Select Projection
 
@@ -141,7 +151,7 @@ The final registry-backed inventory covers every CLI leaf command with exactly o
 - Source-only/unrouted commands: `9`
 - Deleted commands: `0`
 
-The conditional command is `watch`. `grace watch --check --output Json` returns a `WatchStatusDto` in the normal
+The conditional command is `watch`. `grace watch --check --output Json` returns a `WatchCheckStatusDto` in the normal
 `GraceReturnValue<T>` envelope so scripts and agents can read `IsRunning`, `CanUseIncrementalStatus`, `Mode`,
 `Reason`, and `SafetyFlags`. Foreground `grace watch --output Json` still short-circuits to a `GraceError` document
 instead of starting the continuous workflow.
