@@ -8050,34 +8050,15 @@ module Watch =
         && root.Sha256Hash = status.RootDirectorySha256Hash
         && root.Blake3Hash = status.RootDirectoryBlake3Hash
 
-    /// Reconstructs only the durable root identity needed to make a reset database safe for the first startup scan.
-    let private createResetRecoveryRootStatus (status: GraceWatchStatus) =
-        let current = Current()
+    /// Rebuilds the complete retained working-tree snapshot and rejects reset evidence that no longer matches its clean IPC root.
+    let private reconstructResetRecoveryStatus (status: GraceWatchStatus) =
+        task {
+            let! reconstructed = createNewGraceStatusFileForRoot status.RootDirectoryId GraceStatus.Default Grace.CLI.Services.parseResult
 
-        let root =
-            LocalDirectoryVersion.CreateWithHashes
-                status.RootDirectoryId
-                current.OwnerId
-                current.OrganizationId
-                current.RepositoryId
-                Constants.RootDirectoryPath
-                status.RootDirectorySha256Hash
-                status.RootDirectoryBlake3Hash
-                (List<DirectoryVersionId>())
-                (List<LocalFileVersion>())
-                Constants.InitialDirectorySize
-                DateTime.UtcNow
+            if not (graceStatusMatchesWatchRoot reconstructed status) then
+                invalidOp "Watch retained working tree did not match the clean IPC root during startup recovery."
 
-        let index = GraceIndex()
-
-        index.TryAdd(root.DirectoryVersionId, root)
-        |> ignore
-
-        { GraceStatus.Default with
-            Index = index
-            RootDirectoryId = root.DirectoryVersionId
-            RootDirectorySha256Hash = root.Sha256Hash
-            RootDirectoryBlake3Hash = root.Blake3Hash
+            return reconstructed
         }
 
     /// Establishes a missing reset boundary from the atomically retained clean IPC root before startup may scan or mutate files.
@@ -8093,20 +8074,32 @@ module Watch =
             match! Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId with
             | Some _ -> return currentStatus
             | None ->
+                let resetDatabaseNeedsReconstruction =
+                    currentStatus.RootDirectoryId = DirectoryVersionId.Empty
+                    && String.IsNullOrWhiteSpace(string currentStatus.RootDirectorySha256Hash)
+                    && (isNull currentStatus.Index
+                        || currentStatus.Index.IsEmpty)
+
+                let! reconstructedResetStatus =
+                    match retainedStatus with
+                    | Some retainedRoot when resetDatabaseNeedsReconstruction ->
+                        task {
+                            let! reconstructed = reconstructResetRecoveryStatus retainedRoot
+                            return Some reconstructed
+                        }
+                    | _ -> Task.FromResult(None)
+
+                cancellationToken.ThrowIfCancellationRequested()
+
                 let rootDirectoryId, rootSha256Hash, rootBlake3Hash, statusToPersist =
                     match retainedStatus with
                     | Some retainedRoot when graceStatusMatchesWatchRoot currentStatus retainedRoot ->
                         retainedRoot.RootDirectoryId, retainedRoot.RootDirectorySha256Hash, retainedRoot.RootDirectoryBlake3Hash, currentStatus
-                    | Some retainedRoot when
-                        currentStatus.RootDirectoryId = DirectoryVersionId.Empty
-                        && String.IsNullOrWhiteSpace(string currentStatus.RootDirectorySha256Hash)
-                        && (isNull currentStatus.Index
-                            || currentStatus.Index.IsEmpty)
-                        ->
-                        retainedRoot.RootDirectoryId,
-                        retainedRoot.RootDirectorySha256Hash,
-                        retainedRoot.RootDirectoryBlake3Hash,
-                        createResetRecoveryRootStatus retainedRoot
+                    | Some retainedRoot when resetDatabaseNeedsReconstruction ->
+                        match reconstructedResetStatus with
+                        | Some reconstructed ->
+                            retainedRoot.RootDirectoryId, retainedRoot.RootDirectorySha256Hash, retainedRoot.RootDirectoryBlake3Hash, reconstructed
+                        | None -> invalidOp "Watch did not reconstruct the reset working-tree status."
                     | Some _ -> invalidOp "Watch durable status did not match the retained IPC root before startup recovery."
                     | None ->
                         let mutable durableRoot = LocalDirectoryVersion.Default

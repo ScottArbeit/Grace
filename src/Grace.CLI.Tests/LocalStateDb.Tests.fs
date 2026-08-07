@@ -552,7 +552,10 @@ module LocalStateDbTests =
                 let boundaryTableCount =
                     executeScalarInt recreatedConnection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'remote_reference_boundaries';"
 
-                Assert.That(boundaryTableCount, Is.EqualTo(0))
+                let boundaryRowCount = executeScalarInt recreatedConnection "SELECT COUNT(*) FROM remote_reference_boundaries;"
+
+                Assert.That(boundaryTableCount, Is.EqualTo(1))
+                Assert.That(boundaryRowCount, Is.EqualTo(0))
             })
 
     /// A concurrent or preexisting boundary prevents missing-cursor recovery from overwriting cursor authority.

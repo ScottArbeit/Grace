@@ -1729,7 +1729,10 @@ module Services =
                 //do! File.WriteAllTextAsync(@$"C:\Intel\ProcessedThings{sb.Length}.txt", sb.ToString())
                 let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
 
-                if parseResult |> isOutputFormat "Verbose" then
+                if
+                    not (isNull parseResult)
+                    && parseResult |> isOutputFormat "Verbose"
+                then
                     logToAnsiConsole Colors.Verbose $"Finished createNewGraceStatusFile. newGraceStatus.Index.Count: {newGraceStatus.Index.Count}."
 
                 let newGraceStatus =
