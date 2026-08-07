@@ -10,8 +10,87 @@ open Grace.Types.Reference
 open Grace.Types.Repository
 open NodaTime
 open NUnit.Framework
+open Orleans.Runtime
 open System
 open System.Collections.Generic
+open System.Threading.Tasks
+
+/// Simulates durable Branch state with a bounded number of definite write failures.
+type private ScriptedBranchEventState(initialDurableEvents: seq<BranchEvent>, failedWrites: int, failedReads: int) =
+    let mutable durableEvents = List<BranchEvent>(initialDurableEvents)
+    let mutable activationEvents = List<BranchEvent>(durableEvents)
+    let mutable remainingFailedWrites = failedWrites
+    let mutable remainingFailedReads = failedReads
+    let mutable writeCount = 0
+
+    member _.WriteCount = writeCount
+
+    member _.CreateReactivatedState() = ScriptedBranchEventState(durableEvents, 0, 0)
+
+    interface IPersistentState<List<BranchEvent>> with
+        member _.State
+            with get () = activationEvents
+            and set value = activationEvents <- value
+
+        member _.Etag = null
+        member _.RecordExists = durableEvents.Count > 0
+
+        member _.ReadStateAsync() =
+            if remainingFailedReads > 0 then
+                remainingFailedReads <- remainingFailedReads - 1
+                Task.FromException(InvalidOperationException("simulated Branch reload failure"))
+            else
+                activationEvents <- List<BranchEvent>(durableEvents)
+                Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            writeCount <- writeCount + 1
+
+            if remainingFailedWrites > 0 then
+                remainingFailedWrites <- remainingFailedWrites - 1
+                Task.FromException(InvalidOperationException("simulated Branch persistence failure"))
+            else
+                durableEvents <- List<BranchEvent>(activationEvents)
+                Task.CompletedTask
+
+        member _.ClearStateAsync() =
+            durableEvents.Clear()
+            activationEvents.Clear()
+            Task.CompletedTask
+
+/// Simulates a Branch write that commits durably before returning an unknown failure outcome.
+type private UnknownOutcomeBranchEventState(initialDurableEvents: seq<BranchEvent>) =
+    let mutable durableEvents = List<BranchEvent>(initialDurableEvents)
+    let mutable activationEvents = List<BranchEvent>(durableEvents)
+    let mutable firstWrite = true
+
+    member _.CreateReactivatedState() = UnknownOutcomeBranchEventState(durableEvents)
+
+    interface IPersistentState<List<BranchEvent>> with
+        member _.State
+            with get () = activationEvents
+            and set value = activationEvents <- value
+
+        member _.Etag = null
+        member _.RecordExists = durableEvents.Count > 0
+
+        member _.ReadStateAsync() =
+            activationEvents <- List<BranchEvent>(durableEvents)
+            Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            durableEvents <- List<BranchEvent>(activationEvents)
+
+            if firstWrite then
+                firstWrite <- false
+                Task.FromException(InvalidOperationException("simulated unknown Branch write outcome"))
+            else
+                Task.CompletedTask
+
+        member _.ClearStateAsync() =
+            durableEvents.Clear()
+            activationEvents.Clear()
+            Task.CompletedTask
 
 /// Covers branch Server Validation behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
@@ -256,7 +335,108 @@ type BranchActorReferenceRetryTests() =
         Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
         Assert.That(recovered.LatestReference, Is.EqualTo(durableCommit))
         Assert.That(recovered.ShouldRecomputeLatestReferences, Is.True)
-        Assert.That(shouldPersistAndPublishBranchEvent (Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)), Is.False)
+        Assert.That(shouldPublishBranchEvent (Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)), Is.False)
+
+    /// Verifies eligible Watch transitions persist in Branch order without duplicating Reference-owned publication.
+    [<Test>]
+    member _.EligibleWatchTransitionsPersistWithoutBranchPublication() =
+        let durableCommit = persistedCommit ()
+        let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+        let checkpointed = Checkpointed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+        let saved = Saved(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+
+        for branchEventType in [ committed; checkpointed; saved ] do
+            Assert.That(shouldPersistBranchEvent branchEventType, Is.True)
+            Assert.That(shouldPublishBranchEvent branchEventType, Is.False)
+
+    /// Verifies an exact retry repairs a missing eligible replay event once without taking over Reference publication.
+    [<Test>]
+    member _.MatchingRetryRepairsMissingWatchTransitionExactlyOnce() =
+        let durableCommit = persistedCommit ()
+        let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+        let persistedEvent = ({ Event = committed; Metadata = EventMetadata.New "persisted-commit" GraceSystemUser }: BranchEvent)
+
+        Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed Seq.empty, Is.True)
+
+        Assert.That(
+            shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed [ persistedEvent ],
+            Is.False,
+            "A retry after the Branch event was persisted must not append a duplicate."
+        )
+
+        Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.NewReference committed Seq.empty, Is.False)
+        Assert.That(shouldPublishBranchEvent committed, Is.False, "The repair must never duplicate Reference-owned publication.")
+
+    /// A failed repair write reloads durable evidence, retries once, and remains exactly once after reactivation.
+    [<Test>]
+    member _.MatchingRetryRepairRequiresDurableWriteAndSurvivesReactivation() =
+        task {
+            let durableCommit = persistedCommit ()
+            let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+            let branchEvent = ({ Event = committed; Metadata = EventMetadata.New "repair-write" GraceSystemUser }: BranchEvent)
+            let state = ScriptedBranchEventState(Seq.empty, 1, 0)
+            let persistentState = state :> IPersistentState<List<BranchEvent>>
+
+            match! persistBranchEventWithDurableRecovery persistentState branchEvent with
+            | BranchEventPersistenceOutcome.Persisted -> Assert.Fail("The forced first write must not report durable success.")
+            | BranchEventPersistenceOutcome.FailedRecovered error -> Assert.That(error.Message, Is.EqualTo("simulated Branch persistence failure"))
+            | BranchEventPersistenceOutcome.FailedUnrecoverable _ -> Assert.Fail("The durable reload should succeed in this witness.")
+
+            Assert.That(persistentState.State, Is.Empty, "Failed activation-only mutation must be replaced by durable state.")
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed persistentState.State, Is.True)
+
+            match! persistBranchEventWithDurableRecovery persistentState branchEvent with
+            | BranchEventPersistenceOutcome.Persisted -> ()
+            | outcome -> Assert.Fail($"The eventual successful write returned {outcome}.")
+
+            Assert.That(state.WriteCount, Is.EqualTo(2))
+            Assert.That(persistentState.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed persistentState.State, Is.False)
+
+            let reactivated = state.CreateReactivatedState() :> IPersistentState<List<BranchEvent>>
+            Assert.That(reactivated.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed reactivated.State, Is.False)
+            Assert.That(shouldPublishBranchEvent committed, Is.False)
+        }
+
+    /// A failed write plus failed durable reload is never admitted as success and requires actor deactivation.
+    [<Test>]
+    member _.MatchingRetryRepairReloadFailureRequiresDeactivation() =
+        task {
+            let durableCommit = persistedCommit ()
+            let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+            let branchEvent = ({ Event = committed; Metadata = EventMetadata.New "repair-reload" GraceSystemUser }: BranchEvent)
+            let state = ScriptedBranchEventState(Seq.empty, 1, 1) :> IPersistentState<List<BranchEvent>>
+
+            match! persistBranchEventWithDurableRecovery state branchEvent with
+            | BranchEventPersistenceOutcome.FailedUnrecoverable (writeError, reloadError) as outcome ->
+                Assert.That(writeError.Message, Is.EqualTo("simulated Branch persistence failure"))
+                Assert.That(reloadError.Message, Is.EqualTo("simulated Branch reload failure"))
+                Assert.That(branchPersistenceRequiresDeactivation outcome, Is.True)
+            | outcome -> Assert.Fail($"Expected an unrecoverable persistence outcome, got {outcome}.")
+        }
+
+    /// An unknown write outcome reloads the committed event and prevents an exact retry from appending it again.
+    [<Test>]
+    member _.MatchingRetryUnknownWriteOutcomeUsesReloadedDurableEvidence() =
+        task {
+            let durableCommit = persistedCommit ()
+            let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+            let branchEvent = ({ Event = committed; Metadata = EventMetadata.New "repair-unknown" GraceSystemUser }: BranchEvent)
+            let scriptedState = UnknownOutcomeBranchEventState(Seq.empty)
+            let state = scriptedState :> IPersistentState<List<BranchEvent>>
+
+            match! persistBranchEventWithDurableRecovery state branchEvent with
+            | BranchEventPersistenceOutcome.FailedRecovered error -> Assert.That(error.Message, Is.EqualTo("simulated unknown Branch write outcome"))
+            | outcome -> Assert.Fail($"Expected a recovered unknown write outcome, got {outcome}.")
+
+            Assert.That(state.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed state.State, Is.False)
+
+            let reactivated = scriptedState.CreateReactivatedState() :> IPersistentState<List<BranchEvent>>
+            Assert.That(reactivated.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed reactivated.State, Is.False)
+        }
 
     /// Verifies a fresh-correlation retry against a completed projection is a projection no-op.
     [<Test>]
@@ -680,3 +860,161 @@ type ReferenceMaterializationBoundarySelectionTests() =
 
         Assert.That(promoted.Value.DirectoryId, Is.EqualTo(promotion.Reference.DirectoryId))
         Assert.That(basedOnly.Value.DirectoryId, Is.EqualTo(branchBase.Reference.DirectoryId))
+
+/// Proves Watch replay is closed by one immutable branch-event snapshot and server-owned cursor interpretation.
+[<Parallelizable(ParallelScope.All)>]
+type ReferenceEventReplayTests() =
+    let repositoryId = Guid.Parse("11111111-8030-4000-8000-111111111111")
+    let branchId = Guid.Parse("22222222-8030-4000-8000-222222222222")
+
+    /// Builds a durable Branch event with deterministic Reference and root identity.
+    let referenceEvent position referenceType =
+        let referenceId = Guid.Parse($"{position + 10:D8}-8030-4000-8000-222222222222")
+        let directoryId = Guid.Parse($"{position + 20:D8}-8030-4000-8000-222222222222")
+
+        let reference =
+            { ReferenceDto.Default with
+                ReferenceId = referenceId
+                OwnerId = Guid.Parse("33333333-8030-4000-8000-333333333333")
+                OrganizationId = Guid.Parse("44444444-8030-4000-8000-444444444444")
+                RepositoryId = repositoryId
+                BranchId = branchId
+                DirectoryId = directoryId
+                Sha256Hash = Sha256Hash $"sha-{position}"
+                Blake3Hash = Blake3Hash $"blake3-{position}"
+                ReferenceType = referenceType
+                ReferenceText = ReferenceText $"reference-{position}"
+            }
+
+        let event =
+            match referenceType with
+            | ReferenceType.Commit -> BranchEventType.Committed(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | ReferenceType.Checkpoint ->
+                BranchEventType.Checkpointed(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | ReferenceType.Save -> BranchEventType.Saved(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | ReferenceType.Tag -> BranchEventType.Tagged(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | _ -> invalidArg (nameof referenceType) "Unsupported replay test Reference type."
+
+        ({ Event = event; Metadata = EventMetadata.New $"correlation-{position}" GraceSystemUser }: BranchEvent)
+
+    /// Eligible events preserve durable order and exact positions while ineligible events still close the scanned range.
+    [<Test>]
+    member _.EligibleEventsRemainOrderedAcrossIneligibleEvents() =
+        let events =
+            [|
+                referenceEvent 0 ReferenceType.Tag
+                referenceEvent 1 ReferenceType.Save
+                referenceEvent 2 ReferenceType.Commit
+                ({ Event = BranchEventType.NameSet(BranchName "renamed"); Metadata = EventMetadata.New "correlation-3" GraceSystemUser }: BranchEvent)
+                referenceEvent 4 ReferenceType.Checkpoint
+            |]
+
+        let result = Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId branchId "branch-event-v1:0" events
+
+        match result with
+        | Error failure -> Assert.Fail($"Expected replay success, got {failure}.")
+        | Ok replay ->
+            Assert.That(
+                replay.Events
+                |> Array.map (fun replayEvent -> replayEvent.EventCursor)
+                |> String.concat "|",
+                Is.EqualTo("branch-event-v1:1|branch-event-v1:2|branch-event-v1:4")
+            )
+
+            Assert.That(
+                replay.Events
+                |> Array.map (fun replayEvent -> string replayEvent.Reference.ReferenceType)
+                |> String.concat "|",
+                Is.EqualTo("ReferenceType.Save|ReferenceType.Commit|ReferenceType.Checkpoint")
+            )
+
+            Assert.That(replay.ScannedThroughCursor, Is.EqualTo("branch-event-v1:4"))
+
+    /// A publication-failed Reference retry appends its absent replay transition once at the durable Branch order boundary.
+    [<Test>]
+    member _.MatchingRetryRepairReplaysExactlyOnceInDurableOrder() =
+        let events =
+            ResizeArray<BranchEvent>(
+                [
+                    referenceEvent 0 ReferenceType.Tag
+                    referenceEvent 1 ReferenceType.Commit
+                ]
+            )
+
+        let repaired = referenceEvent 2 ReferenceType.Save
+
+        if shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry repaired.Event events then
+            events.Add repaired
+
+        if shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry repaired.Event events then
+            events.Add repaired
+
+        match Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId branchId "branch-event-v1:0" events with
+        | Error failure -> Assert.Fail($"Expected replay success, got {failure}.")
+        | Ok replay ->
+            Assert.That(replay.Events, Has.Length.EqualTo(2))
+
+            Assert.That(
+                replay.Events
+                |> Array.map (fun replayEvent -> $"{replayEvent.EventCursor}:{replayEvent.Reference.ReferenceType}")
+                |> String.concat "|",
+                Is.EqualTo("branch-event-v1:1:ReferenceType.Commit|branch-event-v1:2:ReferenceType.Save")
+            )
+
+            Assert.That(replay.ScannedThroughCursor, Is.EqualTo("branch-event-v1:2"))
+
+    /// An empty eligible interval advances only to the exact end of the immutable scanned snapshot.
+    [<Test>]
+    member _.EmptyEligibleIntervalReturnsScannedThroughClosure() =
+        let events =
+            [|
+                referenceEvent 0 ReferenceType.Save
+                referenceEvent 1 ReferenceType.Tag
+                ({ Event = BranchEventType.NameSet(BranchName "renamed"); Metadata = EventMetadata.New "correlation-2" GraceSystemUser }: BranchEvent)
+            |]
+
+        match Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId branchId "branch-event-v1:0" events with
+        | Error failure -> Assert.Fail($"Expected replay success, got {failure}.")
+        | Ok replay ->
+            Assert.That(replay.Events, Is.Empty)
+            Assert.That(replay.ScannedThroughCursor, Is.EqualTo("branch-event-v1:2"))
+
+    /// Cursor syntax, version, future position, and scope are rejected without a partial replay response.
+    [<TestCase("not-a-cursor", ReferenceReplayCursorFailure.Malformed)>]
+    [<TestCase("branch-event-v2:0", ReferenceReplayCursorFailure.UnsupportedVersion)>]
+    [<TestCase("branch-event-v1:9", ReferenceReplayCursorFailure.Future)>]
+    member _.InvalidCursorIsTyped(cursor, expectedFailure: int) =
+        let result =
+            Grace.Server.Branch.replayReferenceEventsAfterCursor
+                repositoryId
+                branchId
+                repositoryId
+                branchId
+                cursor
+                [|
+                    referenceEvent 0 ReferenceType.Save
+                |]
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected cursor rejection.")
+        | Error failure -> Assert.That(failure, Is.EqualTo(enum<ReferenceReplayCursorFailure> expectedFailure))
+
+    /// Cursor scope is validated separately from its opaque position token.
+    [<Test>]
+    member _.CrossScopeCursorIsTyped() =
+        let events =
+            [|
+                referenceEvent 0 ReferenceType.Save
+            |]
+
+        let crossRepository = Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId (Guid.NewGuid()) branchId "branch-event-v1:0" events
+
+        let crossBranch = Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId (Guid.NewGuid()) "branch-event-v1:0" events
+
+        match crossRepository with
+        | Ok _ -> Assert.Fail("Expected repository-scoped cursor rejection.")
+        | Error failure -> Assert.That(failure, Is.EqualTo(ReferenceReplayCursorFailure.RepositoryMismatch))
+
+        match crossBranch with
+        | Ok _ -> Assert.Fail("Expected branch-scoped cursor rejection.")
+        | Error failure -> Assert.That(failure, Is.EqualTo(ReferenceReplayCursorFailure.BranchMismatch))

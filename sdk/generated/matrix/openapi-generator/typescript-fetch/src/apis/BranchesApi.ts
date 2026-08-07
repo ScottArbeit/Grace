@@ -99,10 +99,20 @@ import {
     ReferenceMaterializationBoundaryReturnValueToJSON,
 } from '../models/ReferenceMaterializationBoundaryReturnValue';
 import {
+    type ReferenceReplayReturnValue,
+    ReferenceReplayReturnValueFromJSON,
+    ReferenceReplayReturnValueToJSON,
+} from '../models/ReferenceReplayReturnValue';
+import {
     type ReferenceReturnValue,
     ReferenceReturnValueFromJSON,
     ReferenceReturnValueToJSON,
 } from '../models/ReferenceReturnValue';
+import {
+    type ReplayReferenceEventsParameters,
+    ReplayReferenceEventsParametersFromJSON,
+    ReplayReferenceEventsParametersToJSON,
+} from '../models/ReplayReferenceEventsParameters';
 
 export interface AnnotateBranchRequest {
     annotateParameters: AnnotateParameters;
@@ -198,6 +208,10 @@ export interface PromoteBranchRequest {
 
 export interface RebaseBranchRequest {
     rebaseParameters: RebaseParameters;
+}
+
+export interface ReplayReferenceEventsRequest {
+    replayReferenceEventsParameters: ReplayReferenceEventsParameters;
 }
 
 export interface SaveBranchRequest {
@@ -1578,6 +1592,63 @@ export class BranchesApi extends runtime.BaseAPI {
      */
     async rebaseBranch(requestParameters: RebaseBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<BranchCommandReturnValue> {
         const response = await this.rebaseBranchRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for replayReferenceEvents without sending the request
+     */
+    async replayReferenceEventsRequestOpts(requestParameters: ReplayReferenceEventsRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['replayReferenceEventsParameters'] == null) {
+            throw new runtime.RequiredError(
+                'replayReferenceEventsParameters',
+                'Required parameter "replayReferenceEventsParameters" was null or undefined when calling replayReferenceEvents().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/branch/replayReferenceEvents`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: ReplayReferenceEventsParametersToJSON(requestParameters['replayReferenceEventsParameters']),
+        };
+    }
+
+    /**
+     * Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+     * Replay cursor-new Reference events.
+     */
+    async replayReferenceEventsRaw(requestParameters: ReplayReferenceEventsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ReferenceReplayReturnValue>> {
+        const requestOptions = await this.replayReferenceEventsRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ReferenceReplayReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+     * Replay cursor-new Reference events.
+     */
+    async replayReferenceEvents(requestParameters: ReplayReferenceEventsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ReferenceReplayReturnValue> {
+        const response = await this.replayReferenceEventsRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

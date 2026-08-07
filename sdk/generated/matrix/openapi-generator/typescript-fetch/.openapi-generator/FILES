@@ -54,6 +54,7 @@ docs/CreateParameters.md
 docs/CreateReferenceParameters.md
 docs/CreateRepositoryParameters.md
 docs/CreateWebhookRuleParameters.md
+docs/CurrentBranchReferenceNotification.md
 docs/DedupeDiscoverySnapshot.md
 docs/DefaultApi.md
 docs/DeleteBranchParameters.md
@@ -166,9 +167,13 @@ docs/ReferenceListReturnValue.md
 docs/ReferenceMaterializationBoundaryApiDto.md
 docs/ReferenceMaterializationBoundaryReturnValue.md
 docs/ReferenceParameters.md
+docs/ReferenceReplayApiDto.md
+docs/ReferenceReplayEventApiDto.md
+docs/ReferenceReplayReturnValue.md
 docs/ReferenceReturnValue.md
 docs/ReferenceType.md
 docs/RegisterContentBlockUploadParameters.md
+docs/ReplayReferenceEventsParameters.md
 docs/RepositoriesApi.md
 docs/RepositoryBooleanReturnValue.md
 docs/RepositoryBranchesReturnValue.md
@@ -301,6 +306,7 @@ src/models/CreateParameters.ts
 src/models/CreateReferenceParameters.ts
 src/models/CreateRepositoryParameters.ts
 src/models/CreateWebhookRuleParameters.ts
+src/models/CurrentBranchReferenceNotification.ts
 src/models/DedupeDiscoverySnapshot.ts
 src/models/DeleteBranchParameters.ts
 src/models/DeleteOrganizationParameters.ts
@@ -408,9 +414,13 @@ src/models/ReferenceListReturnValue.ts
 src/models/ReferenceMaterializationBoundaryApiDto.ts
 src/models/ReferenceMaterializationBoundaryReturnValue.ts
 src/models/ReferenceParameters.ts
+src/models/ReferenceReplayApiDto.ts
+src/models/ReferenceReplayEventApiDto.ts
+src/models/ReferenceReplayReturnValue.ts
 src/models/ReferenceReturnValue.ts
 src/models/ReferenceType.ts
 src/models/RegisterContentBlockUploadParameters.ts
+src/models/ReplayReferenceEventsParameters.ts
 src/models/RepositoryBooleanReturnValue.ts
 src/models/RepositoryBranchesReturnValue.ts
 src/models/RepositoryCommandReturnValue.ts

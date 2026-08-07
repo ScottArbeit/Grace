@@ -30,6 +30,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
+open System.Globalization
 open System.Linq
 open System.Text.Json
 open System.Threading.Tasks
@@ -103,6 +104,105 @@ module Branch =
 
     /// Encodes a branch event position without exposing cursor interpretation to clients.
     let internal referenceEventCursor eventPosition = $"branch-event-v1:{eventPosition}"
+
+    /// Interprets a v1 branch-event cursor only inside the server replay boundary.
+    let private tryParseReferenceEventCursor eventCursor =
+        let prefix = "branch-event-v1:"
+
+        if String.IsNullOrWhiteSpace eventCursor then
+            Error Reference.ReferenceReplayCursorFailure.Malformed
+        elif eventCursor.StartsWith(prefix, StringComparison.Ordinal) then
+            let positionText = eventCursor.Substring(prefix.Length)
+            let mutable position = 0L
+
+            if Int64.TryParse(positionText, NumberStyles.None, CultureInfo.InvariantCulture, &position) then
+                Ok position
+            else
+                Error Reference.ReferenceReplayCursorFailure.Malformed
+        elif eventCursor.StartsWith("branch-event-", StringComparison.Ordinal) then
+            Error Reference.ReferenceReplayCursorFailure.UnsupportedVersion
+        else
+            Error Reference.ReferenceReplayCursorFailure.Malformed
+
+    /// Projects one eligible durable Branch Reference event into the Watch replay contract.
+    let private tryCreateReferenceReplayEvent repositoryId branchId position (branchEvent: BranchEvent) =
+        let create expectedReferenceType (referenceDto: Reference.ReferenceDto) directoryId sha256Hash blake3Hash referenceText =
+            if referenceDto.RepositoryId <> repositoryId
+               || referenceDto.BranchId <> branchId
+               || referenceDto.ReferenceType
+                  <> expectedReferenceType then
+                None
+            else
+                Some
+                    { Reference.ReferenceReplayEventDto.Default with
+                        EventCursor = referenceEventCursor position
+                        Reference =
+                            { Reference.CurrentBranchReferenceNotification.Default with
+                                ReferenceId = referenceDto.ReferenceId
+                                OwnerId = referenceDto.OwnerId
+                                OrganizationId = referenceDto.OrganizationId
+                                RepositoryId = repositoryId
+                                BranchId = branchId
+                                DirectoryId = directoryId
+                                Sha256Hash = sha256Hash
+                                Blake3Hash = blake3Hash
+                                ReferenceType = expectedReferenceType
+                                ReferenceText = referenceText
+                                CorrelationId = branchEvent.Metadata.CorrelationId
+                            }
+                    }
+
+        match branchEvent.Event with
+        | BranchEventType.Committed (referenceDto, directoryId, sha256Hash, blake3Hash, referenceText) ->
+            create ReferenceType.Commit referenceDto directoryId sha256Hash blake3Hash referenceText
+        | BranchEventType.Checkpointed (referenceDto, directoryId, sha256Hash, blake3Hash, referenceText) ->
+            create ReferenceType.Checkpoint referenceDto directoryId sha256Hash blake3Hash referenceText
+        | BranchEventType.Saved (referenceDto, directoryId, sha256Hash, blake3Hash, referenceText) ->
+            create ReferenceType.Save referenceDto directoryId sha256Hash blake3Hash referenceText
+        | _ -> None
+
+    /// Returns the eligible events and exact scanned closure after a branch-scoped cursor from one immutable snapshot.
+    let internal replayReferenceEventsAfterCursor
+        repositoryId
+        branchId
+        cursorRepositoryId
+        cursorBranchId
+        eventCursor
+        (branchEvents: IReadOnlyList<BranchEvent>)
+        =
+        if cursorRepositoryId <> repositoryId then
+            Error Reference.ReferenceReplayCursorFailure.RepositoryMismatch
+        elif cursorBranchId <> branchId then
+            Error Reference.ReferenceReplayCursorFailure.BranchMismatch
+        else
+            match tryParseReferenceEventCursor eventCursor with
+            | Error failure -> Error failure
+            | Ok cursorPosition when
+                cursorPosition < 0L
+                || cursorPosition >= int64 branchEvents.Count
+                ->
+                Error Reference.ReferenceReplayCursorFailure.Future
+            | Ok cursorPosition ->
+                let events =
+                    branchEvents
+                    |> Seq.mapi (fun position branchEvent -> int64 position, branchEvent)
+                    |> Seq.filter (fun (position, _) -> position > cursorPosition)
+                    |> Seq.choose (fun (position, branchEvent) -> tryCreateReferenceReplayEvent repositoryId branchId position branchEvent)
+                    |> Seq.toArray
+
+                let scannedThroughCursor =
+                    if cursorPosition = int64 branchEvents.Count - 1L then
+                        eventCursor
+                    else
+                        referenceEventCursor (int64 branchEvents.Count - 1L)
+
+                Ok
+                    { Reference.ReferenceReplayDto.Default with
+                        RepositoryId = repositoryId
+                        BranchId = branchId
+                        Events = events
+                        ScannedThroughCursor = scannedThroughCursor
+                    }
 
     /// Selects a root and ordered boundary from one immutable branch-event snapshot.
     let internal trySelectReferenceMaterializationBoundary
@@ -1747,6 +1847,63 @@ module Branch =
                                 .enhance(getParametersAsDictionary parameters)
                                 .enhance(nameof RepositoryId, repositoryId)
                                 .enhance(nameof BranchId, branchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result400BadRequest error
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
+            }
+
+    /// Replays eligible Reference events strictly after a branch-scoped opaque cursor from one actor snapshot.
+    let ReplayReferenceEvents: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context |> parse<ReplayReferenceEventsParameters>
+
+                    let cursorRepositoryId =
+                        match Guid.TryParse parameters.CursorRepositoryId with
+                        | true, value -> value
+                        | _ -> RepositoryId.Empty
+
+                    let cursorBranchId =
+                        match Guid.TryParse parameters.CursorBranchId with
+                        | true, value -> value
+                        | _ -> BranchId.Empty
+
+                    let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                    let! branchEvents = actorProxy.GetEvents correlationId
+
+                    match
+                        replayReferenceEventsAfterCursor
+                            graceIds.RepositoryId
+                            graceIds.BranchId
+                            cursorRepositoryId
+                            cursorBranchId
+                            parameters.EventCursor
+                            branchEvents
+                        with
+                    | Ok replay ->
+                        let returnValue =
+                            (GraceReturnValue.Create replay correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok returnValue
+                    | Error _ ->
+                        let error =
+                            (GraceError.Create "The supplied Watch replay cursor does not identify a valid interval for this branch." correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
                                 .enhance ("Path", context.Request.Path.Value)
 
                         return! context |> result400BadRequest error

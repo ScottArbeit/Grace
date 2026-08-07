@@ -110,6 +110,13 @@ type Branch() =
             $"branch/{nameof (Branch.GetReferenceMaterializationBoundary)}"
         )
 
+    /// Replays eligible Reference events after one branch-scoped opaque cursor.
+    static member public ReplayReferenceEvents(parameters: ReplayReferenceEventsParameters) =
+        postServer<ReplayReferenceEventsParameters, ReferenceReplayDto> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"branch/{nameof (Branch.ReplayReferenceEvents)}"
+        )
+
     /// Gets the references from a branch.
     static member public GetReferences(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReferences)}")

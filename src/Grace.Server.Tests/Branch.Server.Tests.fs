@@ -1907,6 +1907,154 @@ type BranchServer() =
                     })
         }
 
+    /// Verifies authenticated SDK replay preserves branch scope, event order, cursor closure, and generic cursor failures through the hosted route.
+    [<Test; NonParallelizable>]
+    member _.ReplayReferenceEventsRouteAndSdkPreserveOrderedBranchScopedCursorContract() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parentBranchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ReplayRoute{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+
+                        let replayParameters = Parameters.Branch.ReplayReferenceEventsParameters()
+                        replayParameters.OwnerId <- ownerId
+                        replayParameters.OrganizationId <- organizationId
+                        replayParameters.RepositoryId <- repositoryId
+                        replayParameters.BranchId <- $"{branch.BranchId}"
+                        replayParameters.CursorRepositoryId <- repositoryId
+                        replayParameters.CursorBranchId <- $"{branch.BranchId}"
+                        replayParameters.EventCursor <- "branch-event-v1:0"
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! baselineResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        let baseline =
+                            match baselineResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected authenticated SDK replay baseline success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceReplayDto>
+
+                        Assert.That(baseline.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(baseline.BranchId, Is.EqualTo(branch.BranchId))
+                        Assert.That(baseline.Events, Is.Empty)
+                        Assert.That(baseline.ScannedThroughCursor, Does.StartWith("branch-event-v1:"))
+
+                        let saveReferenceId = Guid.NewGuid()
+                        let saveParameters = Parameters.Branch.CreateReferenceParameters()
+                        saveParameters.OwnerId <- ownerId
+                        saveParameters.OrganizationId <- organizationId
+                        saveParameters.RepositoryId <- repositoryId
+                        saveParameters.BranchId <- $"{branch.BranchId}"
+                        saveParameters.ReferenceId <- saveReferenceId
+                        saveParameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        saveParameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        saveParameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        saveParameters.Message <- "Hosted replay route ordered save"
+                        saveParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! saveResponse = Client.PostAsync("/branch/save", createJsonContent saveParameters)
+                        let! saveBody = saveResponse.Content.ReadAsStringAsync()
+                        Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
+
+                        let! saveRetryResponse = Client.PostAsync("/branch/save", createJsonContent saveParameters)
+                        let! saveRetryBody = saveRetryResponse.Content.ReadAsStringAsync()
+                        Assert.That(saveRetryResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveRetryBody)
+
+                        let commitReferenceId = Guid.NewGuid()
+                        let commitParameters = Parameters.Branch.CreateReferenceParameters()
+                        commitParameters.OwnerId <- ownerId
+                        commitParameters.OrganizationId <- organizationId
+                        commitParameters.RepositoryId <- repositoryId
+                        commitParameters.BranchId <- $"{branch.BranchId}"
+                        commitParameters.ReferenceId <- commitReferenceId
+                        commitParameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        commitParameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        commitParameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        commitParameters.Message <- "Hosted replay route ordered commit"
+                        commitParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! commitResponse = Client.PostAsync("/branch/commit", createJsonContent commitParameters)
+                        let! commitBody = commitResponse.Content.ReadAsStringAsync()
+                        Assert.That(commitResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), commitBody)
+
+                        let checkpointReferenceId = Guid.NewGuid()
+                        let checkpointParameters = Parameters.Branch.CreateReferenceParameters()
+                        checkpointParameters.OwnerId <- ownerId
+                        checkpointParameters.OrganizationId <- organizationId
+                        checkpointParameters.RepositoryId <- repositoryId
+                        checkpointParameters.BranchId <- $"{branch.BranchId}"
+                        checkpointParameters.ReferenceId <- checkpointReferenceId
+                        checkpointParameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        checkpointParameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        checkpointParameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        checkpointParameters.Message <- "Hosted replay route ordered checkpoint"
+                        checkpointParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! checkpointResponse = Client.PostAsync("/branch/checkpoint", createJsonContent checkpointParameters)
+                        let! checkpointBody = checkpointResponse.Content.ReadAsStringAsync()
+                        Assert.That(checkpointResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), checkpointBody)
+
+                        replayParameters.EventCursor <- baseline.ScannedThroughCursor
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! replayResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        let replay =
+                            match replayResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected authenticated SDK replay success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceReplayDto>
+
+                        Assert.That(replay.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(replay.BranchId, Is.EqualTo(branch.BranchId))
+                        Assert.That(replay.Events, Has.Length.EqualTo(3))
+                        Assert.That(replay.Events[0].Reference.ReferenceId, Is.EqualTo(saveReferenceId))
+                        Assert.That(replay.Events[0].Reference.ReferenceType, Is.EqualTo(ReferenceType.Save))
+                        Assert.That(replay.Events[1].Reference.ReferenceId, Is.EqualTo(commitReferenceId))
+                        Assert.That(replay.Events[1].Reference.ReferenceType, Is.EqualTo(ReferenceType.Commit))
+                        Assert.That(replay.Events[2].Reference.ReferenceId, Is.EqualTo(checkpointReferenceId))
+                        Assert.That(replay.Events[2].Reference.ReferenceType, Is.EqualTo(ReferenceType.Checkpoint))
+                        Assert.That(replay.Events[0].EventCursor, Is.Not.EqualTo(replay.Events[1].EventCursor))
+                        Assert.That(replay.Events[1].EventCursor, Is.Not.EqualTo(replay.Events[2].EventCursor))
+                        Assert.That(replay.ScannedThroughCursor, Is.EqualTo(replay.Events[2].EventCursor))
+
+                        replayParameters.EventCursor <- "not-a-cursor"
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! malformedResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match malformedResult with
+                        | Ok _ -> Assert.Fail("Expected malformed replay cursor rejection through the SDK.")
+                        | Error error ->
+                            let projectedError = deserialize<GraceError> error.Error
+
+                            Assert.That(
+                                projectedError.Error,
+                                Is.EqualTo("The supplied Watch replay cursor does not identify a valid interval for this branch.")
+                            )
+
+                        replayParameters.EventCursor <- baseline.ScannedThroughCursor
+                        replayParameters.CursorRepositoryId <- $"{Guid.NewGuid()}"
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! crossScopeResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match crossScopeResult with
+                        | Ok _ -> Assert.Fail("Expected cross-repository replay cursor rejection through the SDK.")
+                        | Error error ->
+                            let projectedError = deserialize<GraceError> error.Error
+
+                            Assert.That(
+                                projectedError.Error,
+                                Is.EqualTo("The supplied Watch replay cursor does not identify a valid interval for this branch.")
+                            )
+                    })
+        }
+
     /// Verifies the annotate route returns grace error for bad parameters scenario.
     [<Test>]
     member _.AnnotateRouteReturnsGraceErrorForBadParameters() =

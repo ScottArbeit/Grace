@@ -87,6 +87,7 @@ __all__ = [
     "CreateReferenceParameters",
     "CreateRepositoryParameters",
     "CreateWebhookRuleParameters",
+    "CurrentBranchReferenceNotification",
     "DedupeDiscoverySnapshot",
     "DeleteBranchParameters",
     "DeleteOrganizationParameters",
@@ -194,9 +195,13 @@ __all__ = [
     "ReferenceMaterializationBoundaryApiDto",
     "ReferenceMaterializationBoundaryReturnValue",
     "ReferenceParameters",
+    "ReferenceReplayApiDto",
+    "ReferenceReplayEventApiDto",
+    "ReferenceReplayReturnValue",
     "ReferenceReturnValue",
     "ReferenceType",
     "RegisterContentBlockUploadParameters",
+    "ReplayReferenceEventsParameters",
     "RepositoryBooleanReturnValue",
     "RepositoryBranchesReturnValue",
     "RepositoryCommandReturnValue",
@@ -340,6 +345,7 @@ from grace_generated_openapi_probe.models.create_parameters import CreateParamet
 from grace_generated_openapi_probe.models.create_reference_parameters import CreateReferenceParameters as CreateReferenceParameters
 from grace_generated_openapi_probe.models.create_repository_parameters import CreateRepositoryParameters as CreateRepositoryParameters
 from grace_generated_openapi_probe.models.create_webhook_rule_parameters import CreateWebhookRuleParameters as CreateWebhookRuleParameters
+from grace_generated_openapi_probe.models.current_branch_reference_notification import CurrentBranchReferenceNotification as CurrentBranchReferenceNotification
 from grace_generated_openapi_probe.models.dedupe_discovery_snapshot import DedupeDiscoverySnapshot as DedupeDiscoverySnapshot
 from grace_generated_openapi_probe.models.delete_branch_parameters import DeleteBranchParameters as DeleteBranchParameters
 from grace_generated_openapi_probe.models.delete_organization_parameters import DeleteOrganizationParameters as DeleteOrganizationParameters
@@ -447,9 +453,13 @@ from grace_generated_openapi_probe.models.reference_list_return_value import Ref
 from grace_generated_openapi_probe.models.reference_materialization_boundary_api_dto import ReferenceMaterializationBoundaryApiDto as ReferenceMaterializationBoundaryApiDto
 from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue as ReferenceMaterializationBoundaryReturnValue
 from grace_generated_openapi_probe.models.reference_parameters import ReferenceParameters as ReferenceParameters
+from grace_generated_openapi_probe.models.reference_replay_api_dto import ReferenceReplayApiDto as ReferenceReplayApiDto
+from grace_generated_openapi_probe.models.reference_replay_event_api_dto import ReferenceReplayEventApiDto as ReferenceReplayEventApiDto
+from grace_generated_openapi_probe.models.reference_replay_return_value import ReferenceReplayReturnValue as ReferenceReplayReturnValue
 from grace_generated_openapi_probe.models.reference_return_value import ReferenceReturnValue as ReferenceReturnValue
 from grace_generated_openapi_probe.models.reference_type import ReferenceType as ReferenceType
 from grace_generated_openapi_probe.models.register_content_block_upload_parameters import RegisterContentBlockUploadParameters as RegisterContentBlockUploadParameters
+from grace_generated_openapi_probe.models.replay_reference_events_parameters import ReplayReferenceEventsParameters as ReplayReferenceEventsParameters
 from grace_generated_openapi_probe.models.repository_boolean_return_value import RepositoryBooleanReturnValue as RepositoryBooleanReturnValue
 from grace_generated_openapi_probe.models.repository_branches_return_value import RepositoryBranchesReturnValue as RepositoryBranchesReturnValue
 from grace_generated_openapi_probe.models.repository_command_return_value import RepositoryCommandReturnValue as RepositoryCommandReturnValue

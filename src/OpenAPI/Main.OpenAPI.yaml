@@ -135,6 +135,8 @@ paths:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReference'
   /branch/getReferenceMaterializationBoundary:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReferenceMaterializationBoundary'
+  /branch/replayReferenceEvents:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1replayReferenceEvents'
   /branch/getReferences:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReferences'
   /branch/getPromotions:

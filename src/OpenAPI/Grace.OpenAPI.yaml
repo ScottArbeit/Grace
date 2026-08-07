@@ -1213,6 +1213,40 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /branch/replayReferenceEvents:
+    post:
+      tags:
+        - Branches
+      summary: Replay cursor-new Reference events.
+      description: Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+      operationId: ReplayReferenceEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplayReferenceEventsParameters'
+            examples:
+              replay:
+                summary: Replay newer eligible Reference events
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
+                  CursorRepositoryId: 46a7e2f4-58ad-43e8-883e-33c564b4a98b
+                  CursorBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  EventCursor: branch-event-v1:42
+      responses:
+        '200':
+          $ref: '#/components/responses/ReferenceReplayResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /branch/getReferences:
     post:
       tags:
@@ -6134,6 +6168,121 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    ReplayReferenceEventsParameters:
+      description: Replays eligible Reference events after one opaque cursor for the exact branch scope that produced it.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+        - type: object
+          properties:
+            CursorRepositoryId:
+              $ref: '#/components/schemas/RepositoryId'
+            CursorBranchId:
+              $ref: '#/components/schemas/BranchId'
+            EventCursor:
+              type: string
+              minLength: 1
+              description: Opaque cursor returned by Grace Server; clients must not interpret or modify it.
+          required:
+            - CursorRepositoryId
+            - CursorBranchId
+            - EventCursor
+    CurrentBranchReferenceNotification:
+      description: Root identity for one eligible current-branch Reference event.
+      type: object
+      additionalProperties: false
+      properties:
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        BranchName:
+          $ref: '#/components/schemas/BranchName'
+        DirectoryId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: '#/components/schemas/ReferenceText'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+      required:
+        - ReferenceId
+        - OwnerId
+        - OrganizationId
+        - RepositoryId
+        - BranchId
+        - BranchName
+        - DirectoryId
+        - Sha256Hash
+        - Blake3Hash
+        - ReferenceType
+        - ReferenceText
+        - CorrelationId
+    ReferenceReplayEventApiDto:
+      description: One eligible Reference event paired with its opaque durable branch-event cursor.
+      type: object
+      additionalProperties: false
+      properties:
+        EventCursor:
+          type: string
+          minLength: 1
+          description: Opaque cursor interpreted only by Grace Server.
+        Reference:
+          $ref: '#/components/schemas/CurrentBranchReferenceNotification'
+      required:
+        - EventCursor
+        - Reference
+    ReferenceReplayApiDto:
+      description: Eligible Reference events and the exact closure of one immutable branch-event snapshot.
+      type: object
+      additionalProperties: false
+      properties:
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        Events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceReplayEventApiDto'
+        ScannedThroughCursor:
+          type: string
+          minLength: 1
+          description: Opaque cursor closing the complete response interval; clients must not interpret or modify it.
+      required:
+        - RepositoryId
+        - BranchId
+        - Events
+        - ScannedThroughCursor
+    ReferenceReplayReturnValue:
+      description: Grace response envelope containing one closed branch Reference replay interval.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/ReferenceReplayApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
     GetReferencesParameters:
       description: Parameters for /branch/getReferences and reference-type list endpoints.
       allOf:
@@ -7745,6 +7894,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ReferenceMaterializationBoundaryReturnValue'
+    ReferenceReplayResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReferenceReplayReturnValue'
     ReferenceListResponse:
       description: OK
       content:

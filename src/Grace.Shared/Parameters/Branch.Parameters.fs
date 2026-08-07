@@ -108,6 +108,13 @@ module Branch =
         member val public DirectoryVersionId: DirectoryVersionId = DirectoryVersionId.Empty with get, set
         member val public ReferenceType = String.Empty with get, set
 
+    /// Requests eligible Reference events strictly after one branch-scoped opaque cursor.
+    type ReplayReferenceEventsParameters() =
+        inherit BranchParameters()
+        member val public CursorRepositoryId = String.Empty with get, set
+        member val public CursorBranchId = String.Empty with get, set
+        member val public EventCursor = String.Empty with get, set
+
     /// Parameters for the /branch/getReferences and /branch/get[reference] endpoints.
     type GetReferencesParameters() =
         inherit BranchParameters()
