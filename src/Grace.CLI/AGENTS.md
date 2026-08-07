@@ -27,8 +27,8 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 1. Keep handlers thin; move heavier logic into services or helpers that are
    straightforward to unit test.
-2. Preserve existing option names and switches. Introduce new aliases when
-   expanding behavior instead of breaking existing scripts.
+2. Preserve existing option names and switches unless a tracked decision explicitly replaces the public contract
+   without compatibility aliases. Do not restore a deliberately removed command or option as a hidden alias.
 3. Capture new command patterns or usage tips in this document to guide future  
    agents.
 4. Root and selected subcommand help grouping lives in
@@ -56,8 +56,9 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 ## Continuous Review Commands
 
-- `grace workitem` (aliases: `work`, `work-item`, `wi`) covers create/show/status,
-  linking references or promotion sets, and attach flows (`summary`, `prompt`, `notes`).
+- `grace workitem` (aliases: `work`, `work-item`, `wi`) covers create/show/set-status,
+  linking references or promotion sets, and exact attachment add, retrieval, delete, and undelete commands. Do not
+  restore the removed bulk `links remove summary|prompt|notes` command paths.
 - `grace review` covers inbox/open/checkpoint/delta/resolve/deepen. Inbox and
   delta remain CLI stubs until server endpoints land.
 - `grace queue` covers status/enqueue/pause/resume/dequeue; prefer

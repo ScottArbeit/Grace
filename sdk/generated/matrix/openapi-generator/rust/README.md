@@ -145,6 +145,8 @@ Class | Method | HTTP request | Description
 *WebhooksApi* | [**show_webhook_rule**](docs/WebhooksApi.md#show_webhook_rule) | **POST** /webhook/rule/show | Show a webhook rule.
 *WebhooksApi* | [**test_webhook_rule**](docs/WebhooksApi.md#test_webhook_rule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**update_webhook_rule**](docs/WebhooksApi.md#update_webhook_rule) | **POST** /webhook/rule/update | Update a webhook rule.
+*WorkItemsApi* | [**delete_work_item_attachment**](docs/WorkItemsApi.md#delete_work_item_attachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**undelete_work_item_attachment**](docs/WorkItemsApi.md#undelete_work_item_attachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 
 
 ## Documentation For Models
@@ -167,6 +169,7 @@ Class | Method | HTTP request | Description
  - [ApprovalScope](docs/ApprovalScope.md)
  - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
  - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
+ - [ArtifactDeletionResult](docs/ArtifactDeletionResult.md)
  - [AssignParameters](docs/AssignParameters.md)
  - [BlockUploadIntent](docs/BlockUploadIntent.md)
  - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
@@ -204,6 +207,7 @@ Class | Method | HTTP request | Description
  - [DeleteOrganizationParameters](docs/DeleteOrganizationParameters.md)
  - [DeleteOwnerParameters](docs/DeleteOwnerParameters.md)
  - [DeleteRepositoryParameters](docs/DeleteRepositoryParameters.md)
+ - [DeleteWorkItemAttachmentParameters](docs/DeleteWorkItemAttachmentParameters.md)
  - [DiffApiDto](docs/DiffApiDto.md)
  - [DiffDto](docs/DiffDto.md)
  - [DiffParameters](docs/DiffParameters.md)
@@ -272,6 +276,8 @@ Class | Method | HTTP request | Description
  - [InlineObject5](docs/InlineObject5.md)
  - [InlineObject6](docs/InlineObject6.md)
  - [InlineObject7](docs/InlineObject7.md)
+ - [InlineObject8](docs/InlineObject8.md)
+ - [InlineObject9](docs/InlineObject9.md)
  - [IsEmptyParameters](docs/IsEmptyParameters.md)
  - [IssueDedupeDiscoveryParameters](docs/IssueDedupeDiscoveryParameters.md)
  - [ListApprovalPoliciesParameters](docs/ListApprovalPoliciesParameters.md)
@@ -343,6 +349,7 @@ Class | Method | HTTP request | Description
  - [UndeleteOrganizationParameters](docs/UndeleteOrganizationParameters.md)
  - [UndeleteOwnerParameters](docs/UndeleteOwnerParameters.md)
  - [UndeleteRepositoryParameters](docs/UndeleteRepositoryParameters.md)
+ - [UndeleteWorkItemAttachmentParameters](docs/UndeleteWorkItemAttachmentParameters.md)
  - [UploadMetadata](docs/UploadMetadata.md)
  - [UploadMetadataArrayReturnValue](docs/UploadMetadataArrayReturnValue.md)
  - [UploadSessionBlockUploadConfirmedEvent](docs/UploadSessionBlockUploadConfirmedEvent.md)
@@ -374,6 +381,7 @@ Class | Method | HTTP request | Description
  - [WebhookRuleParameters](docs/WebhookRuleParameters.md)
  - [WebhookRuleStatus](docs/WebhookRuleStatus.md)
  - [WebhookScope](docs/WebhookScope.md)
+ - [WorkItemParameters](docs/WorkItemParameters.md)
 
 
 To get access to the crate's generated documentation, use:

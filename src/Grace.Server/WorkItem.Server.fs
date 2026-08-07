@@ -617,6 +617,7 @@ module WorkItem =
                     BlobPath = blobPath
                     CreatedAt = createdAt
                     CreatedBy = UserId metadata.Principal
+                    WorkItemId = Some workItemId
                 }
 
             let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId metadata.CorrelationId
@@ -965,6 +966,11 @@ module WorkItem =
                 let! artifactMetadata = artifactActorProxy.Get correlationId
 
                 match artifactMetadata with
+                | Some metadata when
+                    metadata.IsDeleted
+                    || metadata.WorkItemId <> Some workItemDto.WorkItemId
+                    ->
+                    ()
                 | Some metadata ->
                     match tryGetReviewerAttachmentTypeName metadata.ArtifactType with
                     | Some attachmentType -> attachments.Add({ ArtifactId = artifactId; Metadata = metadata; AttachmentType = attachmentType })
@@ -1375,7 +1381,7 @@ module WorkItem =
                             return!
                                 context
                                 |> result400BadRequest (
-                                    GraceError.Create "The specified artifact is not linked to the work item." correlationId
+                                    GraceError.Create "Attachment is unavailable for this work item." correlationId
                                     |> withContext
                                 )
                         else
@@ -1387,7 +1393,20 @@ module WorkItem =
                                 return!
                                     context
                                     |> result400BadRequest (
-                                        GraceError.Create (ArtifactError.getErrorMessage ArtifactError.ArtifactDoesNotExist) correlationId
+                                        GraceError.Create "Attachment is unavailable for this work item." correlationId
+                                        |> withContext
+                                    )
+                            | Some metadata when
+                                metadata.OwnerId <> ownerId
+                                || metadata.OrganizationId <> organizationId
+                                || metadata.RepositoryId <> repositoryId
+                                || metadata.WorkItemId <> Some workItemId
+                                || metadata.IsDeleted
+                                ->
+                                return!
+                                    context
+                                    |> result400BadRequest (
+                                        GraceError.Create "Attachment is unavailable for this work item." correlationId
                                         |> withContext
                                     )
                             | Some metadata ->
@@ -1396,7 +1415,7 @@ module WorkItem =
                                     return!
                                         context
                                         |> result400BadRequest (
-                                            GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidArtifactType) correlationId
+                                            GraceError.Create "Attachment is unavailable for this work item." correlationId
                                             |> withContext
                                         )
                                 | Some attachmentType ->
@@ -1618,7 +1637,32 @@ module WorkItem =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 /// Implements validations for the server request pipeline.
-                let validations (parameters: LinkArtifactParameters) = validateLinkArtifactParameters parameters
+                let validations (parameters: LinkArtifactParameters) =
+                    let graceIds = getGraceIds context
+                    let correlationId = getCorrelationId context
+
+                    Array.append
+                        (validateLinkArtifactParameters parameters)
+                        [|
+                            ValueTask<Result<unit, WorkItemError>>(
+                                task {
+                                    match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                                    | Error _ -> return Error WorkItemError.InvalidArtifactId
+                                    | Ok workItemId ->
+                                        let artifactId = Guid.Parse parameters.ArtifactId
+                                        let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
+
+                                        match! artifactActorProxy.Get correlationId with
+                                        | Some artifact when
+                                            artifact.RepositoryId = graceIds.RepositoryId
+                                            && (artifact.WorkItemId.IsNone
+                                                || artifact.WorkItemId = Some workItemId)
+                                            ->
+                                            return Ok()
+                                        | _ -> return Error WorkItemError.InvalidArtifactId
+                                }
+                            )
+                        |]
 
                 /// Implements command for the server request pipeline.
                 let command (parameters: LinkArtifactParameters) =
@@ -1629,24 +1673,180 @@ module WorkItem =
                 return! processCommand context validations command
             }
 
+    /// Logically deletes one exact owned attachment while retaining bytes and the work-item link for recovery.
+    let DeleteAttachment: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                let! parameters =
+                    context
+                    |> parse<DeleteWorkItemAttachmentParameters>
+
+                if String.IsNullOrWhiteSpace parameters.DeleteReason then
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create "DeleteReason is required." correlationId)
+                else
+                    match tryParseNonEmptyGuid parameters.ArtifactId with
+                    | None ->
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "Attachment is unavailable for this work item." correlationId)
+                    | Some artifactId ->
+                        match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                        | Error _ ->
+                            return!
+                                context
+                                |> result400BadRequest (GraceError.Create "Attachment is unavailable for this work item." correlationId)
+                        | Ok workItemId ->
+                            let workItemActorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                            let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
+                            let! workItemDto = workItemActorProxy.Get correlationId
+                            let! artifactMetadata = artifactActorProxy.Get correlationId
+
+                            match artifactMetadata with
+                            | Some artifact when
+                                artifact.OwnerId = graceIds.OwnerId
+                                && artifact.OrganizationId = graceIds.OrganizationId
+                                && artifact.RepositoryId = graceIds.RepositoryId
+                                && artifact.WorkItemId = Some workItemId
+                                && (workItemDto.ArtifactIds
+                                    |> List.contains artifactId)
+                                && tryGetReviewerAttachmentTypeName artifact.ArtifactType
+                                   |> Option.isSome
+                                ->
+                                let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
+                                let deletedAt = getCurrentInstant ()
+
+                                let physicalDeletionAt =
+                                    deletedAt
+                                    + Duration.FromDays(float repositoryDto.LogicalDeleteDays)
+
+                                let deletionGeneration = Guid.NewGuid()
+
+                                let command =
+                                    ArtifactCommand.DeleteLogical(workItemId, parameters.DeleteReason.Trim(), deletionGeneration, deletedAt, physicalDeletionAt)
+
+                                match! artifactActorProxy.Handle command (createMetadata context) with
+                                | Error graceError -> return! context |> result400BadRequest graceError
+                                | Ok _ ->
+                                    let! current = artifactActorProxy.Get correlationId
+
+                                    match current with
+                                    | Some deletedArtifact when
+                                        deletedArtifact.DeletedAt.IsSome
+                                        && deletedArtifact.PhysicalDeletionAt.IsSome
+                                        && deletedArtifact.WorkItemId.IsSome
+                                        ->
+                                        let response: ArtifactDeletionResult =
+                                            {
+                                                ArtifactId = deletedArtifact.ArtifactId
+                                                WorkItemId = deletedArtifact.WorkItemId.Value
+                                                DeletionGeneration = deletedArtifact.DeletionGeneration
+                                                DeletedAt = deletedArtifact.DeletedAt.Value
+                                                PhysicalDeletionAt = deletedArtifact.PhysicalDeletionAt.Value
+                                                DeleteReason = deletedArtifact.DeleteReason
+                                            }
+
+                                        return!
+                                            context
+                                            |> result200Ok (GraceReturnValue.Create response correlationId)
+                                    | _ ->
+                                        return!
+                                            context
+                                            |> result500ServerError (GraceError.Create "Attachment deletion state was not persisted." correlationId)
+                            | _ ->
+                                return!
+                                    context
+                                    |> result400BadRequest (GraceError.Create "Attachment is unavailable for this work item." correlationId)
+            }
+
+    /// Recovers one exact logically deleted attachment before its stored retention deadline.
+    let UndeleteAttachment: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                let! parameters =
+                    context
+                    |> parse<UndeleteWorkItemAttachmentParameters>
+
+                match tryParseNonEmptyGuid parameters.ArtifactId with
+                | None ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create "Attachment is unavailable for this work item." correlationId)
+                | Some artifactId ->
+                    match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                    | Error _ ->
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "Attachment is unavailable for this work item." correlationId)
+                    | Ok workItemId ->
+                        let workItemActorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                        let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
+                        let! workItemDto = workItemActorProxy.Get correlationId
+                        let! artifactMetadata = artifactActorProxy.Get correlationId
+
+                        match artifactMetadata with
+                        | Some artifact when
+                            artifact.OwnerId = graceIds.OwnerId
+                            && artifact.OrganizationId = graceIds.OrganizationId
+                            && artifact.RepositoryId = graceIds.RepositoryId
+                            && artifact.WorkItemId = Some workItemId
+                            && artifact.IsDeleted
+                            && (workItemDto.ArtifactIds
+                                |> List.contains artifactId)
+                            && tryGetReviewerAttachmentTypeName artifact.ArtifactType
+                               |> Option.isSome
+                            ->
+                            match! artifactActorProxy.Handle (ArtifactCommand.Undelete workItemId) (createMetadata context) with
+                            | Error graceError -> return! context |> result400BadRequest graceError
+                            | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                        | _ ->
+                            return!
+                                context
+                                |> result400BadRequest (GraceError.Create "Attachment is unavailable for this work item." correlationId)
+            }
+
     /// Removes an artifact link from a work item.
     let RemoveArtifactLink: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
-                /// Implements validations for the server request pipeline.
-                let validations (parameters: RemoveArtifactLinkParameters) =
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+                context.Items[ "Command" ] <- "RemoveArtifactLink"
+
+                let! parameters = context |> parse<RemoveArtifactLinkParameters>
+
+                let validations =
                     [|
                         validateWorkItemIdentifier parameters.WorkItemId
                         Guid.isValidAndNotEmptyGuid parameters.ArtifactId WorkItemError.InvalidArtifactId
                     |]
 
-                /// Implements command for the server request pipeline.
-                let command (parameters: RemoveArtifactLinkParameters) =
-                    WorkItemCommand.UnlinkArtifact(Guid.Parse(parameters.ArtifactId))
-                    |> returnValueTask
+                let! validationsPassed = validations |> allPass
 
-                context.Items[ "Command" ] <- "RemoveArtifactLink"
-                return! processCommand context validations command
+                if not validationsPassed then
+                    let! error = validations |> getFirstError
+
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (WorkItemError.getErrorMessage error) correlationId)
+                else
+                    match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                    | Error graceError -> return! context |> result400BadRequest graceError
+                    | Ok workItemId ->
+                        let artifactId = Guid.Parse parameters.ArtifactId
+                        let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
+
+                        match! artifactActorProxy.UnlinkFromWorkItem workItemId graceIds.RepositoryId (createMetadata context) with
+                        | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                        | Error graceError -> return! context |> result400BadRequest graceError
             }
 
     /// Removes artifact links from a work item by artifact type.
@@ -1684,6 +1884,7 @@ module WorkItem =
                             let! workItemDto = workItemActorProxy.Get correlationId
                             let artifactIds = workItemDto.ArtifactIds |> List.toArray
                             let removableArtifactIds = ResizeArray<ArtifactId>()
+                            let mutable ownedAttachmentFound = false
                             let mutable i = 0
 
                             while i < artifactIds.Length do
@@ -1692,35 +1893,51 @@ module WorkItem =
                                 let! artifactMetadata = artifactActorProxy.Get correlationId
 
                                 match artifactMetadata with
+                                | Some metadata when
+                                    metadata.ArtifactType = artifactType
+                                    && Grace.Actors.Artifact.isOwnedReviewerAttachment metadata
+                                    ->
+                                    ownedAttachmentFound <- true
                                 | Some metadata when metadata.ArtifactType = artifactType -> removableArtifactIds.Add(artifactId)
                                 | _ -> ()
 
                                 i <- i + 1
 
-                            let metadata = createMetadata context
-                            let removableArtifactIdsArray = removableArtifactIds |> Seq.toArray
-                            let mutable removedCount = 0
-                            let mutable removeError: GraceError option = None
-                            let mutable j = 0
+                            if ownedAttachmentFound then
+                                return!
+                                    context
+                                    |> result400BadRequest (
+                                        GraceError.Create "Owned reviewer attachments must be deleted through the attachment lifecycle." correlationId
+                                    )
+                            else
+                                let metadata = createMetadata context
+                                let removableArtifactIdsArray = removableArtifactIds |> Seq.toArray
+                                let mutable removedCount = 0
+                                let mutable removeError: GraceError option = None
+                                let mutable j = 0
 
-                            while j < removableArtifactIdsArray.Length
-                                  && removeError.IsNone do
-                                let artifactId = removableArtifactIdsArray[j]
-                                let! removeResult = workItemActorProxy.Handle (WorkItemCommand.UnlinkArtifact artifactId) metadata
+                                while j < removableArtifactIdsArray.Length
+                                      && removeError.IsNone do
+                                    let artifactId = removableArtifactIdsArray[j]
+                                    let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
 
-                                match removeResult with
-                                | Ok _ ->
-                                    removedCount <- removedCount + 1
-                                    j <- j + 1
-                                | Error graceError -> removeError <- Some graceError
+                                    let unlinkMetadata = { metadata with CorrelationId = $"{metadata.CorrelationId}:generic-artifact-unlink:{artifactId:N}" }
 
-                            match removeError with
-                            | Some graceError -> return! context |> result400BadRequest graceError
-                            | None ->
-                                let resultMessage = $"Removed {removedCount} artifact link(s) of type {getDiscriminatedUnionCaseName artifactType}."
+                                    let! removeResult = artifactActorProxy.UnlinkFromWorkItem workItemId graceIds.RepositoryId unlinkMetadata
 
-                                let graceReturnValue = GraceReturnValue.Create resultMessage correlationId
-                                return! context |> result200Ok graceReturnValue
+                                    match removeResult with
+                                    | Ok _ ->
+                                        removedCount <- removedCount + 1
+                                        j <- j + 1
+                                    | Error graceError -> removeError <- Some graceError
+
+                                match removeError with
+                                | Some graceError -> return! context |> result400BadRequest graceError
+                                | None ->
+                                    let resultMessage = $"Removed {removedCount} artifact link(s) of type {getDiscriminatedUnionCaseName artifactType}."
+
+                                    let graceReturnValue = GraceReturnValue.Create resultMessage correlationId
+                                    return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = WorkItemError.getErrorMessage error

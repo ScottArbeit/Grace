@@ -314,6 +314,8 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/work/attachments/list" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/work/attachments/show" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/work/attachments/download" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/work/attachments/delete" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/attachments/undelete" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/links/remove/artifact" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/links/remove/artifact-type" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/links/remove/promotion-set" (Authorized(RepositoryWrite, Repository))

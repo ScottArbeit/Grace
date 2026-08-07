@@ -3,6 +3,8 @@ namespace Grace.Server.Tests
 open Grace.Server
 open Grace.Types.Artifact
 open Grace.Types.Common
+open Grace.Types.Events
+open Grace.Types.Reminder
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
@@ -225,9 +227,18 @@ type WorkItemAttachmentUnitTests() =
         let metadataById =
             Dictionary<ArtifactId, ArtifactMetadata option>(
                 [
-                    KeyValuePair(summaryId, Some(metadata summaryId ArtifactType.AgentSummary "text/markdown" 10L Instant.MinValue))
-                    KeyValuePair(promptId, Some(metadata promptId ArtifactType.Prompt "text/markdown" 11L Instant.MinValue))
-                    KeyValuePair(notesId, Some(metadata notesId ArtifactType.ReviewNotes "text/markdown" 12L Instant.MinValue))
+                    KeyValuePair(
+                        summaryId,
+                        Some { metadata summaryId ArtifactType.AgentSummary "text/markdown" 10L Instant.MinValue with WorkItemId = Some workItemDto.WorkItemId }
+                    )
+                    KeyValuePair(
+                        promptId,
+                        Some { metadata promptId ArtifactType.Prompt "text/markdown" 11L Instant.MinValue with WorkItemId = Some workItemDto.WorkItemId }
+                    )
+                    KeyValuePair(
+                        notesId,
+                        Some { metadata notesId ArtifactType.ReviewNotes "text/markdown" 12L Instant.MinValue with WorkItemId = Some workItemDto.WorkItemId }
+                    )
                     KeyValuePair(unknownId, Some(metadata unknownId (ArtifactType.Other "mystery") "application/octet-stream" 13L Instant.MinValue))
                     KeyValuePair(missingMetadataId, None)
                 ]
@@ -240,3 +251,193 @@ type WorkItemAttachmentUnitTests() =
         Assert.That(links.PromptArtifactIds = [ promptId ], Is.True)
         Assert.That(links.ReviewNotesArtifactIds = [ notesId ], Is.True)
         Assert.That(links.OtherArtifactIds = [ unknownId; missingMetadataId ], Is.True)
+
+    /// Verifies that logically deleted attachments remain linked durably but disappear from normal link projections.
+    [<Test>]
+    member _.BuildLinksDtoHidesLogicallyDeletedAttachments() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+        let visibleId = artifactId "10000000-0000-0000-0000-000000000001"
+        let deletedId = artifactId "10000000-0000-0000-0000-000000000002"
+        let deletedAt = Instant.FromUtc(2026, 8, 7, 12, 0)
+
+        let workItemDto = { WorkItemDto.Default with WorkItemId = workItemId; ArtifactIds = [ visibleId; deletedId ] }
+
+        let deletedMetadata =
+            { metadata deletedId ArtifactType.Prompt "text/plain" 12L Instant.MinValue with WorkItemId = Some workItemId; DeletedAt = Some deletedAt }
+
+        let metadataById =
+            Dictionary<ArtifactId, ArtifactMetadata option>(
+                [
+                    KeyValuePair(
+                        visibleId,
+                        Some { metadata visibleId ArtifactType.AgentSummary "text/plain" 11L Instant.MinValue with WorkItemId = Some workItemId }
+                    )
+                    KeyValuePair(deletedId, Some deletedMetadata)
+                ]
+            )
+
+        let links = WorkItemAttachments.buildLinksDto workItemDto metadataById
+
+        Assert.That(links.ArtifactIds = [ visibleId ], Is.True)
+        Assert.That(links.AgentSummaryArtifactIds = [ visibleId ], Is.True)
+        Assert.That(links.PromptArtifactIds, Is.Empty)
+
+    /// Verifies that reviewer attachment projections hide metadata owned by another work item.
+    [<Test>]
+    member _.BuildLinksDtoHidesMismatchedAttachmentOwnership() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+        let otherWorkItemId = artifactId "20000000-0000-0000-0000-000000000002"
+        let attachmentId = artifactId "10000000-0000-0000-0000-000000000001"
+        let workItemDto = { WorkItemDto.Default with WorkItemId = workItemId; ArtifactIds = [ attachmentId ] }
+
+        let mismatchedMetadata = { metadata attachmentId ArtifactType.AgentSummary "text/plain" 11L Instant.MinValue with WorkItemId = Some otherWorkItemId }
+
+        let metadataById =
+            Dictionary<ArtifactId, ArtifactMetadata option>(
+                [
+                    KeyValuePair(attachmentId, Some mismatchedMetadata)
+                ]
+            )
+
+        let links = WorkItemAttachments.buildLinksDto workItemDto metadataById
+
+        Assert.That(links.ArtifactIds, Is.Empty)
+        Assert.That(links.AgentSummaryArtifactIds, Is.Empty)
+
+    /// Verifies that event replay preserves the exact ownership, deletion generation, deadline, and cleanup progress.
+    [<Test>]
+    member _.ArtifactEventReplayPreservesDeletionIdentityAndProgress() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+        let deletionGeneration = artifactId "30000000-0000-0000-0000-000000000001"
+        let deletedAt = Instant.FromUtc(2026, 8, 7, 12, 0)
+        let physicalDeletionAt = deletedAt + Duration.FromDays(14.0)
+        let eventMetadata = EventMetadata.New "artifact-delete" "test"
+
+        let deletedMetadata =
+            { metadata defaultArtifactId ArtifactType.ReviewNotes "text/plain" 42L Instant.MinValue with
+                WorkItemId = Some workItemId
+                DeletedAt = Some deletedAt
+                DeleteReason = "obsolete notes"
+                DeletionGeneration = deletionGeneration
+                PhysicalDeletionAt = Some physicalDeletionAt
+                BlobDeleted = true
+                WorkItemLinkRemoved = true
+            }
+
+        let replayed =
+            ArtifactEvent.FromMetadata(ArtifactEventNames.WorkItemLinkRemoved, deletedMetadata, eventMetadata)
+            |> fun artifactEvent -> ArtifactMetadata.UpdateDto artifactEvent ArtifactMetadata.Default
+
+        Assert.That(replayed, Is.EqualTo(deletedMetadata))
+        Assert.That(replayed.IsDeleted, Is.True)
+
+    /// Verifies that reminder retries ignore diagnostic timestamps and correlations but preserve deletion identity.
+    [<Test>]
+    member _.PhysicalDeletionReminderReplayUsesSemanticIdentity() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+        let deletionGeneration = artifactId "30000000-0000-0000-0000-000000000001"
+        let deletedAt = Instant.FromUtc(2026, 8, 7, 12, 0)
+        let physicalDeletionAt = deletedAt + Duration.FromDays(14.0)
+
+        let reminderState correlationId : PhysicalDeletionReminderState =
+            {
+                ArtifactId = defaultArtifactId
+                RepositoryId = artifactId "40000000-0000-0000-0000-000000000001"
+                WorkItemId = workItemId
+                DeletionGeneration = deletionGeneration
+                DeletedAt = deletedAt
+                PhysicalDeletionAt = physicalDeletionAt
+                CorrelationId = correlationId
+            }
+
+        let createReminder correlationId =
+            { ReminderDto.Default with
+                ReminderId = deletionGeneration
+                ActorName = "Artifact"
+                ActorId = defaultArtifactId.ToString()
+                RepositoryId = (reminderState correlationId).RepositoryId
+                ReminderType = ReminderTypes.PhysicalDeletion
+                CreatedAt =
+                    if correlationId = "first-delete" then
+                        Instant.FromUtc(2026, 8, 7, 12, 1)
+                    else
+                        Instant.FromUtc(2026, 8, 7, 12, 2)
+                ReminderTime = physicalDeletionAt
+                CorrelationId = correlationId
+                State = ReminderState.ArtifactPhysicalDeletion(reminderState correlationId)
+            }
+
+        let existing = createReminder "first-delete"
+        let retry = createReminder "retry-delete"
+
+        Assert.That(Grace.Actors.Artifact.isSamePhysicalDeletionReminder existing retry, Is.True)
+
+    /// Verifies that an old reminder generation cannot match a newer durable attachment tombstone.
+    [<Test>]
+    member _.PhysicalDeletionReminderRejectsStaleGeneration() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+        let repositoryId = artifactId "40000000-0000-0000-0000-000000000001"
+        let currentGeneration = artifactId "30000000-0000-0000-0000-000000000002"
+        let staleGeneration = artifactId "30000000-0000-0000-0000-000000000001"
+        let deletedAt = Instant.FromUtc(2026, 8, 7, 12, 0)
+        let physicalDeletionAt = deletedAt + Duration.FromDays(14.0)
+
+        let currentArtifact =
+            { ArtifactMetadata.Default with
+                ArtifactId = defaultArtifactId
+                RepositoryId = repositoryId
+                WorkItemId = Some workItemId
+                DeletedAt = Some deletedAt
+                DeletionGeneration = currentGeneration
+                PhysicalDeletionAt = Some physicalDeletionAt
+            }
+
+        let staleReminderState: PhysicalDeletionReminderState =
+            {
+                ArtifactId = defaultArtifactId
+                RepositoryId = repositoryId
+                WorkItemId = workItemId
+                DeletionGeneration = staleGeneration
+                DeletedAt = deletedAt
+                PhysicalDeletionAt = physicalDeletionAt
+                CorrelationId = "stale-delete"
+            }
+
+        Assert.That(Grace.Actors.Artifact.matchesPhysicalDeletionState currentArtifact staleReminderState, Is.False)
+
+    /// Verifies that an earlier linked snapshot cannot authorize an Artifact mutation after the current link disappears.
+    [<Test>]
+    member _.AttachmentMutationRejectsStaleLinkedSnapshot() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+        let linkedArtifact = { ArtifactMetadata.Default with ArtifactId = defaultArtifactId; WorkItemId = Some workItemId }
+        let earlierSnapshot = { WorkItemDto.Default with WorkItemId = workItemId; ArtifactIds = [ defaultArtifactId ] }
+        let currentSnapshot = { earlierSnapshot with ArtifactIds = [] }
+
+        Assert.That(Grace.Actors.Artifact.hasCurrentWorkItemLink linkedArtifact workItemId earlierSnapshot, Is.True)
+        Assert.That(Grace.Actors.Artifact.hasCurrentWorkItemLink linkedArtifact workItemId currentSnapshot, Is.False)
+
+    /// Verifies that both canonical and accepted alias reviewer types remain protected from generic unlink.
+    [<Test>]
+    member _.OwnedReviewerAttachmentDetectionIncludesCanonicalAndAliases() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+
+        let artifactTypes =
+            [
+                ArtifactType.AgentSummary
+                ArtifactType.Prompt
+                ArtifactType.ReviewNotes
+                ArtifactType.Other "summary"
+                ArtifactType.Other "AgentSummary"
+                ArtifactType.Other "prompt"
+                ArtifactType.Other "notes"
+                ArtifactType.Other "ReviewNotes"
+            ]
+
+        for artifactType in artifactTypes do
+            let owned = { ArtifactMetadata.Default with WorkItemId = Some workItemId; ArtifactType = artifactType }
+            Assert.That(Grace.Actors.Artifact.isOwnedReviewerAttachment owned, Is.True, $"Expected {artifactType} to be protected.")
+
+        let unowned = { ArtifactMetadata.Default with ArtifactType = ArtifactType.AgentSummary }
+        let ownedOther = { ArtifactMetadata.Default with WorkItemId = Some workItemId; ArtifactType = ArtifactType.ValidationOutput }
+        Assert.That(Grace.Actors.Artifact.isOwnedReviewerAttachment unowned, Is.False)
+        Assert.That(Grace.Actors.Artifact.isOwnedReviewerAttachment ownedOther, Is.False)
