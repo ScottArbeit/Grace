@@ -3,18 +3,113 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.Shared
+open Grace.Shared.Client.Configuration
+open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Branch
 open Grace.Types.Reference
+open Microsoft.Data.Sqlite
 open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups connect coverage for the CLI test project.
 [<NonParallelizable>]
 module ConnectTests =
+    /// Creates the minimal repository-local configuration file required by the shared configuration cache.
+    let private ensureGraceConfig root =
+        let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+
+        Directory.CreateDirectory(graceDirectory)
+        |> ignore
+
+        File.WriteAllText(Path.Combine(graceDirectory, Constants.GraceConfigFileName), "{}")
+
+    /// Configures the CLI local-state paths for a fresh Connect producer-path test repository.
+    let private configureForRoot root =
+        let configuration = GraceConfiguration()
+        configuration.OwnerId <- Guid.NewGuid()
+        configuration.OrganizationId <- Guid.NewGuid()
+        configuration.RepositoryId <- Guid.NewGuid()
+        configuration.BranchId <- Guid.NewGuid()
+        configuration.RootDirectory <- root
+        configuration.StandardizedRootDirectory <- normalizeFilePath root
+        configuration.GraceDirectory <- Path.Combine(root, Constants.GraceConfigDirectory)
+        configuration.ObjectDirectory <- Path.Combine(configuration.GraceDirectory, Constants.GraceObjectsDirectory)
+        configuration.GraceStatusFile <- Path.Combine(configuration.GraceDirectory, Constants.GraceLocalStateDbFileName)
+        configuration.GraceObjectCacheFile <- configuration.GraceStatusFile
+        configuration.ConfigurationDirectory <- configuration.GraceDirectory
+        configuration.IsPopulated <- true
+        updateConfiguration configuration
+        configuration
+
+    /// Runs an asynchronous Connect producer-path test in an isolated repository and restores global CLI state.
+    let private withConfiguredTempDir action =
+        task {
+            let tempDir = Path.Combine(Path.GetTempPath(), $"grace-connect-tests-{Guid.NewGuid():N}")
+            Directory.CreateDirectory(tempDir) |> ignore
+            let originalDir = Environment.CurrentDirectory
+            let previousConfiguration = if configurationFileExists () then Some(Current()) else None
+
+            try
+                Environment.CurrentDirectory <- tempDir
+                ensureGraceConfig tempDir
+                let configuration = configureForRoot tempDir
+                return! action configuration
+            finally
+                Environment.CurrentDirectory <- originalDir
+
+                match previousConfiguration with
+                | Some configuration -> updateConfiguration configuration
+                | None -> resetConfiguration ()
+
+                SqliteConnection.ClearAllPools()
+
+                if Directory.Exists(tempDir) then
+                    try
+                        Directory.Delete(tempDir, true)
+                    with
+                    | _ -> ()
+        }
+
+    /// A fresh default Connect persists the exact server-selected root identity in both status and boundary state.
+    [<Test>]
+    let ``fresh connect materialization persists the selected server root identity`` () =
+        withConfiguredTempDir (fun configuration ->
+            task {
+                let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+                let selectedRootId = DirectoryVersionId.Parse "11111111-8020-4000-8000-111111111111"
+                let! scannedStatus = Services.createNewGraceStatusFile GraceStatus.Default parseResult
+
+                let boundary =
+                    { ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = selectedRootId
+                        Sha256Hash = scannedStatus.RootDirectorySha256Hash
+                        Blake3Hash = scannedStatus.RootDirectoryBlake3Hash
+                        EventCursor = "branch-event-v1:1"
+                    }
+
+                Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+
+                let! materializedStatus = Connect.createAndWriteMaterializedStatus GraceStatus.Default parseResult boundary CancellationToken.None
+                let! persistedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                let! persistedBoundary =
+                    LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(materializedStatus.RootDirectoryId, Is.EqualTo(selectedRootId))
+                Assert.That(persistedStatus.RootDirectoryId, Is.EqualTo(selectedRootId))
+                Assert.That(persistedStatus.RootDirectorySha256Hash, Is.EqualTo(boundary.Sha256Hash))
+                Assert.That(persistedStatus.RootDirectoryBlake3Hash, Is.EqualTo(boundary.Blake3Hash))
+                Assert.That(persistedBoundary, Is.EqualTo(Some boundary))
+            })
+
     /// A no-download Connect never enters the retrieval path that can persist a remote boundary.
     [<Test>]
     let ``connect no download does not invoke materialization`` () =

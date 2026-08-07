@@ -783,6 +783,20 @@ module Connect =
 
         writeHumanLine parseResult $"[{Colors.Important}]Finished writing files to disk.[/]"
 
+    /// Builds and atomically persists the local status represented by a selected server materialization boundary.
+    let internal createAndWriteMaterializedStatus
+        (previousGraceStatus: GraceStatus)
+        (parseResult: ParseResult)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            let! graceStatus = createNewGraceStatusFileForRoot boundary.DirectoryId previousGraceStatus parseResult
+            cancellationToken.ThrowIfCancellationRequested()
+            do! writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary
+            return graceStatus
+        }
+
     /// Coordinates retrieve default branch and write behavior for this CLI command path.
     let private retrieveDefaultBranchAndWrite
         (parseResult: ParseResult)
@@ -869,9 +883,7 @@ module Connect =
 
                         writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
                         let! previousGraceStatus = readGraceStatusFile ()
-                        let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-                        cancellationToken.ThrowIfCancellationRequested()
-                        do! writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary
+                        let! graceStatus = createAndWriteMaterializedStatus previousGraceStatus parseResult boundary cancellationToken
 
                         writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
                         do! upsertObjectCache graceStatus.Index.Values
