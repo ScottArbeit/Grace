@@ -667,16 +667,7 @@ module GraceCommand =
     let private workItemHelpSections =
         [
             { Heading = "Create and update"; CommandNames = [ "create"; "show"; "set-status" ] }
-            {
-                Heading = "Link and attach"
-                CommandNames =
-                    [
-                        "link"
-                        "attach"
-                        "attachments"
-                        "links"
-                    ]
-            }
+            { Heading = "Link and attach"; CommandNames = [ "link"; "attachments"; "links" ] }
         ]
 
     let private groupedHelpSectionsByCommandName =

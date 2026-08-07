@@ -57,7 +57,7 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 ## Continuous Review Commands
 
 - `grace workitem` (aliases: `work`, `work-item`, `wi`) covers create/show/set-status,
-  linking references or promotion sets, and attach flows (`summary`, `prompt`, `notes`).
+  linking references or promotion sets, and `attachments add --type <summary|prompt|notes>` plus attachment retrieval.
 - `grace review` covers inbox/open/checkpoint/delta/resolve/deepen. Inbox and
   delta remain CLI stubs until server endpoints land.
 - `grace queue` covers status/enqueue/pause/resume/dequeue; prefer
