@@ -41,7 +41,7 @@
     },
     {
       "path": "Main.OpenAPI.yaml",
-      "sha256": "94fb4c23725af75affa25e09e9f12ad582100c81f4a9fc48148b368efdf77a6b"
+      "sha256": "36acc347c8671318b5254895acfd7f1552a24b25cfd55c79a73d0d87ac336834"
     },
     {
       "path": "Organization.Components.OpenAPI.yaml",
@@ -102,32 +102,40 @@
     {
       "path": "Webhook.Paths.OpenAPI.yaml",
       "sha256": "d143611ec15ea55bd8f4178b2e7eb1cd46cf67a12f862f88456d05fc5bda8926"
+    },
+    {
+      "path": "WorkItem.Components.OpenAPI.yaml",
+      "sha256": "6d8d707c86089e9f42ab6801a1749e7c51d5fcd7d34a0dcdb5bac30650618bae"
+    },
+    {
+      "path": "WorkItem.Paths.OpenAPI.yaml",
+      "sha256": "176730c21b98d5f5de0666ef7d6135f16a4566d881915acf2e5febbfb1650858"
     }
   ],
   "generatedArtifacts": [
     {
       "path": "Grace.OpenAPI.yaml",
       "kind": "canonical-bundle",
-      "sourceDigest": "ca17a3964afd6304af1dfa1b6fcdd9e3f9143ec08e1904e0a4b2612e340bf0ba",
+      "sourceDigest": "6949d79e568cc44b32301006dc09354ea60c8811b3b5ea6e11f2a5c179e9fae5",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
-      "sha256": "fa908a931516bf6049a2bc56facb3c6f555685f8620e5351dcc5f56d9fc51ec5"
+      "sha256": "2ea9ed6f86a8902b281e7d4bc513787f5ee77fb131caf63ff1e0315cc5019ae0"
     },
     {
       "path": "Grace.OpenAPI.3.1.2.yaml",
       "kind": "generator-projection",
-      "sourceDigest": "ca17a3964afd6304af1dfa1b6fcdd9e3f9143ec08e1904e0a4b2612e340bf0ba",
+      "sourceDigest": "6949d79e568cc44b32301006dc09354ea60c8811b3b5ea6e11f2a5c179e9fae5",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
       "lossReport": "Grace.OpenAPI.3.1.2.loss-report.json",
-      "sha256": "0fd1086eedb5e6496af9c0f340516cce5378d9992abfd063772bb217d2675eb8"
+      "sha256": "bedf0bb55e27ac397ffcc3a74f5c938b2bfe6c937285178aca76676c909af022"
     },
     {
       "path": "Grace.OpenAPI.3.1.2.loss-report.json",
       "kind": "projection-loss-report",
-      "sourceDigest": "ca17a3964afd6304af1dfa1b6fcdd9e3f9143ec08e1904e0a4b2612e340bf0ba",
+      "sourceDigest": "6949d79e568cc44b32301006dc09354ea60c8811b3b5ea6e11f2a5c179e9fae5",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",

@@ -498,7 +498,7 @@ module Interfaces =
     /// Defines the operations for the Artifact actor.
     [<Interface>]
     type IArtifactActor =
-        inherit IGrainWithGuidKey
+        inherit IGraceReminderWithGuidKey
 
         /// Returns true if this artifact already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>

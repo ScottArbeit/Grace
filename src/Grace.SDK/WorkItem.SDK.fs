@@ -51,6 +51,17 @@ type WorkItem() =
     static member public DownloadAttachment(parameters: DownloadWorkItemAttachmentParameters) =
         postServer<DownloadWorkItemAttachmentParameters, DownloadWorkItemAttachmentResult> (parameters |> ensureCorrelationIdIsSet, "work/attachments/download")
 
+    /// Logically deletes one owned attachment and returns its immutable recovery deadline.
+    static member public DeleteAttachment(parameters: DeleteWorkItemAttachmentParameters) =
+        postServer<DeleteWorkItemAttachmentParameters, Grace.Types.Artifact.ArtifactDeletionResult> (
+            parameters |> ensureCorrelationIdIsSet,
+            "work/attachments/delete"
+        )
+
+    /// Recovers one logically deleted attachment before physical cleanup.
+    static member public UndeleteAttachment(parameters: UndeleteWorkItemAttachmentParameters) =
+        postServer<UndeleteWorkItemAttachmentParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/attachments/undelete")
+
     /// Removes a reference link from a work item.
     static member public RemoveReferenceLink(parameters: RemoveReferenceLinkParameters) =
         postServer<RemoveReferenceLinkParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/links/remove/reference")

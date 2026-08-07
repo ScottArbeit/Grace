@@ -22,6 +22,7 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/ArtifactDeletionResult.md
 docs/AssignParameters.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
@@ -61,6 +62,7 @@ docs/DeleteBranchParameters.md
 docs/DeleteOrganizationParameters.md
 docs/DeleteOwnerParameters.md
 docs/DeleteRepositoryParameters.md
+docs/DeleteWorkItemAttachmentParameters.md
 docs/DiffApiDto.md
 docs/DiffDto.md
 docs/DiffParameters.md
@@ -131,6 +133,8 @@ docs/InlineObject4.md
 docs/InlineObject5.md
 docs/InlineObject6.md
 docs/InlineObject7.md
+docs/InlineObject8.md
+docs/InlineObject9.md
 docs/IsEmptyParameters.md
 docs/IssueDedupeDiscoveryParameters.md
 docs/ListApprovalPoliciesParameters.md
@@ -205,6 +209,7 @@ docs/TypedReferenceApiDto.md
 docs/UndeleteOrganizationParameters.md
 docs/UndeleteOwnerParameters.md
 docs/UndeleteRepositoryParameters.md
+docs/UndeleteWorkItemAttachmentParameters.md
 docs/UploadMetadata.md
 docs/UploadMetadataArrayReturnValue.md
 docs/UploadSessionBlockUploadConfirmedEvent.md
@@ -237,6 +242,8 @@ docs/WebhookRuleParameters.md
 docs/WebhookRuleStatus.md
 docs/WebhookScope.md
 docs/WebhooksApi.md
+docs/WorkItemParameters.md
+docs/WorkItemsApi.md
 git_push.sh
 src/apis/approvals_api.rs
 src/apis/branches_api.rs
@@ -249,6 +256,7 @@ src/apis/organizations_api.rs
 src/apis/owners_api.rs
 src/apis/repositories_api.rs
 src/apis/webhooks_api.rs
+src/apis/work_items_api.rs
 src/lib.rs
 src/models/annotate_parameters.rs
 src/models/annotation_boundary.rs
@@ -268,6 +276,7 @@ src/models/approval_request_status.rs
 src/models/approval_scope.rs
 src/models/approval_timeout_action.rs
 src/models/approve_approval_request_parameters.rs
+src/models/artifact_deletion_result.rs
 src/models/assign_parameters.rs
 src/models/block_upload_intent.rs
 src/models/branch_annotation_api_dto.rs
@@ -305,6 +314,7 @@ src/models/delete_branch_parameters.rs
 src/models/delete_organization_parameters.rs
 src/models/delete_owner_parameters.rs
 src/models/delete_repository_parameters.rs
+src/models/delete_work_item_attachment_parameters.rs
 src/models/diff_api_dto.rs
 src/models/diff_dto.rs
 src/models/diff_parameters.rs
@@ -373,6 +383,8 @@ src/models/inline_object_4.rs
 src/models/inline_object_5.rs
 src/models/inline_object_6.rs
 src/models/inline_object_7.rs
+src/models/inline_object_8.rs
+src/models/inline_object_9.rs
 src/models/is_empty_parameters.rs
 src/models/issue_dedupe_discovery_parameters.rs
 src/models/list_approval_policies_parameters.rs
@@ -445,6 +457,7 @@ src/models/typed_reference_api_dto.rs
 src/models/undelete_organization_parameters.rs
 src/models/undelete_owner_parameters.rs
 src/models/undelete_repository_parameters.rs
+src/models/undelete_work_item_attachment_parameters.rs
 src/models/upload_metadata.rs
 src/models/upload_metadata_array_return_value.rs
 src/models/upload_session_block_upload_confirmed_event.rs
@@ -476,3 +489,4 @@ src/models/webhook_rule.rs
 src/models/webhook_rule_parameters.rs
 src/models/webhook_rule_status.rs
 src/models/webhook_scope.rs
+src/models/work_item_parameters.rs

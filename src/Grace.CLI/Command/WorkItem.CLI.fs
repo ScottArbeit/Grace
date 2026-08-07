@@ -125,6 +125,9 @@ module WorkItemCommand =
 
         let artifactId = new Option<string>("--artifact-id", Required = true, Description = "Attachment artifact ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
+        let deleteReason =
+            new Option<string>("--delete-reason", Required = true, Description = "Reason for deleting the attachment.", Arity = ArgumentArity.ExactlyOne)
+
         let outputFile =
             new Option<string>(
                 "--output-file",
@@ -306,11 +309,12 @@ module WorkItemCommand =
         }
 
     /// Adds a work-item attachment and uploads the local artifact content for it.
-    let private createAndUploadArtifact (graceIds: GraceIds) (artifactType: ArtifactType) (attachmentInput: AttachmentInput) =
+    let private createAndUploadArtifact (graceIds: GraceIds) (workItemId: WorkItemId) (artifactType: ArtifactType) (attachmentInput: AttachmentInput) =
         task {
             let createParameters =
                 Parameters.Artifact.CreateArtifactParameters(
                     ArtifactType = getDiscriminatedUnionCaseName artifactType,
+                    WorkItemId = workItemId.ToString(),
                     MimeType = attachmentInput.MimeType,
                     Size = int64 attachmentInput.Bytes.LongLength,
                     Sha256 = computeSha256 attachmentInput.Bytes,
@@ -635,39 +639,51 @@ module WorkItemCommand =
                 match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
                 | Error error -> return Error error
                 | Ok workItem ->
-                    match! tryGetAttachmentInput parseResult with
+                    let getParameters =
+                        Parameters.WorkItem.GetWorkItemParameters(
+                            WorkItemId = workItem,
+                            OwnerId = graceIds.OwnerIdString,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    match! WorkItem.Get(getParameters) with
                     | Error error -> return Error error
-                    | Ok attachmentInput ->
-                        match! createAndUploadArtifact graceIds attachmentType.ArtifactType attachmentInput with
+                    | Ok workItemResult ->
+                        match! tryGetAttachmentInput parseResult with
                         | Error error -> return Error error
-                        | Ok artifactId ->
-                            let linkParameters =
-                                Parameters.WorkItem.LinkArtifactParameters(
-                                    WorkItemId = workItem,
-                                    ArtifactId = artifactId.ToString(),
-                                    OwnerId = graceIds.OwnerIdString,
-                                    OwnerName = graceIds.OwnerName,
-                                    OrganizationId = graceIds.OrganizationIdString,
-                                    OrganizationName = graceIds.OrganizationName,
-                                    RepositoryId = graceIds.RepositoryIdString,
-                                    RepositoryName = graceIds.RepositoryName,
-                                    CorrelationId = graceIds.CorrelationId
-                                )
-
-                            match! WorkItem.LinkArtifact(linkParameters) with
+                        | Ok attachmentInput ->
+                            match! createAndUploadArtifact graceIds workItemResult.ReturnValue.WorkItemId attachmentType.ArtifactType attachmentInput with
                             | Error error -> return Error error
-                            | Ok _ ->
-                                let result = { WorkItem = workItem; ArtifactId = artifactId; ArtifactType = attachmentType.Label }
-
-                                if
-                                    not (parseResult |> json)
-                                    && not (parseResult |> silent)
-                                then
-                                    AnsiConsole.MarkupLine(
-                                        $"[green]Attached {Markup.Escape(attachmentType.Label)} content[/] [grey](artifact {Markup.Escape(artifactId.ToString())})[/] [green]to work item[/] {Markup.Escape(workItem)}"
+                            | Ok artifactId ->
+                                let linkParameters =
+                                    Parameters.WorkItem.LinkArtifactParameters(
+                                        WorkItemId = workItem,
+                                        ArtifactId = artifactId.ToString(),
+                                        OwnerId = graceIds.OwnerIdString,
+                                        OwnerName = graceIds.OwnerName,
+                                        OrganizationId = graceIds.OrganizationIdString,
+                                        OrganizationName = graceIds.OrganizationName,
+                                        RepositoryId = graceIds.RepositoryIdString,
+                                        RepositoryName = graceIds.RepositoryName,
+                                        CorrelationId = graceIds.CorrelationId
                                     )
 
-                                return Ok(GraceReturnValue.Create result graceIds.CorrelationId)
+                                match! WorkItem.LinkArtifact(linkParameters) with
+                                | Error error -> return Error error
+                                | Ok _ ->
+                                    let result = { WorkItem = workItem; ArtifactId = artifactId; ArtifactType = attachmentType.Label }
+
+                                    if
+                                        not (parseResult |> json)
+                                        && not (parseResult |> silent)
+                                    then
+                                        AnsiConsole.MarkupLine(
+                                            $"[green]Attached {Markup.Escape(attachmentType.Label)} content[/] [grey](artifact {Markup.Escape(artifactId.ToString())})[/] [green]to work item[/] {Markup.Escape(workItem)}"
+                                        )
+
+                                    return Ok(GraceReturnValue.Create result graceIds.CorrelationId)
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
@@ -940,6 +956,98 @@ module WorkItemCommand =
                 return result |> renderOutput parseResult
             }
 
+    /// Routes recoverable attachment deletion through the aligned SDK contract.
+    let private attachmentsDeleteHandler (parseResult: ParseResult) =
+        task {
+            let graceIds = parseResult |> getNormalizedIdsAndNames
+            let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
+            let artifactId = parseResult.GetValue(Options.artifactId)
+            let deleteReason = parseResult.GetValue(Options.deleteReason)
+
+            match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+            | Error error -> return Error error
+            | Ok workItem ->
+                let parameters =
+                    Parameters.WorkItem.DeleteWorkItemAttachmentParameters(
+                        WorkItemId = workItem,
+                        ArtifactId = artifactId,
+                        DeleteReason = deleteReason,
+                        OwnerId = graceIds.OwnerIdString,
+                        OrganizationId = graceIds.OrganizationIdString,
+                        RepositoryId = graceIds.RepositoryIdString,
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                let! result = WorkItem.DeleteAttachment(parameters)
+
+                match result with
+                | Ok value when
+                    not (parseResult |> json)
+                    && not (parseResult |> silent)
+                    ->
+                    AnsiConsole.MarkupLine(
+                        $"[green]Logically deleted attachment[/] [grey]{Markup.Escape(value.ReturnValue.ArtifactId.ToString())}[/] [green]until[/] {Markup.Escape(value.ReturnValue.PhysicalDeletionAt.ToString())}."
+                    )
+                | _ -> ()
+
+                return result
+        }
+
+    /// Executes the attachment delete command through the asynchronous CLI action boundary.
+    type AttachmentsDelete() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs recoverable deletion without performing side effects during command introspection.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let! result = attachmentsDeleteHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    /// Routes attachment recovery through the aligned SDK contract.
+    let private attachmentsUndeleteHandler (parseResult: ParseResult) =
+        task {
+            let graceIds = parseResult |> getNormalizedIdsAndNames
+            let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
+            let artifactId = parseResult.GetValue(Options.artifactId)
+
+            match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+            | Error error -> return Error error
+            | Ok workItem ->
+                let parameters =
+                    Parameters.WorkItem.UndeleteWorkItemAttachmentParameters(
+                        WorkItemId = workItem,
+                        ArtifactId = artifactId,
+                        OwnerId = graceIds.OwnerIdString,
+                        OrganizationId = graceIds.OrganizationIdString,
+                        RepositoryId = graceIds.RepositoryIdString,
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                let! result = WorkItem.UndeleteAttachment(parameters)
+
+                match result with
+                | Ok _ when
+                    not (parseResult |> json)
+                    && not (parseResult |> silent)
+                    ->
+                    AnsiConsole.MarkupLine($"[green]Restored attachment[/] [grey]{Markup.Escape artifactId}[/].")
+                | _ -> ()
+
+                return result
+        }
+
+    /// Executes the attachment undelete command through the asynchronous CLI action boundary.
+    type AttachmentsUndelete() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs attachment recovery without performing side effects during command introspection.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let! result = attachmentsUndeleteHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
     /// Formats guid list values into the text shown in Spectre.Console tables or command output.
     let private formatGuidList (values: Guid list) =
         if values.IsEmpty then
@@ -1128,68 +1236,6 @@ module WorkItemCommand =
                 return result |> renderOutput parseResult
             }
 
-    /// Routes the remove artifact type links command from parsed options through validation, the SDK call, and result rendering.
-    let private removeArtifactTypeLinksHandler (artifactType: string) (parseResult: ParseResult) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-                let graceIds = parseResult |> getNormalizedIdsAndNames
-                let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
-
-                match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
-                | Error error -> return Error error
-                | Ok workItem ->
-                    let parameters =
-                        Parameters.WorkItem.RemoveArtifactTypeLinksParameters(
-                            WorkItemId = workItem,
-                            ArtifactType = artifactType,
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            CorrelationId = graceIds.CorrelationId
-                        )
-
-                    return! WorkItem.RemoveArtifactTypeLinks(parameters)
-            with
-            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
-        }
-
-    /// Executes the remove summary links command by binding ParseResult values to the SDK request and CLI output contract.
-    type RemoveSummaryLinks() =
-        inherit AsynchronousCommandLineAction()
-
-        /// Runs the asynchronous remove summary links action when System.CommandLine dispatches the parsed command.
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
-            task {
-                let! result = removeArtifactTypeLinksHandler "summary" parseResult
-                return result |> renderOutput parseResult
-            }
-
-    /// Executes the remove prompt links command by binding ParseResult values to the SDK request and CLI output contract.
-    type RemovePromptLinks() =
-        inherit AsynchronousCommandLineAction()
-
-        /// Runs the asynchronous remove prompt links action when System.CommandLine dispatches the parsed command.
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
-            task {
-                let! result = removeArtifactTypeLinksHandler "prompt" parseResult
-                return result |> renderOutput parseResult
-            }
-
-    /// Executes the remove notes links command by binding ParseResult values to the SDK request and CLI output contract.
-    type RemoveNotesLinks() =
-        inherit AsynchronousCommandLineAction()
-
-        /// Runs the asynchronous remove notes links action when System.CommandLine dispatches the parsed command.
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
-            task {
-                let! result = removeArtifactTypeLinksHandler "notes" parseResult
-                return result |> renderOutput parseResult
-            }
-
     let Build =
         /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
@@ -1262,7 +1308,7 @@ module WorkItemCommand =
 
         workCommand.Subcommands.Add(linkCommand)
 
-        let attachmentsCommand = new Command("attachments", Description = "Add, list, show, and download reviewer attachments by work item ID or number.")
+        let attachmentsCommand = new Command("attachments", Description = "Add, inspect, delete, and recover reviewer attachments by work item ID or number.")
 
         let attachmentsAddCommand =
             new Command("add", Description = "Add summary, prompt, or notes content to a work item.")
@@ -1302,6 +1348,25 @@ module WorkItemCommand =
         attachmentsDownloadCommand.Action <- new AttachmentsDownload()
         attachmentsCommand.Subcommands.Add(attachmentsDownloadCommand)
 
+        let attachmentsDeleteCommand =
+            new Command("delete", Description = "Logically delete one owned attachment using repository retention.")
+            |> addOption Options.artifactId
+            |> addOption Options.deleteReason
+            |> addCommonOptions
+
+        attachmentsDeleteCommand.Arguments.Add(Arguments.workItemIdentifier)
+        attachmentsDeleteCommand.Action <- new AttachmentsDelete()
+        attachmentsCommand.Subcommands.Add(attachmentsDeleteCommand)
+
+        let attachmentsUndeleteCommand =
+            new Command("undelete", Description = "Recover one logically deleted attachment before physical cleanup.")
+            |> addOption Options.artifactId
+            |> addCommonOptions
+
+        attachmentsUndeleteCommand.Arguments.Add(Arguments.workItemIdentifier)
+        attachmentsUndeleteCommand.Action <- new AttachmentsUndelete()
+        attachmentsCommand.Subcommands.Add(attachmentsUndeleteCommand)
+
         workCommand.Subcommands.Add(attachmentsCommand)
 
         let linksCommand = new Command("links", Description = "Inspect and remove work item links.")
@@ -1333,30 +1398,6 @@ module WorkItemCommand =
         removePromotionSetCommand.Arguments.Add(Arguments.promotionSetId)
         removePromotionSetCommand.Action <- new RemovePromotionSetLink()
         linksRemoveCommand.Subcommands.Add(removePromotionSetCommand)
-
-        let removeSummaryLinksCommand =
-            new Command("summary", Description = "Remove all summary attachments from a work item.")
-            |> addCommonOptions
-
-        removeSummaryLinksCommand.Arguments.Add(Arguments.workItemIdentifier)
-        removeSummaryLinksCommand.Action <- new RemoveSummaryLinks()
-        linksRemoveCommand.Subcommands.Add(removeSummaryLinksCommand)
-
-        let removePromptLinksCommand =
-            new Command("prompt", Description = "Remove all prompt attachments from a work item.")
-            |> addCommonOptions
-
-        removePromptLinksCommand.Arguments.Add(Arguments.workItemIdentifier)
-        removePromptLinksCommand.Action <- new RemovePromptLinks()
-        linksRemoveCommand.Subcommands.Add(removePromptLinksCommand)
-
-        let removeNotesLinksCommand =
-            new Command("notes", Description = "Remove all notes attachments from a work item.")
-            |> addCommonOptions
-
-        removeNotesLinksCommand.Arguments.Add(Arguments.workItemIdentifier)
-        removeNotesLinksCommand.Action <- new RemoveNotesLinks()
-        linksRemoveCommand.Subcommands.Add(removeNotesLinksCommand)
 
         linksCommand.Subcommands.Add(linksRemoveCommand)
         workCommand.Subcommands.Add(linksCommand)

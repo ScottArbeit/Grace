@@ -10,6 +10,7 @@ open Grace.Types.Artifact
 open Grace.Types.PersonalAccessToken
 open Grace.Types.Common
 open Grace.Types.WorkItem
+open NodaTime
 open NUnit.Framework
 open System
 open System.IO
@@ -264,6 +265,53 @@ module private WorkItemIntegrationHelpers =
             else
                 let! returnValue = deserializeContent<GraceReturnValue<Parameters.WorkItem.DownloadWorkItemAttachmentResult>> response
                 return returnValue.ReturnValue
+        }
+
+    /// Requests logical deletion for one exact owned work-item attachment.
+    let deleteWorkItemAttachmentAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) deleteReason =
+        task {
+            let parameters = Parameters.WorkItem.DeleteWorkItemAttachmentParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.ArtifactId <- artifactId.ToString()
+            parameters.DeleteReason <- deleteReason
+            parameters.CorrelationId <- generateCorrelationId ()
+            let! response = client.PostAsync("/work/attachments/delete", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            return deserialize<GraceReturnValue<ArtifactDeletionResult>> body
+        }
+
+    /// Requests recovery for one exact owned work-item attachment.
+    let undeleteWorkItemAttachmentAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
+        task {
+            let parameters = Parameters.WorkItem.UndeleteWorkItemAttachmentParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.ArtifactId <- artifactId.ToString()
+            parameters.CorrelationId <- generateCorrelationId ()
+            let! response = client.PostAsync("/work/attachments/undelete", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+        }
+
+    /// Sets the repository retention duration used by attachment deletion scheduling.
+    let setLogicalDeleteDaysAsync (client: HttpClient) (repositoryId: string) (days: single) =
+        task {
+            let parameters =
+                dict [ "OwnerId", box ownerId
+                       "OrganizationId", box organizationId
+                       "RepositoryId", box repositoryId
+                       "LogicalDeleteDays", box days
+                       "CorrelationId", box (generateCorrelationId ()) ]
+
+            let! response = client.PostAsync("/repository/setLogicalDeleteDays", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
         }
 
     let addSummaryResponseAsync
@@ -805,6 +853,71 @@ type WorkItemAddSummaryIntegrationTests() =
             let! summaryDownloadUri = WorkItemIntegrationHelpers.getArtifactDownloadUriAsync Client repositoryId summaryArtifactId
             Assert.That(summaryDownloadUri, Is.Not.Null)
             Assert.That(String.IsNullOrWhiteSpace(summaryDownloadUri.AbsoluteUri), Is.False)
+        }
+
+    /// Verifies logical hide, exact recovery, re-delete generation, and eventual durable blob and link cleanup.
+    [<Test>]
+    member _.AttachmentDeleteUndeleteAndPhysicalCleanupConverge() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-attachment-delete"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "attachment delete lifecycle"
+
+            let! added =
+                WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId "# Summary\nDeletion lifecycle" None None (generateCorrelationId ())
+
+            let artifactId = Guid.Parse added.SummaryArtifactId
+            let! downloadUri = WorkItemIntegrationHelpers.getArtifactDownloadUriAsync Client repositoryId artifactId
+            let blobClient = BlobClient downloadUri
+            let! blobBeforeDelete = blobClient.ExistsAsync()
+            Assert.That(blobBeforeDelete.Value, Is.True)
+
+            do! WorkItemIntegrationHelpers.setLogicalDeleteDaysAsync Client repositoryId 1.0f
+
+            let! firstDeletion = WorkItemIntegrationHelpers.deleteWorkItemAttachmentAsync Client repositoryId workItemId artifactId "superseded summary"
+
+            Assert.That(
+                firstDeletion.ReturnValue.PhysicalDeletionAt
+                - firstDeletion.ReturnValue.DeletedAt,
+                Is.EqualTo(Duration.FromDays(1.0)),
+                "The recovery proof must use a real nonzero retention window before undelete."
+            )
+
+            let! hiddenAttachments = WorkItemIntegrationHelpers.listWorkItemAttachmentsAsync Client repositoryId workItemId
+            Assert.That(hiddenAttachments.Attachments, Is.Empty)
+
+            let! hiddenDownload = WorkItemIntegrationHelpers.downloadWorkItemAttachmentResponseAsync Client repositoryId workItemId artifactId
+            Assert.That(hiddenDownload.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            do! WorkItemIntegrationHelpers.undeleteWorkItemAttachmentAsync Client repositoryId workItemId artifactId
+            let! restoredAttachments = WorkItemIntegrationHelpers.listWorkItemAttachmentsAsync Client repositoryId workItemId
+            Assert.That(restoredAttachments.Attachments, Has.Count.EqualTo(1))
+
+            do! WorkItemIntegrationHelpers.setLogicalDeleteDaysAsync Client repositoryId 0.0f
+
+            let! secondDeletion = WorkItemIntegrationHelpers.deleteWorkItemAttachmentAsync Client repositoryId workItemId artifactId "retention expired"
+
+            Assert.That(secondDeletion.ReturnValue.DeletionGeneration, Is.Not.EqualTo(firstDeletion.ReturnValue.DeletionGeneration))
+            Assert.That(secondDeletion.ReturnValue.PhysicalDeletionAt, Is.EqualTo(secondDeletion.ReturnValue.DeletedAt))
+
+            let mutable cleanupConverged = false
+            let mutable attempts = 0
+
+            while not cleanupConverged && attempts < 75 do
+                let! currentWorkItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+                let! blobExists = blobClient.ExistsAsync()
+
+                cleanupConverged <-
+                    not (
+                        currentWorkItem.ArtifactIds
+                        |> List.contains artifactId
+                    )
+                    && not blobExists.Value
+
+                if not cleanupConverged then do! Task.Delay(TimeSpan.FromSeconds(1.0))
+
+                attempts <- attempts + 1
+
+            Assert.That(cleanupConverged, Is.True, "Expected the due reminder to delete the blob and durable work-item link.")
         }
 
     /// Verifies the add summary with work item number round trips prompt and links across both identifiers scenario.

@@ -27,6 +27,7 @@ __all__ = [
     "OwnersApi",
     "RepositoriesApi",
     "WebhooksApi",
+    "WorkItemsApi",
     "DefaultApi",
     "ApiResponse",
     "ApiClient",
@@ -55,6 +56,7 @@ __all__ = [
     "ApprovalScope",
     "ApprovalTimeoutAction",
     "ApproveApprovalRequestParameters",
+    "ArtifactDeletionResult",
     "AssignParameters",
     "BlockUploadIntent",
     "BranchAnnotationApiDto",
@@ -92,6 +94,7 @@ __all__ = [
     "DeleteOrganizationParameters",
     "DeleteOwnerParameters",
     "DeleteRepositoryParameters",
+    "DeleteWorkItemAttachmentParameters",
     "DiffApiDto",
     "DiffDto",
     "DiffParameters",
@@ -160,6 +163,8 @@ __all__ = [
     "InlineObject5",
     "InlineObject6",
     "InlineObject7",
+    "InlineObject8",
+    "InlineObject9",
     "IsEmptyParameters",
     "IssueDedupeDiscoveryParameters",
     "ListApprovalPoliciesParameters",
@@ -231,6 +236,7 @@ __all__ = [
     "UndeleteOrganizationParameters",
     "UndeleteOwnerParameters",
     "UndeleteRepositoryParameters",
+    "UndeleteWorkItemAttachmentParameters",
     "UploadMetadata",
     "UploadMetadataArrayReturnValue",
     "UploadSessionBlockUploadConfirmedEvent",
@@ -262,6 +268,7 @@ __all__ = [
     "WebhookRuleParameters",
     "WebhookRuleStatus",
     "WebhookScope",
+    "WorkItemParameters",
 ]
 
 # import apis into sdk package
@@ -273,6 +280,7 @@ from grace_generated_openapi_probe.api.organizations_api import OrganizationsApi
 from grace_generated_openapi_probe.api.owners_api import OwnersApi as OwnersApi
 from grace_generated_openapi_probe.api.repositories_api import RepositoriesApi as RepositoriesApi
 from grace_generated_openapi_probe.api.webhooks_api import WebhooksApi as WebhooksApi
+from grace_generated_openapi_probe.api.work_items_api import WorkItemsApi as WorkItemsApi
 from grace_generated_openapi_probe.api.default_api import DefaultApi as DefaultApi
 
 # import ApiClient
@@ -305,6 +313,7 @@ from grace_generated_openapi_probe.models.approval_request_status import Approva
 from grace_generated_openapi_probe.models.approval_scope import ApprovalScope as ApprovalScope
 from grace_generated_openapi_probe.models.approval_timeout_action import ApprovalTimeoutAction as ApprovalTimeoutAction
 from grace_generated_openapi_probe.models.approve_approval_request_parameters import ApproveApprovalRequestParameters as ApproveApprovalRequestParameters
+from grace_generated_openapi_probe.models.artifact_deletion_result import ArtifactDeletionResult as ArtifactDeletionResult
 from grace_generated_openapi_probe.models.assign_parameters import AssignParameters as AssignParameters
 from grace_generated_openapi_probe.models.block_upload_intent import BlockUploadIntent as BlockUploadIntent
 from grace_generated_openapi_probe.models.branch_annotation_api_dto import BranchAnnotationApiDto as BranchAnnotationApiDto
@@ -342,6 +351,7 @@ from grace_generated_openapi_probe.models.delete_branch_parameters import Delete
 from grace_generated_openapi_probe.models.delete_organization_parameters import DeleteOrganizationParameters as DeleteOrganizationParameters
 from grace_generated_openapi_probe.models.delete_owner_parameters import DeleteOwnerParameters as DeleteOwnerParameters
 from grace_generated_openapi_probe.models.delete_repository_parameters import DeleteRepositoryParameters as DeleteRepositoryParameters
+from grace_generated_openapi_probe.models.delete_work_item_attachment_parameters import DeleteWorkItemAttachmentParameters as DeleteWorkItemAttachmentParameters
 from grace_generated_openapi_probe.models.diff_api_dto import DiffApiDto as DiffApiDto
 from grace_generated_openapi_probe.models.diff_dto import DiffDto as DiffDto
 from grace_generated_openapi_probe.models.diff_parameters import DiffParameters as DiffParameters
@@ -410,6 +420,8 @@ from grace_generated_openapi_probe.models.inline_object4 import InlineObject4 as
 from grace_generated_openapi_probe.models.inline_object5 import InlineObject5 as InlineObject5
 from grace_generated_openapi_probe.models.inline_object6 import InlineObject6 as InlineObject6
 from grace_generated_openapi_probe.models.inline_object7 import InlineObject7 as InlineObject7
+from grace_generated_openapi_probe.models.inline_object8 import InlineObject8 as InlineObject8
+from grace_generated_openapi_probe.models.inline_object9 import InlineObject9 as InlineObject9
 from grace_generated_openapi_probe.models.is_empty_parameters import IsEmptyParameters as IsEmptyParameters
 from grace_generated_openapi_probe.models.issue_dedupe_discovery_parameters import IssueDedupeDiscoveryParameters as IssueDedupeDiscoveryParameters
 from grace_generated_openapi_probe.models.list_approval_policies_parameters import ListApprovalPoliciesParameters as ListApprovalPoliciesParameters
@@ -481,6 +493,7 @@ from grace_generated_openapi_probe.models.typed_reference_api_dto import TypedRe
 from grace_generated_openapi_probe.models.undelete_organization_parameters import UndeleteOrganizationParameters as UndeleteOrganizationParameters
 from grace_generated_openapi_probe.models.undelete_owner_parameters import UndeleteOwnerParameters as UndeleteOwnerParameters
 from grace_generated_openapi_probe.models.undelete_repository_parameters import UndeleteRepositoryParameters as UndeleteRepositoryParameters
+from grace_generated_openapi_probe.models.undelete_work_item_attachment_parameters import UndeleteWorkItemAttachmentParameters as UndeleteWorkItemAttachmentParameters
 from grace_generated_openapi_probe.models.upload_metadata import UploadMetadata as UploadMetadata
 from grace_generated_openapi_probe.models.upload_metadata_array_return_value import UploadMetadataArrayReturnValue as UploadMetadataArrayReturnValue
 from grace_generated_openapi_probe.models.upload_session_block_upload_confirmed_event import UploadSessionBlockUploadConfirmedEvent as UploadSessionBlockUploadConfirmedEvent
@@ -512,4 +525,5 @@ from grace_generated_openapi_probe.models.webhook_rule import WebhookRule as Web
 from grace_generated_openapi_probe.models.webhook_rule_parameters import WebhookRuleParameters as WebhookRuleParameters
 from grace_generated_openapi_probe.models.webhook_rule_status import WebhookRuleStatus as WebhookRuleStatus
 from grace_generated_openapi_probe.models.webhook_scope import WebhookScope as WebhookScope
+from grace_generated_openapi_probe.models.work_item_parameters import WorkItemParameters as WorkItemParameters
 

@@ -113,6 +113,10 @@ module Artifact =
                          else
                              Guid.isValidAndNotEmptyGuid parameters.ArtifactId ArtifactError.InvalidArtifactId)
                         String.isNotEmpty parameters.ArtifactType ArtifactError.InvalidArtifactType
+                        (if String.IsNullOrWhiteSpace(parameters.WorkItemId) then
+                             Ok() |> returnValueTask
+                         else
+                             Guid.isValidAndNotEmptyGuid parameters.WorkItemId ArtifactError.InvalidArtifactId)
                         String.isNotEmpty parameters.MimeType ArtifactError.InvalidMimeType
                         if parameters.Size >= 0L then Ok() else Error ArtifactError.InvalidSize
                         |> returnValueTask
@@ -151,6 +155,11 @@ module Artifact =
                             BlobPath = blobPath
                             CreatedAt = createdAt
                             CreatedBy = UserId(getPrincipal context)
+                            WorkItemId =
+                                if String.IsNullOrWhiteSpace parameters.WorkItemId then
+                                    None
+                                else
+                                    Some(Guid.Parse parameters.WorkItemId)
                         }
 
                     let metadata = createMetadata context
@@ -212,6 +221,7 @@ module Artifact =
                                 artifact.OwnerId = ownerId
                                 && artifact.OrganizationId = organizationId
                                 && artifact.RepositoryId = repositoryId
+                                && not artifact.IsDeleted
                                 ->
                                 let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
                                 let! repositoryDto = repositoryActorProxy.Get correlationId

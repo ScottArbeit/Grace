@@ -771,16 +771,15 @@ module CommandOutputContract =
         | "webhook.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookRule>>
         | "workitem.attachments.add" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentResult"
         | "workitem.attachments.download" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentDownloadResult"
+        | "workitem.attachments.delete" -> typeof<Grace.Types.Artifact.ArtifactDeletionResult>
         | "workitem.attachments.list" -> typeof<Grace.Shared.Parameters.WorkItem.ListWorkItemAttachmentsResult>
         | "workitem.attachments.show" -> typeof<Grace.Shared.Parameters.WorkItem.ShowWorkItemAttachmentResult>
+        | "workitem.attachments.undelete" -> typeof<string>
         | "workitem.create"
         | "workitem.link.prset"
         | "workitem.link.ref"
-        | "workitem.links.remove.notes"
-        | "workitem.links.remove.prompt"
         | "workitem.links.remove.prset"
         | "workitem.links.remove.ref"
-        | "workitem.links.remove.summary"
         | "workitem.set-status" -> typeof<string>
         | "workitem.links.list" -> typeof<Grace.Types.WorkItem.WorkItemLinksDto>
         | "workitem.show" -> typeof<Grace.Types.WorkItem.WorkItemDto>
@@ -1360,31 +1359,23 @@ module CommandOutputContract =
             row [ "webhook" ] "test" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "update" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attachments" ] "add" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
+            row [ "workitem"; "attachments" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attachments" ] "download" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "workitem"; "attachments" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attachments" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row
+                [ "workitem"; "attachments" ]
+                "undelete"
+                true
+                true
+                common_renderOutput_envelope
+                mutating_state_transition
+                server_via_sdk
+                ReuseExistingApiOrSdkDto
             row [ "workitem" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "link" ] "prset" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "link" ] "ref" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "links" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "links"; "remove" ]
-                "notes"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "links"; "remove" ]
-                "prompt"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
             row
                 [ "workitem"; "links"; "remove" ]
                 "prset"
@@ -1395,15 +1386,6 @@ module CommandOutputContract =
                 server_via_sdk
                 ReuseExistingApiOrSdkDto
             row [ "workitem"; "links"; "remove" ] "ref" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row
-                [ "workitem"; "links"; "remove" ]
-                "summary"
-                true
-                false
-                common_renderOutput_envelope
-                read_or_mutating_verify
-                server_via_sdk
-                ReuseExistingApiOrSdkDto
             row [ "workitem" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem" ] "set-status" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
         ]

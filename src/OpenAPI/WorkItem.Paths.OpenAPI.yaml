@@ -1,0 +1,41 @@
+'/work/attachments/delete':
+  post:
+    tags:
+      - Work items
+    summary: Logically delete one owned work-item attachment.
+    description: >-
+      Retains the blob, artifact state, and owning link until the stored repository-retention deadline.
+    operationId: DeleteWorkItemAttachment
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './WorkItem.Components.OpenAPI.yaml#/DeleteWorkItemAttachmentParameters'
+    responses:
+      '200':
+        $ref: './WorkItem.Components.OpenAPI.yaml#/ArtifactDeletionResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/work/attachments/undelete':
+  post:
+    tags:
+      - Work items
+    summary: Recover one logically deleted work-item attachment.
+    description: Restores the attachment before its immutable physical-cleanup deadline.
+    operationId: UndeleteWorkItemAttachment
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './WorkItem.Components.OpenAPI.yaml#/UndeleteWorkItemAttachmentParameters'
+    responses:
+      '200':
+        $ref: './WorkItem.Components.OpenAPI.yaml#/StringResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'

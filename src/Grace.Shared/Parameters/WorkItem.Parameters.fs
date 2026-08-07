@@ -72,6 +72,17 @@ module WorkItem =
         inherit WorkItemParameters()
         member val public ArtifactId = String.Empty with get, set
 
+    /// Parameters for logically deleting one owned work-item attachment.
+    type DeleteWorkItemAttachmentParameters() =
+        inherit WorkItemParameters()
+        member val public ArtifactId = String.Empty with get, set
+        member val public DeleteReason = String.Empty with get, set
+
+    /// Parameters for recovering one logically deleted work-item attachment.
+    type UndeleteWorkItemAttachmentParameters() =
+        inherit WorkItemParameters()
+        member val public ArtifactId = String.Empty with get, set
+
     /// Parameters for /work/links/remove/reference.
     type RemoveReferenceLinkParameters() =
         inherit WorkItemParameters()

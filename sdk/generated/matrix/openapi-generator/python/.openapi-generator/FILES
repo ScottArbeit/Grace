@@ -23,6 +23,7 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/ArtifactDeletionResult.md
 docs/AssignParameters.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
@@ -62,6 +63,7 @@ docs/DeleteBranchParameters.md
 docs/DeleteOrganizationParameters.md
 docs/DeleteOwnerParameters.md
 docs/DeleteRepositoryParameters.md
+docs/DeleteWorkItemAttachmentParameters.md
 docs/DiffApiDto.md
 docs/DiffDto.md
 docs/DiffParameters.md
@@ -132,6 +134,8 @@ docs/InlineObject4.md
 docs/InlineObject5.md
 docs/InlineObject6.md
 docs/InlineObject7.md
+docs/InlineObject8.md
+docs/InlineObject9.md
 docs/IsEmptyParameters.md
 docs/IssueDedupeDiscoveryParameters.md
 docs/ListApprovalPoliciesParameters.md
@@ -206,6 +210,7 @@ docs/TypedReferenceApiDto.md
 docs/UndeleteOrganizationParameters.md
 docs/UndeleteOwnerParameters.md
 docs/UndeleteRepositoryParameters.md
+docs/UndeleteWorkItemAttachmentParameters.md
 docs/UploadMetadata.md
 docs/UploadMetadataArrayReturnValue.md
 docs/UploadSessionBlockUploadConfirmedEvent.md
@@ -238,6 +243,8 @@ docs/WebhookRuleParameters.md
 docs/WebhookRuleStatus.md
 docs/WebhookScope.md
 docs/WebhooksApi.md
+docs/WorkItemParameters.md
+docs/WorkItemsApi.md
 git_push.sh
 grace_generated_openapi_probe/__init__.py
 grace_generated_openapi_probe/api/__init__.py
@@ -250,6 +257,7 @@ grace_generated_openapi_probe/api/organizations_api.py
 grace_generated_openapi_probe/api/owners_api.py
 grace_generated_openapi_probe/api/repositories_api.py
 grace_generated_openapi_probe/api/webhooks_api.py
+grace_generated_openapi_probe/api/work_items_api.py
 grace_generated_openapi_probe/api_client.py
 grace_generated_openapi_probe/api_response.py
 grace_generated_openapi_probe/configuration.py
@@ -273,6 +281,7 @@ grace_generated_openapi_probe/models/approval_request_status.py
 grace_generated_openapi_probe/models/approval_scope.py
 grace_generated_openapi_probe/models/approval_timeout_action.py
 grace_generated_openapi_probe/models/approve_approval_request_parameters.py
+grace_generated_openapi_probe/models/artifact_deletion_result.py
 grace_generated_openapi_probe/models/assign_parameters.py
 grace_generated_openapi_probe/models/block_upload_intent.py
 grace_generated_openapi_probe/models/branch_annotation_api_dto.py
@@ -310,6 +319,7 @@ grace_generated_openapi_probe/models/delete_branch_parameters.py
 grace_generated_openapi_probe/models/delete_organization_parameters.py
 grace_generated_openapi_probe/models/delete_owner_parameters.py
 grace_generated_openapi_probe/models/delete_repository_parameters.py
+grace_generated_openapi_probe/models/delete_work_item_attachment_parameters.py
 grace_generated_openapi_probe/models/diff_api_dto.py
 grace_generated_openapi_probe/models/diff_dto.py
 grace_generated_openapi_probe/models/diff_parameters.py
@@ -378,6 +388,8 @@ grace_generated_openapi_probe/models/inline_object4.py
 grace_generated_openapi_probe/models/inline_object5.py
 grace_generated_openapi_probe/models/inline_object6.py
 grace_generated_openapi_probe/models/inline_object7.py
+grace_generated_openapi_probe/models/inline_object8.py
+grace_generated_openapi_probe/models/inline_object9.py
 grace_generated_openapi_probe/models/is_empty_parameters.py
 grace_generated_openapi_probe/models/issue_dedupe_discovery_parameters.py
 grace_generated_openapi_probe/models/list_approval_policies_parameters.py
@@ -449,6 +461,7 @@ grace_generated_openapi_probe/models/typed_reference_api_dto.py
 grace_generated_openapi_probe/models/undelete_organization_parameters.py
 grace_generated_openapi_probe/models/undelete_owner_parameters.py
 grace_generated_openapi_probe/models/undelete_repository_parameters.py
+grace_generated_openapi_probe/models/undelete_work_item_attachment_parameters.py
 grace_generated_openapi_probe/models/upload_metadata.py
 grace_generated_openapi_probe/models/upload_metadata_array_return_value.py
 grace_generated_openapi_probe/models/upload_session_block_upload_confirmed_event.py
@@ -480,6 +493,7 @@ grace_generated_openapi_probe/models/webhook_rule.py
 grace_generated_openapi_probe/models/webhook_rule_parameters.py
 grace_generated_openapi_probe/models/webhook_rule_status.py
 grace_generated_openapi_probe/models/webhook_scope.py
+grace_generated_openapi_probe/models/work_item_parameters.py
 grace_generated_openapi_probe/py.typed
 grace_generated_openapi_probe/rest.py
 pyproject.toml
@@ -507,6 +521,7 @@ test/test_approval_scope.py
 test/test_approval_timeout_action.py
 test/test_approvals_api.py
 test/test_approve_approval_request_parameters.py
+test/test_artifact_deletion_result.py
 test/test_assign_parameters.py
 test/test_block_upload_intent.py
 test/test_branch_annotation_api_dto.py
@@ -546,6 +561,7 @@ test/test_delete_branch_parameters.py
 test/test_delete_organization_parameters.py
 test/test_delete_owner_parameters.py
 test/test_delete_repository_parameters.py
+test/test_delete_work_item_attachment_parameters.py
 test/test_diff_api_dto.py
 test/test_diff_dto.py
 test/test_diff_parameters.py
@@ -616,6 +632,8 @@ test/test_inline_object4.py
 test/test_inline_object5.py
 test/test_inline_object6.py
 test/test_inline_object7.py
+test/test_inline_object8.py
+test/test_inline_object9.py
 test/test_is_empty_parameters.py
 test/test_issue_dedupe_discovery_parameters.py
 test/test_list_approval_policies_parameters.py
@@ -690,6 +708,7 @@ test/test_typed_reference_api_dto.py
 test/test_undelete_organization_parameters.py
 test/test_undelete_owner_parameters.py
 test/test_undelete_repository_parameters.py
+test/test_undelete_work_item_attachment_parameters.py
 test/test_upload_metadata.py
 test/test_upload_metadata_array_return_value.py
 test/test_upload_session_block_upload_confirmed_event.py
@@ -722,4 +741,6 @@ test/test_webhook_rule_parameters.py
 test/test_webhook_rule_status.py
 test/test_webhook_scope.py
 test/test_webhooks_api.py
+test/test_work_item_parameters.py
+test/test_work_items_api.py
 tox.ini

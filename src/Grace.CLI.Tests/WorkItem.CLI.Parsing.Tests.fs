@@ -355,19 +355,13 @@ module WorkItemCommandParsingTests =
                        Guid.NewGuid().ToString() |]
         )
 
-    /// Verifies that workitem links remove artifact type aliases parse for guid and numeric work item identifiers.
+    /// Verifies that workitem links remove artifact type aliases are unavailable.
     [<TestCase("workitem", "summary", "50")>]
     [<TestCase("workitem", "prompt", "6a635cbe-19ce-4e5f-a0fd-f1c1d1d468ea")>]
     [<TestCase("wi", "notes", "51")>]
     [<TestCase("work", "summary", "fdb37dfa-699d-4f8f-80f0-6e2eb6222596")>]
-    let ``workitem links remove artifact-type aliases parse for guid and numeric work item identifiers``
-        (
-            commandAlias: string,
-            linkType: string,
-            workItemIdentifier: string
-        )
-        =
-        assertParsesWithoutErrors (
+    let ``workitem links remove artifact-type aliases are unavailable`` (commandAlias: string, linkType: string, workItemIdentifier: string) =
+        assertRejected (
             withIds [| commandAlias
                        "links"
                        "remove"
@@ -416,13 +410,56 @@ module WorkItemCommandParsingTests =
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
-    /// Verifies that workitem links remove summary parses numeric work item.
+    /// Verifies that attachment delete and undelete expose only the required specific-artifact inputs.
     [<Test>]
-    let ``workitem links remove summary parses numeric work item`` () =
+    let ``workitem attachment delete and undelete parse exact artifact identity`` () =
+        let artifactId = Guid.NewGuid().ToString()
+
         assertParsesWithoutErrors (
-            withIds [| "workitem"
-                       "links"
-                       "remove"
-                       "summary"
-                       "123" |]
+            buildAttachmentsArgs
+                "workitem"
+                "delete"
+                "123"
+                [|
+                    "--artifact-id"
+                    artifactId
+                    "--delete-reason"
+                    "superseded"
+                |]
+            |> withIds
         )
+
+        assertParsesWithoutErrors (
+            buildAttachmentsArgs "workitem" "undelete" "123" [| "--artifact-id"; artifactId |]
+            |> withIds
+        )
+
+    /// Verifies that deletion rejects missing reason or artifact identity before invoking SDK behavior.
+    [<Test>]
+    let ``workitem attachment delete requires artifact id and reason`` () =
+        buildAttachmentsArgs
+            "workitem"
+            "delete"
+            "123"
+            [|
+                "--artifact-id"
+                Guid.NewGuid().ToString()
+            |]
+        |> withIds
+        |> assertRejected
+
+        buildAttachmentsArgs "workitem" "delete" "123" [| "--delete-reason"; "superseded" |]
+        |> withIds
+        |> assertRejected
+
+    /// Verifies that removed bulk attachment unlink commands are absent from the public command tree.
+    [<TestCase("summary")>]
+    [<TestCase("prompt")>]
+    [<TestCase("notes")>]
+    let ``workitem links remove bulk attachment paths are unavailable`` (attachmentType: string) =
+        withIds [| "workitem"
+                   "links"
+                   "remove"
+                   attachmentType
+                   "123" |]
+        |> assertRejected
