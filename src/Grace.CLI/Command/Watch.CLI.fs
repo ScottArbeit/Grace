@@ -921,13 +921,13 @@ module Watch =
         | DeletedPathKindUnknown
         | DeletedPathStatusUnavailable
 
-    /// Maps Watch's tracked delete evidence into the shared repository path-classification shape.
+    /// Maps tracked or uncertain removals to reconciliation while unknown paths retain configured-ignore admission.
     let private repositoryPathKindForDeletedPath pathKind =
         match pathKind with
-        | DeletedFile -> RepositoryPathKind.FilePath
-        | DeletedDirectory -> RepositoryPathKind.DirectoryPath
+        | DeletedFile
+        | DeletedDirectory
+        | DeletedPathStatusUnavailable -> RepositoryPathKind.RemovalReconciliationPath
         | DeletedPathKindUnknown -> RepositoryPathKind.UnknownPath
-        | DeletedPathStatusUnavailable -> RepositoryPathKind.StatusUnavailablePath
 
     /// Coordinates repository relative path behavior for this CLI command path.
     let private repositoryRelativePath (fullPath: string) =
@@ -1809,7 +1809,7 @@ module Watch =
     let private classifyRawLocalObservation (fallbackKind: WatchObservationKind) (fullPath: string) =
         match fallbackKind with
         | Deleted ->
-            match classifyRepositoryPathForWatch RepositoryPathKind.UnknownPath fullPath with
+            match classifyRepositoryPathForWatch RepositoryPathKind.RemovalReconciliationPath fullPath with
             | RepositoryPathClassification.Eligible ->
                 let pathKind =
                     match repositoryRelativePath fullPath with

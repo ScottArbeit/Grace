@@ -903,8 +903,8 @@ module Services =
         | DirectoryPath
         /// The path is missing or its final filesystem shape is not yet known.
         | UnknownPath
-        /// The path shape could not be recovered from trusted local status.
-        | StatusUnavailablePath
+        /// The path is a tracked removal or status could not be read, so configured ignores cannot discard reconciliation.
+        | RemovalReconciliationPath
 
     /// Describes the only four admission outcomes shared by repository scans and Watch callbacks.
     type RepositoryPathClassification =
@@ -976,7 +976,7 @@ module Services =
 
         let matchesConfiguredIgnore =
             match pathKind with
-            | RepositoryPathKind.StatusUnavailablePath -> false
+            | RepositoryPathKind.RemovalReconciliationPath -> false
             | RepositoryPathKind.DirectoryPath ->
                 input.DirectoryIgnoreEntries
                 |> Array.exists directoryRuleMatchesCandidate
