@@ -22536,8 +22536,21 @@ module WatchTests =
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator publishes dirty ipc before apply seam`` () =
         withTempRepo (fun root ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let status = liveWatchStatus (Guid.NewGuid())
+            let durableStatus = graceStatusFromWorkingTree root (Guid.NewGuid()) Array.empty Array.empty
+
+            Services
+                .writeGraceStatusFile(durableStatus)
+                .GetAwaiter()
+                .GetResult()
+
+            let status =
+                { liveWatchStatus durableStatus.RootDirectoryId with
+                    RootDirectorySha256Hash = durableStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = durableStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>(durableStatus.Index.Keys)
+                }
 
             writeWatchStatusJsonWithRuntimeSurface status
             |> ignore
@@ -22554,13 +22567,20 @@ module WatchTests =
             let getBranch () =
                 Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-ipc-before-apply-test"))
 
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
-            let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
+            let inspectStatus () = Services.inspectGraceWatchStatus ()
+            let degradedResyncReasons = ResizeArray<string>()
+            let requestDegradedResync reason = degradedResyncReasons.Add(reason)
             let waitForSafePoint _ _ = Task.FromResult(())
             let reestablishIpc _ _ = Task.FromResult(())
 
-            let applyReference _ _ =
+            let applyReference _ (acceptedStatus: Services.GraceWatchStatus) =
                 task {
+                    acceptedStatus.HasPendingWatchWork
+                    |> should equal false
+
+                    acceptedStatus.IsWorkingTreeClean
+                    |> should equal true
+
                     let inspection =
                         Services
                             .inspectGraceWatchStatus()
@@ -22589,6 +22609,9 @@ module WatchTests =
                     applyReference
                     notification)
                     .Result
+
+            degradedResyncReasons.ToArray()
+            |> should equal Array.empty
 
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied)

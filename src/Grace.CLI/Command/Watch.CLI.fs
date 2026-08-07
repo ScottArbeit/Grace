@@ -6570,8 +6570,16 @@ module Watch =
             payload
             acceptedStatus
 
+    /// Identifies the exact dirty Watch snapshot published for one coordinator-owned materialization boundary.
+    type private CurrentBranchMaterializationPendingPublication =
+        {
+            ExpectedStatus: GraceStatus
+            ExpectedDirectoryIds: HashSet<DirectoryVersionId>
+            StartedAt: Instant
+        }
+
     /// Publishes and verifies the dirty materialization boundary before target mutation can begin.
-    let private tryPublishCurrentBranchMaterializationPendingStatus (_status: GraceWatchStatus) =
+    let private tryPublishCurrentBranchMaterializationPendingStatus () =
         try
             let expectedStatus =
                 readGraceStatusFileForPendingWorkTransition()
@@ -6579,13 +6587,18 @@ module Watch =
                     .GetResult()
 
             let directoryIds = expectedStatus.Index.Keys.ToHashSet()
+            let publicationStartedAt = getCurrentInstant ()
 
-            tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus directoryIds (fun () ->
-                updateGraceWatchInterprocessFile expectedStatus (Some directoryIds))
+            if
+                tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus directoryIds (fun () ->
+                    updateGraceWatchInterprocessFile expectedStatus (Some directoryIds)) then
+                Some { ExpectedStatus = expectedStatus; ExpectedDirectoryIds = directoryIds; StartedAt = publicationStartedAt }
+            else
+                None
         with
         | ex ->
             logToAnsiConsole Colors.Error $"Grace Watch could not prove materialization-pending IPC/status publication: {ex.Message}"
-            false
+            None
 
     /// Names the coordinator result for one exact same-branch Reference notification.
     type internal CurrentBranchMaterializationCoordinatorOutcomeReason =
@@ -6663,7 +6676,23 @@ module Watch =
         && inspection.OpenedReadOnly
 
     /// Converts current target, local queues, durable DB evidence, and inspected IPC into the private materialization gate.
-    let private currentBranchMaterializationStatusGate ignoreOwnedMaterializationPendingLatch payload (inspection: GraceWatchStatusInspection) =
+    let private currentBranchMaterializationStatusGate
+        ignoreOwnedMaterializationPendingLatch
+        ownedPendingPublication
+        payload
+        (inspection: GraceWatchStatusInspection)
+        =
+        let inspectionMatchesOwnedPendingPublication =
+            match ownedPendingPublication, inspection.Status, inspection.EffectiveMode with
+            | Some publication, Some status, Some GraceWatchRuntimeMode.HealthyIncremental when
+                hasManualPendingWatchWorkStatusFlag ()
+                && inspection.IsFresh
+                && inspection.HasCurrentRepositoryIdentity
+                && statusMatchesVerifiedPublication publication.ExpectedStatus publication.ExpectedDirectoryIds true publication.StartedAt status
+                ->
+                true
+            | _ -> false
+
         if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
             NotCurrentBranch
         elif updateInProgress () then
@@ -6673,14 +6702,22 @@ module Watch =
             Blocked "materialization pending status has not reached IPC"
         elif hasProcessablePendingWatchWork () then
             Blocked "process-local Watch queues have pending local observations"
-        elif inspection.IsUsable then
+        elif inspection.IsUsable
+             || inspectionMatchesOwnedPendingPublication then
             if not (hasReadableLocalStateDbAuthority ()) then
                 Degraded "missing local-state DB authority"
             else
                 match inspectDurableWatchJournalPendingEvidence () with
                 | Error _ -> Degraded "unreadable durable Watch journal authority"
                 | Ok true -> Blocked "durable Watch journal has pending local observations"
-                | Ok false -> Clean inspection.Status.Value
+                | Ok false ->
+                    let acceptedStatus =
+                        if inspectionMatchesOwnedPendingPublication then
+                            { inspection.Status.Value with HasPendingWatchWork = false; IsWorkingTreeClean = true }
+                        else
+                            inspection.Status.Value
+
+                    Clean acceptedStatus
         elif inspection.ReadError.IsSome then
             Degraded "unreadable Watch IPC/status authority"
         elif not inspection.Exists then
@@ -6781,7 +6818,7 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
                         let! inspection = clients.InspectLocalStatus()
 
-                        match currentBranchMaterializationStatusGate false payload inspection with
+                        match currentBranchMaterializationStatusGate false None payload inspection with
                         | NotCurrentBranch ->
                             terminalOutcome <-
                                 {
@@ -6820,7 +6857,7 @@ module Watch =
                                                         Decision = Some leaseDecision
                                                     }
                                             else
-                                                match currentBranchMaterializationStatusGate false payload leaseInspection with
+                                                match currentBranchMaterializationStatusGate false None payload leaseInspection with
                                                 | NotCurrentBranch ->
                                                     return
                                                         {
@@ -6838,9 +6875,9 @@ module Watch =
                                                             }
                                                     else
                                                         setGraceWatchPendingWorkStatusFlag true
-                                                        let materializationPendingPublished = tryPublishCurrentBranchMaterializationPendingStatus leaseStatus
+                                                        let materializationPendingPublication = tryPublishCurrentBranchMaterializationPendingStatus ()
 
-                                                        if not materializationPendingPublished then
+                                                        if materializationPendingPublication.IsNone then
                                                             setGraceWatchPendingWorkStatusFlag false
                                                             clients.RequestDegradedResync "materialization pending Watch IPC/status publication failed"
 
@@ -6890,7 +6927,13 @@ module Watch =
                                                                             Decision = Some preApplyDecision
                                                                         }
                                                                 else
-                                                                    match currentBranchMaterializationStatusGate true payload preApplyInspection with
+                                                                    match
+                                                                        currentBranchMaterializationStatusGate
+                                                                            true
+                                                                            materializationPendingPublication
+                                                                            payload
+                                                                            preApplyInspection
+                                                                        with
                                                                     | NotCurrentBranch ->
                                                                         setGraceWatchPendingWorkStatusFlag false
                                                                         publishPendingWatchWorkTransitionIfNeeded ()
@@ -7110,7 +7153,7 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync ->
                         let! inspection = clients.InspectLocalStatus()
 
-                        match currentBranchMaterializationStatusGate false payload inspection with
+                        match currentBranchMaterializationStatusGate false None payload inspection with
                         | NotCurrentBranch ->
                             terminalOutcome <-
                                 {
@@ -7804,7 +7847,7 @@ module Watch =
                 | Some payload -> payload
                 | None -> { CurrentBranchReferenceNotification.Default with RepositoryId = current.RepositoryId; BranchId = current.BranchId }
 
-            match currentBranchMaterializationStatusGate true gatePayload inspection with
+            match currentBranchMaterializationStatusGate true None gatePayload inspection with
             | Clean status ->
                 ensureCurrentBranchReplayReferenceRootAcknowledged status reference
 
