@@ -346,6 +346,8 @@ pub mod repository_status;
 pub use self::repository_status::RepositoryStatus;
 pub mod repository_visibility;
 pub use self::repository_visibility::RepositoryVisibility;
+pub mod resolve_reference_event_boundary_parameters;
+pub use self::resolve_reference_event_boundary_parameters::ResolveReferenceEventBoundaryParameters;
 pub mod save_directory_versions_parameters;
 pub use self::save_directory_versions_parameters::SaveDirectoryVersionsParameters;
 pub mod scoped_outbound_url;

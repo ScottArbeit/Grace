@@ -113,6 +113,11 @@ import {
     ReplayReferenceEventsParametersFromJSON,
     ReplayReferenceEventsParametersToJSON,
 } from '../models/ReplayReferenceEventsParameters';
+import {
+    type ResolveReferenceEventBoundaryParameters,
+    ResolveReferenceEventBoundaryParametersFromJSON,
+    ResolveReferenceEventBoundaryParametersToJSON,
+} from '../models/ResolveReferenceEventBoundaryParameters';
 
 export interface AnnotateBranchRequest {
     annotateParameters: AnnotateParameters;
@@ -212,6 +217,10 @@ export interface RebaseBranchRequest {
 
 export interface ReplayReferenceEventsRequest {
     replayReferenceEventsParameters: ReplayReferenceEventsParameters;
+}
+
+export interface ResolveReferenceEventBoundaryRequest {
+    resolveReferenceEventBoundaryParameters: ResolveReferenceEventBoundaryParameters;
 }
 
 export interface SaveBranchRequest {
@@ -1649,6 +1658,63 @@ export class BranchesApi extends runtime.BaseAPI {
      */
     async replayReferenceEvents(requestParameters: ReplayReferenceEventsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ReferenceReplayReturnValue> {
         const response = await this.replayReferenceEventsRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for resolveReferenceEventBoundary without sending the request
+     */
+    async resolveReferenceEventBoundaryRequestOpts(requestParameters: ResolveReferenceEventBoundaryRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['resolveReferenceEventBoundaryParameters'] == null) {
+            throw new runtime.RequiredError(
+                'resolveReferenceEventBoundaryParameters',
+                'Required parameter "resolveReferenceEventBoundaryParameters" was null or undefined when calling resolveReferenceEventBoundary().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/branch/resolveReferenceEventBoundary`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: ResolveReferenceEventBoundaryParametersToJSON(requestParameters['resolveReferenceEventBoundaryParameters']),
+        };
+    }
+
+    /**
+     * Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+     * Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+     */
+    async resolveReferenceEventBoundaryRaw(requestParameters: ResolveReferenceEventBoundaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ReferenceMaterializationBoundaryReturnValue>> {
+        const requestOptions = await this.resolveReferenceEventBoundaryRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ReferenceMaterializationBoundaryReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+     * Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+     */
+    async resolveReferenceEventBoundary(requestParameters: ResolveReferenceEventBoundaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ReferenceMaterializationBoundaryReturnValue> {
+        const response = await this.resolveReferenceEventBoundaryRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

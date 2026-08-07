@@ -97,5 +97,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Grace.CLI.Tests" />
+    <InternalsVisibleTo Include="Grace.Server.Tests" />
   </ItemGroup>
 </Project>

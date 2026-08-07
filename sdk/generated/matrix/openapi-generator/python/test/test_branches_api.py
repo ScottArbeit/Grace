@@ -202,6 +202,13 @@ class TestBranchesApi(unittest.TestCase):
         """
         pass
 
+    def test_resolve_reference_event_boundary(self) -> None:
+        """Test case for resolve_reference_event_boundary
+
+        Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+        """
+        pass
+
     def test_save_branch(self) -> None:
         """Test case for save_branch
 

@@ -164,6 +164,22 @@
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
             ReferenceType:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+    ResolveReferenceEventBoundaryParameters:
+      description: >-
+        Supplies the full local root tuple for missing-cursor recovery. Only a matching Save, Commit, or Checkpoint for
+        the same repository and branch returns its exact cursor; Created and Rebased branch bases, every other Reference
+        kind, and unmatched roots use the same immutable-snapshot tail baseline, even when the tuple matches.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            DirectoryVersionId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+            Sha256Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+            Blake3Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+          required: [DirectoryVersionId, Sha256Hash, Blake3Hash]
     ReplayReferenceEventsParameters:
       description: Replays eligible Reference events after one opaque cursor for the exact branch scope that produced it.
       allOf:

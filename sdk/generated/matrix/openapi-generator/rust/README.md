@@ -76,6 +76,7 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**promote_branch**](docs/BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**replay_reference_events**](docs/BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+*BranchesApi* | [**resolve_reference_event_boundary**](docs/BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
@@ -325,6 +326,7 @@ Class | Method | HTTP request | Description
  - [RepositoryReturnValue](docs/RepositoryReturnValue.md)
  - [RepositoryStatus](docs/RepositoryStatus.md)
  - [RepositoryVisibility](docs/RepositoryVisibility.md)
+ - [ResolveReferenceEventBoundaryParameters](docs/ResolveReferenceEventBoundaryParameters.md)
  - [SaveDirectoryVersionsParameters](docs/SaveDirectoryVersionsParameters.md)
  - [ScopedOutboundUrl](docs/ScopedOutboundUrl.md)
  - [SearchVisibility](docs/SearchVisibility.md)
