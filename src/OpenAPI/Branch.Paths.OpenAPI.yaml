@@ -578,6 +578,35 @@
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
 
+  /branch/replayReferenceEvents:
+    post:
+      tags:
+        - Branches
+      summary: Replay cursor-new Reference events.
+      description: Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+      operationId: ReplayReferenceEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Branch.Components.OpenAPI.yaml#/ReplayReferenceEventsParameters'
+            examples:
+              replay:
+                summary: Replay newer eligible Reference events
+                value:
+                  <<: *getBranchExample
+                  CursorRepositoryId: 46a7e2f4-58ad-43e8-883e-33c564b4a98b
+                  CursorBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  EventCursor: branch-event-v1:42
+      responses:
+        '200':
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceReplayResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getReferences:
     post:
       tags:

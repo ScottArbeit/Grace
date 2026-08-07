@@ -195,6 +195,13 @@ class TestBranchesApi(unittest.TestCase):
         """
         pass
 
+    def test_replay_reference_events(self) -> None:
+        """Test case for replay_reference_events
+
+        Replay cursor-new Reference events.
+        """
+        pass
+
     def test_save_branch(self) -> None:
         """Test case for save_branch
 

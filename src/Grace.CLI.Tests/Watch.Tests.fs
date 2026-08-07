@@ -21151,6 +21151,7 @@ module WatchTests =
         let requestCatchUp _ =
             requestedGenerations <- requestedGenerations + 1
             scheduler.Request() |> ignore
+            Task.FromResult(())
 
         (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
             refreshGraceStatusIfChanged
@@ -21206,6 +21207,7 @@ module WatchTests =
         let requestCatchUp _ =
             requestedGenerations <- requestedGenerations + 1
             scheduler.Request() |> ignore
+            Task.FromResult(())
 
         (Watch.processWatchTimerLocalRecoveryWithCatchUpForWatchTests
             (fun () ->
@@ -27871,3 +27873,285 @@ module WatchTests =
                 |> should contain "watch is a continuous foreground workflow"
 
                 File.Exists(ipcFileName) |> should equal true))
+
+    /// Creates a deterministic durable replay boundary without exposing cursor format assumptions to the replay seam.
+    let private replayBoundary cursor =
+        { ReferenceMaterializationBoundaryDto.Default with
+            RepositoryId = Guid.Parse("11111111-8030-4000-8000-111111111111")
+            BranchId = Guid.Parse("22222222-8030-4000-8000-222222222222")
+            DirectoryId = Guid.Parse("33333333-8030-4000-8000-333333333333")
+            Sha256Hash = Sha256Hash "root-n"
+            Blake3Hash = Blake3Hash "root-n-blake3"
+            EventCursor = cursor
+        }
+
+    /// Creates one eligible replay event with deterministic branch and root identity.
+    let private replayEvent cursor rootSuffix =
+        let boundary = replayBoundary cursor
+
+        { ReferenceReplayEventDto.Default with
+            EventCursor = cursor
+            Reference =
+                { CurrentBranchReferenceNotification.Default with
+                    ReferenceId = Guid.NewGuid()
+                    RepositoryId = boundary.RepositoryId
+                    BranchId = boundary.BranchId
+                    DirectoryId = Guid.Parse($"{rootSuffix:D8}-8030-4000-8000-444444444444")
+                    Sha256Hash = Sha256Hash $"root-{rootSuffix}"
+                    Blake3Hash = Blake3Hash $"root-{rootSuffix}-blake3"
+                    ReferenceType = ReferenceType.Save
+                }
+        }
+
+    /// Wraps one immutable replay interval in the typed Grace response envelope used by the SDK.
+    let private replayReturnValue (boundary: ReferenceMaterializationBoundaryDto) (events: ReferenceReplayEventDto array) scannedThroughCursor =
+        GraceReturnValue.Create
+            { ReferenceReplayDto.Default with
+                RepositoryId = boundary.RepositoryId
+                BranchId = boundary.BranchId
+                Events = events
+                ScannedThroughCursor = scannedThroughCursor
+            }
+            "cursor-replay-test"
+
+    /// Creates a coordinator outcome that permits one eligible event cursor to advance.
+    let private appliedReplayOutcome referenceId : Watch.CurrentBranchMaterializationCoordinatorOutcome =
+        ({ ReferenceId = referenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
+
+    /// Creates a same-root coordinator outcome that acknowledges an event without materializing twice.
+    let private sameRootReplayOutcome referenceId (payload: CurrentBranchReferenceNotification) : Watch.CurrentBranchMaterializationCoordinatorOutcome =
+        ({
+             ReferenceId = referenceId
+             Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
+             Decision = Some { NeedsMaterialization = false; Reason = Services.LatestCurrentBranchReferenceDecisionReason.SameRoot; Reference = Some payload }
+         }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
+
+    /// Creates a non-terminal safe-point outcome that must keep the matching event cursor replayable.
+    let private waitingReplayOutcome referenceId : Watch.CurrentBranchMaterializationCoordinatorOutcome =
+        ({ ReferenceId = referenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint; Decision = None }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
+
+    /// Proves one cursor-new event is applied once and an empty interval bypasses coordinator and pending behavior.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``cursor replay applies one newer event then no-newer wake bypasses coordinator`` () =
+        task {
+            let mutable durableBoundary = replayBoundary "opaque-n"
+            let event = replayEvent "opaque-n-plus-one" 1
+            let processed = ResizeArray<ReferenceId>()
+            let acknowledgements = ResizeArray<string>()
+            use replayGate = new SemaphoreSlim(1, 1)
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(Some durableBoundary)
+                     Replay =
+                         fun boundary ->
+                             let events = if boundary.EventCursor = "opaque-n" then [| event |] else Array.empty
+                             Task.FromResult(Ok(replayReturnValue boundary events "opaque-scanned"))
+                     ProcessReference =
+                         fun payload ->
+                             processed.Add(payload.ReferenceId)
+                             Task.FromResult(appliedReplayOutcome payload.ReferenceId)
+                     AcknowledgeCursor =
+                         fun expected reference cursor _ ->
+                             Assert.That(expected, Is.EqualTo(durableBoundary))
+                             acknowledgements.Add(cursor)
+
+                             let acceptedRoot =
+                                 reference
+                                 |> Option.map (fun payload -> payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash)
+                                 |> Option.defaultValue (expected.DirectoryId, expected.Sha256Hash, expected.Blake3Hash)
+
+                             let directoryId, sha256Hash, blake3Hash = acceptedRoot
+
+                             durableBoundary <-
+                                 { expected with DirectoryId = directoryId; Sha256Hash = sha256Hash; Blake3Hash = blake3Hash; EventCursor = cursor }
+
+                             Task.FromResult(durableBoundary)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            let! first = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+            let! second = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+
+            Assert.That(first.Reason, Is.EqualTo(Watch.CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged))
+            Assert.That(first.AcknowledgedEventCount, Is.EqualTo(1))
+            Assert.That(second.ReceivedEventCount, Is.EqualTo(0))
+
+            processed
+            |> Seq.toArray
+            |> should equal [| event.Reference.ReferenceId |]
+
+            acknowledgements
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    "opaque-n-plus-one"
+                    "opaque-scanned"
+                    "opaque-scanned"
+                |]
+        }
+
+    /// Proves concurrent direct and reconnect wakes converge through one durable cursor without duplicate apply.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``concurrent replay wakes materialize once and second wake observes advanced boundary`` () =
+        task {
+            let mutable durableBoundary = replayBoundary "opaque-before"
+            let event = replayEvent "opaque-event" 2
+            let mutable processCount = 0
+            use replayGate = new SemaphoreSlim(1, 1)
+            let applyStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let releaseApply = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(Some durableBoundary)
+                     Replay =
+                         fun boundary ->
+                             let events = if boundary.EventCursor = "opaque-before" then [| event |] else Array.empty
+                             Task.FromResult(Ok(replayReturnValue boundary events "opaque-closed"))
+                     ProcessReference =
+                         fun payload ->
+                             task {
+                                 processCount <- processCount + 1
+                                 applyStarted.TrySetResult(()) |> ignore
+                                 do! releaseApply.Task
+                                 return appliedReplayOutcome payload.ReferenceId
+                             }
+                     AcknowledgeCursor =
+                         fun expected reference cursor _ ->
+                             let payload = reference |> Option.defaultValue event.Reference
+
+                             durableBoundary <-
+                                 { expected with
+                                     DirectoryId = payload.DirectoryId
+                                     Sha256Hash = payload.Sha256Hash
+                                     Blake3Hash = payload.Blake3Hash
+                                     EventCursor = cursor
+                                 }
+
+                             Task.FromResult(durableBoundary)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            let first = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+            do! applyStarted.Task
+            let second = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+            releaseApply.TrySetResult(()) |> ignore
+            let! outcomes = Task.WhenAll(first, second)
+
+            Assert.That(processCount, Is.EqualTo(1))
+
+            Assert.That(
+                outcomes
+                |> Array.forall (fun outcome -> outcome.ScannedThroughAcknowledged),
+                Is.True
+            )
+        }
+
+    /// Proves wait, branch-change-equivalent rejection, and local-save safe-point outcomes never advance the event cursor.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``non-terminal replay event leaves cursor unadvanced and interval open`` () =
+        task {
+            let boundary = replayBoundary "opaque-before-wait"
+            let event = replayEvent "opaque-waiting" 3
+            let mutable acknowledgementCount = 0
+            use replayGate = new SemaphoreSlim(1, 1)
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(Some boundary)
+                     Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-wait"))
+                     ProcessReference = fun payload -> Task.FromResult(waitingReplayOutcome payload.ReferenceId)
+                     AcknowledgeCursor =
+                         fun _ _ _ _ ->
+                             acknowledgementCount <- acknowledgementCount + 1
+                             Task.FromResult(boundary)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            let! outcome = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+
+            Assert.That(outcome.Reason, Is.EqualTo(Watch.CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged))
+            Assert.That(outcome.AcknowledgedEventCount, Is.EqualTo(0))
+            Assert.That(outcome.ScannedThroughAcknowledged, Is.False)
+            Assert.That(acknowledgementCount, Is.EqualTo(0))
+        }
+
+    /// Proves same-root replay acknowledges without apply and persistence failure leaves the event replayable.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``same-root acknowledgement persists cursor while persistence failure replays idempotently`` () =
+        task {
+            let mutable durableBoundary = replayBoundary "opaque-replayable"
+            let event = replayEvent "opaque-same-root" 4
+            let mutable processCount = 0
+            let mutable failPersistence = true
+            use replayGate = new SemaphoreSlim(1, 1)
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(Some durableBoundary)
+                     Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-scan-closed"))
+                     ProcessReference =
+                         fun payload ->
+                             processCount <- processCount + 1
+                             Task.FromResult(sameRootReplayOutcome payload.ReferenceId payload)
+                     AcknowledgeCursor =
+                         fun expected reference cursor _ ->
+                             if failPersistence then
+                                 failPersistence <- false
+                                 Task.FromException<ReferenceMaterializationBoundaryDto>(SqliteException("forced cursor failure", 1))
+                             else
+                                 let payload = reference |> Option.defaultValue event.Reference
+
+                                 durableBoundary <-
+                                     { expected with
+                                         DirectoryId = payload.DirectoryId
+                                         Sha256Hash = payload.Sha256Hash
+                                         Blake3Hash = payload.Blake3Hash
+                                         EventCursor = cursor
+                                     }
+
+                                 Task.FromResult(durableBoundary)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            Assert.ThrowsAsync<SqliteException>(
+                Func<Task>(fun () -> Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None :> Task)
+            )
+            |> ignore
+
+            Assert.That(durableBoundary.EventCursor, Is.EqualTo("opaque-replayable"))
+            let! recovered = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+            Assert.That(recovered.Reason, Is.EqualTo(Watch.CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged))
+            Assert.That(processCount, Is.EqualTo(2))
+        }
+
+    /// Proves cancellation after apply but before acknowledgement keeps the durable cursor unchanged for safe replay.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``cancellation before replay acknowledgement leaves durable cursor unchanged`` () =
+        task {
+            let boundary = replayBoundary "opaque-before-cancel"
+            let event = replayEvent "opaque-cancelled" 5
+            let mutable acknowledgementCount = 0
+            use replayGate = new SemaphoreSlim(1, 1)
+            use cancellation = new CancellationTokenSource()
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(Some boundary)
+                     Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-cancel"))
+                     ProcessReference =
+                         fun payload ->
+                             cancellation.Cancel()
+                             Task.FromResult(appliedReplayOutcome payload.ReferenceId)
+                     AcknowledgeCursor =
+                         fun _ _ _ token ->
+                             token.ThrowIfCancellationRequested()
+                             acknowledgementCount <- acknowledgementCount + 1
+                             Task.FromResult(boundary)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            Assert.ThrowsAsync<OperationCanceledException>(
+                Func<Task>(fun () -> Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients cancellation.Token :> Task)
+            )
+            |> ignore
+
+            Assert.That(acknowledgementCount, Is.EqualTo(0))
+        }

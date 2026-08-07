@@ -6702,7 +6702,7 @@ module Watch =
             | _, Some GraceWatchRuntimeMode.Stopping -> Degraded "Watch IPC/status authority is stopping"
             | _ -> Degraded "ambiguous Watch IPC/status authority"
 
-    /// Runs protocol and latest-eligible BranchDto admission checks before the coordinator consults current Watch evidence.
+    /// Runs protocol admission and current local-root checks without consulting a BranchDto summary.
     let private currentBranchMaterializationDecision
         (clients: CurrentBranchMaterializationCoordinatorClients)
         (current: Grace.Shared.Client.Configuration.GraceConfiguration)
@@ -6712,23 +6712,14 @@ module Watch =
             match currentBranchReferenceProtocolValidationDecision current.RepositoryId current.BranchId payload with
             | Some decision -> return Ok decision
             | None ->
-                match! clients.GetCurrentBranch() with
-                | Error error ->
-                    let errorText = Markup.Escape(error.ToString())
+                let! inspection = clients.InspectLocalStatus()
 
-                    logToAnsiConsole Colors.Error $"Failed to refresh BranchDto for current-branch reference notification {payload.ReferenceId}: {errorText}."
+                let localStatus =
+                    match inspection.Status with
+                    | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
+                    | _ -> None
 
-                    return Error error
-                | Ok branchReturnValue ->
-                    let branchDto = branchReturnValue.ReturnValue
-                    let! inspection = clients.InspectLocalStatus()
-
-                    let localStatus =
-                        match inspection.Status with
-                        | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
-                        | _ -> None
-
-                    return Ok(decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus branchDto payload)
+                return Ok(revalidateAcceptedCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus payload)
         }
 
     /// Rechecks accepted Reference identity and root evidence while the coordinator refreshes the remaining Watch gates separately.
@@ -7519,11 +7510,6 @@ module Watch =
 
         logToAnsiConsole Colors.Verbose $"Current-branch Watch catch-up requested after {reason}."
 
-    do
-        lock transitionCatchUpRequestLock (fun () ->
-            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
-                fun () -> requestCurrentBranchReferenceCatchUp "branch transition SignalR subscription refresh")
-
     /// Completes a claimed lifecycle request and deliberately leaves later requests pending.
     let private completeCurrentBranchReferenceCatchUp (scheduler: CurrentBranchReferenceCatchUpScheduler) (claim: CurrentBranchReferenceCatchUpClaim) =
         scheduler.Complete(claim) |> ignore
@@ -7638,6 +7624,289 @@ module Watch =
     /// Runs the production lifecycle scheduler against injected clients after a real Watch callback queues fresh evidence.
     let internal runCurrentBranchReferenceCatchUpIfDueForWatchTests getCurrentBranch processReference =
         runCurrentBranchReferenceCatchUpIfDueWithClients currentBranchReferenceCatchUpScheduler getCurrentBranch processReference
+
+    /// Names the terminal result of one cursor-backed replay wake.
+    type internal CurrentBranchReferenceReplayOutcomeReason =
+        /// The exact current repository and branch have no persisted cursor; recovery belongs to issue #804.
+        | MissingBoundary = 0
+        /// The server rejected or failed the replay request without changing the durable cursor.
+        | ReplayFailed = 1
+        /// One eligible event did not reach a terminal acknowledgement, so the response interval remains open.
+        | EventNotAcknowledged = 2
+        /// Every eligible event and the server-declared scanned interval were durably acknowledged.
+        | IntervalAcknowledged = 3
+
+    /// Reports the bounded work completed by one durable cursor replay wake.
+    type internal CurrentBranchReferenceReplayOutcome =
+        {
+            Reason: CurrentBranchReferenceReplayOutcomeReason
+            ReceivedEventCount: int
+            AcknowledgedEventCount: int
+            ScannedThroughAcknowledged: bool
+        }
+
+    /// Provides injectable durable replay, materialization, and cursor-acknowledgement operations.
+    type internal CurrentBranchReferenceReplayClients =
+        {
+            ReadBoundary: unit -> Task<ReferenceMaterializationBoundaryDto option>
+            Replay: ReferenceMaterializationBoundaryDto -> Task<Result<GraceReturnValue<ReferenceReplayDto>, GraceError>>
+            ProcessReference: CurrentBranchReferenceNotification -> Task<CurrentBranchMaterializationCoordinatorOutcome>
+            AcknowledgeCursor: ReferenceMaterializationBoundaryDto
+                -> CurrentBranchReferenceNotification option
+                -> string
+                -> CancellationToken
+                -> Task<ReferenceMaterializationBoundaryDto>
+        }
+
+    /// Reports whether the coordinator outcome permits the matching eligible event cursor to advance.
+    let private currentBranchReplayEventReachedTerminalAcknowledgement (outcome: CurrentBranchMaterializationCoordinatorOutcome) =
+        match outcome.Reason, outcome.Decision with
+        | CurrentBranchMaterializationCoordinatorOutcomeReason.Applied, _
+        | CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed, _ -> true
+        | CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected, Some decision when
+            decision.Reason = LatestCurrentBranchReferenceDecisionReason.SameRoot
+            ->
+            true
+        | _ -> false
+
+    /// Replays one immutable server interval sequentially and advances only terminally acknowledged opaque cursors.
+    let private replayCurrentBranchReferenceEventsWithClients
+        (replayGate: SemaphoreSlim)
+        (clients: CurrentBranchReferenceReplayClients)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            do! replayGate.WaitAsync(cancellationToken)
+
+            try
+                cancellationToken.ThrowIfCancellationRequested()
+
+                match! clients.ReadBoundary() with
+                | None ->
+                    return
+                        {
+                            Reason = CurrentBranchReferenceReplayOutcomeReason.MissingBoundary
+                            ReceivedEventCount = 0
+                            AcknowledgedEventCount = 0
+                            ScannedThroughAcknowledged = false
+                        }
+                | Some initialBoundary ->
+                    match! clients.Replay initialBoundary with
+                    | Error _ ->
+                        return
+                            {
+                                Reason = CurrentBranchReferenceReplayOutcomeReason.ReplayFailed
+                                ReceivedEventCount = 0
+                                AcknowledgedEventCount = 0
+                                ScannedThroughAcknowledged = false
+                            }
+                    | Ok returnValue ->
+                        let replay = returnValue.ReturnValue
+
+                        if replay.RepositoryId
+                           <> initialBoundary.RepositoryId
+                           || replay.BranchId <> initialBoundary.BranchId
+                           || String.IsNullOrWhiteSpace replay.ScannedThroughCursor then
+                            return
+                                {
+                                    Reason = CurrentBranchReferenceReplayOutcomeReason.ReplayFailed
+                                    ReceivedEventCount = replay.Events.Length
+                                    AcknowledgedEventCount = 0
+                                    ScannedThroughAcknowledged = false
+                                }
+                        else
+                            let mutable currentBoundary = initialBoundary
+                            let mutable eventIndex = 0
+                            let mutable acknowledgedEventCount = 0
+                            let mutable responseIntervalOpen = true
+
+                            while responseIntervalOpen
+                                  && eventIndex < replay.Events.Length do
+                                cancellationToken.ThrowIfCancellationRequested()
+                                let replayEvent = replay.Events[eventIndex]
+
+                                if String.IsNullOrWhiteSpace replayEvent.EventCursor then
+                                    responseIntervalOpen <- false
+                                else
+                                    let! outcome = clients.ProcessReference replayEvent.Reference
+
+                                    if currentBranchReplayEventReachedTerminalAcknowledgement outcome then
+                                        let! acceptedBoundary =
+                                            clients.AcknowledgeCursor currentBoundary (Some replayEvent.Reference) replayEvent.EventCursor cancellationToken
+
+                                        currentBoundary <- acceptedBoundary
+                                        acknowledgedEventCount <- acknowledgedEventCount + 1
+                                        eventIndex <- eventIndex + 1
+                                    else
+                                        responseIntervalOpen <- false
+
+                            if responseIntervalOpen then
+                                let! _ = clients.AcknowledgeCursor currentBoundary None replay.ScannedThroughCursor cancellationToken
+
+                                return
+                                    {
+                                        Reason = CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged
+                                        ReceivedEventCount = replay.Events.Length
+                                        AcknowledgedEventCount = acknowledgedEventCount
+                                        ScannedThroughAcknowledged = true
+                                    }
+                            else
+                                return
+                                    {
+                                        Reason = CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged
+                                        ReceivedEventCount = replay.Events.Length
+                                        AcknowledgedEventCount = acknowledgedEventCount
+                                        ScannedThroughAcknowledged = false
+                                    }
+            finally
+                replayGate.Release() |> ignore
+        }
+
+    /// Serializes current-branch replay wakes so each interval starts from the latest durable cursor.
+    let private currentBranchReferenceReplayGate = new SemaphoreSlim(1, 1)
+
+    /// Persists an opaque cursor only after current branch, safe-state, root, and prior-boundary evidence are reread.
+    let private acknowledgeCurrentBranchReferenceReplayCursor
+        (expectedBoundary: ReferenceMaterializationBoundaryDto)
+        (reference: CurrentBranchReferenceNotification option)
+        eventCursor
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            cancellationToken.ThrowIfCancellationRequested()
+            let current = Current()
+
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Error error -> invalidOp $"Watch could not reread persisted repository identity before cursor acknowledgement: {error}"
+            | Ok persisted when
+                persisted.Configuration.RepositoryId
+                <> current.RepositoryId
+                || persisted.Configuration.BranchId
+                   <> current.BranchId
+                || expectedBoundary.RepositoryId
+                   <> current.RepositoryId
+                || expectedBoundary.BranchId <> current.BranchId
+                ->
+                invalidOp "Watch repository or branch identity changed before cursor acknowledgement."
+            | Ok _ -> ()
+
+            let! inspection = inspectGraceWatchStatus ()
+
+            let gatePayload =
+                match reference with
+                | Some payload -> payload
+                | None -> { CurrentBranchReferenceNotification.Default with RepositoryId = current.RepositoryId; BranchId = current.BranchId }
+
+            match currentBranchMaterializationStatusGate true gatePayload inspection with
+            | Clean status ->
+                match reference with
+                | Some payload when
+                    status.RootDirectoryId <> payload.DirectoryId
+                    && (status.RootDirectorySha256Hash
+                        <> payload.Sha256Hash
+                        || status.RootDirectoryBlake3Hash
+                           <> payload.Blake3Hash)
+                    ->
+                    invalidOp "Watch local root does not acknowledge the replayed Reference."
+                | _ -> ()
+
+                let acceptedBoundary =
+                    { expectedBoundary with
+                        DirectoryId = status.RootDirectoryId
+                        Sha256Hash = status.RootDirectorySha256Hash
+                        Blake3Hash = status.RootDirectoryBlake3Hash
+                        EventCursor = eventCursor
+                    }
+
+                let! durableBoundary =
+                    Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile expectedBoundary.RepositoryId expectedBoundary.BranchId
+
+                if durableBoundary <> Some expectedBoundary then
+                    invalidOp "Watch replay cursor changed before this response interval could acknowledge it."
+
+                cancellationToken.ThrowIfCancellationRequested()
+
+                return! Grace.CLI.LocalStateDb.advanceRemoteReferenceBoundaryCursor current.GraceStatusFile expectedBoundary acceptedBoundary cancellationToken
+            | NotCurrentBranch -> return invalidOp "Watch branch identity changed before cursor acknowledgement."
+            | Blocked reason -> return invalidOp $"Watch local work blocked cursor acknowledgement: {reason}."
+            | Degraded reason -> return invalidOp $"Watch local state blocked cursor acknowledgement: {reason}."
+        }
+
+    /// Invokes the typed replay route from the current durable boundary and processes eligible events one at a time.
+    let private replayCurrentBranchReferenceEvents (cancellationToken: CancellationToken) =
+        task {
+            try
+                let current = Current()
+
+                let clients =
+                    {
+                        ReadBoundary =
+                            fun () -> Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                        Replay =
+                            fun boundary ->
+                                let parameters =
+                                    ReplayReferenceEventsParameters(
+                                        OwnerId = $"{current.OwnerId}",
+                                        OwnerName = current.OwnerName,
+                                        OrganizationId = $"{current.OrganizationId}",
+                                        OrganizationName = current.OrganizationName,
+                                        RepositoryId = $"{current.RepositoryId}",
+                                        RepositoryName = current.RepositoryName,
+                                        BranchId = $"{current.BranchId}",
+                                        BranchName = current.BranchName,
+                                        CursorRepositoryId = $"{boundary.RepositoryId}",
+                                        CursorBranchId = $"{boundary.BranchId}",
+                                        EventCursor = boundary.EventCursor,
+                                        CorrelationId = generateCorrelationId ()
+                                    )
+
+                                Grace.SDK.Branch.ReplayReferenceEvents parameters
+                        ProcessReference =
+                            fun payload ->
+                                runCurrentBranchMaterializationCoordinator
+                                    {
+                                        GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                                        InspectLocalStatus = inspectGraceWatchStatus
+                                        RequestDegradedResync = requestGraceWatchExplicitResync
+                                        WaitForSafePoint = fun _ _ -> Task.FromResult(())
+                                        ReestablishIpc = fun _ _ -> Task.FromResult(())
+                                        ApplyReference = applyCurrentBranchReferenceMaterialization
+                                        PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
+                                        ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
+                                        MaxAttempts = Some 1
+                                    }
+                                    payload
+                        AcknowledgeCursor = acknowledgeCurrentBranchReferenceReplayCursor
+                    }
+
+                let! outcome = replayCurrentBranchReferenceEventsWithClients currentBranchReferenceReplayGate clients cancellationToken
+
+                match outcome.Reason with
+                | CurrentBranchReferenceReplayOutcomeReason.MissingBoundary ->
+                    logToAnsiConsole
+                        Colors.Verbose
+                        "Watch replay skipped because this branch has no persisted cursor; missing-cursor recovery belongs to a later slice."
+                | CurrentBranchReferenceReplayOutcomeReason.ReplayFailed ->
+                    logToAnsiConsole Colors.Error "Watch could not replay the current branch cursor; the durable cursor remains unchanged."
+                | CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged ->
+                    logToAnsiConsole Colors.Verbose "Watch replay stopped at an event that has not reached a safe terminal acknowledgement."
+                | CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged -> ()
+                | _ -> logToAnsiConsole Colors.Error "Watch replay returned an unsupported local outcome; the durable cursor remains unchanged."
+            with
+            | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> ()
+            | ex -> logToAnsiConsole Colors.Error $"Watch replay stopped without acknowledging the failing event: {Markup.Escape(ex.Message)}."
+        }
+
+    do
+        lock transitionCatchUpRequestLock (fun () ->
+            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
+                fun () ->
+                    replayCurrentBranchReferenceEvents CancellationToken.None
+                    |> ignore)
+
+    /// Exposes sequential cursor replay to deterministic Watch tests without a server or filesystem watcher.
+    let internal replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients cancellationToken =
+        replayCurrentBranchReferenceEventsWithClients replayGate clients cancellationToken
 
     /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
     let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
@@ -7984,7 +8253,10 @@ module Watch =
                     match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
                     | ObservedCurrentMarker when isRecentGraceUpdateMarkerCompletion completedUtc ->
                         recordGraceUpdateMarkerCompletedUtc completedUtc
-                        requestCurrentBranchReferenceCatchUp "current-branch reference materialization marker deletion"
+
+                        replayCurrentBranchReferenceEvents CancellationToken.None
+                        |> ignore
+
                         logToAnsiConsole Colors.Important $"Reference materialization update has finished."
                     | _ ->
                         let reason = $"reference-materialization marker deletion did not provide current observed completion evidence for {args.FullPath}."
@@ -9610,7 +9882,7 @@ module Watch =
             processChangedFilesClient
             catchUpCurrentBranchReference
 
-    /// Preserves pending-work recovery evidence across GraceStatus refresh processing before queuing a lifecycle catch-up generation.
+    /// Preserves pending-work recovery evidence across local processing before invoking one cursor replay wake.
     let private processWatchTimerLocalRecoveryWithCatchUp
         refreshGraceStatusIfChanged
         processChangedFilesClient
@@ -9629,7 +9901,7 @@ module Watch =
 
             if (localWorkWasPending && not (hasPendingWork ()))
                || (resyncWasPending && not (isResyncPending ())) then
-                requestCatchUp "local Watch recovery"
+                do! requestCatchUp "local Watch recovery"
         }
 
     /// Exposes timer recovery sequencing so Watch tests can prove a refresh cannot erase its blocked-to-safe wake-up.
@@ -9836,7 +10108,7 @@ module Watch =
                     use notifyCurrentBranchReference =
                         signalRConnection.On<CurrentBranchReferenceNotification>(
                             "NotifyCurrentBranchReference",
-                            fun payload -> (handleCurrentBranchReferenceNotification payload) :> Task
+                            fun _payload -> (replayCurrentBranchReferenceEvents cancellationToken) :> Task
                         )
 
                     use notifyOnSave =
@@ -9888,11 +10160,7 @@ module Watch =
                                     (fun () ->
                                         refreshSignalRSubscriptionsForActiveConnection (fun () ->
                                             registerCurrentSignalRParentBranch signalRConnection cancellationToken))
-                                    (fun () ->
-                                        task {
-                                            requestCurrentBranchReferenceCatchUp "SignalR subscription recovery"
-                                            do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
-                                        })
+                                    (fun () -> replayCurrentBranchReferenceEvents cancellationToken)
 
                             ()
                         })
@@ -9955,11 +10223,7 @@ module Watch =
                             readGraceStatusFile
                             updateGraceWatchInterprocessFile
                             processChangedFiles
-                            (fun () ->
-                                task {
-                                    requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
-                                    do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
-                                })
+                            (fun () -> replayCurrentBranchReferenceEvents cancellationToken)
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -9994,16 +10258,11 @@ module Watch =
                                         readGraceStatusFile
                                         updateGraceWatchInterprocessFile
                                         processChangedFiles
-                                        (fun () ->
-                                            task {
-                                                requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
-                                                do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
-                                            }))
+                                        (fun () -> replayCurrentBranchReferenceEvents cancellationToken))
                                 hasPendingWatchWork
                                 isGraceWatchResyncPending
-                                requestCurrentBranchReferenceCatchUp
+                                (fun _ -> replayCurrentBranchReferenceEvents cancellationToken)
 
-                        do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 

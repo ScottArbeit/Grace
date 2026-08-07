@@ -3119,6 +3119,103 @@ module LocalStateDb =
                 return None
         }
 
+    /// Advances one exact branch cursor and its accepted root only when the previously read boundary is still current.
+    let private advanceRemoteReferenceBoundaryCursorCore
+        (dbPath: string)
+        (expectedBoundary: ReferenceMaterializationBoundaryDto)
+        (acceptedBoundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        (beforeCommit: unit -> unit)
+        =
+        task {
+            if expectedBoundary.RepositoryId = RepositoryId.Empty
+               || expectedBoundary.BranchId = BranchId.Empty
+               || String.IsNullOrWhiteSpace expectedBoundary.EventCursor then
+                invalidArg (nameof expectedBoundary) "The expected remote Reference boundary must contain exact scope and cursor identity."
+
+            if acceptedBoundary.RepositoryId
+               <> expectedBoundary.RepositoryId
+               || acceptedBoundary.BranchId
+                  <> expectedBoundary.BranchId
+               || acceptedBoundary.DirectoryId = DirectoryVersionId.Empty
+               || String.IsNullOrWhiteSpace(string acceptedBoundary.Sha256Hash)
+               || String.IsNullOrWhiteSpace(string acceptedBoundary.Blake3Hash)
+               || String.IsNullOrWhiteSpace acceptedBoundary.EventCursor then
+                invalidArg (nameof acceptedBoundary) "The accepted remote Reference boundary must preserve scope and contain complete root and cursor identity."
+
+            cancellationToken.ThrowIfCancellationRequested()
+            do! ensureDbInitialized dbPath
+            cancellationToken.ThrowIfCancellationRequested()
+
+            do!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+                        cancellationToken.ThrowIfCancellationRequested()
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
+
+                        try
+                            use command = connection.CreateCommand()
+
+                            command.CommandText <-
+                                "UPDATE remote_reference_boundaries SET root_directory_version_id = $accepted_root_id, root_directory_sha256_hash = $accepted_root_sha256_hash, root_directory_blake3_hash = $accepted_root_blake3_hash, event_cursor = $accepted_event_cursor WHERE repository_id = $repository_id AND branch_id = $branch_id AND root_directory_version_id = $expected_root_id AND root_directory_sha256_hash = $expected_root_sha256_hash AND root_directory_blake3_hash = $expected_root_blake3_hash AND event_cursor = $expected_event_cursor;"
+
+                            command.Parameters.AddWithValue("$accepted_root_id", acceptedBoundary.DirectoryId.ToString())
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$accepted_root_sha256_hash", acceptedBoundary.Sha256Hash)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$accepted_root_blake3_hash", acceptedBoundary.Blake3Hash)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$accepted_event_cursor", acceptedBoundary.EventCursor)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$repository_id", expectedBoundary.RepositoryId.ToString())
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$branch_id", expectedBoundary.BranchId.ToString())
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$expected_root_id", expectedBoundary.DirectoryId.ToString())
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$expected_root_sha256_hash", expectedBoundary.Sha256Hash)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$expected_root_blake3_hash", expectedBoundary.Blake3Hash)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$expected_event_cursor", expectedBoundary.EventCursor)
+                            |> ignore
+
+                            let affectedRows = command.ExecuteNonQuery()
+
+                            if affectedRows <> 1 then
+                                invalidOp "The remote Reference boundary changed before its cursor acknowledgement could commit."
+
+                            beforeCommit ()
+                            cancellationToken.ThrowIfCancellationRequested()
+                            executeNonQuery connection "COMMIT;"
+                            return ()
+                        with
+                        | ex ->
+                            executeNonQuery connection "ROLLBACK;"
+                            return raise ex
+                    })
+
+            return acceptedBoundary
+        }
+
+    /// Persists a terminally acknowledged opaque cursor without rewriting the already accepted local status snapshot.
+    let advanceRemoteReferenceBoundaryCursor dbPath expectedBoundary acceptedBoundary cancellationToken =
+        advanceRemoteReferenceBoundaryCursorCore dbPath expectedBoundary acceptedBoundary cancellationToken ignore
+
+    /// Exposes the final pre-commit seam so cancellation and persistence failures prove that cursor replay remains safe.
+    let internal advanceRemoteReferenceBoundaryCursorWithBeforeCommit dbPath expectedBoundary acceptedBoundary cancellationToken beforeCommit =
+        advanceRemoteReferenceBoundaryCursorCore dbPath expectedBoundary acceptedBoundary cancellationToken beforeCommit
+
     /// Replaces the local status snapshot while preserving the existing unit-returning caller contract.
     let replaceStatusSnapshot (dbPath: string) (graceStatus: GraceStatus) =
         task {

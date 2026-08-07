@@ -164,6 +164,21 @@
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
             ReferenceType:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+    ReplayReferenceEventsParameters:
+      description: Replays eligible Reference events after one opaque cursor for the exact branch scope that produced it.
+      allOf:
+        - $ref: '#/BranchQueryParameters'
+        - type: object
+          properties:
+            CursorRepositoryId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+            CursorBranchId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+            EventCursor:
+              type: string
+              minLength: 1
+              description: Opaque cursor returned by Grace Server; clients must not interpret or modify it.
+          required: [CursorRepositoryId, CursorBranchId, EventCursor]
     GetReferencesParameters:
       description: Parameters for /branch/getReferences and reference-type list endpoints.
       allOf:
@@ -653,6 +668,93 @@
           additionalProperties:
             type: string
       required: [ReturnValue, EventTime, CorrelationId, Properties]
+    CurrentBranchReferenceNotification:
+      description: Root identity for one eligible current-branch Reference event.
+      type: object
+      additionalProperties: false
+      properties:
+        ReferenceId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        BranchName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+        DirectoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+        Sha256Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+        ReferenceType:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceText'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+      required:
+        - ReferenceId
+        - OwnerId
+        - OrganizationId
+        - RepositoryId
+        - BranchId
+        - BranchName
+        - DirectoryId
+        - Sha256Hash
+        - Blake3Hash
+        - ReferenceType
+        - ReferenceText
+        - CorrelationId
+    ReferenceReplayEventApiDto:
+      description: One eligible Reference event paired with its opaque durable branch-event cursor.
+      type: object
+      additionalProperties: false
+      properties:
+        EventCursor:
+          type: string
+          minLength: 1
+          description: Opaque cursor interpreted only by Grace Server.
+        Reference:
+          $ref: '#/CurrentBranchReferenceNotification'
+      required: [EventCursor, Reference]
+    ReferenceReplayApiDto:
+      description: Eligible Reference events and the exact closure of one immutable branch-event snapshot.
+      type: object
+      additionalProperties: false
+      properties:
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        Events:
+          type: array
+          items:
+            $ref: '#/ReferenceReplayEventApiDto'
+        ScannedThroughCursor:
+          type: string
+          minLength: 1
+          description: Opaque cursor closing the complete response interval; clients must not interpret or modify it.
+      required: [RepositoryId, BranchId, Events, ScannedThroughCursor]
+    ReferenceReplayReturnValue:
+      description: Grace response envelope containing one closed branch Reference replay interval.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/ReferenceReplayApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
     ReferenceListReturnValue:
       description: Grace response envelope whose ReturnValue contains references.
       type: object
@@ -904,6 +1006,12 @@
         application/json:
           schema:
             $ref: '#/ReferenceMaterializationBoundaryReturnValue'
+    ReferenceReplayResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/ReferenceReplayReturnValue'
     ReferenceListResponse:
       description: OK
       content:

@@ -91,6 +91,7 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**listBranchTags**](docs/BranchesApi.md#listbranchtags) | **POST** /branch/getTags | List branch tags.
 *BranchesApi* | [**promoteBranch**](docs/BranchesApi.md#promotebranch) | **POST** /branch/promote | Promote the current branch content.
 *BranchesApi* | [**rebaseBranch**](docs/BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch.
+*BranchesApi* | [**replayReferenceEvents**](docs/BranchesApi.md#replayreferenceevents) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
@@ -216,6 +217,7 @@ All URIs are relative to *http://localhost:5000*
 - [CreateReferenceParameters](docs/CreateReferenceParameters.md)
 - [CreateRepositoryParameters](docs/CreateRepositoryParameters.md)
 - [CreateWebhookRuleParameters](docs/CreateWebhookRuleParameters.md)
+- [CurrentBranchReferenceNotification](docs/CurrentBranchReferenceNotification.md)
 - [DedupeDiscoverySnapshot](docs/DedupeDiscoverySnapshot.md)
 - [DeleteBranchParameters](docs/DeleteBranchParameters.md)
 - [DeleteOrganizationParameters](docs/DeleteOrganizationParameters.md)
@@ -323,9 +325,13 @@ All URIs are relative to *http://localhost:5000*
 - [ReferenceMaterializationBoundaryApiDto](docs/ReferenceMaterializationBoundaryApiDto.md)
 - [ReferenceMaterializationBoundaryReturnValue](docs/ReferenceMaterializationBoundaryReturnValue.md)
 - [ReferenceParameters](docs/ReferenceParameters.md)
+- [ReferenceReplayApiDto](docs/ReferenceReplayApiDto.md)
+- [ReferenceReplayEventApiDto](docs/ReferenceReplayEventApiDto.md)
+- [ReferenceReplayReturnValue](docs/ReferenceReplayReturnValue.md)
 - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
 - [ReferenceType](docs/ReferenceType.md)
 - [RegisterContentBlockUploadParameters](docs/RegisterContentBlockUploadParameters.md)
+- [ReplayReferenceEventsParameters](docs/ReplayReferenceEventsParameters.md)
 - [RepositoryBooleanReturnValue](docs/RepositoryBooleanReturnValue.md)
 - [RepositoryBranchesReturnValue](docs/RepositoryBranchesReturnValue.md)
 - [RepositoryCommandReturnValue](docs/RepositoryCommandReturnValue.md)

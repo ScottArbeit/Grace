@@ -680,3 +680,128 @@ type ReferenceMaterializationBoundarySelectionTests() =
 
         Assert.That(promoted.Value.DirectoryId, Is.EqualTo(promotion.Reference.DirectoryId))
         Assert.That(basedOnly.Value.DirectoryId, Is.EqualTo(branchBase.Reference.DirectoryId))
+
+/// Proves Watch replay is closed by one immutable branch-event snapshot and server-owned cursor interpretation.
+[<Parallelizable(ParallelScope.All)>]
+type ReferenceEventReplayTests() =
+    let repositoryId = Guid.Parse("11111111-8030-4000-8000-111111111111")
+    let branchId = Guid.Parse("22222222-8030-4000-8000-222222222222")
+
+    /// Builds a durable Branch event with deterministic Reference and root identity.
+    let referenceEvent position referenceType =
+        let referenceId = Guid.Parse($"{position + 10:D8}-8030-4000-8000-222222222222")
+        let directoryId = Guid.Parse($"{position + 20:D8}-8030-4000-8000-222222222222")
+
+        let reference =
+            { ReferenceDto.Default with
+                ReferenceId = referenceId
+                OwnerId = Guid.Parse("33333333-8030-4000-8000-333333333333")
+                OrganizationId = Guid.Parse("44444444-8030-4000-8000-444444444444")
+                RepositoryId = repositoryId
+                BranchId = branchId
+                DirectoryId = directoryId
+                Sha256Hash = Sha256Hash $"sha-{position}"
+                Blake3Hash = Blake3Hash $"blake3-{position}"
+                ReferenceType = referenceType
+                ReferenceText = ReferenceText $"reference-{position}"
+            }
+
+        let event =
+            match referenceType with
+            | ReferenceType.Commit -> BranchEventType.Committed(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | ReferenceType.Checkpoint ->
+                BranchEventType.Checkpointed(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | ReferenceType.Save -> BranchEventType.Saved(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | ReferenceType.Tag -> BranchEventType.Tagged(reference, directoryId, reference.Sha256Hash, reference.Blake3Hash, reference.ReferenceText)
+            | _ -> invalidArg (nameof referenceType) "Unsupported replay test Reference type."
+
+        ({ Event = event; Metadata = EventMetadata.New $"correlation-{position}" GraceSystemUser }: BranchEvent)
+
+    /// Eligible events preserve durable order and exact positions while ineligible events still close the scanned range.
+    [<Test>]
+    member _.EligibleEventsRemainOrderedAcrossIneligibleEvents() =
+        let events =
+            [|
+                referenceEvent 0 ReferenceType.Tag
+                referenceEvent 1 ReferenceType.Save
+                referenceEvent 2 ReferenceType.Commit
+                ({ Event = BranchEventType.NameSet(BranchName "renamed"); Metadata = EventMetadata.New "correlation-3" GraceSystemUser }: BranchEvent)
+                referenceEvent 4 ReferenceType.Checkpoint
+            |]
+
+        let result = Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId branchId "branch-event-v1:0" events
+
+        match result with
+        | Error failure -> Assert.Fail($"Expected replay success, got {failure}.")
+        | Ok replay ->
+            Assert.That(
+                replay.Events
+                |> Array.map (fun replayEvent -> replayEvent.EventCursor)
+                |> String.concat "|",
+                Is.EqualTo("branch-event-v1:1|branch-event-v1:2|branch-event-v1:4")
+            )
+
+            Assert.That(
+                replay.Events
+                |> Array.map (fun replayEvent -> string replayEvent.Reference.ReferenceType)
+                |> String.concat "|",
+                Is.EqualTo("ReferenceType.Save|ReferenceType.Commit|ReferenceType.Checkpoint")
+            )
+
+            Assert.That(replay.ScannedThroughCursor, Is.EqualTo("branch-event-v1:4"))
+
+    /// An empty eligible interval advances only to the exact end of the immutable scanned snapshot.
+    [<Test>]
+    member _.EmptyEligibleIntervalReturnsScannedThroughClosure() =
+        let events =
+            [|
+                referenceEvent 0 ReferenceType.Save
+                referenceEvent 1 ReferenceType.Tag
+                ({ Event = BranchEventType.NameSet(BranchName "renamed"); Metadata = EventMetadata.New "correlation-2" GraceSystemUser }: BranchEvent)
+            |]
+
+        match Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId branchId "branch-event-v1:0" events with
+        | Error failure -> Assert.Fail($"Expected replay success, got {failure}.")
+        | Ok replay ->
+            Assert.That(replay.Events, Is.Empty)
+            Assert.That(replay.ScannedThroughCursor, Is.EqualTo("branch-event-v1:2"))
+
+    /// Cursor syntax, version, future position, and scope are rejected without a partial replay response.
+    [<TestCase("not-a-cursor", ReferenceReplayCursorFailure.Malformed)>]
+    [<TestCase("branch-event-v2:0", ReferenceReplayCursorFailure.UnsupportedVersion)>]
+    [<TestCase("branch-event-v1:9", ReferenceReplayCursorFailure.Future)>]
+    member _.InvalidCursorIsTyped(cursor, expectedFailure: int) =
+        let result =
+            Grace.Server.Branch.replayReferenceEventsAfterCursor
+                repositoryId
+                branchId
+                repositoryId
+                branchId
+                cursor
+                [|
+                    referenceEvent 0 ReferenceType.Save
+                |]
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected cursor rejection.")
+        | Error failure -> Assert.That(failure, Is.EqualTo(enum<ReferenceReplayCursorFailure> expectedFailure))
+
+    /// Cursor scope is validated separately from its opaque position token.
+    [<Test>]
+    member _.CrossScopeCursorIsTyped() =
+        let events =
+            [|
+                referenceEvent 0 ReferenceType.Save
+            |]
+
+        let crossRepository = Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId (Guid.NewGuid()) branchId "branch-event-v1:0" events
+
+        let crossBranch = Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId (Guid.NewGuid()) "branch-event-v1:0" events
+
+        match crossRepository with
+        | Ok _ -> Assert.Fail("Expected repository-scoped cursor rejection.")
+        | Error failure -> Assert.That(failure, Is.EqualTo(ReferenceReplayCursorFailure.RepositoryMismatch))
+
+        match crossBranch with
+        | Ok _ -> Assert.Fail("Expected branch-scoped cursor rejection.")
+        | Error failure -> Assert.That(failure, Is.EqualTo(ReferenceReplayCursorFailure.BranchMismatch))

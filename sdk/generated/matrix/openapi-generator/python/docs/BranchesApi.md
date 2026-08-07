@@ -28,6 +28,7 @@ Method | HTTP request | Description
 [**list_branch_tags**](BranchesApi.md#list_branch_tags) | **POST** /branch/getTags | List branch tags.
 [**promote_branch**](BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 [**rebase_branch**](BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
+[**replay_reference_events**](BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
 [**save_branch**](BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 [**tag_branch**](BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 
@@ -1956,6 +1957,87 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **replay_reference_events**
+> ReferenceReplayReturnValue replay_reference_events(replay_reference_events_parameters)
+
+Replay cursor-new Reference events.
+
+Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.reference_replay_return_value import ReferenceReplayReturnValue
+from grace_generated_openapi_probe.models.replay_reference_events_parameters import ReplayReferenceEventsParameters
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    replay_reference_events_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"CursorRepositoryId":"46a7e2f4-58ad-43e8-883e-33c564b4a98b","CursorBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","EventCursor":"branch-event-v1:42"} # ReplayReferenceEventsParameters | 
+
+    try:
+        # Replay cursor-new Reference events.
+        api_response = api_instance.replay_reference_events(replay_reference_events_parameters)
+        print("The response of BranchesApi->replay_reference_events:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->replay_reference_events: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **replay_reference_events_parameters** | [**ReplayReferenceEventsParameters**](ReplayReferenceEventsParameters.md)|  | 
+
+### Return type
+
+[**ReferenceReplayReturnValue**](ReferenceReplayReturnValue.md)
 
 ### Authorization
 

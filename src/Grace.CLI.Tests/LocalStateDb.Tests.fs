@@ -557,6 +557,149 @@ module LocalStateDbTests =
                 Assert.That(storedBoundary, Is.EqualTo(None))
             })
 
+    /// A terminal replay acknowledgement advances the exact cursor and accepted root without rewriting status tables.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``remote reference cursor acknowledgement advances exact boundary`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("88888888-8030-4000-8000-888888888888")
+                let originalStatus = { createTestStatus originalRoot (Sha256Hash "original") 10L with RootDirectoryBlake3Hash = Blake3Hash "original-blake3" }
+
+                let originalBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = originalRoot
+                        Sha256Hash = originalStatus.RootDirectorySha256Hash
+                        Blake3Hash = originalStatus.RootDirectoryBlake3Hash
+                        EventCursor = "opaque-original"
+                    }
+
+                let! _ =
+                    LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                        configuration.GraceStatusFile
+                        originalStatus
+                        originalBoundary
+                        CancellationToken.None
+
+                let acceptedBoundary =
+                    { originalBoundary with
+                        DirectoryId = Guid.Parse("99999999-8030-4000-8000-999999999999")
+                        Sha256Hash = Sha256Hash "accepted"
+                        Blake3Hash = Blake3Hash "accepted-blake3"
+                        EventCursor = "opaque-accepted"
+                    }
+
+                let! advanced =
+                    LocalStateDb.advanceRemoteReferenceBoundaryCursor configuration.GraceStatusFile originalBoundary acceptedBoundary CancellationToken.None
+
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                Assert.That(advanced, Is.EqualTo(acceptedBoundary))
+                Assert.That(stored, Is.EqualTo(Some acceptedBoundary))
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+            })
+
+    /// A stale response interval cannot overwrite a cursor already acknowledged by another completion.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``stale remote reference cursor acknowledgement leaves newer boundary unchanged`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let root = Guid.Parse("aaaaaaaa-8030-4000-8000-aaaaaaaaaaaa")
+                let status = { createTestStatus root (Sha256Hash "root") 10L with RootDirectoryBlake3Hash = Blake3Hash "root-blake3" }
+
+                let originalBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = root
+                        Sha256Hash = status.RootDirectorySha256Hash
+                        Blake3Hash = status.RootDirectoryBlake3Hash
+                        EventCursor = "opaque-1"
+                    }
+
+                let! _ =
+                    LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status originalBoundary CancellationToken.None
+
+                let newerBoundary = { originalBoundary with EventCursor = "opaque-2" }
+
+                let! _ = LocalStateDb.advanceRemoteReferenceBoundaryCursor configuration.GraceStatusFile originalBoundary newerBoundary CancellationToken.None
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.advanceRemoteReferenceBoundaryCursor
+                            configuration.GraceStatusFile
+                            originalBoundary
+                            { originalBoundary with EventCursor = "opaque-stale" }
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(stored, Is.EqualTo(Some newerBoundary))
+            })
+
+    /// Cancellation or a SQLite failure before commit leaves the prior opaque cursor replayable.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``remote reference cursor failure leaves prior boundary replayable`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let root = Guid.Parse("bbbbbbbb-8030-4000-8000-bbbbbbbbbbbb")
+                let status = { createTestStatus root (Sha256Hash "root") 10L with RootDirectoryBlake3Hash = Blake3Hash "root-blake3" }
+
+                let originalBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = root
+                        Sha256Hash = status.RootDirectorySha256Hash
+                        Blake3Hash = status.RootDirectoryBlake3Hash
+                        EventCursor = "opaque-before"
+                    }
+
+                let! _ =
+                    LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status originalBoundary CancellationToken.None
+
+                use cancellation = new CancellationTokenSource()
+
+                Assert.ThrowsAsync<OperationCanceledException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.advanceRemoteReferenceBoundaryCursorWithBeforeCommit
+                            configuration.GraceStatusFile
+                            originalBoundary
+                            { originalBoundary with EventCursor = "opaque-cancelled" }
+                            cancellation.Token
+                            cancellation.Cancel
+                        :> Task)
+                )
+                |> ignore
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery
+                        connection
+                        "CREATE TRIGGER reject_remote_reference_cursor BEFORE UPDATE ON remote_reference_boundaries BEGIN SELECT RAISE(ABORT, 'forced cursor failure'); END;"
+
+                Assert.ThrowsAsync<SqliteException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.advanceRemoteReferenceBoundaryCursor
+                            configuration.GraceStatusFile
+                            originalBoundary
+                            { originalBoundary with EventCursor = "opaque-failed" }
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(stored, Is.EqualTo(Some originalBoundary))
+            })
+
     /// Verifies that initializes watch journal schema and applied through metadata.
     [<Test>]
     let ``initializes watch journal schema and applied through metadata`` () =

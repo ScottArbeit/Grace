@@ -207,6 +207,14 @@ module Reference =
                 EventCursor = String.Empty
             }
 
+    /// Classifies why a Watch replay cursor cannot name a valid interval in the requested branch event stream.
+    type ReferenceReplayCursorFailure =
+        | Malformed = 0
+        | UnsupportedVersion = 1
+        | Future = 2
+        | RepositoryMismatch = 3
+        | BranchMismatch = 4
+
     /// Describes a same-branch Reference that current-branch Watch clients may inspect after server-side recomputation.
     [<CLIMutable; GenerateSerializer>]
     type CurrentBranchReferenceNotification =
@@ -252,3 +260,27 @@ module Reference =
             | ReferenceType.Tag
             | ReferenceType.External
             | ReferenceType.Rebase -> false
+
+    /// Carries one eligible Reference event together with its opaque durable branch-event cursor.
+    [<CLIMutable; GenerateSerializer>]
+    type ReferenceReplayEventDto =
+        {
+            EventCursor: string
+            Reference: CurrentBranchReferenceNotification
+        }
+
+        /// Represents an initialized replay event for serializers and generated clients.
+        static member Default = { EventCursor = String.Empty; Reference = CurrentBranchReferenceNotification.Default }
+
+    /// Closes one immutable branch-event replay interval for a Watch client.
+    [<CLIMutable; GenerateSerializer>]
+    type ReferenceReplayDto =
+        {
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            Events: ReferenceReplayEventDto array
+            ScannedThroughCursor: string
+        }
+
+        /// Represents an initialized replay response for serializers and generated clients.
+        static member Default = { RepositoryId = RepositoryId.Empty; BranchId = BranchId.Empty; Events = Array.empty; ScannedThroughCursor = String.Empty }
