@@ -19,6 +19,7 @@ Method | HTTP request | Description
 [**get_branch**](BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 [**get_branch_reference**](BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 [**get_parent_branch**](BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+[**get_reference_materialization_boundary**](BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 [**list_branch_checkpoints**](BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 [**list_branch_commits**](BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 [**list_branch_promotions**](BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -1226,6 +1227,87 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**BranchReturnValue**](BranchReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **get_reference_materialization_boundary**
+> ReferenceMaterializationBoundaryReturnValue get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+
+Resolve a Connect materialization boundary.
+
+Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.get_reference_materialization_boundary_parameters import GetReferenceMaterializationBoundaryParameters
+from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    get_reference_materialization_boundary_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false} # GetReferenceMaterializationBoundaryParameters | 
+
+    try:
+        # Resolve a Connect materialization boundary.
+        api_response = api_instance.get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+        print("The response of BranchesApi->get_reference_materialization_boundary:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->get_reference_materialization_boundary: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **get_reference_materialization_boundary_parameters** | [**GetReferenceMaterializationBoundaryParameters**](GetReferenceMaterializationBoundaryParameters.md)|  | 
+
+### Return type
+
+[**ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
 
 ### Authorization
 

@@ -1182,6 +1182,37 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /branch/getReferenceMaterializationBoundary:
+    post:
+      tags:
+        - Branches
+      summary: Resolve a Connect materialization boundary.
+      description: Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+      operationId: GetReferenceMaterializationBoundary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetReferenceMaterializationBoundaryParameters'
+            examples:
+              defaultBoundary:
+                summary: Resolve the branch default materialization root
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
+      responses:
+        '200':
+          $ref: '#/components/responses/ReferenceMaterializationBoundaryResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /branch/getReferences:
     post:
       tags:
@@ -6044,6 +6075,65 @@ components:
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/getReference
+    DirectoryVersionId:
+      type: string
+      format: uuid
+      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+    GetReferenceMaterializationBoundaryParameters:
+      description: Selects a branch root whose ordered Reference boundary accompanies Connect materialization.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+        - type: object
+          properties:
+            DirectoryVersionId:
+              $ref: '#/components/schemas/DirectoryVersionId'
+            ReferenceType:
+              $ref: '#/components/schemas/ReferenceType'
+    ReferenceMaterializationBoundaryApiDto:
+      description: Exact materialized root identity coupled to an opaque server-ordered branch event cursor.
+      type: object
+      additionalProperties: false
+      properties:
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        DirectoryId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+        EventCursor:
+          type: string
+          minLength: 1
+          description: Opaque cursor interpreted only by Grace Server.
+      required:
+        - RepositoryId
+        - BranchId
+        - DirectoryId
+        - Sha256Hash
+        - Blake3Hash
+        - EventCursor
+    ReferenceMaterializationBoundaryReturnValue:
+      description: Grace response envelope containing the root selected for materialization and its ordered event boundary.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/ReferenceMaterializationBoundaryApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
     GetReferencesParameters:
       description: Parameters for /branch/getReferences and reference-type list endpoints.
       allOf:
@@ -6203,10 +6293,6 @@ components:
       description: Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups.
       pattern: ^[A-Fa-f0-9]{2,64}$
       example: 9a35d91b2f63
-    DirectoryVersionId:
-      type: string
-      format: uuid
-      example: 33a4e36b-828f-4fae-9343-50b6560dc842
     FileContentReference:
       description: Identifies whether a FileVersion refers to whole-file bytes or a FileManifest.
       type: object
@@ -7653,6 +7739,12 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /branch/getReference
+    ReferenceMaterializationBoundaryResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReferenceMaterializationBoundaryReturnValue'
     ReferenceListResponse:
       description: OK
       content:

@@ -113,6 +113,7 @@ docs/GetDownloadUriParameters.md
 docs/GetOrganizationParameters.md
 docs/GetOwnerParameters.md
 docs/GetParameters.md
+docs/GetReferenceMaterializationBoundaryParameters.md
 docs/GetReferenceParameters.md
 docs/GetReferencesByReferenceIdParameters.md
 docs/GetReferencesParameters.md
@@ -163,6 +164,8 @@ docs/ReferenceApiDto.md
 docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
 docs/ReferenceListReturnValue.md
+docs/ReferenceMaterializationBoundaryApiDto.md
+docs/ReferenceMaterializationBoundaryReturnValue.md
 docs/ReferenceParameters.md
 docs/ReferenceReturnValue.md
 docs/ReferenceType.md
@@ -355,6 +358,7 @@ src/models/get_download_uri_parameters.rs
 src/models/get_organization_parameters.rs
 src/models/get_owner_parameters.rs
 src/models/get_parameters.rs
+src/models/get_reference_materialization_boundary_parameters.rs
 src/models/get_reference_parameters.rs
 src/models/get_references_by_reference_id_parameters.rs
 src/models/get_references_parameters.rs
@@ -404,6 +408,8 @@ src/models/reference_api_dto.rs
 src/models/reference_default_sentinel.rs
 src/models/reference_dto.rs
 src/models/reference_list_return_value.rs
+src/models/reference_materialization_boundary_api_dto.rs
+src/models/reference_materialization_boundary_return_value.rs
 src/models/reference_parameters.rs
 src/models/reference_return_value.rs
 src/models/reference_type.rs

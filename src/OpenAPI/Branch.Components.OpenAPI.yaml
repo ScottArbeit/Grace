@@ -154,6 +154,16 @@
       description: Parameters for the /branch/getReference endpoint.
       allOf:
         - $ref: '#/BranchQueryParameters'
+    GetReferenceMaterializationBoundaryParameters:
+      description: Selects a branch root whose ordered Reference boundary accompanies Connect materialization.
+      allOf:
+        - $ref: '#/BranchQueryParameters'
+        - type: object
+          properties:
+            DirectoryVersionId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+            ReferenceType:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
     GetReferencesParameters:
       description: Parameters for /branch/getReferences and reference-type list endpoints.
       allOf:
@@ -608,6 +618,41 @@
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/getReference
+    ReferenceMaterializationBoundaryApiDto:
+      description: Exact materialized root identity coupled to an opaque server-ordered branch event cursor.
+      type: object
+      additionalProperties: false
+      properties:
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        DirectoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+        Sha256Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+        EventCursor:
+          type: string
+          minLength: 1
+          description: Opaque cursor interpreted only by Grace Server.
+      required: [RepositoryId, BranchId, DirectoryId, Sha256Hash, Blake3Hash, EventCursor]
+    ReferenceMaterializationBoundaryReturnValue:
+      description: Grace response envelope containing the root selected for materialization and its ordered event boundary.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/ReferenceMaterializationBoundaryApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
     ReferenceListReturnValue:
       description: Grace response envelope whose ReturnValue contains references.
       type: object
@@ -853,6 +898,12 @@
             reference:
               summary: Reference response envelope
               value: *referenceReturnValueExample
+    ReferenceMaterializationBoundaryResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/ReferenceMaterializationBoundaryReturnValue'
     ReferenceListResponse:
       description: OK
       content:

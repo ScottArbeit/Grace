@@ -142,6 +142,7 @@ __all__ = [
     "GetOrganizationParameters",
     "GetOwnerParameters",
     "GetParameters",
+    "GetReferenceMaterializationBoundaryParameters",
     "GetReferenceParameters",
     "GetReferencesByReferenceIdParameters",
     "GetReferencesParameters",
@@ -190,6 +191,8 @@ __all__ = [
     "ReferenceDefaultSentinel",
     "ReferenceDto",
     "ReferenceListReturnValue",
+    "ReferenceMaterializationBoundaryApiDto",
+    "ReferenceMaterializationBoundaryReturnValue",
     "ReferenceParameters",
     "ReferenceReturnValue",
     "ReferenceType",
@@ -392,6 +395,7 @@ from grace_generated_openapi_probe.models.get_download_uri_parameters import Get
 from grace_generated_openapi_probe.models.get_organization_parameters import GetOrganizationParameters as GetOrganizationParameters
 from grace_generated_openapi_probe.models.get_owner_parameters import GetOwnerParameters as GetOwnerParameters
 from grace_generated_openapi_probe.models.get_parameters import GetParameters as GetParameters
+from grace_generated_openapi_probe.models.get_reference_materialization_boundary_parameters import GetReferenceMaterializationBoundaryParameters as GetReferenceMaterializationBoundaryParameters
 from grace_generated_openapi_probe.models.get_reference_parameters import GetReferenceParameters as GetReferenceParameters
 from grace_generated_openapi_probe.models.get_references_by_reference_id_parameters import GetReferencesByReferenceIdParameters as GetReferencesByReferenceIdParameters
 from grace_generated_openapi_probe.models.get_references_parameters import GetReferencesParameters as GetReferencesParameters
@@ -440,6 +444,8 @@ from grace_generated_openapi_probe.models.reference_api_dto import ReferenceApiD
 from grace_generated_openapi_probe.models.reference_default_sentinel import ReferenceDefaultSentinel as ReferenceDefaultSentinel
 from grace_generated_openapi_probe.models.reference_dto import ReferenceDto as ReferenceDto
 from grace_generated_openapi_probe.models.reference_list_return_value import ReferenceListReturnValue as ReferenceListReturnValue
+from grace_generated_openapi_probe.models.reference_materialization_boundary_api_dto import ReferenceMaterializationBoundaryApiDto as ReferenceMaterializationBoundaryApiDto
+from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue as ReferenceMaterializationBoundaryReturnValue
 from grace_generated_openapi_probe.models.reference_parameters import ReferenceParameters as ReferenceParameters
 from grace_generated_openapi_probe.models.reference_return_value import ReferenceReturnValue as ReferenceReturnValue
 from grace_generated_openapi_probe.models.reference_type import ReferenceType as ReferenceType

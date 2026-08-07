@@ -553,6 +553,31 @@
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
 
+  /branch/getReferenceMaterializationBoundary:
+    post:
+      tags:
+        - Branches
+      summary: Resolve a Connect materialization boundary.
+      description: Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+      operationId: GetReferenceMaterializationBoundary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferenceMaterializationBoundaryParameters'
+            examples:
+              defaultBoundary:
+                summary: Resolve the branch default materialization root
+                value: *getBranchExample
+      responses:
+        '200':
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceMaterializationBoundaryResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getReferences:
     post:
       tags:

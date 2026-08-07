@@ -1338,6 +1338,9 @@ module Application =
                                route "/getEvents" Branch.GetEvents
                                |> addMetadata typeof<Branch.GetBranchParameters>
 
+                               route "/getReferenceMaterializationBoundary" (composeHandlers requireBranchRead Branch.GetReferenceMaterializationBoundary)
+                               |> addMetadata typeof<Branch.GetReferenceMaterializationBoundaryParameters>
+
                                route "/getExternals" Branch.GetExternals
                                |> addMetadata typeof<Branch.GetReferenceParameters>
 

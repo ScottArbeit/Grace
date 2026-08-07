@@ -15,6 +15,7 @@ open System.IO
 open System.Linq
 open System.Text
 open System.Diagnostics
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups local state db coverage for the CLI test project.
@@ -106,6 +107,7 @@ module LocalStateDbTests =
         (files: LocalFileVersion array)
         sizeBytes
         lastWriteTimeUtc
+        : LocalDirectoryVersion
         =
         LocalDirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -378,11 +380,181 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
                 statusMetaCount |> should equal 1
+            })
+
+    /// Successful Connect persistence commits status and its matching branch cursor together.
+    [<Test>]
+    let ``status snapshot and remote reference boundary commit atomically`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("11111111-8020-4000-8000-111111111111")
+                let rootHash = Sha256Hash "root-sha"
+                let rootBlake3 = Blake3Hash "root-sha-blake3"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = rootBlake3; Index = index }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = rootBlake3
+                        EventCursor = "branch-event-v1:7"
+                    }
+
+                let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status boundary CancellationToken.None
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                Assert.That(stored, Is.EqualTo(Some boundary))
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(rootId))
+                Assert.That(storedStatus.RootDirectorySha256Hash, Is.EqualTo(rootHash))
+                Assert.That(storedStatus.RootDirectoryBlake3Hash, Is.EqualTo(rootBlake3))
+            })
+
+    /// A mismatched cursor is rejected before it can replace the previously committed status snapshot.
+    [<Test>]
+    let ``mismatched remote reference boundary leaves status and cursor unchanged`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("22222222-8020-4000-8000-222222222222")
+                let originalStatus = createTestStatus originalRoot (Sha256Hash "original") 10L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile originalStatus
+
+                let replacementRoot = Guid.Parse("33333333-8020-4000-8000-333333333333")
+                let replacementStatus = createTestStatus replacementRoot (Sha256Hash "replacement") 20L
+
+                let mismatched =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = originalRoot
+                        Sha256Hash = Sha256Hash "original"
+                        Blake3Hash = Blake3Hash String.Empty
+                        EventCursor = "branch-event-v1:1"
+                    }
+
+                Assert.ThrowsAsync<ArgumentException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            mismatched
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+                Assert.That(storedBoundary, Is.EqualTo(None))
+            })
+
+    /// A cursor persistence failure rolls back the matching status replacement instead of acknowledging a false boundary.
+    [<Test>]
+    let ``remote reference boundary write failure rolls back status replacement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("44444444-8020-4000-8000-444444444444")
+                let originalStatus = createTestStatus originalRoot (Sha256Hash "original") 10L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile originalStatus
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery
+                        connection
+                        "CREATE TRIGGER reject_remote_reference_boundary BEFORE INSERT ON remote_reference_boundaries BEGIN SELECT RAISE(ABORT, 'forced boundary failure'); END;"
+
+                let replacementRoot = Guid.Parse("55555555-8020-4000-8000-555555555555")
+                let replacementBlake3 = Blake3Hash "replacement-blake3"
+
+                let replacementStatus = { createTestStatus replacementRoot (Sha256Hash "replacement") 20L with RootDirectoryBlake3Hash = replacementBlake3 }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = replacementRoot
+                        Sha256Hash = replacementStatus.RootDirectorySha256Hash
+                        Blake3Hash = replacementBlake3
+                        EventCursor = "branch-event-v1:2"
+                    }
+
+                Assert.ThrowsAsync<SqliteException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            boundary
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+                Assert.That(storedBoundary, Is.EqualTo(None))
+            })
+
+    /// Cancellation after status and boundary staging rolls the entire SQLite transaction back before durable acceptance.
+    [<Test>]
+    let ``remote reference boundary cancellation before commit rolls back status replacement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("66666666-8020-4000-8000-666666666666")
+                let originalStatus = createTestStatus originalRoot (Sha256Hash "original") 10L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile originalStatus
+
+                let replacementRoot = Guid.Parse("77777777-8020-4000-8000-777777777777")
+                let replacementBlake3 = Blake3Hash "replacement-blake3"
+
+                let replacementStatus = { createTestStatus replacementRoot (Sha256Hash "replacement") 20L with RootDirectoryBlake3Hash = replacementBlake3 }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = replacementRoot
+                        Sha256Hash = replacementStatus.RootDirectorySha256Hash
+                        Blake3Hash = replacementBlake3
+                        EventCursor = "branch-event-v1:3"
+                    }
+
+                use cancellation = new CancellationTokenSource()
+                let mutable cancelled = false
+
+                try
+                    let! _ =
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryWithBeforeCommit
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            boundary
+                            cancellation.Token
+                            cancellation.Cancel
+
+                    ()
+                with
+                | :? OperationCanceledException -> cancelled <- true
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(cancelled, Is.True)
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+                Assert.That(storedBoundary, Is.EqualTo(None))
             })
 
     /// Verifies that initializes watch journal schema and applied through metadata.
@@ -1238,7 +1410,7 @@ module LocalStateDbTests =
 
                 let lifecycleColumns = executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('watch_lifecycle_events');"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 lifecycleColumns |> should equal 13
 
                 let corruptAfter =
@@ -1281,7 +1453,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -1570,7 +1742,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -1607,7 +1779,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let sequencePk = executeScalarInt connection "SELECT pk FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
                 sequencePk |> should equal 1
@@ -1659,7 +1831,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -1699,7 +1871,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -1739,7 +1911,7 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
 
                 let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
@@ -1781,7 +1953,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let duplicateRows = executeScalarInt connection "SELECT COUNT(*) FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 duplicateRows |> should equal 1
 
@@ -1826,7 +1998,7 @@ module LocalStateDbTests =
                     with
                     | :? SqliteException -> false
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 duplicateInsertSucceeded |> should equal false
 
@@ -1865,7 +2037,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1904,7 +2076,7 @@ module LocalStateDbTests =
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
                 let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
                 allocationRows |> should equal 0
@@ -1942,7 +2114,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1979,7 +2151,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2016,7 +2188,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2062,7 +2234,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2109,7 +2281,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2155,7 +2327,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2203,7 +2375,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2244,7 +2416,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2274,7 +2446,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -2329,7 +2501,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "8")
+                |> should equal (Some "9")
 
                 inspection.MissingRequiredTables
                 |> should equal Array.empty<string>
@@ -2374,7 +2546,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "8")
+                |> should equal (Some "9")
 
                 inspection.IntegrityCheckRows
                 |> should equal [| "ok" |]
@@ -2652,7 +2824,7 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection2 "SELECT value FROM meta WHERE key = 'schema_version';"
                 let readRootId = executeScalarString connection2 "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection2 "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 readRootId
                 |> should not' (equal (rootId.ToString()))
@@ -2689,7 +2861,7 @@ module LocalStateDbTests =
                 let readRootId = executeScalarString connection "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
                 let readRootBlake3Hash = executeScalarString connection "SELECT root_directory_blake3_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 readRootId |> should equal (rootId.ToString())
                 readRootHash |> should equal rootHash
                 readRootBlake3Hash |> should equal rootBlake3Hash
@@ -2745,7 +2917,7 @@ module LocalStateDbTests =
                 let watchJournalCount = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 watchJournalCount |> should equal 1
                 appliedThrough |> should equal "0"
 
@@ -2797,7 +2969,7 @@ module LocalStateDbTests =
 
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 hiddenRequiredColumns |> should equal 0
                 journalColumns |> should equal 15
                 appliedThrough |> should equal "0"
@@ -2834,7 +3006,7 @@ module LocalStateDbTests =
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 rootBlake3Columns |> should equal 1
                 statusMetaCount |> should equal 1
 
@@ -2875,7 +3047,7 @@ module LocalStateDbTests =
                 let statusDirectoryCount = executeScalarInt connection "SELECT COUNT(*) FROM status_directories;"
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 statusDirectoryCount |> should equal 0
                 statusMetaCount |> should equal 1
 
@@ -3120,7 +3292,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
@@ -3147,7 +3319,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
             })
 
     /// Verifies that replace status snapshot fully clears old snapshot rows.
@@ -3461,7 +3633,7 @@ module LocalStateDbTests =
                 do
                     use connection = openRawConnection configuration.GraceStatusFile
                     executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '8');"
+                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9');"
 
                     executeNonQuery
                         connection
@@ -4371,7 +4543,7 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "8"
+                    schemaVersion |> should equal "9"
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1

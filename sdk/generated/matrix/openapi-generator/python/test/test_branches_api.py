@@ -132,6 +132,13 @@ class TestBranchesApi(unittest.TestCase):
         """
         pass
 
+    def test_get_reference_materialization_boundary(self) -> None:
+        """Test case for get_reference_materialization_boundary
+
+        Resolve a Connect materialization boundary.
+        """
+        pass
+
     def test_list_branch_checkpoints(self) -> None:
         """Test case for list_branch_checkpoints
 

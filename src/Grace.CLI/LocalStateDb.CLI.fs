@@ -12,6 +12,7 @@ open System.Threading.Tasks
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.Reference
 open Microsoft.Data.Sqlite
 open NodaTime
 open SQLitePCL
@@ -19,7 +20,7 @@ open SQLitePCL
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let SchemaVersion = "8"
+    let SchemaVersion = "9"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]
@@ -210,6 +211,7 @@ module LocalStateDb =
             "CREATE INDEX IF NOT EXISTS ix_status_directories_parent ON status_directories(parent_path);"
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_status_directories_directory_version_id ON status_directories(directory_version_id);"
             "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
+            "CREATE TABLE IF NOT EXISTS remote_reference_boundaries (repository_id TEXT NOT NULL, branch_id TEXT NOT NULL, root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, root_directory_blake3_hash TEXT NOT NULL, event_cursor TEXT NOT NULL, PRIMARY KEY (repository_id, branch_id));"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_path ON status_files(directory_path);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_version_id ON status_files(directory_version_id);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_sha256 ON status_files(sha256_hash);"
@@ -229,6 +231,7 @@ module LocalStateDb =
             "status_meta"
             "status_directories"
             "status_files"
+            "remote_reference_boundaries"
             "object_cache_directories"
             "object_cache_directory_children"
             "object_cache_directory_files"
@@ -1616,7 +1619,7 @@ module LocalStateDb =
                                                     if hasRequiredMetaKeyValueShape connection
                                                        && tableExists connection "watch_journal" then
                                                         try
-                                                            logTrace "migrating local state DB schema from v6 to v8"
+                                                            logTrace "migrating local state DB schema from v6 to v9"
                                                             migrateWatchJournalV6ToV7 connection
                                                             setMetaValue connection "schema_version" SchemaVersion
                                                         with
@@ -1627,7 +1630,7 @@ module LocalStateDb =
                                                     if hasRequiredMetaKeyValueShape connection
                                                        && tableExists connection "watch_journal" then
                                                         try
-                                                            logTrace "migrating local state DB schema from v7 to v8"
+                                                            logTrace "migrating local state DB schema from v7 to v9"
                                                             migrateWatchJournalV7ToV8 connection
                                                             setMetaValue connection "schema_version" SchemaVersion
                                                         with
@@ -2885,9 +2888,32 @@ module LocalStateDb =
                 |> ignore)
 
     /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
-    let replaceStatusSnapshotWithRevision (dbPath: string) (graceStatus: GraceStatus) =
+    let private replaceStatusSnapshotWithRevisionCore
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto option)
+        (cancellationToken: CancellationToken)
+        (beforeCommit: unit -> unit)
+        =
         task {
+            match boundary with
+            | Some boundary when
+                boundary.DirectoryId
+                <> graceStatus.RootDirectoryId
+                || boundary.Sha256Hash
+                   <> graceStatus.RootDirectorySha256Hash
+                || boundary.Blake3Hash
+                   <> getRootDirectoryBlake3Hash graceStatus
+                || boundary.RepositoryId = RepositoryId.Empty
+                || boundary.BranchId = BranchId.Empty
+                || String.IsNullOrWhiteSpace boundary.EventCursor
+                ->
+                invalidArg (nameof boundary) "The remote Reference boundary must match the complete persisted status root identity."
+            | _ -> ()
+
+            cancellationToken.ThrowIfCancellationRequested()
             do! ensureDbInitialized dbPath
+            cancellationToken.ThrowIfCancellationRequested()
 
             return!
                 executeWithRevisionRetry (fun () ->
@@ -2895,6 +2921,7 @@ module LocalStateDb =
                         let connection = openConnection dbPath
 
                         try
+                            cancellationToken.ThrowIfCancellationRequested()
                             executeNonQuery connection "BEGIN IMMEDIATE;"
 
                             try
@@ -2997,6 +3024,33 @@ module LocalStateDb =
                                         fileCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
                                         fileCommand.ExecuteNonQuery() |> ignore))
 
+                                match boundary with
+                                | Some boundary ->
+                                    executeNonQueryWithParams
+                                        connection
+                                        "INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ($repository_id, $branch_id, $root_id, $root_sha256_hash, $root_blake3_hash, $event_cursor);"
+                                        (fun parameters ->
+                                            parameters.AddWithValue("$repository_id", boundary.RepositoryId.ToString())
+                                            |> ignore
+
+                                            parameters.AddWithValue("$branch_id", boundary.BranchId.ToString())
+                                            |> ignore
+
+                                            parameters.AddWithValue("$root_id", boundary.DirectoryId.ToString())
+                                            |> ignore
+
+                                            parameters.AddWithValue("$root_sha256_hash", boundary.Sha256Hash)
+                                            |> ignore
+
+                                            parameters.AddWithValue("$root_blake3_hash", boundary.Blake3Hash)
+                                            |> ignore
+
+                                            parameters.AddWithValue("$event_cursor", boundary.EventCursor)
+                                            |> ignore)
+                                | None -> ()
+
+                                beforeCommit ()
+                                cancellationToken.ThrowIfCancellationRequested()
                                 let committedRevision = incrementLocalStatusRevision connection
                                 executeNonQuery connection "COMMIT;"
                                 return committedRevision
@@ -3007,6 +3061,62 @@ module LocalStateDb =
                         finally
                             connection.Dispose()
                     })
+        }
+
+    /// Replaces status and its matching branch-scoped remote Reference boundary in one SQLite transaction.
+    let replaceStatusSnapshotWithRemoteReferenceBoundary
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken ignore
+
+    /// Persists a matching status and boundary while exposing the final pre-commit seam for deterministic rollback proof.
+    let internal replaceStatusSnapshotWithRemoteReferenceBoundaryWithBeforeCommit
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        (beforeCommit: unit -> unit)
+        =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken beforeCommit
+
+    /// Replaces status without changing any branch-scoped remote Reference boundary.
+    let replaceStatusSnapshotWithRevision (dbPath: string) (graceStatus: GraceStatus) =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus None CancellationToken.None ignore
+
+    /// Reads the boundary for one repository and branch without falling back to global metadata.
+    let readRemoteReferenceBoundary (dbPath: string) repositoryId branchId =
+        task {
+            do! ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor FROM remote_reference_boundaries WHERE repository_id = $repository_id AND branch_id = $branch_id;"
+
+            command.Parameters.AddWithValue("$repository_id", repositoryId.ToString())
+            |> ignore
+
+            command.Parameters.AddWithValue("$branch_id", branchId.ToString())
+            |> ignore
+
+            use reader = command.ExecuteReader()
+
+            if reader.Read() then
+                return
+                    Some
+                        { ReferenceMaterializationBoundaryDto.Default with
+                            RepositoryId = repositoryId
+                            BranchId = branchId
+                            DirectoryId = Guid.Parse(reader.GetString(0))
+                            Sha256Hash = Sha256Hash(reader.GetString(1))
+                            Blake3Hash = Blake3Hash(reader.GetString(2))
+                            EventCursor = reader.GetString(3)
+                        }
+            else
+                return None
         }
 
     /// Replaces the local status snapshot while preserving the existing unit-returning caller contract.

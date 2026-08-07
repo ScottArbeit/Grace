@@ -114,6 +114,7 @@ docs/GetDownloadUriParameters.md
 docs/GetOrganizationParameters.md
 docs/GetOwnerParameters.md
 docs/GetParameters.md
+docs/GetReferenceMaterializationBoundaryParameters.md
 docs/GetReferenceParameters.md
 docs/GetReferencesByReferenceIdParameters.md
 docs/GetReferencesParameters.md
@@ -164,6 +165,8 @@ docs/ReferenceApiDto.md
 docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
 docs/ReferenceListReturnValue.md
+docs/ReferenceMaterializationBoundaryApiDto.md
+docs/ReferenceMaterializationBoundaryReturnValue.md
 docs/ReferenceParameters.md
 docs/ReferenceReturnValue.md
 docs/ReferenceType.md
@@ -360,6 +363,7 @@ grace_generated_openapi_probe/models/get_download_uri_parameters.py
 grace_generated_openapi_probe/models/get_organization_parameters.py
 grace_generated_openapi_probe/models/get_owner_parameters.py
 grace_generated_openapi_probe/models/get_parameters.py
+grace_generated_openapi_probe/models/get_reference_materialization_boundary_parameters.py
 grace_generated_openapi_probe/models/get_reference_parameters.py
 grace_generated_openapi_probe/models/get_references_by_reference_id_parameters.py
 grace_generated_openapi_probe/models/get_references_parameters.py
@@ -408,6 +412,8 @@ grace_generated_openapi_probe/models/reference_api_dto.py
 grace_generated_openapi_probe/models/reference_default_sentinel.py
 grace_generated_openapi_probe/models/reference_dto.py
 grace_generated_openapi_probe/models/reference_list_return_value.py
+grace_generated_openapi_probe/models/reference_materialization_boundary_api_dto.py
+grace_generated_openapi_probe/models/reference_materialization_boundary_return_value.py
 grace_generated_openapi_probe/models/reference_parameters.py
 grace_generated_openapi_probe/models/reference_return_value.py
 grace_generated_openapi_probe/models/reference_type.py
@@ -598,6 +604,7 @@ test/test_get_download_uri_parameters.py
 test/test_get_organization_parameters.py
 test/test_get_owner_parameters.py
 test/test_get_parameters.py
+test/test_get_reference_materialization_boundary_parameters.py
 test/test_get_reference_parameters.py
 test/test_get_references_by_reference_id_parameters.py
 test/test_get_references_parameters.py
@@ -648,6 +655,8 @@ test/test_reference_api_dto.py
 test/test_reference_default_sentinel.py
 test/test_reference_dto.py
 test/test_reference_list_return_value.py
+test/test_reference_materialization_boundary_api_dto.py
+test/test_reference_materialization_boundary_return_value.py
 test/test_reference_parameters.py
 test/test_reference_return_value.py
 test/test_reference_type.py

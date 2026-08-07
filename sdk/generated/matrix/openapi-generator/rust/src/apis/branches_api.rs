@@ -150,6 +150,15 @@ pub enum GetParentBranchError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`get_reference_materialization_boundary`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetReferenceMaterializationBoundaryError {
+    Status400(models::GraceError),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`list_branch_checkpoints`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -852,6 +861,47 @@ pub async fn get_parent_branch(configuration: &configuration::Configuration, get
     } else {
         let content = resp.text().await?;
         let entity: Option<GetParentBranchError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+pub async fn get_reference_materialization_boundary(configuration: &configuration::Configuration, get_reference_materialization_boundary_parameters: models::GetReferenceMaterializationBoundaryParameters) -> Result<models::ReferenceMaterializationBoundaryReturnValue, Error<GetReferenceMaterializationBoundaryError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_get_reference_materialization_boundary_parameters = get_reference_materialization_boundary_parameters;
+
+    let uri_str = format!("{}/branch/getReferenceMaterializationBoundary", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_get_reference_materialization_boundary_parameters);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::ReferenceMaterializationBoundaryReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::ReferenceMaterializationBoundaryReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetReferenceMaterializationBoundaryError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

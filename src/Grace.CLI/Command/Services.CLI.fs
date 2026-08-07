@@ -1285,6 +1285,14 @@ module Services =
     /// Writes the full Grace status snapshot to disk.
     let writeGraceStatusFile (graceStatus: GraceStatus) = LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
 
+    /// Atomically persists a materialized status snapshot and its matching remote Reference boundary.
+    let writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary cancellationToken =
+        task {
+            let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary (getLocalStateDbPath ()) graceStatus boundary cancellationToken
+
+            return ()
+        }
+
     /// Applies incremental Grace status updates to the local DB.
     let applyGraceStatusIncremental
         (graceStatus: GraceStatus)
@@ -1536,8 +1544,12 @@ module Services =
                 return (List<LocalDirectoryVersion>(), List<LocalFileVersion>(), Sha256Hash.Empty, Blake3Hash String.Empty)
         }
 
-    /// Scans the repository working directory and writes the Grace index file.
-    let createNewGraceStatusFile (previousGraceStatus: GraceStatus) (parseResult: ParseResult) =
+    /// Scans the working directory while optionally preserving a server-selected root identity for materialization.
+    let private createNewGraceStatusFileCore
+        (selectedRootDirectoryId: DirectoryVersionId option)
+        (previousGraceStatus: GraceStatus)
+        (parseResult: ParseResult)
+        =
         task {
             try
                 // Start with a new GraceStatus instance.
@@ -1570,7 +1582,8 @@ module Services =
                             )
                             .Value
 
-                    if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash
+                    if selectedRootDirectoryId.IsNone
+                       && previousRootDirectoryVersion.Sha256Hash = rootSha256Hash
                        && previousRootDirectoryVersion.Blake3Hash = rootBlake3Hash then
                         previousRootDirectoryVersion
                     else
@@ -1580,8 +1593,13 @@ module Services =
                                 .Select(fun d -> d.DirectoryVersionId)
                                 .ToList()
 
+                        let rootDirectoryId =
+                            match selectedRootDirectoryId with
+                            | Some directoryVersionId -> directoryVersionId
+                            | None -> DirectoryVersionId.NewGuid()
+
                         LocalDirectoryVersion.CreateWithHashes
-                            (Guid.NewGuid())
+                            rootDirectoryId
                             (Current().OwnerId)
                             (Current().OrganizationId)
                             (Current().RepositoryId)
@@ -1618,6 +1636,13 @@ module Services =
                 logToAnsiConsole Colors.Error $"Exception in createNewGraceStatusFile: {ExceptionResponse.Create ex}"
                 return GraceStatus.Default
         }
+
+    /// Scans the repository working directory and assigns local identity to a changed root.
+    let createNewGraceStatusFile previousGraceStatus parseResult = createNewGraceStatusFileCore None previousGraceStatus parseResult
+
+    /// Scans a materialized working directory using the exact root identity selected by the server boundary.
+    let createNewGraceStatusFileForRoot rootDirectoryId previousGraceStatus parseResult =
+        createNewGraceStatusFileCore (Some rootDirectoryId) previousGraceStatus parseResult
 
     /// Adds a LocalDirectoryVersion to the local object cache.
     let addDirectoryToObjectCache (localDirectoryVersion: LocalDirectoryVersion) =

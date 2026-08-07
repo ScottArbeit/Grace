@@ -184,6 +184,29 @@ module Reference =
 
             { newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp }
 
+    /// Couples one materialized branch root to the opaque server event position represented by that root.
+    [<CLIMutable; GenerateSerializer>]
+    type ReferenceMaterializationBoundaryDto =
+        {
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            DirectoryId: DirectoryVersionId
+            Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
+            EventCursor: string
+        }
+
+        /// Represents an initialized boundary value for serializers and client-side validation.
+        static member Default =
+            {
+                RepositoryId = RepositoryId.Empty
+                BranchId = BranchId.Empty
+                DirectoryId = DirectoryVersionId.Empty
+                Sha256Hash = Sha256Hash String.Empty
+                Blake3Hash = Blake3Hash String.Empty
+                EventCursor = String.Empty
+            }
+
     /// Describes a same-branch Reference that current-branch Watch clients may inspect after server-side recomputation.
     [<CLIMutable; GenerateSerializer>]
     type CurrentBranchReferenceNotification =

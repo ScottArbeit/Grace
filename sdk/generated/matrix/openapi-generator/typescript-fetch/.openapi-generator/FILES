@@ -112,6 +112,7 @@ docs/GetDownloadUriParameters.md
 docs/GetOrganizationParameters.md
 docs/GetOwnerParameters.md
 docs/GetParameters.md
+docs/GetReferenceMaterializationBoundaryParameters.md
 docs/GetReferenceParameters.md
 docs/GetReferencesByReferenceIdParameters.md
 docs/GetReferencesParameters.md
@@ -162,6 +163,8 @@ docs/ReferenceApiDto.md
 docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
 docs/ReferenceListReturnValue.md
+docs/ReferenceMaterializationBoundaryApiDto.md
+docs/ReferenceMaterializationBoundaryReturnValue.md
 docs/ReferenceParameters.md
 docs/ReferenceReturnValue.md
 docs/ReferenceType.md
@@ -353,6 +356,7 @@ src/models/GetDownloadUriParameters.ts
 src/models/GetOrganizationParameters.ts
 src/models/GetOwnerParameters.ts
 src/models/GetParameters.ts
+src/models/GetReferenceMaterializationBoundaryParameters.ts
 src/models/GetReferenceParameters.ts
 src/models/GetReferencesByReferenceIdParameters.ts
 src/models/GetReferencesParameters.ts
@@ -401,6 +405,8 @@ src/models/ReferenceApiDto.ts
 src/models/ReferenceDefaultSentinel.ts
 src/models/ReferenceDto.ts
 src/models/ReferenceListReturnValue.ts
+src/models/ReferenceMaterializationBoundaryApiDto.ts
+src/models/ReferenceMaterializationBoundaryReturnValue.ts
 src/models/ReferenceParameters.ts
 src/models/ReferenceReturnValue.ts
 src/models/ReferenceType.ts
