@@ -1563,17 +1563,22 @@ module LocalStateDb =
             let normalizedPath = Path.GetFullPath(dbPath)
             let mutable loopCount = 0
 
-            match initializedDbs.TryGetValue(normalizedPath) with
-            | true, _ -> ()
-            | _ ->
+            /// Invalidates process-local initialization when the SQLite file was genuinely deleted between Watch runs.
+            let initializedDatabaseStillExists () =
+                match initializedDbs.TryGetValue(normalizedPath) with
+                | true, _ when File.Exists(normalizedPath) -> true
+                | true, _ ->
+                    initializedDbs.TryRemove(normalizedPath) |> ignore
+                    false
+                | _ -> false
+
+            if not (initializedDatabaseStillExists ()) then
                 let semaphore = initLocks.GetOrAdd(normalizedPath, (fun _ -> new SemaphoreSlim(1, 1)))
 
                 do! semaphore.WaitAsync()
 
                 try
-                    match initializedDbs.TryGetValue(normalizedPath) with
-                    | true, _ -> ()
-                    | _ ->
+                    if not (initializedDatabaseStillExists ()) then
                         do!
                             executeWithRetry (fun () ->
                                 task {

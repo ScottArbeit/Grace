@@ -3103,6 +3103,34 @@ module LocalStateDbTests =
                 appliedThrough2 |> should equal "0"
             })
 
+    /// Verifies that process-local initialization cannot hide a genuinely deleted SQLite database.
+    [<Test>]
+    let ``ensureDbInitialized recreates a database deleted after initialization`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+
+                [|
+                    configuration.GraceStatusFile
+                    configuration.GraceStatusFile + "-wal"
+                    configuration.GraceStatusFile + "-shm"
+                    configuration.GraceStatusFile + "-journal"
+                |]
+                |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
+
+                Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
+                |> should equal 1
+
+                executeScalarInt connection "SELECT COUNT(*) FROM remote_reference_boundaries;"
+                |> should equal 0
+            })
+
     /// Verifies that ensure db initialized recreates legacy schema v2 database without blake3 columns.
     [<Test>]
     let ``ensureDbInitialized recreates legacy schema v2 database without blake3 columns`` () =

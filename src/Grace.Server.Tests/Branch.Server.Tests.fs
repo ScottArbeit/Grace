@@ -2121,19 +2121,50 @@ type BranchServer() =
                         do! Grace.CLI.Services.updateGraceWatchInterprocessFile initialStatus (Some(HashSet<DirectoryVersionId>(index.Keys)))
 
                         let ipcPath = Grace.CLI.Services.IpcFileName()
+                        let retainedStatus = deserialize<Grace.CLI.Services.GraceWatchStatus> (File.ReadAllText(ipcPath))
+
+                        File.WriteAllText(
+                            ipcPath,
+                            serialize { retainedStatus with UpdatedAt = retainedStatus.UpdatedAt.Minus(NodaTime.Duration.FromMinutes(10.0)) }
+                        )
+
+                        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+                        GC.Collect()
+                        GC.WaitForPendingFinalizers()
+
+                        [|
+                            configuration.GraceStatusFile
+                            configuration.GraceStatusFile + "-wal"
+                            configuration.GraceStatusFile + "-shm"
+                            configuration.GraceStatusFile + "-journal"
+                        |]
+                        |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
 
                         try
-                            let! before =
-                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
-                                    configuration.GraceStatusFile
-                                    configuration.RepositoryId
-                                    configuration.BranchId
+                            Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                            Assert.That(File.Exists(ipcPath), Is.True)
 
-                            Assert.That(before, Is.EqualTo(None))
+                            let! claim = Grace.CLI.Services.claimGraceWatchInterprocessFile ()
+                            Assert.That(claim.Claimed, Is.True)
+                            Assert.That(claim.RetainedStatus.IsSome, Is.True)
+                            Grace.CLI.Command.Watch.setGraceWatchRuntimeModeForWatchTests Grace.CLI.Services.GraceWatchRuntimeMode.StartingUp
+
+                            let! resetStatus = Grace.CLI.Services.readGraceStatusFile ()
+                            Assert.That(resetStatus.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
+                            let materializedPath = Path.Combine(configuration.RootDirectory, string relativePath)
 
                             use cancelled = new System.Threading.CancellationTokenSource()
                             cancelled.Cancel()
-                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests cancelled.Token
+
+                            Assert.ThrowsAsync<OperationCanceledException>(
+                                Func<Task> (fun () ->
+                                    Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
+                                        claim.RetainedStatus
+                                        resetStatus
+                                        cancelled.Token
+                                    :> Task)
+                            )
+                            |> ignore
 
                             let! afterCancellation =
                                 Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
@@ -2142,10 +2173,46 @@ type BranchServer() =
                                     configuration.BranchId
 
                             Assert.That(afterCancellation, Is.EqualTo(None))
+                            Assert.That(File.Exists(materializedPath), Is.False)
 
-                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None
+                            let configPath = Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+                            File.Delete(configPath)
 
-                            let materializedPath = Path.Combine(configuration.RootDirectory, string relativePath)
+                            try
+                                Assert.ThrowsAsync<InvalidOperationException>(
+                                    Func<Task> (fun () ->
+                                        Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
+                                            claim.RetainedStatus
+                                            resetStatus
+                                            System.Threading.CancellationToken.None
+                                        :> Task)
+                                )
+                                |> ignore
+                            finally
+                                saveConfigFile configPath configuration
+
+                            let! afterFailure =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(afterFailure, Is.EqualTo(None))
+                            Assert.That(File.Exists(materializedPath), Is.False)
+
+                            let! _ =
+                                Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
+                                    claim.RetainedStatus
+                                    resetStatus
+                                    System.Threading.CancellationToken.None
+
+                            do!
+                                Grace.CLI.Command.Watch.completeStartupRecoveryIfPendingWorkDrainedWithCatchUpForWatchTests
+                                    Grace.CLI.Services.readGraceStatusFile
+                                    Grace.CLI.Services.updateGraceWatchInterprocessFile
+                                    (fun () -> task { Assert.Fail("Startup processing must remain idle before boundary recovery completes.") })
+                                    (fun () -> Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None)
+
                             Assert.That(File.Exists(materializedPath), Is.True)
                             Assert.That(Convert.ToHexString(File.ReadAllBytes(materializedPath)), Is.EqualTo(Convert.ToHexString(payload)))
 
@@ -2163,6 +2230,143 @@ type BranchServer() =
                             Assert.That(boundary.IsSome, Is.True)
                             Assert.That(boundary.Value.DirectoryId, Is.EqualTo(laterRoot.DirectoryVersionId))
                             Assert.That(boundary.Value.EventCursor, Is.EqualTo("branch-event-v1:2"))
+                        finally
+                            Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                            if File.Exists(ipcPath) then File.Delete(ipcPath)
+                    })
+        }
+
+    /// A real DB reset with an unmatched retained root preserves local files and starts at the current server tail.
+    [<Test; NonParallelizable>]
+    member _.ProductionWatchMissingBoundaryRecoveryBaselinesUnmatchedRootWithoutMutation() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parentBranchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"WatchBaseline{Guid.NewGuid():N}"
+            let serverRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath []
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ serverRoot ]
+            let! serverSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch serverRoot.DirectoryVersionId serverRoot.Sha256Hash
+            let! serverSaveBody = serverSave.Content.ReadAsStringAsync()
+            Assert.That(serverSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), serverSaveBody)
+
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+                        let configuration = Current()
+                        configuration.OwnerId <- Guid.Parse(ownerId)
+                        configuration.OrganizationId <- Guid.Parse(organizationId)
+                        configuration.RepositoryId <- Guid.Parse(repositoryId)
+                        configuration.RepositoryName <- "watch-baseline-repository"
+                        configuration.BranchId <- branch.BranchId
+                        configuration.BranchName <- string branch.BranchName
+
+                        saveConfigFile (Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)) configuration
+
+                        let localRoot =
+                            LocalDirectoryVersion.CreateWithHashes
+                                (Guid.NewGuid())
+                                configuration.OwnerId
+                                configuration.OrganizationId
+                                configuration.RepositoryId
+                                Constants.RootDirectoryPath
+                                (Sha256Hash "unmatched-local-root-sha256")
+                                (Blake3Hash "unmatched-local-root-blake3")
+                                (List<DirectoryVersionId>())
+                                (List<LocalFileVersion>())
+                                Constants.InitialDirectorySize
+                                DateTime.UtcNow
+
+                        let index = GraceIndex()
+
+                        index.TryAdd(localRoot.DirectoryVersionId, localRoot)
+                        |> ignore
+
+                        let initialStatus =
+                            { GraceStatus.Default with
+                                Index = index
+                                RootDirectoryId = localRoot.DirectoryVersionId
+                                RootDirectorySha256Hash = localRoot.Sha256Hash
+                                RootDirectoryBlake3Hash = localRoot.Blake3Hash
+                            }
+
+                        let retainedFilePath = Path.Combine(configuration.RootDirectory, $"retained-{Guid.NewGuid():N}.txt")
+                        let retainedBytes = Encoding.UTF8.GetBytes("unmatched local content wins")
+                        File.WriteAllBytes(retainedFilePath, retainedBytes)
+
+                        Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                        do! Grace.CLI.LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                        do! Grace.CLI.Services.writeGraceStatusFile initialStatus
+                        do! Grace.CLI.Services.updateGraceWatchInterprocessFile initialStatus (Some(HashSet<DirectoryVersionId>(index.Keys)))
+
+                        let ipcPath = Grace.CLI.Services.IpcFileName()
+                        let retainedStatus = deserialize<Grace.CLI.Services.GraceWatchStatus> (File.ReadAllText(ipcPath))
+
+                        File.WriteAllText(
+                            ipcPath,
+                            serialize { retainedStatus with UpdatedAt = retainedStatus.UpdatedAt.Minus(NodaTime.Duration.FromMinutes(10.0)) }
+                        )
+
+                        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+                        GC.Collect()
+                        GC.WaitForPendingFinalizers()
+
+                        [|
+                            configuration.GraceStatusFile
+                            configuration.GraceStatusFile + "-wal"
+                            configuration.GraceStatusFile + "-shm"
+                            configuration.GraceStatusFile + "-journal"
+                        |]
+                        |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
+
+                        try
+                            let! claim = Grace.CLI.Services.claimGraceWatchInterprocessFile ()
+                            Assert.That(claim.Claimed, Is.True)
+                            Assert.That(claim.RetainedStatus.IsSome, Is.True)
+                            Grace.CLI.Command.Watch.setGraceWatchRuntimeModeForWatchTests Grace.CLI.Services.GraceWatchRuntimeMode.StartingUp
+
+                            let! resetStatus = Grace.CLI.Services.readGraceStatusFile ()
+
+                            let! recoveredStatus =
+                                Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
+                                    claim.RetainedStatus
+                                    resetStatus
+                                    System.Threading.CancellationToken.None
+
+                            Assert.That(Convert.ToHexString(File.ReadAllBytes(retainedFilePath)), Is.EqualTo(Convert.ToHexString(retainedBytes)))
+                            Assert.That(recoveredStatus.RootDirectoryId, Is.EqualTo(localRoot.DirectoryVersionId))
+
+                            let! boundary =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(boundary.IsSome, Is.True)
+                            Assert.That(boundary.Value.DirectoryId, Is.EqualTo(localRoot.DirectoryVersionId))
+                            Assert.That(boundary.Value.Sha256Hash, Is.EqualTo(localRoot.Sha256Hash))
+                            Assert.That(boundary.Value.Blake3Hash, Is.EqualTo(localRoot.Blake3Hash))
+                            Assert.That(boundary.Value.EventCursor, Is.EqualTo("branch-event-v1:1"))
+
+                            let mutable startupProcessingCount = 0
+
+                            do!
+                                Grace.CLI.Command.Watch.completeStartupRecoveryIfPendingWorkDrainedWithCatchUpForWatchTests
+                                    Grace.CLI.Services.readGraceStatusFile
+                                    Grace.CLI.Services.updateGraceWatchInterprocessFile
+                                    (fun () ->
+                                        task {
+                                            startupProcessingCount <- startupProcessingCount + 1
+                                            Assert.Fail("Unmatched recovery must establish its tail boundary before startup processing.")
+                                        })
+                                    (fun () -> Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None)
+
+                            Assert.That(startupProcessingCount, Is.EqualTo(0))
+                            Assert.That(Convert.ToHexString(File.ReadAllBytes(retainedFilePath)), Is.EqualTo(Convert.ToHexString(retainedBytes)))
+
+                            let! branchAfterRecovery = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+                            Assert.That(branchAfterRecovery.LatestReference.DirectoryId, Is.EqualTo(serverRoot.DirectoryVersionId))
                         finally
                             Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
                             if File.Exists(ipcPath) then File.Delete(ipcPath)

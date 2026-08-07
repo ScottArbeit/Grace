@@ -3128,8 +3128,11 @@ module Services =
             if inspection.IsUsable then return inspection.Status else return None // The file is stale, a startup claim, unreadable, or does not contain usable root data.
         }
 
-    /// Atomically claims the `grace watch` status IPC file before foreground watch startup.
-    let tryClaimGraceWatchInterprocessFile () =
+    /// Carries the previous clean root snapshot across the atomic Watch startup claim.
+    type GraceWatchInterprocessClaim = { Claimed: bool; RetainedStatus: GraceWatchStatus option }
+
+    /// Atomically claims Watch IPC while retaining a stopped process's clean root for pre-scan boundary recovery.
+    let claimGraceWatchInterprocessFile () =
         task {
             let claimStatus = createGraceWatchStartupClaim ()
 
@@ -3144,7 +3147,7 @@ module Services =
 
             try
                 do! writeGraceWatchStatus FileMode.CreateNew claimStatus
-                return true
+                return { Claimed = true; RetainedStatus = None }
             with
             | :? IOException ->
                 try
@@ -3168,17 +3171,40 @@ module Services =
 
                         if isGraceWatchStatusFresh existingGraceWatchStatus
                            && existingGraceWatchInspection.HasCurrentRepositoryIdentity then
-                            return false
+                            return { Claimed = false; RetainedStatus = None }
                         else
+                            let retainedStatus =
+                                if
+                                    existingGraceWatchInspection.HasCurrentRepositoryIdentity
+                                    && not existingGraceWatchStatus.IsStartupClaim
+                                    && existingGraceWatchStatus.Mode = GraceWatchRuntimeMode.HealthyIncremental
+                                    && existingGraceWatchStatus.IsWorkingTreeClean
+                                    && not existingGraceWatchStatus.HasPendingWatchWork
+                                    && existingGraceWatchStatus.RootDirectoryId
+                                       <> DirectoryVersionId.Empty
+                                    && not (String.IsNullOrWhiteSpace(string existingGraceWatchStatus.RootDirectorySha256Hash))
+                                    && not (String.IsNullOrWhiteSpace(string existingGraceWatchStatus.RootDirectoryBlake3Hash))
+                                then
+                                    Some existingGraceWatchStatus
+                                else
+                                    None
+
                             do! writeClaimToExistingFile fileStream
-                            return true
+                            return { Claimed = true; RetainedStatus = retainedStatus }
                     with
                     | _ ->
                         do! writeClaimToExistingFile fileStream
-                        return true
+                        return { Claimed = true; RetainedStatus = None }
                 with
-                | :? IOException -> return false
+                | :? IOException -> return { Claimed = false; RetainedStatus = None }
 
+        }
+
+    /// Preserves the existing boolean claim contract for callers that do not perform startup recovery.
+    let tryClaimGraceWatchInterprocessFile () =
+        task {
+            let! claim = claimGraceWatchInterprocessFile ()
+            return claim.Claimed
         }
 
     /// Checks if a file already exists in the object cache.

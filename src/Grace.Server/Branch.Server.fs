@@ -263,6 +263,7 @@ module Branch =
 
     /// Projects one eligible durable Branch Reference event into the Watch replay contract.
     let private tryCreateReferenceReplayEvent repositoryId branchId position (branchEvent: BranchEvent) =
+        /// Projects a type-matching branch Reference while preserving its exact durable event position.
         let create expectedReferenceType (referenceDto: Reference.ReferenceDto) directoryId sha256Hash blake3Hash referenceText =
             if referenceDto.RepositoryId <> repositoryId
                || referenceDto.BranchId <> branchId
@@ -1984,6 +1985,7 @@ module Branch =
 
     /// Resolves Reference-bearing candidates from one durable branch-event snapshot.
     let private getReferenceMaterializationBoundaryCandidates repositoryId branchId correlationId (branchEvents: IReadOnlyList<BranchEvent>) =
+        /// Admits a branch-scoped Reference candidate with its base-establishment and Watch-replay roles kept explicit.
         let candidate position establishesBranchBase eligibleForWatchReplay (referenceDto: Reference.ReferenceDto) =
             if referenceDto.RepositoryId = repositoryId
                && (establishesBranchBase
@@ -2000,6 +2002,7 @@ module Branch =
             else
                 None
 
+        /// Loads an inherited Reference so branch creation and rebase events can establish a conservative replay boundary.
         let resolveReference position establishesBranchBase referenceId =
             task {
                 if referenceId = ReferenceId.Empty then
