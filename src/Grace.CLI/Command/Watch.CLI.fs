@@ -1458,7 +1458,7 @@ module Watch =
     let private transitionCatchUpRequestLock = obj ()
     let mutable private requestCurrentBranchReferenceCatchUpAfterTransitionCompletion = ignore
 
-    /// Queues the current target branch's BranchDto catch-up only after its SignalR subscriptions are current.
+    /// Requests current-branch cursor replay only after transition SignalR subscriptions are current.
     let private requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh () =
         let request = lock transitionCatchUpRequestLock (fun () -> requestCurrentBranchReferenceCatchUpAfterTransitionCompletion)
         request ()
@@ -7765,6 +7765,13 @@ module Watch =
     /// Serializes current-branch replay wakes so each interval starts from the latest durable cursor.
     let private currentBranchReferenceReplayGate = new SemaphoreSlim(1, 1)
 
+    /// Rejects replay acknowledgement unless the current local root exactly matches the event root identity.
+    let internal ensureCurrentBranchReplayReferenceRootAcknowledged (status: GraceWatchStatus) (reference: CurrentBranchReferenceNotification option) =
+        match reference with
+        | Some payload when not (currentBranchReferenceMatchesLocalRoot status payload) ->
+            invalidOp "Watch local root does not acknowledge the replayed Reference."
+        | _ -> ()
+
     /// Persists an opaque cursor only after current branch, safe-state, root, and prior-boundary evidence are reread.
     let private acknowledgeCurrentBranchReferenceReplayCursor
         (expectedBoundary: ReferenceMaterializationBoundaryDto)
@@ -7799,16 +7806,7 @@ module Watch =
 
             match currentBranchMaterializationStatusGate true gatePayload inspection with
             | Clean status ->
-                match reference with
-                | Some payload when
-                    status.RootDirectoryId <> payload.DirectoryId
-                    && (status.RootDirectorySha256Hash
-                        <> payload.Sha256Hash
-                        || status.RootDirectoryBlake3Hash
-                           <> payload.Blake3Hash)
-                    ->
-                    invalidOp "Watch local root does not acknowledge the replayed Reference."
-                | _ -> ()
+                ensureCurrentBranchReplayReferenceRootAcknowledged status reference
 
                 let acceptedBoundary =
                     { expectedBoundary with
@@ -7898,6 +7896,18 @@ module Watch =
         }
 
     do
+        lock transitionCatchUpRequestLock (fun () ->
+            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
+                fun () ->
+                    replayCurrentBranchReferenceEvents CancellationToken.None
+                    |> ignore)
+
+    /// Installs a deterministic cursor-replay wake used by marker and transition tests.
+    let internal setCurrentBranchReferenceReplayRequestForWatchTests request =
+        lock transitionCatchUpRequestLock (fun () -> requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <- request)
+
+    /// Restores the production cursor-replay wake after focused tests replace it.
+    let internal resetCurrentBranchReferenceReplayRequestForWatchTests () =
         lock transitionCatchUpRequestLock (fun () ->
             requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
                 fun () ->
@@ -8253,9 +8263,7 @@ module Watch =
                     match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
                     | ObservedCurrentMarker when isRecentGraceUpdateMarkerCompletion completedUtc ->
                         recordGraceUpdateMarkerCompletedUtc completedUtc
-
-                        replayCurrentBranchReferenceEvents CancellationToken.None
-                        |> ignore
+                        requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
 
                         logToAnsiConsole Colors.Important $"Reference materialization update has finished."
                     | _ ->

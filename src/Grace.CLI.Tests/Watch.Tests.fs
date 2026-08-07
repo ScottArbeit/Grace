@@ -2674,6 +2674,8 @@ module WatchTests =
             let completedUtc = DateTime.UtcNow
 
             Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ()
+            let mutable replayRequests = 0
+            Watch.setCurrentBranchReferenceReplayRequestForWatchTests (fun () -> replayRequests <- replayRequests + 1)
 
             try
                 Watch.setSignalRBranchSubscriptionForWatchTests branchId parentBranchId
@@ -2696,7 +2698,10 @@ module WatchTests =
                 Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
                 Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal (if observeCreation then Some 1L else None)
+                |> should equal None
+
+                replayRequests
+                |> should equal (if observeCreation then 1 else 0)
 
                 Watch.isGraceWatchResyncPendingForWatchTests ()
                 |> should equal (not observeCreation)
@@ -2707,6 +2712,7 @@ module WatchTests =
                 subscription.ParentBranchId
                 |> should equal parentBranchId
             finally
+                Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
                 Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
     /// Verifies a recent sidecar from an earlier marker cannot authorize current Reference catch-up.
@@ -2809,11 +2815,15 @@ module WatchTests =
 
             writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
             Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+            let mutable replayRequests = 0
+            Watch.setCurrentBranchReferenceReplayRequestForWatchTests (fun () -> replayRequests <- replayRequests + 1)
 
             recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
 
             Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-            |> should equal (Some 1L)
+            |> should equal None
+
+            replayRequests |> should equal 1
 
             Services.IpcFileName() |> should equal branchBIpc
 
@@ -2853,6 +2863,7 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None
 
+            Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
             Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
     /// Verifies that branch transition completion refreshes SignalR parent identity before auto-rebase events resume.
@@ -2908,6 +2919,8 @@ module WatchTests =
 
                 writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
                 Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+                let mutable replayRequests = 0
+                Watch.setCurrentBranchReferenceReplayRequestForWatchTests (fun () -> replayRequests <- replayRequests + 1)
 
                 recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
 
@@ -2918,7 +2931,9 @@ module WatchTests =
                 |> should equal [| None |]
 
                 Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal (Some 1L)
+                |> should equal None
+
+                replayRequests |> should equal 1
 
                 let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
                 subscription.BranchId |> should equal branchBId
@@ -2951,6 +2966,7 @@ module WatchTests =
                         statusB.RootDirectoryId
                     |]
             finally
+                Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
                 Watch.resetSignalRSubscriptionRefreshForWatchTests ()
                 Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
@@ -20695,9 +20711,9 @@ module WatchTests =
             payload.ReferenceType
             |> should equal latestNotification.ReferenceType)
 
-    /// Verifies that a completed same-branch materialization marker wakes a fresh BranchDto catch-up after bounded retries stopped.
+    /// Verifies that a completed same-branch materialization marker wakes cursor replay after legacy catch-up retries stopped.
     [<Test; Category("CurrentBranchCatchUp")>]
-    let ``reference materialization marker deletion routes fresh BranchDto reference after bounded catch-up exhaustion`` () =
+    let ``reference materialization marker deletion routes cursor replay after bounded catch-up exhaustion`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let scheduler = Watch.CurrentBranchReferenceCatchUpScheduler(3)
@@ -20762,18 +20778,8 @@ module WatchTests =
             try
                 let updateMarkerFile = Services.updateInProgressFileName ()
                 let completedUtc = DateTime.UtcNow
-
-                let freshReference =
-                    validCurrentBranchReferenceNotification
-                        currentRepositoryId
-                        currentBranchId
-                        ReferenceType.Commit
-                        (Guid.NewGuid())
-                        (Sha256Hash "fresh-marker-catch-up-root")
-                        (Blake3Hash "fresh-marker-catch-up-root-blake3")
-
-                let freshBranchDto = branchDtoWithLatestCurrentBranchReference freshReference
-                let observedPayloads = ResizeArray<CurrentBranchReferenceNotification>()
+                let mutable replayRequests = 0
+                Watch.setCurrentBranchReferenceReplayRequestForWatchTests (fun () -> replayRequests <- replayRequests + 1)
 
                 Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
                 |> ignore
@@ -20791,30 +20797,11 @@ module WatchTests =
                 Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
                 Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
-                |> should equal (Some 1L)
-
-                let getFreshBranch () = Task.FromResult(Ok(GraceReturnValue.Create freshBranchDto "fresh-marker-catch-up-source-test"))
-
-                let processFreshReference (payload: CurrentBranchReferenceNotification) : Task<Watch.CurrentBranchMaterializationCoordinatorOutcome> =
-                    task {
-                        observedPayloads.Add(payload)
-
-                        return
-                            { ReferenceId = payload.ReferenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied; Decision = None }
-                    }
-
-                (Watch.runCurrentBranchReferenceCatchUpIfDueForWatchTests getFreshBranch processFreshReference)
-                    .GetAwaiter()
-                    .GetResult()
-
-                observedPayloads.ToArray() |> should haveLength 1
-
-                observedPayloads[0].ReferenceId
-                |> should equal freshReference.ReferenceId
-
-                Watch.currentBranchReferenceCatchUpPendingGenerationForWatchTests ()
                 |> should equal None
+
+                replayRequests |> should equal 1
             finally
+                Watch.resetCurrentBranchReferenceReplayRequestForWatchTests ()
                 Watch.resetCurrentBranchReferenceCatchUpSchedulerForWatchTests ())
 
     /// Verifies that a BranchDto without a concrete latest Reference never invents deferred catch-up work.
@@ -21266,9 +21253,9 @@ module WatchTests =
 
             assertRejected Services.LatestCurrentBranchReferenceDecisionReason.ReferenceIdUnavailable { validPayload with ReferenceId = ReferenceId.Empty })
 
-    /// Verifies that current-branch notification handling reads BranchDto before initial local status and rechecks status before apply.
+    /// Verifies cursor-admitted notification handling rechecks local status without consulting BranchDto.
     [<Test>]
-    let ``current branch reference handler fetches BranchDto before local status for valid notifications`` () =
+    let ``current branch reference handler rechecks local status without BranchDto`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let status = liveWatchStatus (Guid.NewGuid())
@@ -21327,7 +21314,6 @@ module WatchTests =
             |> should
                 equal
                 [|
-                    "branch"
                     "status"
                     "status"
                     "status"
@@ -21366,7 +21352,9 @@ module WatchTests =
 
             decision.Reference
             |> Option.map (fun reference -> reference.ReferenceId)
-            |> should equal (Some payload.ReferenceId))
+            |> should equal (Some payload.ReferenceId)
+
+            Assert.DoesNotThrow(Action(fun () -> Watch.ensureCurrentBranchReplayReferenceRootAcknowledged status (Some payload))))
 
     /// Verifies that BranchDto latest authority, not notification arrival order, selects the materializable Reference.
     [<Test>]
@@ -21617,9 +21605,9 @@ module WatchTests =
             acceptedDecision.Reason
             |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
 
-    /// Verifies that root-hash equality is enough to make a deterministic no-op decision.
+    /// Verifies that matching root hashes cannot acknowledge a different DirectoryVersion identity.
     [<Test>]
-    let ``latest current branch decision compares local root hashes without scanning`` () =
+    let ``latest current branch decision materializes when only root hashes match`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let status = liveWatchStatus (Guid.NewGuid())
@@ -21639,11 +21627,38 @@ module WatchTests =
 
             let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto payload
 
-            decision.NeedsMaterialization
-            |> should equal false
+            decision.NeedsMaterialization |> should equal true
 
             decision.Reason
-            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.SameRoot)
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
+
+    /// Verifies that matching DirectoryVersion identity cannot acknowledge different root hashes.
+    [<Test>]
+    let ``latest current branch decision materializes when only directory identity matches`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let status = liveWatchStatus localRootId
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = localRootId
+                    Sha256Hash = Sha256Hash "different-root-sha256"
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                    ReferenceType = ReferenceType.Checkpoint
+                }
+
+            let branchDto = branchDtoWithLatestCurrentBranchReference payload
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto payload
+
+            decision.NeedsMaterialization |> should equal true
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
 
     /// Verifies that dirty or pending local status cannot fall back to unsafe scan-oriented materialization.
     [<Test>]
@@ -21766,7 +21781,7 @@ module WatchTests =
                 Task.Delay(150).Wait()
 
                 branchFetches.ToArray()
-                |> should equal [| referenceA.ReferenceId |]
+                |> should equal Array.empty<ReferenceId>
             finally
                 releaseApply.Set()
 
@@ -21776,12 +21791,7 @@ module WatchTests =
             |> should equal true
 
             branchFetches.ToArray()
-            |> should
-                equal
-                [|
-                    referenceA.ReferenceId
-                    referenceB.ReferenceId
-                |]
+            |> should equal Array.empty<ReferenceId>
 
             appliedReferences.ToArray()
             |> should
@@ -22146,9 +22156,9 @@ module WatchTests =
             inspectionCount
             |> should be (greaterThanOrEqualTo 4))
 
-    /// Verifies that an accepted Reference completes before a later same-branch Reference that arrives during its lease wait.
+    /// Verifies a cursor-admitted Reference completes before a later same-branch event arriving during its lease wait.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
-    let ``current branch materialization coordinator preserves accepted reference after latest advances during lease wait`` () =
+    let ``current branch materialization coordinator preserves accepted reference while later event waits`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let status = liveWatchStatus (Guid.NewGuid())
@@ -22175,18 +22185,20 @@ module WatchTests =
             branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference newerReference)
 
             let branchFetches = ResizeArray<ReferenceId>()
-            use branchFetched = new ManualResetEventSlim(false)
+            use admissionInspected = new ManualResetEventSlim(false)
 
             let getBranch () =
                 task {
                     let branchDto = branchDtos.Dequeue()
                     branchFetches.Add(branchDto.LatestReference.ReferenceId)
-                    branchFetched.Set() |> ignore
 
                     return Ok(GraceReturnValue.Create branchDto "post-lease-accepted-reference-test")
                 }
 
-            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let inspectStatus () =
+                admissionInspected.Set() |> ignore
+                Task.FromResult(watchStatusInspection status)
+
             let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
             let waitForSafePoint _ _ = Task.FromResult(())
             let reestablishIpc _ _ = Task.FromResult(())
@@ -22215,10 +22227,10 @@ module WatchTests =
             let mutable laterMaterializationTask: Task<Watch.CurrentBranchMaterializationCoordinatorOutcome option> = null
 
             try
-                branchFetched.Wait(5000) |> should equal true
+                admissionInspected.Wait(5000) |> should equal true
 
                 branchFetches.ToArray()
-                |> should equal [| acceptedReference.ReferenceId |]
+                |> should equal Array.empty<ReferenceId>
 
                 laterMaterializationTask <-
                     Task.Run (fun () ->
@@ -22236,7 +22248,7 @@ module WatchTests =
                 Task.Delay(150).Wait()
 
                 branchFetches.ToArray()
-                |> should equal [| acceptedReference.ReferenceId |]
+                |> should equal Array.empty<ReferenceId>
             finally
                 blockingLease.Dispose()
 
@@ -22256,12 +22268,7 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
 
             branchFetches.ToArray()
-            |> should
-                equal
-                [|
-                    acceptedReference.ReferenceId
-                    newerReference.ReferenceId
-                |]
+            |> should equal Array.empty<ReferenceId>
 
             laterMaterializationTask.Result.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
@@ -22299,14 +22306,21 @@ module WatchTests =
 
             let mutable currentStatus = initialStatus
             let branchFetches = ResizeArray<ReferenceId>()
-            use branchFetched = new ManualResetEventSlim(false)
+            use preLeaseInspected = new ManualResetEventSlim(false)
 
             let getBranch () =
                 branchFetches.Add(acceptedReference.ReferenceId)
-                branchFetched.Set() |> ignore
                 Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference acceptedReference) "accepted-root-revalidation-test"))
 
-            let inspectStatus () = Task.FromResult(watchStatusInspection currentStatus)
+            let mutable inspectionCount = 0
+
+            let inspectStatus () =
+                inspectionCount <- inspectionCount + 1
+
+                if inspectionCount >= 2 then preLeaseInspected.Set() |> ignore
+
+                Task.FromResult(watchStatusInspection currentStatus)
+
             let requestDegradedResync _ = Assert.Fail("Readable current Watch evidence must not request degraded resync.")
             let waitForSafePoint _ _ = Task.FromResult(())
             let reestablishIpc _ _ = Task.FromResult(())
@@ -22333,7 +22347,7 @@ module WatchTests =
                         .GetResult())
 
             try
-                branchFetched.Wait(5000) |> should equal true
+                preLeaseInspected.Wait(5000) |> should equal true
                 currentStatus <- acceptedRootStatus
             finally
                 blockingLease.Dispose()
@@ -22345,14 +22359,14 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
 
             branchFetches.ToArray()
-            |> should equal [| acceptedReference.ReferenceId |]
+            |> should equal Array.empty<ReferenceId>
 
             appliedReferences.ToArray()
             |> should equal Array.empty<ReferenceId>)
 
-    /// Verifies that a queued Reference is checked against BranchDto latest only after it owns the serialized lane.
+    /// Verifies queued cursor-admitted References preserve their exact payloads without consulting BranchDto.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``queued current branch reference revalidates BranchDto latest when processed`` () =
+    let ``queued current branch references preserve cursor admitted payloads`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let status = liveWatchStatus (Guid.NewGuid())
@@ -22423,12 +22437,7 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
 
             branchFetches.ToArray()
-            |> should
-                equal
-                [|
-                    referenceA.ReferenceId
-                    referenceB.ReferenceId
-                |])
+            |> should equal Array.empty<ReferenceId>)
 
     /// Verifies that dirty local Watch state blocks remote apply and leaves local files untouched.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -26292,7 +26301,7 @@ module WatchTests =
             materializationTask.Result.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
 
-    /// Verifies that an accepted Reference survives a post-lease blocked retry when BranchDto latest advances meanwhile.
+    /// Verifies that a cursor-admitted Reference survives a post-lease blocked retry without BranchDto revalidation.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
     let ``current branch materialization coordinator keeps accepted reference after post lease blocked retry`` () =
         withTempRepo (fun root ->
@@ -26375,7 +26384,7 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
 
             branchFetches.ToArray()
-            |> should equal [| notification.ReferenceId |]
+            |> should equal Array.empty<ReferenceId>
 
             safePointWaits.ToArray()
             |> should
@@ -26400,7 +26409,7 @@ module WatchTests =
             appliedReferences.ToArray()
             |> should equal [| notification.ReferenceId |])
 
-    /// Verifies that an accepted Reference survives a post-lease degraded retry when BranchDto latest advances meanwhile.
+    /// Verifies that a cursor-admitted Reference survives a post-lease degraded retry without BranchDto revalidation.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator keeps accepted reference after post lease degraded retry`` () =
         withTempRepo (fun root ->
@@ -26477,7 +26486,7 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
 
             branchFetches.ToArray()
-            |> should equal [| notification.ReferenceId |]
+            |> should equal Array.empty<ReferenceId>
 
             degradedRequests.ToArray()
             |> should
@@ -26577,19 +26586,14 @@ module WatchTests =
                 |]
 
             branchFetches.ToArray()
-            |> should
-                equal
-                [|
-                    notification.ReferenceId
-                    notification.ReferenceId
-                |]
+            |> should equal Array.empty<ReferenceId>
 
             appliedReferences.ToArray()
             |> should equal [| notification.ReferenceId |])
 
-    /// Verifies that degraded retry drops the preserved Reference when BranchDto latest changes before apply.
+    /// Verifies degraded retry acknowledges an exact local root without consulting a BranchDto summary.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
-    let ``current branch materialization coordinator drops stale reference after degraded resync revalidation`` () =
+    let ``current branch materialization coordinator detects exact local root after degraded resync`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let status = liveWatchStatus (Guid.NewGuid())
@@ -26603,33 +26607,25 @@ module WatchTests =
                     (Sha256Hash "remote-root")
                     (Blake3Hash "remote-root-blake3")
 
-            let newerNotification =
-                { notification with
-                    ReferenceId = Guid.NewGuid()
-                    DirectoryId = Guid.NewGuid()
-                    Sha256Hash = Sha256Hash "newer-remote-root"
-                    Blake3Hash = Blake3Hash "newer-remote-root-blake3"
+            let acceptedRootStatus =
+                { status with
+                    RootDirectoryId = notification.DirectoryId
+                    RootDirectorySha256Hash = notification.Sha256Hash
+                    RootDirectoryBlake3Hash = notification.Blake3Hash
                 }
-
-            let branchDtos = Queue<Grace.Types.Branch.BranchDto>()
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference notification)
-            branchDtos.Enqueue(branchDtoWithLatestCurrentBranchReference newerNotification)
 
             let branchFetches = ResizeArray<ReferenceId>()
 
             let getBranch () =
-                task {
-                    let branchDto = branchDtos.Dequeue()
-                    branchFetches.Add(branchDto.LatestReference.ReferenceId)
-                    return Ok(GraceReturnValue.Create branchDto "degraded-stale-drop-test")
-                }
+                branchFetches.Add(notification.ReferenceId)
+                Task.FromResult(Ok(GraceReturnValue.Create Grace.Types.Branch.BranchDto.Default "unexpected-branch-fetch"))
 
             let mutable statusReestablished = false
 
             let inspectStatus () =
                 Task.FromResult(
                     if statusReestablished then
-                        watchStatusInspection status
+                        watchStatusInspection acceptedRootStatus
                     else
                         missingWatchStatusInspection
                 )
@@ -26662,15 +26658,10 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected
 
             outcome.Value.Decision.Value.Reason
-            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.SameRoot
 
             branchFetches.ToArray()
-            |> should
-                equal
-                [|
-                    notification.ReferenceId
-                    newerNotification.ReferenceId
-                |])
+            |> should equal Array.empty<ReferenceId>)
 
     /// Verifies that stale branch evidence is dropped before a mismatch safe-point wait can hold the lane.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
@@ -26727,7 +26718,7 @@ module WatchTests =
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
 
-    /// Verifies that dirty status becoming clean re-runs the latest-reference decision before apply.
+    /// Verifies that dirty status becoming clean re-runs local cursor-event safety checks before apply.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator retries after dirty status becomes clean`` () =
         withTempRepo (fun root ->
@@ -26783,19 +26774,14 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
 
             branchFetches.ToArray()
-            |> should
-                equal
-                [|
-                    notification.ReferenceId
-                    notification.ReferenceId
-                |]
+            |> should equal Array.empty<ReferenceId>
 
-            inspections |> should equal 6
+            inspections |> should equal 4
 
             appliedReferences.ToArray()
             |> should equal [| notification.ReferenceId |])
 
-    /// Verifies that unavailable status becoming clean re-runs the latest-reference decision before apply.
+    /// Verifies that unavailable status becoming clean re-runs local cursor-event safety checks before apply.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator retries after unavailable status becomes clean`` () =
         withTempRepo (fun root ->
@@ -26850,26 +26836,19 @@ module WatchTests =
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
 
             branchFetches.ToArray()
-            |> should
-                equal
-                [|
-                    notification.ReferenceId
-                    notification.ReferenceId
-                |]
+            |> should equal Array.empty<ReferenceId>
 
-            inspections |> should equal 6
+            inspections |> should equal 4
 
             appliedReferences.ToArray()
             |> should equal [| notification.ReferenceId |])
 
-    /// Verifies that a clean gate after a local status identity rejection terminates instead of spinning.
+    /// Verifies mismatched local status identity is rejected and cannot apply a cursor event.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator terminates clean gate after status identity mismatch`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
             let legacyNameFallbackStatus = { liveWatchStatus (Guid.NewGuid()) with BranchId = BranchId.Empty; BranchName = BranchName "branch-a" }
-
-            let branchAStatus = liveWatchStatus (Guid.NewGuid())
 
             let notification =
                 validCurrentBranchReferenceNotification
@@ -26890,15 +26869,11 @@ module WatchTests =
 
             let inspectStatus () =
                 inspections <- inspections + 1
+                Task.FromResult(watchStatusInspection legacyNameFallbackStatus)
 
-                if inspections = 1 then
-                    Task.FromResult(watchStatusInspection legacyNameFallbackStatus)
-                else
-                    Task.FromResult(watchStatusInspection branchAStatus)
-
-            let requestDegradedResync _ = Assert.Fail("Clean status identity rejection must not request degraded resync.")
-            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("clean status identity rejection must not wait"))
-            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("clean status identity rejection must not retry IPC"))
+            let requestDegradedResync _ = ()
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("identity mismatch must not enter a safe-point wait"))
+            let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("clean status identity rejection must not apply"))
 
             let outcome =
@@ -26918,7 +26893,7 @@ module WatchTests =
             outcome.Value.Decision.Value.Reason
             |> should equal Services.LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
 
-            branchFetches |> should equal 1
+            branchFetches |> should equal 0
             inspections |> should equal 2)
 
     /// Verifies that rootless notifications never enter a materialization apply or multi-reference optimization path.
@@ -27929,6 +27904,116 @@ module WatchTests =
     /// Creates a non-terminal safe-point outcome that must keep the matching event cursor replayable.
     let private waitingReplayOutcome referenceId : Watch.CurrentBranchMaterializationCoordinatorOutcome =
         ({ ReferenceId = referenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint; Decision = None }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
+
+    /// Proves a partial root match stays non-terminal at the production decision and replay acknowledgement boundary.
+    let private assertPartialRootMatchRemainsReplayable (status: Services.GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
+        task {
+            Assert.Throws<InvalidOperationException>(Action(fun () -> Watch.ensureCurrentBranchReplayReferenceRootAcknowledged status (Some payload)))
+            |> ignore
+
+            let boundary = { replayBoundary "opaque-before-partial-match" with RepositoryId = payload.RepositoryId; BranchId = payload.BranchId }
+
+            let event = { replayEvent "opaque-partial-match" 6 with Reference = payload }
+
+            let mutable observedDecision = None
+            let mutable acknowledgementCount = 0
+            use replayGate = new SemaphoreSlim(1, 1)
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(Some boundary)
+                     Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-partial-match"))
+                     ProcessReference =
+                         fun currentPayload ->
+                             let decision =
+                                 Services.revalidateAcceptedCurrentBranchReferenceMaterialization
+                                     currentPayload.RepositoryId
+                                     currentPayload.BranchId
+                                     (Some status)
+                                     currentPayload
+
+                             observedDecision <- Some decision
+
+                             Task.FromResult(
+                                 ({
+                                      ReferenceId = currentPayload.ReferenceId
+                                      Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                      Decision = Some decision
+                                  }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
+                             )
+                     AcknowledgeCursor =
+                         fun _ _ _ _ ->
+                             acknowledgementCount <- acknowledgementCount + 1
+                             Task.FromResult(boundary)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            let! outcome = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+
+            Assert.That(outcome.Reason, Is.EqualTo(Watch.CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged))
+            Assert.That(outcome.AcknowledgedEventCount, Is.EqualTo(0))
+            Assert.That(outcome.ScannedThroughAcknowledged, Is.False)
+            Assert.That(acknowledgementCount, Is.EqualTo(0))
+            Assert.That(observedDecision.Value.NeedsMaterialization, Is.True)
+
+            Assert.That(observedDecision.Value.Reason, Is.EqualTo(Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired))
+        }
+
+    /// Proves a shared DirectoryVersion ID with a differing hash cannot advance the replay cursor.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``same directory identity with a different hash remains replayable`` () =
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+        let directoryId = Guid.NewGuid()
+
+        let status =
+            { Services.GraceWatchStatus.Default with
+                RepositoryId = repositoryId
+                BranchId = branchId
+                RootDirectoryId = directoryId
+                RootDirectorySha256Hash = Sha256Hash "local-root-sha256"
+                RootDirectoryBlake3Hash = Blake3Hash "shared-root-blake3"
+            }
+
+        let payload =
+            { CurrentBranchReferenceNotification.Default with
+                RepositoryId = repositoryId
+                BranchId = branchId
+                ReferenceId = Guid.NewGuid()
+                DirectoryId = directoryId
+                Sha256Hash = Sha256Hash "remote-root-sha256"
+                Blake3Hash = status.RootDirectoryBlake3Hash
+                ReferenceType = ReferenceType.Save
+            }
+
+        assertPartialRootMatchRemainsReplayable status payload
+
+    /// Proves matching hashes with a different DirectoryVersion ID cannot advance the replay cursor.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``different directory identity with matching hashes remains replayable`` () =
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+
+        let status =
+            { Services.GraceWatchStatus.Default with
+                RepositoryId = repositoryId
+                BranchId = branchId
+                RootDirectoryId = Guid.NewGuid()
+                RootDirectorySha256Hash = Sha256Hash "shared-root-sha256"
+                RootDirectoryBlake3Hash = Blake3Hash "shared-root-blake3"
+            }
+
+        let payload =
+            { CurrentBranchReferenceNotification.Default with
+                RepositoryId = repositoryId
+                BranchId = branchId
+                ReferenceId = Guid.NewGuid()
+                DirectoryId = Guid.NewGuid()
+                Sha256Hash = status.RootDirectorySha256Hash
+                Blake3Hash = status.RootDirectoryBlake3Hash
+                ReferenceType = ReferenceType.Save
+            }
+
+        assertPartialRootMatchRemainsReplayable status payload
 
     /// Proves one cursor-new event is applied once and an empty interval bypasses coordinator and pending behavior.
     [<Test; Category("CurrentBranchCursorReplay")>]

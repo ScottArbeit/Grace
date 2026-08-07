@@ -550,11 +550,11 @@ module Services =
         && payload.BranchId = branchId
         && CurrentBranchReferenceNotification.IsEligibleReferenceType payload.ReferenceType
 
-    /// Reports whether a remote Reference points at the same root already held by the local Watch status.
-    let private currentBranchReferenceMatchesLocalRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
+    /// Reports whether a remote Reference has the exact root identity already held by the local Watch status.
+    let internal currentBranchReferenceMatchesLocalRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
         status.RootDirectoryId = payload.DirectoryId
-        || (status.RootDirectorySha256Hash = payload.Sha256Hash
-            && status.RootDirectoryBlake3Hash = payload.Blake3Hash)
+        && status.RootDirectorySha256Hash = payload.Sha256Hash
+        && status.RootDirectoryBlake3Hash = payload.Blake3Hash
 
     /// Selects the latest eligible overall Reference, falling back to typed materializable slots when overall latest is ineligible.
     let internal tryLatestEligibleCurrentBranchReference (branchDto: Grace.Types.Branch.BranchDto) =
@@ -627,6 +627,11 @@ module Services =
         | Some decision -> decision
         | None ->
             match localStatus with
+            | Some status when
+                status.RepositoryId <> repositoryId
+                || status.BranchId <> branchId
+                ->
+                LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch, payload)
             | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
                 LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.SameRoot, payload)
             | _ -> { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
