@@ -51,8 +51,8 @@ PowerShell:
 ./grace workitem show f88b46e2-5c36-4b52-9e36-716f7d7a9a8b
 ./grace workitem show 42
 
-./grace workitem status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --set InReview
-./grace workitem status 42 --set Done
+./grace workitem set-status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --status InReview
+./grace workitem set-status 42 -s Done
 ```
 
 bash / zsh:
@@ -69,8 +69,8 @@ bash / zsh:
 ./grace workitem show f88b46e2-5c36-4b52-9e36-716f7d7a9a8b
 ./grace workitem show 42
 
-./grace workitem status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --set InReview
-./grace workitem status 42 --set Done
+./grace workitem set-status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --status InReview
+./grace workitem set-status 42 -s Done
 ```
 
 ### Link references and promotion sets
