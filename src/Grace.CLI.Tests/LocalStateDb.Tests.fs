@@ -421,6 +421,179 @@ module LocalStateDbTests =
                 Assert.That(storedStatus.RootDirectoryBlake3Hash, Is.EqualTo(rootBlake3))
             })
 
+    /// Missing-cursor recovery inserts a boundary only while the complete materialized status root remains current.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary is established by exact local root CAS`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("aaaaaaaa-8040-4000-8000-aaaaaaaaaaaa")
+                let rootHash = Sha256Hash "local-root-sha"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let rootBlake3 = root.Blake3Hash
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = rootBlake3; Index = index }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = rootBlake3
+                        EventCursor = "branch-event-v1:4"
+                    }
+
+                let! stored = LocalStateDb.establishRemoteReferenceBoundaryIfAbsent configuration.GraceStatusFile status boundary CancellationToken.None
+
+                let! durable = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(stored, Is.EqualTo(boundary))
+                Assert.That(durable, Is.EqualTo(Some boundary))
+            })
+
+    /// Cancellation at the missing-boundary commit seam rolls back the inserted cursor without changing local status.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary cancellation rolls back the insert`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("dddddddd-8040-4000-8000-dddddddddddd")
+                let rootHash = Sha256Hash "cancelled-root-sha"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = root.Blake3Hash; Index = index }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = root.Blake3Hash
+                        EventCursor = "branch-event-v1:5"
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+                use cancellation = new CancellationTokenSource()
+
+                Assert.ThrowsAsync<OperationCanceledException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.establishRemoteReferenceBoundaryIfAbsentWithBeforeCommit
+                            configuration.GraceStatusFile
+                            status
+                            boundary
+                            cancellation.Token
+                            cancellation.Cancel
+                        :> Task)
+                )
+                |> ignore
+
+                let! durable = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                let! durableStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                Assert.That(durable, Is.EqualTo(None))
+                Assert.That(durableStatus.RootDirectoryId, Is.EqualTo(rootId))
+                Assert.That(durableStatus.RootDirectorySha256Hash, Is.EqualTo(rootHash))
+                Assert.That(durableStatus.RootDirectoryBlake3Hash, Is.EqualTo(root.Blake3Hash))
+            })
+
+    /// A changed, recreated, or already-bounded database cannot accept a stale missing-cursor decision.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary rejects stale local database state`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let expectedRootId = Guid.Parse("bbbbbbbb-8040-4000-8000-bbbbbbbbbbbb")
+                let expectedHash = Sha256Hash "expected-root-sha"
+
+                let expectedRoot =
+                    createDirectoryVersion configuration expectedRootId Constants.RootDirectoryPath expectedHash Array.empty Array.empty 0L DateTime.UtcNow
+
+                let expectedBlake3 = expectedRoot.Blake3Hash
+
+                let expectedIndex = GraceIndex()
+                expectedIndex[expectedRootId] <- expectedRoot
+
+                let expectedStatus = { createTestStatus expectedRootId expectedHash 123L with RootDirectoryBlake3Hash = expectedBlake3; Index = expectedIndex }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = expectedRootId
+                        Sha256Hash = expectedHash
+                        Blake3Hash = expectedBlake3
+                        EventCursor = "branch-event-v1:5"
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile expectedStatus
+                SqliteConnection.ClearAllPools()
+                File.Delete(configuration.GraceStatusFile)
+                File.Delete(configuration.GraceStatusFile + "-wal")
+                File.Delete(configuration.GraceStatusFile + "-shm")
+
+                let mutable staleDecisionRejected = false
+
+                try
+                    let! _ = LocalStateDb.establishRemoteReferenceBoundaryIfAbsent configuration.GraceStatusFile expectedStatus boundary CancellationToken.None
+
+                    ()
+                with
+                | _ -> staleDecisionRejected <- true
+
+                Assert.That(staleDecisionRejected, Is.True)
+
+                use recreatedConnection = openRawConnection configuration.GraceStatusFile
+
+                let boundaryTableCount =
+                    executeScalarInt recreatedConnection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'remote_reference_boundaries';"
+
+                Assert.That(boundaryTableCount, Is.EqualTo(0))
+            })
+
+    /// A concurrent or preexisting boundary prevents missing-cursor recovery from overwriting cursor authority.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary rejects an existing boundary`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("cccccccc-8040-4000-8000-cccccccccccc")
+                let rootHash = Sha256Hash "existing-root-sha"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = root.Blake3Hash; Index = index }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = root.Blake3Hash
+                        EventCursor = "branch-event-v1:5"
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                let! _ = LocalStateDb.establishRemoteReferenceBoundaryIfAbsent configuration.GraceStatusFile status boundary CancellationToken.None
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.establishRemoteReferenceBoundaryIfAbsent
+                            configuration.GraceStatusFile
+                            status
+                            { boundary with EventCursor = "branch-event-v1:6" }
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+            })
+
     /// A mismatched cursor is rejected before it can replace the previously committed status snapshot.
     [<Test>]
     let ``mismatched remote reference boundary leaves status and cursor unchanged`` () =

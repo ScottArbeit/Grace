@@ -202,6 +202,13 @@ class TestBranchesApi(unittest.TestCase):
         """
         pass
 
+    def test_resolve_reference_event_boundary(self) -> None:
+        """Test case for resolve_reference_event_boundary
+
+        Resolve an absent Watch event boundary.
+        """
+        pass
+
     def test_save_branch(self) -> None:
         """Test case for save_branch
 

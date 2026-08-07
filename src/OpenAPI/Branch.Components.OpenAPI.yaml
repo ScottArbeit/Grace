@@ -164,6 +164,19 @@
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
             ReferenceType:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+    ResolveReferenceEventBoundaryParameters:
+      description: Supplies the exact materialized local root whose missing Watch cursor must match or baseline.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            DirectoryVersionId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+            Sha256Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+            Blake3Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+          required: [DirectoryVersionId, Sha256Hash, Blake3Hash]
     ReplayReferenceEventsParameters:
       description: Replays eligible Reference events after one opaque cursor for the exact branch scope that produced it.
       allOf:

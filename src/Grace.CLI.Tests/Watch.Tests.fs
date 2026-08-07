@@ -27928,6 +27928,124 @@ module WatchTests =
     let private waitingReplayOutcome referenceId : Watch.CurrentBranchMaterializationCoordinatorOutcome =
         ({ ReferenceId = referenceId; Reason = Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint; Decision = None }: Watch.CurrentBranchMaterializationCoordinatorOutcome)
 
+    /// A DB-reset root matching ordered history starts at that event and applies only the later eligible event.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing cursor exact root recovery replays only later events`` () =
+        task {
+            let recovered = replayBoundary "opaque-matching-root"
+            let laterEvent = replayEvent "opaque-later-event" 11
+            let mutable durableBoundary: ReferenceMaterializationBoundaryDto option = None
+            let mutable resolutionCount = 0
+            let processed = ResizeArray<ReferenceId>()
+            use replayGate = new SemaphoreSlim(1, 1)
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(durableBoundary)
+                     ResolveMissingBoundary =
+                         fun _ ->
+                             resolutionCount <- resolutionCount + 1
+                             durableBoundary <- Some recovered
+                             Task.FromResult(durableBoundary)
+                     Replay =
+                         fun boundary ->
+                             Assert.That(boundary.EventCursor, Is.EqualTo("opaque-matching-root"))
+                             Task.FromResult(Ok(replayReturnValue boundary [| laterEvent |] "opaque-later-event"))
+                     ProcessReference =
+                         fun payload ->
+                             processed.Add(payload.ReferenceId)
+                             Task.FromResult(appliedReplayOutcome payload.ReferenceId)
+                     AcknowledgeCursor =
+                         fun expected reference cursor _ ->
+                             Assert.That(durableBoundary, Is.EqualTo(Some expected))
+
+                             let acceptedRoot =
+                                 reference
+                                 |> Option.map (fun payload -> payload.DirectoryId, payload.Sha256Hash, payload.Blake3Hash)
+                                 |> Option.defaultValue (expected.DirectoryId, expected.Sha256Hash, expected.Blake3Hash)
+
+                             let directoryId, sha256Hash, blake3Hash = acceptedRoot
+
+                             let accepted = { expected with DirectoryId = directoryId; Sha256Hash = sha256Hash; Blake3Hash = blake3Hash; EventCursor = cursor }
+
+                             durableBoundary <- Some accepted
+                             Task.FromResult(accepted)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            let! outcome = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+
+            Assert.That(outcome.Reason, Is.EqualTo(Watch.CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged))
+            Assert.That(resolutionCount, Is.EqualTo(1))
+            Assert.That(outcome.AcknowledgedEventCount, Is.EqualTo(1))
+
+            processed.ToArray()
+            |> should equal [| laterEvent.Reference.ReferenceId |]
+        }
+
+    /// An unmatched local root establishes a conservative baseline, preserves history, and follows only a future event.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing cursor unmatched root baselines without historical materialization`` () =
+        task {
+            let baseline = replayBoundary "opaque-conservative-baseline"
+            let historicalEvent = replayEvent "opaque-historical-event" 12
+            let futureEvent = replayEvent "opaque-future-event" 13
+            let mutable durableBoundary: ReferenceMaterializationBoundaryDto option = None
+            let mutable futureAvailable = false
+            let processed = ResizeArray<ReferenceId>()
+            use replayGate = new SemaphoreSlim(1, 1)
+
+            let clients =
+                ({
+                     ReadBoundary = fun () -> Task.FromResult(durableBoundary)
+                     ResolveMissingBoundary =
+                         fun _ ->
+                             durableBoundary <- Some baseline
+                             Task.FromResult(durableBoundary)
+                     Replay =
+                         fun boundary ->
+                             let events = if futureAvailable then [| futureEvent |] else Array.empty
+                             let scannedThrough = if futureAvailable then futureEvent.EventCursor else boundary.EventCursor
+                             Task.FromResult(Ok(replayReturnValue boundary events scannedThrough))
+                     ProcessReference =
+                         fun payload ->
+                             processed.Add(payload.ReferenceId)
+                             Task.FromResult(appliedReplayOutcome payload.ReferenceId)
+                     AcknowledgeCursor =
+                         fun expected reference cursor _ ->
+                             let payload = reference |> Option.map id
+
+                             let accepted =
+                                 match payload with
+                                 | Some value ->
+                                     { expected with
+                                         DirectoryId = value.DirectoryId
+                                         Sha256Hash = value.Sha256Hash
+                                         Blake3Hash = value.Blake3Hash
+                                         EventCursor = cursor
+                                     }
+                                 | None -> { expected with EventCursor = cursor }
+
+                             durableBoundary <- Some accepted
+                             Task.FromResult(accepted)
+                 }: Watch.CurrentBranchReferenceReplayClients)
+
+            let! baselineOutcome = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+
+            Assert.That(baselineOutcome.ReceivedEventCount, Is.EqualTo(0))
+            Assert.That(processed, Is.Empty)
+
+            futureAvailable <- true
+
+            let! futureOutcome = Watch.replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients CancellationToken.None
+
+            Assert.That(futureOutcome.AcknowledgedEventCount, Is.EqualTo(1))
+
+            processed.ToArray()
+            |> should equal [| futureEvent.Reference.ReferenceId |]
+
+            Assert.That(processed, Does.Not.Contain(historicalEvent.Reference.ReferenceId))
+        }
+
     /// Proves a partial root match stays non-terminal at the production decision and replay acknowledgement boundary.
     let private assertPartialRootMatchRemainsReplayable (status: Services.GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
         task {
@@ -27945,6 +28063,7 @@ module WatchTests =
             let clients =
                 ({
                      ReadBoundary = fun () -> Task.FromResult(Some boundary)
+                     ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-partial-match"))
                      ProcessReference =
                          fun currentPayload ->
@@ -28051,6 +28170,7 @@ module WatchTests =
             let clients =
                 ({
                      ReadBoundary = fun () -> Task.FromResult(Some durableBoundary)
+                     ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay =
                          fun boundary ->
                              let events = if boundary.EventCursor = "opaque-n" then [| event |] else Array.empty
@@ -28113,6 +28233,7 @@ module WatchTests =
             let clients =
                 ({
                      ReadBoundary = fun () -> Task.FromResult(Some durableBoundary)
+                     ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay =
                          fun boundary ->
                              let events = if boundary.EventCursor = "opaque-before" then [| event |] else Array.empty
@@ -28167,6 +28288,7 @@ module WatchTests =
             let clients =
                 ({
                      ReadBoundary = fun () -> Task.FromResult(Some boundary)
+                     ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-wait"))
                      ProcessReference = fun payload -> Task.FromResult(waitingReplayOutcome payload.ReferenceId)
                      AcknowledgeCursor =
@@ -28196,6 +28318,7 @@ module WatchTests =
             let clients =
                 ({
                      ReadBoundary = fun () -> Task.FromResult(Some durableBoundary)
+                     ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-scan-closed"))
                      ProcessReference =
                          fun payload ->
@@ -28244,6 +28367,7 @@ module WatchTests =
             let clients =
                 ({
                      ReadBoundary = fun () -> Task.FromResult(Some boundary)
+                     ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                      Replay = fun current -> Task.FromResult(Ok(replayReturnValue current [| event |] "opaque-after-cancel"))
                      ProcessReference =
                          fun payload ->

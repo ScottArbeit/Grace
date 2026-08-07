@@ -861,6 +861,65 @@ type ReferenceMaterializationBoundarySelectionTests() =
         Assert.That(promoted.Value.DirectoryId, Is.EqualTo(promotion.Reference.DirectoryId))
         Assert.That(basedOnly.Value.DirectoryId, Is.EqualTo(branchBase.Reference.DirectoryId))
 
+    /// An exact local root tuple recovers the matching ordered event rather than the snapshot tail.
+    [<Test>]
+    member _.MissingCursorResolutionUsesExactRootTuple() =
+        let matching = candidate 3L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Save false
+        let parameters = ResolveReferenceEventBoundaryParameters()
+        parameters.DirectoryVersionId <- matching.Reference.DirectoryId
+        parameters.Sha256Hash <- matching.Reference.Sha256Hash
+        parameters.Blake3Hash <- matching.Reference.Blake3Hash
+
+        let result = Grace.Server.Branch.tryResolveReferenceEventBoundary repositoryId branchId parameters 6 [| matching |]
+
+        Assert.That(result.IsSome, Is.True)
+        Assert.That(result.Value.DirectoryId, Is.EqualTo(matching.Reference.DirectoryId))
+        Assert.That(result.Value.Sha256Hash, Is.EqualTo(matching.Reference.Sha256Hash))
+        Assert.That(result.Value.Blake3Hash, Is.EqualTo(matching.Reference.Blake3Hash))
+        Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:3"))
+
+    /// An unmatched local root is preserved while the same immutable snapshot tail becomes its conservative boundary.
+    [<Test>]
+    member _.MissingCursorResolutionUsesConservativeSnapshotBaseline() =
+        let parameters = ResolveReferenceEventBoundaryParameters()
+        parameters.DirectoryVersionId <- Guid.Parse("88888888-8040-4000-8000-888888888888")
+        parameters.Sha256Hash <- Sha256Hash "local-unmatched-sha"
+        parameters.Blake3Hash <- Blake3Hash "local-unmatched-blake3"
+
+        let result =
+            Grace.Server.Branch.tryResolveReferenceEventBoundary
+                repositoryId
+                branchId
+                parameters
+                6
+                [|
+                    candidate 3L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Save false
+                |]
+
+        Assert.That(result.IsSome, Is.True)
+        Assert.That(result.Value.DirectoryId, Is.EqualTo(parameters.DirectoryVersionId))
+        Assert.That(result.Value.Sha256Hash, Is.EqualTo(parameters.Sha256Hash))
+        Assert.That(result.Value.Blake3Hash, Is.EqualTo(parameters.Blake3Hash))
+        Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:5"))
+
+    /// A matching tuple from another branch cannot authorize recovery in the requested branch.
+    [<Test>]
+    member _.MissingCursorResolutionRejectsCrossBranchMatch() =
+        let otherBranchId = Guid.Parse("99999999-8040-4000-8000-999999999999")
+        let localRoot = candidate 2L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Commit false
+
+        let crossBranch = { localRoot with BranchId = otherBranchId; Reference = { localRoot.Reference with BranchId = otherBranchId } }
+
+        let parameters = ResolveReferenceEventBoundaryParameters()
+        parameters.DirectoryVersionId <- localRoot.Reference.DirectoryId
+        parameters.Sha256Hash <- localRoot.Reference.Sha256Hash
+        parameters.Blake3Hash <- localRoot.Reference.Blake3Hash
+
+        let result = Grace.Server.Branch.tryResolveReferenceEventBoundary repositoryId branchId parameters 6 [| crossBranch |]
+
+        Assert.That(result.IsSome, Is.True)
+        Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:5"))
+
 /// Proves Watch replay is closed by one immutable branch-event snapshot and server-owned cursor interpretation.
 [<Parallelizable(ParallelScope.All)>]
 type ReferenceEventReplayTests() =

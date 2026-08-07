@@ -186,6 +186,7 @@ docs/RepositoryReferencesReturnValue.md
 docs/RepositoryReturnValue.md
 docs/RepositoryStatus.md
 docs/RepositoryVisibility.md
+docs/ResolveReferenceEventBoundaryParameters.md
 docs/SaveDirectoryVersionsParameters.md
 docs/ScopedOutboundUrl.md
 docs/SearchVisibility.md
@@ -437,6 +438,7 @@ grace_generated_openapi_probe/models/repository_references_return_value.py
 grace_generated_openapi_probe/models/repository_return_value.py
 grace_generated_openapi_probe/models/repository_status.py
 grace_generated_openapi_probe/models/repository_visibility.py
+grace_generated_openapi_probe/models/resolve_reference_event_boundary_parameters.py
 grace_generated_openapi_probe/models/save_directory_versions_parameters.py
 grace_generated_openapi_probe/models/scoped_outbound_url.py
 grace_generated_openapi_probe/models/search_visibility.py
@@ -686,6 +688,7 @@ test/test_repository_references_return_value.py
 test/test_repository_return_value.py
 test/test_repository_status.py
 test/test_repository_visibility.py
+test/test_resolve_reference_event_boundary_parameters.py
 test/test_save_directory_versions_parameters.py
 test/test_scoped_outbound_url.py
 test/test_search_visibility.py

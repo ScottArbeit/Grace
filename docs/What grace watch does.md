@@ -40,6 +40,13 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   wake Watch; startup, reconnect, and each wake replay server-ordered Commit, Checkpoint, and Save events after the
   opaque cursor stored for the current repository and branch. Watch advances that cursor only after successful
   materialization or verified same-root acknowledgement.
+- If `.grace/grace-local.db` is reset and the current branch cursor is missing, Watch does not choose the branch's
+  latest Reference or overwrite the working directory. For a clean, fully materialized local root, Grace Server either
+  finds the exact repository, branch, root ID, SHA-256, and BLAKE3 tuple in ordered history or captures the current
+  server event boundary as a conservative baseline. The exact-match path replays only later events; the baseline path
+  preserves every local file and follows only future events.
+- `grace connect --retrieve-default-branch false` does not establish a materialized local root. Watch treats a missing
+  or incomplete root as non-incremental state and never selects a historical Reference to fill it implicitly.
 - When it starts, it scans the working directory and all (not-ignored) subdirectories and files for changes since the last time the local Grace Status file was updated.
 - When it starts, and at a couple of other times, it reads and deserializes the local Grace Status file. For small repos, it's well under 10K and is processed in about 1ms. The largest repositories I've tested had a ~53MB status file, and, if I recall correctly, reading and deserializing the data happened in low two-digit milliseconds on a four-year-old laptop.
   - `grace watch` doesn't keep the Grace Status file in memory while it's running. It's so fast to read and deserialize it when it's needed that we make the tradeoff to release the memory rather than hold it indefinitely, especially given that there will be many times that the user isn't coding and `grace watch` should have as small of a memory footprint as possible.

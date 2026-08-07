@@ -110,6 +110,13 @@ type Branch() =
             $"branch/{nameof (Branch.GetReferenceMaterializationBoundary)}"
         )
 
+    /// Resolves an absent Watch cursor by exact root match or conservative server snapshot baseline.
+    static member public ResolveReferenceEventBoundary(parameters: ResolveReferenceEventBoundaryParameters) =
+        postServer<ResolveReferenceEventBoundaryParameters, ReferenceMaterializationBoundaryDto> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"branch/{nameof (Branch.ResolveReferenceEventBoundary)}"
+        )
+
     /// Replays eligible Reference events after one branch-scoped opaque cursor.
     static member public ReplayReferenceEvents(parameters: ReplayReferenceEventsParameters) =
         postServer<ReplayReferenceEventsParameters, ReferenceReplayDto> (

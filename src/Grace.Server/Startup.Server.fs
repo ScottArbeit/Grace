@@ -1341,6 +1341,9 @@ module Application =
                                route "/getReferenceMaterializationBoundary" (composeHandlers requireBranchRead Branch.GetReferenceMaterializationBoundary)
                                |> addMetadata typeof<Branch.GetReferenceMaterializationBoundaryParameters>
 
+                               route "/resolveReferenceEventBoundary" (composeHandlers requireBranchRead Branch.ResolveReferenceEventBoundary)
+                               |> addMetadata typeof<Branch.ResolveReferenceEventBoundaryParameters>
+
                                route "/replayReferenceEvents" (composeHandlers requireBranchRead Branch.ReplayReferenceEvents)
                                |> addMetadata typeof<Branch.ReplayReferenceEventsParameters>
 

@@ -3119,6 +3119,98 @@ module LocalStateDb =
                 return None
         }
 
+    /// Inserts a missing branch boundary only while the exact materialized status root and absent-row decision remain current.
+    let private establishRemoteReferenceBoundaryIfAbsentCore
+        (dbPath: string)
+        (expectedStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        (beforeCommit: unit -> unit)
+        =
+        task {
+            let mutable expectedRoot = LocalDirectoryVersion.Default
+
+            let hasExactMaterializedRoot =
+                boundary.RepositoryId <> RepositoryId.Empty
+                && boundary.BranchId <> BranchId.Empty
+                && boundary.DirectoryId <> DirectoryVersionId.Empty
+                && boundary.DirectoryId = expectedStatus.RootDirectoryId
+                && boundary.Sha256Hash = expectedStatus.RootDirectorySha256Hash
+                && boundary.Blake3Hash = getRootDirectoryBlake3Hash expectedStatus
+                && not (String.IsNullOrWhiteSpace(string boundary.Sha256Hash))
+                && not (String.IsNullOrWhiteSpace(string boundary.Blake3Hash))
+                && not (String.IsNullOrWhiteSpace boundary.EventCursor)
+                && not (isNull expectedStatus.Index)
+                && expectedStatus.Index.TryGetValue(expectedStatus.RootDirectoryId, &expectedRoot)
+                && expectedRoot.RelativePath = Grace.Shared.Constants.RootDirectoryPath
+                && expectedRoot.Sha256Hash = expectedStatus.RootDirectorySha256Hash
+                && expectedRoot.Blake3Hash = boundary.Blake3Hash
+
+            if not hasExactMaterializedRoot then
+                invalidArg (nameof expectedStatus) "Missing-cursor recovery requires a complete materialized status root matching the boundary."
+
+            cancellationToken.ThrowIfCancellationRequested()
+            do! ensureDbInitialized dbPath
+            cancellationToken.ThrowIfCancellationRequested()
+
+            do!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+                        cancellationToken.ThrowIfCancellationRequested()
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
+
+                        try
+                            use command = connection.CreateCommand()
+
+                            command.CommandText <-
+                                "INSERT INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) SELECT $repository_id, $branch_id, $root_id, $root_sha256_hash, $root_blake3_hash, $event_cursor WHERE EXISTS (SELECT 1 FROM status_meta WHERE id = 1 AND root_directory_version_id = $root_id AND root_directory_sha256_hash = $root_sha256_hash AND root_directory_blake3_hash = $root_blake3_hash) AND EXISTS (SELECT 1 FROM status_directories WHERE relative_path = $root_path AND directory_version_id = $root_id AND sha256_hash = $root_sha256_hash AND blake3_hash = $root_blake3_hash) AND NOT EXISTS (SELECT 1 FROM remote_reference_boundaries WHERE repository_id = $repository_id AND branch_id = $branch_id);"
+
+                            command.Parameters.AddWithValue("$repository_id", boundary.RepositoryId.ToString())
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$branch_id", boundary.BranchId.ToString())
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$root_id", boundary.DirectoryId.ToString())
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$root_sha256_hash", boundary.Sha256Hash)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$root_blake3_hash", boundary.Blake3Hash)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$event_cursor", boundary.EventCursor)
+                            |> ignore
+
+                            command.Parameters.AddWithValue("$root_path", Grace.Shared.Constants.RootDirectoryPath)
+                            |> ignore
+
+                            if command.ExecuteNonQuery() <> 1 then
+                                invalidOp "The local status root or absent remote Reference boundary changed before recovery could commit."
+
+                            beforeCommit ()
+                            cancellationToken.ThrowIfCancellationRequested()
+                            executeNonQuery connection "COMMIT;"
+                            return ()
+                        with
+                        | ex ->
+                            executeNonQuery connection "ROLLBACK;"
+                            return raise ex
+                    })
+
+            return boundary
+        }
+
+    /// Atomically establishes the first cursor for an exact materialized root without rewriting local status.
+    let establishRemoteReferenceBoundaryIfAbsent dbPath expectedStatus boundary cancellationToken =
+        establishRemoteReferenceBoundaryIfAbsentCore dbPath expectedStatus boundary cancellationToken ignore
+
+    /// Exposes the final missing-boundary commit seam for deterministic cancellation and stale-state proof.
+    let internal establishRemoteReferenceBoundaryIfAbsentWithBeforeCommit dbPath expectedStatus boundary cancellationToken beforeCommit =
+        establishRemoteReferenceBoundaryIfAbsentCore dbPath expectedStatus boundary cancellationToken beforeCommit
+
     /// Advances one exact branch cursor and its accepted root only when the previously read boundary is still current.
     let private advanceRemoteReferenceBoundaryCursorCore
         (dbPath: string)

@@ -1907,6 +1907,71 @@ type BranchServer() =
                     })
         }
 
+    /// Verifies the authenticated missing-cursor route matches exact roots, baselines unknown roots, and projects generic failures.
+    [<Test; NonParallelizable>]
+    member _.ResolveReferenceEventBoundaryRoutePreservesLocalRootWithoutMaterialization() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parentBranchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ResolveBoundary{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+
+                        let parameters = Parameters.Branch.ResolveReferenceEventBoundaryParameters()
+                        parameters.OwnerId <- ownerId
+                        parameters.OrganizationId <- organizationId
+                        parameters.RepositoryId <- repositoryId
+                        parameters.BranchId <- $"{branch.BranchId}"
+                        parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        parameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        parameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        parameters.CorrelationId <- generateCorrelationId ()
+
+                        let! exactResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
+
+                        let exactBoundary =
+                            match exactResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected exact missing-cursor boundary success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceMaterializationBoundaryDto>
+
+                        Assert.That(exactBoundary.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(exactBoundary.BranchId, Is.EqualTo(branch.BranchId))
+                        Assert.That(exactBoundary.DirectoryId, Is.EqualTo(branch.BasedOn.DirectoryId))
+                        Assert.That(exactBoundary.Sha256Hash, Is.EqualTo(branch.BasedOn.Sha256Hash))
+                        Assert.That(exactBoundary.Blake3Hash, Is.EqualTo(branch.BasedOn.Blake3Hash))
+                        Assert.That(exactBoundary.EventCursor, Does.StartWith("branch-event-v1:"))
+
+                        parameters.DirectoryVersionId <- Guid.NewGuid()
+                        parameters.Sha256Hash <- Sha256Hash "unmatched-local-sha"
+                        parameters.Blake3Hash <- Blake3Hash "unmatched-local-blake3"
+                        parameters.CorrelationId <- generateCorrelationId ()
+
+                        let! baselineResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
+
+                        match baselineResult with
+                        | Ok returnValue ->
+                            Assert.That(returnValue.ReturnValue.DirectoryId, Is.EqualTo(parameters.DirectoryVersionId))
+                            Assert.That(returnValue.ReturnValue.Sha256Hash, Is.EqualTo(parameters.Sha256Hash))
+                            Assert.That(returnValue.ReturnValue.Blake3Hash, Is.EqualTo(parameters.Blake3Hash))
+                            Assert.That(returnValue.ReturnValue.EventCursor, Does.StartWith("branch-event-v1:"))
+                        | Error error -> Assert.Fail($"Expected conservative missing-cursor baseline success, got {error.Error}.")
+
+                        parameters.DirectoryVersionId <- DirectoryVersionId.Empty
+                        parameters.CorrelationId <- generateCorrelationId ()
+                        let! invalidResponse = Client.PostAsync("/branch/resolveReferenceEventBoundary", createJsonContent parameters)
+                        let! invalidBody = invalidResponse.Content.ReadAsStringAsync()
+                        Assert.That(invalidResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), invalidBody)
+                        Assert.That(invalidBody, Does.Contain("cannot establish a Watch event boundary for this branch"))
+                        Assert.That(invalidBody, Does.Not.Contain("System."))
+                    })
+        }
+
     /// Verifies authenticated SDK replay preserves branch scope, event order, cursor closure, and generic cursor failures through the hosted route.
     [<Test; NonParallelizable>]
     member _.ReplayReferenceEventsRouteAndSdkPreserveOrderedBranchScopedCursorContract() =

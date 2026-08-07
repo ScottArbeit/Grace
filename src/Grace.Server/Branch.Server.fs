@@ -244,6 +244,53 @@ module Branch =
                 EventCursor = referenceEventCursor candidate.EventPosition
             })
 
+    /// Resolves an absent Watch cursor from an exact local root or the conservative tail of one branch-event snapshot.
+    let internal tryResolveReferenceEventBoundary
+        repositoryId
+        branchId
+        (parameters: ResolveReferenceEventBoundaryParameters)
+        branchEventCount
+        (candidates: ReferenceMaterializationBoundaryCandidate array)
+        =
+        let hasCompleteLocalRoot =
+            parameters.DirectoryVersionId
+            <> DirectoryVersionId.Empty
+            && not (String.IsNullOrWhiteSpace(string parameters.Sha256Hash))
+            && not (String.IsNullOrWhiteSpace(string parameters.Blake3Hash))
+
+        if repositoryId = RepositoryId.Empty
+           || branchId = BranchId.Empty
+           || not hasCompleteLocalRoot
+           || branchEventCount <= 0 then
+            None
+        else
+            let exactMatch =
+                candidates
+                |> Array.tryFindBack (fun candidate ->
+                    candidate.RepositoryId = repositoryId
+                    && candidate.BranchId = branchId
+                    && candidate.Reference.RepositoryId = repositoryId
+                    && (candidate.EstablishesBranchBase
+                        || candidate.Reference.BranchId = branchId)
+                    && candidate.Reference.DirectoryId = parameters.DirectoryVersionId
+                    && candidate.Reference.Sha256Hash = parameters.Sha256Hash
+                    && candidate.Reference.Blake3Hash = parameters.Blake3Hash)
+
+            let eventCursor =
+                exactMatch
+                |> Option.map (fun candidate -> referenceEventCursor candidate.EventPosition)
+                |> Option.defaultWith (fun () -> referenceEventCursor (int64 branchEventCount - 1L))
+
+            Some
+                { Reference.ReferenceMaterializationBoundaryDto.Default with
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    DirectoryId = parameters.DirectoryVersionId
+                    Sha256Hash = parameters.Sha256Hash
+                    Blake3Hash = parameters.Blake3Hash
+                    EventCursor = eventCursor
+                }
+
     /// Implements annotation error for the server request pipeline.
     let private annotationError correlationId message = GraceError.Create message correlationId
 
@@ -1847,6 +1894,49 @@ module Branch =
                                 .enhance(getParametersAsDictionary parameters)
                                 .enhance(nameof RepositoryId, repositoryId)
                                 .enhance(nameof BranchId, branchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result400BadRequest error
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
+            }
+
+    /// Resolves a missing Watch cursor without materializing any Reference from the branch history snapshot.
+    let ResolveReferenceEventBoundary: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters =
+                        context
+                        |> parse<ResolveReferenceEventBoundaryParameters>
+
+                    let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                    let! branchEvents = actorProxy.GetEvents correlationId
+
+                    let! candidates = getReferenceMaterializationBoundaryCandidates graceIds.RepositoryId graceIds.BranchId correlationId branchEvents
+
+                    match tryResolveReferenceEventBoundary graceIds.RepositoryId graceIds.BranchId parameters branchEvents.Count candidates with
+                    | Some boundary ->
+                        let returnValue =
+                            (GraceReturnValue.Create boundary correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok returnValue
+                    | None ->
+                        let error =
+                            (GraceError.Create "The supplied local root cannot establish a Watch event boundary for this branch." correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
                                 .enhance ("Path", context.Request.Path.Value)
 
                         return! context |> result400BadRequest error

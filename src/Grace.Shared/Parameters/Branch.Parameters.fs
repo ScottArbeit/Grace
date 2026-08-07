@@ -108,6 +108,13 @@ module Branch =
         member val public DirectoryVersionId: DirectoryVersionId = DirectoryVersionId.Empty with get, set
         member val public ReferenceType = String.Empty with get, set
 
+    /// Supplies the exact local root tuple whose missing Watch cursor must match history or baseline conservatively.
+    type ResolveReferenceEventBoundaryParameters() =
+        inherit BranchParameters()
+        member val public DirectoryVersionId: DirectoryVersionId = DirectoryVersionId.Empty with get, set
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
+
     /// Requests eligible Reference events strictly after one branch-scoped opaque cursor.
     type ReplayReferenceEventsParameters() =
         inherit BranchParameters()

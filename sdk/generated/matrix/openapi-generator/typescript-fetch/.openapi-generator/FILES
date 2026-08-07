@@ -184,6 +184,7 @@ docs/RepositoryReferencesReturnValue.md
 docs/RepositoryReturnValue.md
 docs/RepositoryStatus.md
 docs/RepositoryVisibility.md
+docs/ResolveReferenceEventBoundaryParameters.md
 docs/SaveDirectoryVersionsParameters.md
 docs/ScopedOutboundUrl.md
 docs/SearchVisibility.md
@@ -430,6 +431,7 @@ src/models/RepositoryReferencesReturnValue.ts
 src/models/RepositoryReturnValue.ts
 src/models/RepositoryStatus.ts
 src/models/RepositoryVisibility.ts
+src/models/ResolveReferenceEventBoundaryParameters.ts
 src/models/SaveDirectoryVersionsParameters.ts
 src/models/ScopedOutboundUrl.ts
 src/models/SearchVisibility.ts
