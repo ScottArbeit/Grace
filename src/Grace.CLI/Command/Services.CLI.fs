@@ -1286,9 +1286,10 @@ module Services =
     let writeGraceStatusFile (graceStatus: GraceStatus) = LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
 
     /// Atomically persists a materialized status snapshot and its matching remote Reference boundary.
-    let writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary =
+    let writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary cancellationToken =
         task {
-            let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary (getLocalStateDbPath ()) graceStatus boundary
+            let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary (getLocalStateDbPath ()) graceStatus boundary cancellationToken
+
             return ()
         }
 

@@ -2888,7 +2888,13 @@ module LocalStateDb =
                 |> ignore)
 
     /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
-    let private replaceStatusSnapshotWithRevisionCore (dbPath: string) (graceStatus: GraceStatus) (boundary: ReferenceMaterializationBoundaryDto option) =
+    let private replaceStatusSnapshotWithRevisionCore
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto option)
+        (cancellationToken: CancellationToken)
+        (beforeCommit: unit -> unit)
+        =
         task {
             match boundary with
             | Some boundary when
@@ -2905,7 +2911,9 @@ module LocalStateDb =
                 invalidArg (nameof boundary) "The remote Reference boundary must match the complete persisted status root identity."
             | _ -> ()
 
+            cancellationToken.ThrowIfCancellationRequested()
             do! ensureDbInitialized dbPath
+            cancellationToken.ThrowIfCancellationRequested()
 
             return!
                 executeWithRevisionRetry (fun () ->
@@ -2913,6 +2921,7 @@ module LocalStateDb =
                         let connection = openConnection dbPath
 
                         try
+                            cancellationToken.ThrowIfCancellationRequested()
                             executeNonQuery connection "BEGIN IMMEDIATE;"
 
                             try
@@ -3040,6 +3049,8 @@ module LocalStateDb =
                                             |> ignore)
                                 | None -> ()
 
+                                beforeCommit ()
+                                cancellationToken.ThrowIfCancellationRequested()
                                 let committedRevision = incrementLocalStatusRevision connection
                                 executeNonQuery connection "COMMIT;"
                                 return committedRevision
@@ -3053,11 +3064,27 @@ module LocalStateDb =
         }
 
     /// Replaces status and its matching branch-scoped remote Reference boundary in one SQLite transaction.
-    let replaceStatusSnapshotWithRemoteReferenceBoundary (dbPath: string) (graceStatus: GraceStatus) (boundary: ReferenceMaterializationBoundaryDto) =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary)
+    let replaceStatusSnapshotWithRemoteReferenceBoundary
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken ignore
+
+    /// Persists a matching status and boundary while exposing the final pre-commit seam for deterministic rollback proof.
+    let internal replaceStatusSnapshotWithRemoteReferenceBoundaryWithBeforeCommit
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        (beforeCommit: unit -> unit)
+        =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken beforeCommit
 
     /// Replaces status without changing any branch-scoped remote Reference boundary.
-    let replaceStatusSnapshotWithRevision (dbPath: string) (graceStatus: GraceStatus) = replaceStatusSnapshotWithRevisionCore dbPath graceStatus None
+    let replaceStatusSnapshotWithRevision (dbPath: string) (graceStatus: GraceStatus) =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus None CancellationToken.None ignore
 
     /// Reads the boundary for one repository and branch without falling back to global metadata.
     let readRemoteReferenceBoundary (dbPath: string) repositoryId branchId =

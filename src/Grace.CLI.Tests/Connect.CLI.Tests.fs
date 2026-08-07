@@ -110,6 +110,51 @@ module ConnectTests =
                 Assert.That(persistedBoundary, Is.EqualTo(Some boundary))
             })
 
+    /// Cancellation after the status scan but before SQLite acceptance leaves neither status nor boundary committed.
+    [<Test>]
+    let ``connect cancellation before durable acceptance leaves no status or boundary`` () =
+        withConfiguredTempDir (fun configuration ->
+            task {
+                let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+                let selectedRootId = DirectoryVersionId.Parse "22222222-8020-4000-8000-222222222222"
+                let! scannedStatus = Services.createNewGraceStatusFile GraceStatus.Default parseResult
+
+                let boundary =
+                    { ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = selectedRootId
+                        Sha256Hash = scannedStatus.RootDirectorySha256Hash
+                        Blake3Hash = scannedStatus.RootDirectoryBlake3Hash
+                        EventCursor = "branch-event-v1:2"
+                    }
+
+                use cancellation = new CancellationTokenSource()
+                let mutable cancelled = false
+
+                try
+                    let! _ =
+                        Connect.createAndWriteMaterializedStatusWithBeforeDurableWrite
+                            GraceStatus.Default
+                            parseResult
+                            boundary
+                            cancellation.Token
+                            cancellation.Cancel
+
+                    ()
+                with
+                | :? OperationCanceledException -> cancelled <- true
+
+                let! persistedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                let! persistedBoundary =
+                    LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(cancelled, Is.True)
+                Assert.That(persistedStatus.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
+                Assert.That(persistedBoundary, Is.EqualTo(None))
+            })
+
     /// A no-download Connect never enters the retrieval path that can persist a remote boundary.
     [<Test>]
     let ``connect no download does not invoke materialization`` () =

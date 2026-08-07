@@ -15,6 +15,7 @@ open System.IO
 open System.Linq
 open System.Text
 open System.Diagnostics
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups local state db coverage for the CLI test project.
@@ -410,7 +411,7 @@ module LocalStateDbTests =
                         EventCursor = "branch-event-v1:7"
                     }
 
-                let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status boundary
+                let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status boundary CancellationToken.None
                 let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
                 let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
 
@@ -444,7 +445,12 @@ module LocalStateDbTests =
 
                 Assert.ThrowsAsync<ArgumentException>(
                     Func<Task> (fun () ->
-                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile replacementStatus mismatched :> Task)
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            mismatched
+                            CancellationToken.None
+                        :> Task)
                 )
                 |> ignore
 
@@ -487,12 +493,66 @@ module LocalStateDbTests =
 
                 Assert.ThrowsAsync<SqliteException>(
                     Func<Task> (fun () ->
-                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile replacementStatus boundary :> Task)
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            boundary
+                            CancellationToken.None
+                        :> Task)
                 )
                 |> ignore
 
                 let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
                 let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+                Assert.That(storedBoundary, Is.EqualTo(None))
+            })
+
+    /// Cancellation after status and boundary staging rolls the entire SQLite transaction back before durable acceptance.
+    [<Test>]
+    let ``remote reference boundary cancellation before commit rolls back status replacement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("66666666-8020-4000-8000-666666666666")
+                let originalStatus = createTestStatus originalRoot (Sha256Hash "original") 10L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile originalStatus
+
+                let replacementRoot = Guid.Parse("77777777-8020-4000-8000-777777777777")
+                let replacementBlake3 = Blake3Hash "replacement-blake3"
+
+                let replacementStatus = { createTestStatus replacementRoot (Sha256Hash "replacement") 20L with RootDirectoryBlake3Hash = replacementBlake3 }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = replacementRoot
+                        Sha256Hash = replacementStatus.RootDirectorySha256Hash
+                        Blake3Hash = replacementBlake3
+                        EventCursor = "branch-event-v1:3"
+                    }
+
+                use cancellation = new CancellationTokenSource()
+                let mutable cancelled = false
+
+                try
+                    let! _ =
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryWithBeforeCommit
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            boundary
+                            cancellation.Token
+                            cancellation.Cancel
+
+                    ()
+                with
+                | :? OperationCanceledException -> cancelled <- true
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(cancelled, Is.True)
                 Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
                 Assert.That(storedBoundary, Is.EqualTo(None))
             })

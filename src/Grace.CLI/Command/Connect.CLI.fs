@@ -783,6 +783,22 @@ module Connect =
 
         writeHumanLine parseResult $"[{Colors.Important}]Finished writing files to disk.[/]"
 
+    /// Builds and atomically persists local status after exposing the final pre-write seam used by deterministic cancellation proof.
+    let internal createAndWriteMaterializedStatusWithBeforeDurableWrite
+        (previousGraceStatus: GraceStatus)
+        (parseResult: ParseResult)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        (beforeDurableWrite: unit -> unit)
+        =
+        task {
+            let! graceStatus = createNewGraceStatusFileForRoot boundary.DirectoryId previousGraceStatus parseResult
+            cancellationToken.ThrowIfCancellationRequested()
+            beforeDurableWrite ()
+            do! writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary cancellationToken
+            return graceStatus
+        }
+
     /// Builds and atomically persists the local status represented by a selected server materialization boundary.
     let internal createAndWriteMaterializedStatus
         (previousGraceStatus: GraceStatus)
@@ -790,12 +806,7 @@ module Connect =
         (boundary: ReferenceMaterializationBoundaryDto)
         (cancellationToken: CancellationToken)
         =
-        task {
-            let! graceStatus = createNewGraceStatusFileForRoot boundary.DirectoryId previousGraceStatus parseResult
-            cancellationToken.ThrowIfCancellationRequested()
-            do! writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary
-            return graceStatus
-        }
+        createAndWriteMaterializedStatusWithBeforeDurableWrite previousGraceStatus parseResult boundary cancellationToken ignore
 
     /// Coordinates retrieve default branch and write behavior for this CLI command path.
     let private retrieveDefaultBranchAndWrite
