@@ -58,6 +58,29 @@ module Artifact =
         && artifact.DeletedAt = Some reminderState.DeletedAt
         && artifact.PhysicalDeletionAt = Some reminderState.PhysicalDeletionAt
 
+    /// Reports whether metadata represents a work-item-owned reviewer attachment governed by the deletion lifecycle.
+    let isOwnedReviewerAttachment (artifact: ArtifactMetadata) =
+        artifact.WorkItemId.IsSome
+        && match artifact.ArtifactType with
+           | ArtifactType.AgentSummary
+           | ArtifactType.Prompt
+           | ArtifactType.ReviewNotes -> true
+           | ArtifactType.Other kind ->
+               kind.Equals("summary", StringComparison.OrdinalIgnoreCase)
+               || kind.Equals("agentsummary", StringComparison.OrdinalIgnoreCase)
+               || kind.Equals("prompt", StringComparison.OrdinalIgnoreCase)
+               || kind.Equals("notes", StringComparison.OrdinalIgnoreCase)
+               || kind.Equals("reviewnotes", StringComparison.OrdinalIgnoreCase)
+           | _ -> false
+
+    /// Revalidates the exact owning WorkItem link from the actor snapshot used at the Artifact mutation boundary.
+    let hasCurrentWorkItemLink (artifact: ArtifactMetadata) (workItemId: WorkItemId) (workItem: WorkItemDto) =
+        artifact.WorkItemId = Some workItemId
+        && workItem.WorkItemId = workItemId
+        && workItem.RepositoryId = artifact.RepositoryId
+        && (workItem.ArtifactIds
+            |> List.contains artifact.ArtifactId)
+
     /// Implements the Orleans grain for artifact actor.
     type ArtifactActor([<PersistentState(StateName.Artifact, Constants.GraceActorStorage)>] eventState: IPersistentState<List<ArtifactEvent>>) =
         inherit Grain()
@@ -331,6 +354,18 @@ module Artifact =
                 eventState.State :> IReadOnlyList<ArtifactEvent>
                 |> returnTask
 
+            /// Serializes retained generic unlink with Artifact lifecycle mutations and rejects owned reviewer attachments.
+            member this.UnlinkFromWorkItem workItemId repositoryId metadata =
+                task {
+                    this.correlationId <- metadata.CorrelationId
+
+                    if isOwnedReviewerAttachment artifact then
+                        return Error(GraceError.Create "Owned reviewer attachments must be deleted through the attachment lifecycle." metadata.CorrelationId)
+                    else
+                        let workItemActorProxy = WorkItem.CreateActorProxy workItemId repositoryId metadata.CorrelationId
+                        return! workItemActorProxy.Handle (WorkItemCommand.UnlinkArtifact(this.GetPrimaryKey())) metadata
+                }
+
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 /// Checks whether command validation succeeded before emitting the domain event.
@@ -392,7 +427,22 @@ module Artifact =
                                    <> Some artifactCommand.WorkItemId
                                 ->
                                 return Error(GraceError.Create "Artifact ownership is invalid." eventMetadata.CorrelationId)
-                            | _ -> return Ok artifactCommand
+                            | _ ->
+                                if
+                                    String.Equals(artifactCommand.Command, ArtifactCommandNames.DeleteLogical, StringComparison.OrdinalIgnoreCase)
+                                    || String.Equals(artifactCommand.Command, ArtifactCommandNames.Undelete, StringComparison.OrdinalIgnoreCase)
+                                then
+                                    let workItemActorProxy =
+                                        WorkItem.CreateActorProxy artifactCommand.WorkItemId artifact.RepositoryId eventMetadata.CorrelationId
+
+                                    let! currentWorkItem = workItemActorProxy.Get eventMetadata.CorrelationId
+
+                                    if hasCurrentWorkItemLink artifact artifactCommand.WorkItemId currentWorkItem then
+                                        return Ok artifactCommand
+                                    else
+                                        return Error(GraceError.Create "The current owning work-item link cannot be proved." eventMetadata.CorrelationId)
+                                else
+                                    return Ok artifactCommand
                     }
 
                 /// Runs Artifact command decisions, applies emitted events, and persists the result.

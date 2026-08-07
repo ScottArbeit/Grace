@@ -509,6 +509,9 @@ module Interfaces =
         /// Returns the list of events handled by this artifact.
         abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ArtifactEvent>>
 
+        /// Serializes a retained generic WorkItem unlink with attachment lifecycle decisions.
+        abstract member UnlinkFromWorkItem: workItemId: WorkItemId -> repositoryId: RepositoryId -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ArtifactCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 

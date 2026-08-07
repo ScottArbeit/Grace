@@ -404,3 +404,40 @@ type WorkItemAttachmentUnitTests() =
             }
 
         Assert.That(Grace.Actors.Artifact.matchesPhysicalDeletionState currentArtifact staleReminderState, Is.False)
+
+    /// Verifies that an earlier linked snapshot cannot authorize an Artifact mutation after the current link disappears.
+    [<Test>]
+    member _.AttachmentMutationRejectsStaleLinkedSnapshot() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+        let linkedArtifact = { ArtifactMetadata.Default with ArtifactId = defaultArtifactId; WorkItemId = Some workItemId }
+        let earlierSnapshot = { WorkItemDto.Default with WorkItemId = workItemId; ArtifactIds = [ defaultArtifactId ] }
+        let currentSnapshot = { earlierSnapshot with ArtifactIds = [] }
+
+        Assert.That(Grace.Actors.Artifact.hasCurrentWorkItemLink linkedArtifact workItemId earlierSnapshot, Is.True)
+        Assert.That(Grace.Actors.Artifact.hasCurrentWorkItemLink linkedArtifact workItemId currentSnapshot, Is.False)
+
+    /// Verifies that both canonical and accepted alias reviewer types remain protected from generic unlink.
+    [<Test>]
+    member _.OwnedReviewerAttachmentDetectionIncludesCanonicalAndAliases() =
+        let workItemId = artifactId "20000000-0000-0000-0000-000000000001"
+
+        let artifactTypes =
+            [
+                ArtifactType.AgentSummary
+                ArtifactType.Prompt
+                ArtifactType.ReviewNotes
+                ArtifactType.Other "summary"
+                ArtifactType.Other "AgentSummary"
+                ArtifactType.Other "prompt"
+                ArtifactType.Other "notes"
+                ArtifactType.Other "ReviewNotes"
+            ]
+
+        for artifactType in artifactTypes do
+            let owned = { ArtifactMetadata.Default with WorkItemId = Some workItemId; ArtifactType = artifactType }
+            Assert.That(Grace.Actors.Artifact.isOwnedReviewerAttachment owned, Is.True, $"Expected {artifactType} to be protected.")
+
+        let unowned = { ArtifactMetadata.Default with ArtifactType = ArtifactType.AgentSummary }
+        let ownedOther = { ArtifactMetadata.Default with WorkItemId = Some workItemId; ArtifactType = ArtifactType.ValidationOutput }
+        Assert.That(Grace.Actors.Artifact.isOwnedReviewerAttachment unowned, Is.False)
+        Assert.That(Grace.Actors.Artifact.isOwnedReviewerAttachment ownedOther, Is.False)

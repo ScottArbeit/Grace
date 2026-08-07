@@ -1,5 +1,6 @@
 namespace Grace.Server.Tests
 
+open Microsoft.Azure.Cosmos
 open Azure.Storage.Blobs
 open Grace.Server.Tests.Services
 open Grace.Shared
@@ -9,6 +10,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Types.Artifact
 open Grace.Types.PersonalAccessToken
 open Grace.Types.Common
+open Grace.Types.Reminder
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
@@ -22,6 +24,61 @@ open System.Threading.Tasks
 
 /// Groups shared helpers for work item integration helpers.
 module private WorkItemIntegrationHelpers =
+    /// Returns the shared Aspire host state required for direct durable-state assertions.
+    let getSharedHostState () =
+        HostState
+        |> Option.defaultWith (fun () -> failwith "Aspire test host state is unavailable.")
+
+    /// Reports whether the exact Artifact actor still has durable events rather than an empty Orleans storage shell.
+    let artifactActorHasDurableEventsAsync (repositoryId: string) (artifactId: Guid) =
+        task {
+            let hostState = getSharedHostState ()
+            use client = AspireTestHost.createCosmosClient hostState
+            let container = client.GetContainer(hostState.CosmosDatabaseName, hostState.CosmosContainerName)
+
+            let query =
+                QueryDefinition(
+                    "SELECT VALUE COUNT(1) FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey AND CONTAINS(c.id, @artifactId, true) AND ARRAY_LENGTH(c.State) > 0"
+                )
+                    .WithParameter("@grainType", "Artifact")
+                    .WithParameter("@partitionKey", Guid.Parse repositoryId)
+                    .WithParameter("@artifactId", artifactId.ToString("N"))
+
+            use iterator = container.GetItemQueryIterator<int>(query)
+            let mutable count = 0
+
+            while iterator.HasMoreResults do
+                let! response = iterator.ReadNextAsync()
+                count <- count + (response.Resource |> Seq.sum)
+
+            return count > 0
+        }
+
+    /// Reads one reminder through the hosted server so its terminal actor state is observed independently of Artifact cleanup.
+    let getReminderAsync (client: HttpClient) (repositoryId: string) (reminderId: Guid) =
+        task {
+            let parameters = Parameters.Reminder.GetReminderParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.ReminderId <- reminderId.ToString()
+            parameters.CorrelationId <- generateCorrelationId ()
+            let! response = client.PostAsync("/reminder/get", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+            return
+                (deserialize<GraceReturnValue<ReminderDto>> body)
+                    .ReturnValue
+        }
+
+    /// Requires every durable and physical cleanup source to be terminal before hosted proof can converge.
+    let terminalAttachmentCleanupObserved linkPresent blobPresent artifactStatePresent reminderStatePresent =
+        not linkPresent
+        && not blobPresent
+        && not artifactStatePresent
+        && not reminderStatePresent
+
     /// Builds a deterministic authenticated client for integration setup fixture for the server integration work Item Integration assertions.
     let createAuthenticatedClient (userId: string) =
         let client = new HttpClient()
@@ -766,9 +823,9 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(linkedBeforeArtifacts.ReferenceIds, Has.Member(referenceId))
             Assert.That(linkedBeforeArtifacts.PromotionSetIds, Has.Member(promotionSetId))
 
-            let summaryArtifactId = Guid.NewGuid()
-            let promptArtifactId = Guid.NewGuid()
-            let notesArtifactId = Guid.NewGuid()
+            let! summaryArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "AgentSummary"
+            let! promptArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "Prompt"
+            let! notesArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "ReviewNotes"
 
             do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId summaryArtifactId
             do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId promptArtifactId
@@ -870,6 +927,19 @@ type WorkItemAddSummaryIntegrationTests() =
             let blobClient = BlobClient downloadUri
             let! blobBeforeDelete = blobClient.ExistsAsync()
             Assert.That(blobBeforeDelete.Value, Is.True)
+            let! artifactStateBeforeDelete = WorkItemIntegrationHelpers.artifactActorHasDurableEventsAsync repositoryId artifactId
+            Assert.That(artifactStateBeforeDelete, Is.True)
+
+            let! exactUnlinkBeforeDelete = WorkItemIntegrationHelpers.removeArtifactLinkAsync Client repositoryId workItemId artifactId
+            Assert.That(exactUnlinkBeforeDelete.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! typeUnlinkBeforeDelete = WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync Client repositoryId workItemId "summary"
+            Assert.That(typeUnlinkBeforeDelete.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! beforeDeleteAfterRejectedUnlinks = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            Assert.That(beforeDeleteAfterRejectedUnlinks.ArtifactIds, Has.Member artifactId)
+            let! blobAfterRejectedUnlinks = blobClient.ExistsAsync()
+            Assert.That(blobAfterRejectedUnlinks.Value, Is.True)
 
             do! WorkItemIntegrationHelpers.setLogicalDeleteDaysAsync Client repositoryId 1.0f
 
@@ -881,6 +951,28 @@ type WorkItemAddSummaryIntegrationTests() =
                 Is.EqualTo(Duration.FromDays(1.0)),
                 "The recovery proof must use a real nonzero retention window before undelete."
             )
+
+            let! firstReminder = WorkItemIntegrationHelpers.getReminderAsync Client repositoryId firstDeletion.ReturnValue.DeletionGeneration
+            Assert.That(firstReminder.ReminderId, Is.EqualTo(firstDeletion.ReturnValue.DeletionGeneration))
+
+            let! exactUnlinkAfterDelete = WorkItemIntegrationHelpers.removeArtifactLinkAsync Client repositoryId workItemId artifactId
+            Assert.That(exactUnlinkAfterDelete.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! typeUnlinkAfterDelete = WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync Client repositoryId workItemId "summary"
+            Assert.That(typeUnlinkAfterDelete.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! repeatedDeletion =
+                WorkItemIntegrationHelpers.deleteWorkItemAttachmentAsync Client repositoryId workItemId artifactId "ignored replacement reason"
+
+            Assert.That(repeatedDeletion.ReturnValue.DeletionGeneration, Is.EqualTo(firstDeletion.ReturnValue.DeletionGeneration))
+            Assert.That(repeatedDeletion.ReturnValue.DeletedAt, Is.EqualTo(firstDeletion.ReturnValue.DeletedAt))
+            Assert.That(repeatedDeletion.ReturnValue.PhysicalDeletionAt, Is.EqualTo(firstDeletion.ReturnValue.PhysicalDeletionAt))
+            Assert.That(repeatedDeletion.ReturnValue.DeleteReason, Is.EqualTo(firstDeletion.ReturnValue.DeleteReason))
+
+            let! afterDeleteRejectedUnlinks = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            Assert.That(afterDeleteRejectedUnlinks.ArtifactIds, Has.Member artifactId)
+            let! blobAfterDeletedRejectedUnlinks = blobClient.ExistsAsync()
+            Assert.That(blobAfterDeletedRejectedUnlinks.Value, Is.True)
 
             let! hiddenAttachments = WorkItemIntegrationHelpers.listWorkItemAttachmentsAsync Client repositoryId workItemId
             Assert.That(hiddenAttachments.Attachments, Is.Empty)
@@ -901,23 +993,46 @@ type WorkItemAddSummaryIntegrationTests() =
 
             let mutable cleanupConverged = false
             let mutable attempts = 0
+            let mutable lastLinkPresent = true
+            let mutable lastBlobPresent = true
+            let mutable lastArtifactStatePresent = true
+            let mutable lastReminderStatePresent = true
+
+            Assert.That(
+                WorkItemIntegrationHelpers.terminalAttachmentCleanupObserved false false true true,
+                Is.False,
+                "Link and blob progress alone must not claim terminal cleanup while Artifact and reminder state remain."
+            )
 
             while not cleanupConverged && attempts < 75 do
                 let! currentWorkItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
                 let! blobExists = blobClient.ExistsAsync()
+                let! artifactStateExists = WorkItemIntegrationHelpers.artifactActorHasDurableEventsAsync repositoryId artifactId
+                let! reminder = WorkItemIntegrationHelpers.getReminderAsync Client repositoryId secondDeletion.ReturnValue.DeletionGeneration
+
+                let linkPresent =
+                    currentWorkItem.ArtifactIds
+                    |> List.contains artifactId
+
+                let reminderStatePresent = reminder.ReminderId <> ReminderId.Empty
+
+                lastLinkPresent <- linkPresent
+                lastBlobPresent <- blobExists.Value
+                lastArtifactStatePresent <- artifactStateExists
+                lastReminderStatePresent <- reminderStatePresent
 
                 cleanupConverged <-
-                    not (
-                        currentWorkItem.ArtifactIds
-                        |> List.contains artifactId
-                    )
-                    && not blobExists.Value
+                    WorkItemIntegrationHelpers.terminalAttachmentCleanupObserved linkPresent blobExists.Value artifactStateExists reminderStatePresent
 
                 if not cleanupConverged then do! Task.Delay(TimeSpan.FromSeconds(1.0))
 
                 attempts <- attempts + 1
 
-            Assert.That(cleanupConverged, Is.True, "Expected the due reminder to delete the blob and durable work-item link.")
+            Assert.That(
+                cleanupConverged,
+                Is.True,
+                $"Expected terminal cleanup. Link={lastLinkPresent}; Blob={lastBlobPresent}; ArtifactState={lastArtifactStatePresent}; ReminderState={lastReminderStatePresent}."
+            )
         }
 
     /// Verifies the add summary with work item number round trips prompt and links across both identifiers scenario.
@@ -1116,7 +1231,7 @@ type WorkItemAttachmentEndpointsIntegrationTests() =
 
             Assert.That(notLinkedResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! notLinkedError = deserializeContent<GraceError> notLinkedResponse
-            Assert.That(notLinkedError.Error, Does.Contain("not linked"))
+            Assert.That(notLinkedError.Error, Does.Contain("Attachment is unavailable for this work item."))
         }
 
 /// Covers work item links authorization scenarios.
@@ -1194,7 +1309,7 @@ type WorkItemLinksAuthorizationIntegrationTests() =
             let! adminUpdate = WorkItemIntegrationHelpers.updateWorkItemResponseAsync adminClient repositoryId workItemId
             Assert.That(adminUpdate.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let linkedArtifactId = Guid.NewGuid()
+            let! linkedArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "ValidationOutput"
             let! readerLink = WorkItemIntegrationHelpers.linkArtifactResponseAsync readerClient repositoryId workItemId linkedArtifactId
             Assert.That(readerLink.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
@@ -1416,9 +1531,9 @@ type WorkItemSdkSmokeIntegrationTests() =
                         Assert.That(linked.ReferenceIds, Has.Member(referenceId))
                         Assert.That(linked.PromotionSetIds, Has.Member(promotionSetId))
 
-                        let summaryArtifactId = Guid.NewGuid()
-                        let promptArtifactId = Guid.NewGuid()
-                        let notesArtifactId = Guid.NewGuid()
+                        let! summaryArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "AgentSummary"
+                        let! promptArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "Prompt"
+                        let! notesArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "ReviewNotes"
 
                         do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId summaryArtifactId
                         do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId promptArtifactId
