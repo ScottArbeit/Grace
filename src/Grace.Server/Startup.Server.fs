@@ -1558,6 +1558,12 @@ module Application =
                                route "/attachments/download" (composeHandlers requireRepositoryRead WorkItem.DownloadAttachment)
                                |> addMetadata typeof<WorkItem.DownloadWorkItemAttachmentParameters>
 
+                               route "/attachments/delete" (composeHandlers requireRepositoryWrite WorkItem.DeleteAttachment)
+                               |> addMetadata typeof<WorkItem.DeleteWorkItemAttachmentParameters>
+
+                               route "/attachments/undelete" (composeHandlers requireRepositoryWrite WorkItem.UndeleteAttachment)
+                               |> addMetadata typeof<WorkItem.UndeleteWorkItemAttachmentParameters>
+
                                route "/links/remove/reference" (composeHandlers requireRepositoryWrite WorkItem.RemoveReferenceLink)
                                |> addMetadata typeof<WorkItem.RemoveReferenceLinkParameters>
 

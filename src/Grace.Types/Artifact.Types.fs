@@ -24,6 +24,26 @@ module Artifact =
         /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ArtifactType>()
 
+    /// Captures the exact attachment deletion identity delivered by the durable cleanup reminder.
+    [<GenerateSerializer>]
+    type PhysicalDeletionReminderState =
+        {
+            [<Id(0u)>]
+            ArtifactId: ArtifactId
+            [<Id(1u)>]
+            RepositoryId: RepositoryId
+            [<Id(2u)>]
+            WorkItemId: WorkItemId
+            [<Id(3u)>]
+            DeletionGeneration: Guid
+            [<Id(4u)>]
+            DeletedAt: Instant
+            [<Id(5u)>]
+            PhysicalDeletionAt: Instant
+            [<Id(6u)>]
+            CorrelationId: CorrelationId
+        }
+
     /// Represents artifact metadata.
     [<GenerateSerializer>]
     type ArtifactMetadata =
@@ -52,6 +72,20 @@ module Artifact =
             CreatedAt: Instant
             [<Id(11u)>]
             CreatedBy: UserId
+            [<Id(12u)>]
+            WorkItemId: WorkItemId option
+            [<Id(13u)>]
+            DeletedAt: Instant option
+            [<Id(14u)>]
+            DeleteReason: DeleteReason
+            [<Id(15u)>]
+            DeletionGeneration: Guid
+            [<Id(16u)>]
+            PhysicalDeletionAt: Instant option
+            [<Id(17u)>]
+            BlobDeleted: bool
+            [<Id(18u)>]
+            WorkItemLinkRemoved: bool
         }
 
         /// Represents the deterministic default instance used when callers need an initialized contract value.
@@ -69,7 +103,17 @@ module Artifact =
                 BlobPath = String.Empty
                 CreatedAt = Constants.DefaultTimestamp
                 CreatedBy = UserId String.Empty
+                WorkItemId = None
+                DeletedAt = None
+                DeleteReason = String.Empty
+                DeletionGeneration = Guid.Empty
+                PhysicalDeletionAt = None
+                BlobDeleted = false
+                WorkItemLinkRemoved = false
             }
+
+        /// Reports whether the artifact is unavailable because logical deletion is active.
+        member this.IsDeleted = this.DeletedAt.IsSome
 
     /// Represents the artifact create result contract.
     [<GenerateSerializer>]
@@ -78,6 +122,18 @@ module Artifact =
     /// Represents the artifact download uri result contract.
     [<GenerateSerializer>]
     type ArtifactDownloadUriResult = { ArtifactId: ArtifactId; DownloadUri: UriWithSharedAccessSignature }
+
+    /// Describes the accepted recoverable deletion generation and its immutable cleanup deadline.
+    [<GenerateSerializer>]
+    type ArtifactDeletionResult =
+        {
+            ArtifactId: ArtifactId
+            WorkItemId: WorkItemId
+            DeletionGeneration: Guid
+            DeletedAt: Instant
+            PhysicalDeletionAt: Instant
+            DeleteReason: DeleteReason
+        }
 
     /// Represents artifact created.
     [<CLIMutable; GenerateSerializer>]
@@ -107,6 +163,8 @@ module Artifact =
             CreatedAtUnixTimeTicks: int64
             [<Id(11u)>]
             CreatedBy: string
+            [<Id(12u)>]
+            WorkItemId: WorkItemId
         }
 
         /// Rehydrates the artifact contract from persisted metadata fields.
@@ -136,6 +194,9 @@ module Artifact =
                 BlobPath = artifact.BlobPath
                 CreatedAtUnixTimeTicks = artifact.CreatedAt.ToUnixTimeTicks()
                 CreatedBy = artifact.CreatedBy
+                WorkItemId =
+                    artifact.WorkItemId
+                    |> Option.defaultValue WorkItemId.Empty
             }
 
         /// Projects the artifact contract into the metadata shape stored outside the aggregate.
@@ -166,6 +227,7 @@ module Artifact =
                 BlobPath = this.BlobPath
                 CreatedAt = Instant.FromUnixTimeTicks this.CreatedAtUnixTimeTicks
                 CreatedBy = UserId this.CreatedBy
+                WorkItemId = if this.WorkItemId = WorkItemId.Empty then None else Some this.WorkItemId
             }
 
     /// Represents artifact command.
@@ -198,6 +260,16 @@ module Artifact =
             CreatedAtUnixTimeTicks: int64
             [<Id(12u)>]
             CreatedBy: string
+            [<Id(13u)>]
+            WorkItemId: WorkItemId
+            [<Id(14u)>]
+            DeleteReason: DeleteReason
+            [<Id(15u)>]
+            DeletionGeneration: Guid
+            [<Id(16u)>]
+            DeletedAtUnixTimeTicks: int64
+            [<Id(17u)>]
+            PhysicalDeletionAtUnixTimeTicks: int64
         }
 
         /// Builds the contract value from required caller inputs and generated defaults used by this surface.
@@ -216,7 +288,27 @@ module Artifact =
                 BlobPath = artifact.BlobPath
                 CreatedAtUnixTimeTicks = artifact.CreatedAtUnixTimeTicks
                 CreatedBy = artifact.CreatedBy
+                WorkItemId = artifact.WorkItemId
+                DeleteReason = String.Empty
+                DeletionGeneration = Guid.Empty
+                DeletedAtUnixTimeTicks = 0L
+                PhysicalDeletionAtUnixTimeTicks = 0L
             }
+
+        /// Requests logical deletion for one exact owning work item and immutable retention deadline.
+        static member DeleteLogical(workItemId, deleteReason, deletionGeneration, deletedAt: Instant, physicalDeletionAt: Instant) =
+            { ArtifactCommand.Create(ArtifactCreated.FromMetadata ArtifactMetadata.Default) with
+                Command = "DeleteLogical"
+                WorkItemId = workItemId
+                DeleteReason = deleteReason
+                DeletionGeneration = deletionGeneration
+                DeletedAtUnixTimeTicks = deletedAt.ToUnixTimeTicks()
+                PhysicalDeletionAtUnixTimeTicks = physicalDeletionAt.ToUnixTimeTicks()
+            }
+
+        /// Requests recovery of a logically deleted attachment owned by the exact work item.
+        static member Undelete(workItemId) =
+            { ArtifactCommand.Create(ArtifactCreated.FromMetadata ArtifactMetadata.Default) with Command = "Undelete"; WorkItemId = workItemId }
 
         /// Projects the artifact contract into the event payload emitted when the artifact is first recorded.
         member this.ToCreated() =
@@ -233,11 +325,14 @@ module Artifact =
                 BlobPath = this.BlobPath
                 CreatedAtUnixTimeTicks = this.CreatedAtUnixTimeTicks
                 CreatedBy = this.CreatedBy
+                WorkItemId = this.WorkItemId
             }
 
     /// Contains artifact command names helpers.
     module ArtifactCommandNames =
         let Create = "Create"
+        let DeleteLogical = "DeleteLogical"
+        let Undelete = "Undelete"
 
     /// Represents artifact event.
     [<CLIMutable; GenerateSerializer>]
@@ -271,54 +366,107 @@ module Artifact =
             CreatedBy: string
             [<Id(13u)>]
             Metadata: EventMetadata
+            [<Id(14u)>]
+            WorkItemId: WorkItemId
+            [<Id(15u)>]
+            DeletedAtUnixTimeTicks: int64
+            [<Id(16u)>]
+            DeleteReason: DeleteReason
+            [<Id(17u)>]
+            DeletionGeneration: Guid
+            [<Id(18u)>]
+            PhysicalDeletionAtUnixTimeTicks: int64
+            [<Id(19u)>]
+            BlobDeleted: bool
+            [<Id(20u)>]
+            WorkItemLinkRemoved: bool
         }
 
         /// Rehydrates the artifact contract from the creation event payload.
         static member FromCreated(eventName: string, artifact: ArtifactCreated, metadata: EventMetadata) =
+            ArtifactEvent.FromMetadata(eventName, artifact.ToMetadata(), metadata)
+
+        /// Captures a complete artifact state snapshot for deterministic event replay.
+        static member FromMetadata(eventName: string, artifact: ArtifactMetadata, metadata: EventMetadata) =
+            let created = ArtifactCreated.FromMetadata artifact
+
             {
                 Event = eventName
-                ArtifactId = artifact.ArtifactId
-                OwnerId = artifact.OwnerId
-                OrganizationId = artifact.OrganizationId
-                RepositoryId = artifact.RepositoryId
-                ArtifactType = artifact.ArtifactType
-                OtherArtifactType = artifact.OtherArtifactType
-                MimeType = artifact.MimeType
-                Size = artifact.Size
-                Sha256 = artifact.Sha256
-                BlobPath = artifact.BlobPath
-                CreatedAtUnixTimeTicks = artifact.CreatedAtUnixTimeTicks
-                CreatedBy = artifact.CreatedBy
+                ArtifactId = created.ArtifactId
+                OwnerId = created.OwnerId
+                OrganizationId = created.OrganizationId
+                RepositoryId = created.RepositoryId
+                ArtifactType = created.ArtifactType
+                OtherArtifactType = created.OtherArtifactType
+                MimeType = created.MimeType
+                Size = created.Size
+                Sha256 = created.Sha256
+                BlobPath = created.BlobPath
+                CreatedAtUnixTimeTicks = created.CreatedAtUnixTimeTicks
+                CreatedBy = created.CreatedBy
                 Metadata = metadata
+                WorkItemId = created.WorkItemId
+                DeletedAtUnixTimeTicks =
+                    artifact.DeletedAt
+                    |> Option.map (fun value -> value.ToUnixTimeTicks())
+                    |> Option.defaultValue 0L
+                DeleteReason = artifact.DeleteReason
+                DeletionGeneration = artifact.DeletionGeneration
+                PhysicalDeletionAtUnixTimeTicks =
+                    artifact.PhysicalDeletionAt
+                    |> Option.map (fun value -> value.ToUnixTimeTicks())
+                    |> Option.defaultValue 0L
+                BlobDeleted = artifact.BlobDeleted
+                WorkItemLinkRemoved = artifact.WorkItemLinkRemoved
             }
 
         /// Projects the artifact contract into the metadata shape stored outside the aggregate.
         member this.ToMetadata() =
-            {
-                ArtifactId = this.ArtifactId
-                OwnerId = this.OwnerId
-                OrganizationId = this.OrganizationId
-                RepositoryId = this.RepositoryId
-                ArtifactType = this.ArtifactType
-                OtherArtifactType = this.OtherArtifactType
-                MimeType = this.MimeType
-                Size = this.Size
-                Sha256 = this.Sha256
-                BlobPath = this.BlobPath
-                CreatedAtUnixTimeTicks = this.CreatedAtUnixTimeTicks
-                CreatedBy = this.CreatedBy
+            let created =
+                {
+                    ArtifactId = this.ArtifactId
+                    OwnerId = this.OwnerId
+                    OrganizationId = this.OrganizationId
+                    RepositoryId = this.RepositoryId
+                    ArtifactType = this.ArtifactType
+                    OtherArtifactType = this.OtherArtifactType
+                    MimeType = this.MimeType
+                    Size = this.Size
+                    Sha256 = this.Sha256
+                    BlobPath = this.BlobPath
+                    CreatedAtUnixTimeTicks = this.CreatedAtUnixTimeTicks
+                    CreatedBy = this.CreatedBy
+                    WorkItemId = this.WorkItemId
+                }
+
+            let metadata = created.ToMetadata()
+
+            { metadata with
+                DeletedAt =
+                    if this.DeletedAtUnixTimeTicks = 0L then
+                        None
+                    else
+                        Some(Instant.FromUnixTimeTicks this.DeletedAtUnixTimeTicks)
+                DeleteReason = this.DeleteReason
+                DeletionGeneration = this.DeletionGeneration
+                PhysicalDeletionAt =
+                    if this.PhysicalDeletionAtUnixTimeTicks = 0L then
+                        None
+                    else
+                        Some(Instant.FromUnixTimeTicks this.PhysicalDeletionAtUnixTimeTicks)
+                BlobDeleted = this.BlobDeleted
+                WorkItemLinkRemoved = this.WorkItemLinkRemoved
             }
-                .ToMetadata()
 
     /// Contains artifact event names helpers.
     module ArtifactEventNames =
         let Created = "Created"
+        let LogicalDeleted = "LogicalDeleted"
+        let Undeleted = "Undeleted"
+        let BlobDeleted = "BlobDeleted"
+        let WorkItemLinkRemoved = "WorkItemLinkRemoved"
 
     /// Contains artifact metadata helpers.
     module ArtifactMetadata =
         /// Carries optional artifact fields that can be patched without rebuilding the full artifact record.
-        let UpdateDto (artifactEvent: ArtifactEvent) (current: ArtifactMetadata) =
-            if String.Equals(artifactEvent.Event, ArtifactEventNames.Created, StringComparison.OrdinalIgnoreCase) then
-                artifactEvent.ToMetadata()
-            else
-                current
+        let UpdateDto (artifactEvent: ArtifactEvent) (current: ArtifactMetadata) = artifactEvent.ToMetadata()

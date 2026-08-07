@@ -446,6 +446,18 @@ module Services =
             return blobContainerClient
         }
 
+    /// Deletes one repository-scoped artifact blob idempotently and reports whether bytes existed.
+    let deleteArtifactBlobIfExists (repositoryDto: RepositoryDto) (blobPath: string) correlationId =
+        task {
+            try
+                let! containerClient = getContainerClient repositoryDto correlationId
+                let blobClient = containerClient.GetBlobClient(blobPath)
+                let! deleted = blobClient.DeleteIfExistsAsync()
+                return Ok deleted.Value
+            with
+            | ex -> return Error(GraceError.Create $"Artifact payload could not be deleted from object storage: {ex.Message}" correlationId)
+        }
+
     /// Gets an Azure Blob Storage client instance for the given repository and file version.
     let getAzureBlobClient (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {

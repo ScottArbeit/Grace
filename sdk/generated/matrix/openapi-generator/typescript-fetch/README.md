@@ -164,6 +164,8 @@ All URIs are relative to *http://localhost:5000*
 *WebhooksApi* | [**showWebhookRule**](docs/WebhooksApi.md#showwebhookrule) | **POST** /webhook/rule/show | Show a webhook rule.
 *WebhooksApi* | [**testWebhookRule**](docs/WebhooksApi.md#testwebhookrule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**updateWebhookRule**](docs/WebhooksApi.md#updatewebhookrule) | **POST** /webhook/rule/update | Update a webhook rule.
+*WorkItemsApi* | [**deleteWorkItemAttachment**](docs/WorkItemsApi.md#deleteworkitemattachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**undeleteWorkItemAttachment**](docs/WorkItemsApi.md#undeleteworkitemattachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 
 
 ### Models
@@ -186,6 +188,7 @@ All URIs are relative to *http://localhost:5000*
 - [ApprovalScope](docs/ApprovalScope.md)
 - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
 - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
+- [ArtifactDeletionResult](docs/ArtifactDeletionResult.md)
 - [AssignParameters](docs/AssignParameters.md)
 - [BlockUploadIntent](docs/BlockUploadIntent.md)
 - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
@@ -224,6 +227,7 @@ All URIs are relative to *http://localhost:5000*
 - [DeleteOrganizationParameters](docs/DeleteOrganizationParameters.md)
 - [DeleteOwnerParameters](docs/DeleteOwnerParameters.md)
 - [DeleteRepositoryParameters](docs/DeleteRepositoryParameters.md)
+- [DeleteWorkItemAttachmentParameters](docs/DeleteWorkItemAttachmentParameters.md)
 - [DiffApiDto](docs/DiffApiDto.md)
 - [DiffDto](docs/DiffDto.md)
 - [DiffParameters](docs/DiffParameters.md)
@@ -293,6 +297,8 @@ All URIs are relative to *http://localhost:5000*
 - [InlineObject5](docs/InlineObject5.md)
 - [InlineObject6](docs/InlineObject6.md)
 - [InlineObject7](docs/InlineObject7.md)
+- [InlineObject8](docs/InlineObject8.md)
+- [InlineObject9](docs/InlineObject9.md)
 - [IsEmptyParameters](docs/IsEmptyParameters.md)
 - [IssueDedupeDiscoveryParameters](docs/IssueDedupeDiscoveryParameters.md)
 - [ListApprovalPoliciesParameters](docs/ListApprovalPoliciesParameters.md)
@@ -371,6 +377,7 @@ All URIs are relative to *http://localhost:5000*
 - [UndeleteOrganizationParameters](docs/UndeleteOrganizationParameters.md)
 - [UndeleteOwnerParameters](docs/UndeleteOwnerParameters.md)
 - [UndeleteRepositoryParameters](docs/UndeleteRepositoryParameters.md)
+- [UndeleteWorkItemAttachmentParameters](docs/UndeleteWorkItemAttachmentParameters.md)
 - [UploadMetadata](docs/UploadMetadata.md)
 - [UploadMetadataArrayReturnValue](docs/UploadMetadataArrayReturnValue.md)
 - [UploadSessionBlockUploadConfirmedEvent](docs/UploadSessionBlockUploadConfirmedEvent.md)
@@ -402,6 +409,7 @@ All URIs are relative to *http://localhost:5000*
 - [WebhookRuleParameters](docs/WebhookRuleParameters.md)
 - [WebhookRuleStatus](docs/WebhookRuleStatus.md)
 - [WebhookScope](docs/WebhookScope.md)
+- [WorkItemParameters](docs/WorkItemParameters.md)
 
 ### Authorization
 

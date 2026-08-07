@@ -46,6 +46,28 @@ module WorkItemCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that set-status dispatches the existing work item validation handler.
+    [<Test>]
+    let ``workitem set-status rejects invalid work item identifier through its bound action`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "set-status"
+                                    "not-a-work-item"
+                                    "--status"
+                                    "Done" |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        parseResult.CommandResult.Command.Name
+        |> should equal "set-status"
+
+        parseResult.CommandResult.Command.Action.GetType()
+        |> should equal typeof<Grace.CLI.Command.WorkItemCommand.SetStatus>
+
+        parseResult.Invoke() |> should equal -1
+
     /// Verifies that workitem link ref rejects invalid reference id.
     [<Test>]
     let ``workitem link ref rejects invalid reference id`` () =
@@ -76,29 +98,33 @@ module WorkItemCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
-    /// Verifies that workitem attach summary requires exactly one input source.
+    /// Verifies that workitem attachments add requires exactly one input source.
     [<Test>]
-    let ``workitem attach summary requires exactly one input source`` () =
+    let ``workitem attachments add requires exactly one input source`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "workitem"
-                                    "attach"
-                                    "summary"
-                                    Guid.NewGuid().ToString() |]
+                                    "attachments"
+                                    "add"
+                                    Guid.NewGuid().ToString()
+                                    "--type"
+                                    "summary" |]
             )
 
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
-    /// Verifies that workitem attach summary rejects multiple input sources.
+    /// Verifies that workitem attachments add rejects multiple input sources.
     [<Test>]
-    let ``workitem attach summary rejects multiple input sources`` () =
+    let ``workitem attachments add rejects multiple input sources`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "workitem"
-                                    "attach"
-                                    "summary"
+                                    "attachments"
+                                    "add"
                                     Guid.NewGuid().ToString()
+                                    "--type"
+                                    "summary"
                                     "--text"
                                     "hello"
                                     "--stdin" |]
@@ -143,14 +169,16 @@ module WorkItemCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
-    /// Verifies that workitem attach input source combinations are valid iff exactly one is selected.
+    /// Verifies that workitem attachments add input source combinations are valid iff exactly one is selected.
     [<FsCheck.NUnit.Property(MaxTest = 64)>]
-    let ``workitem attach input source combinations are valid iff exactly one is selected`` (useFile: bool) (useText: bool) (useStdin: bool) =
+    let ``workitem attachments add input source combinations are valid iff exactly one is selected`` (useFile: bool) (useText: bool) (useStdin: bool) =
         let args = List<string>()
         args.Add("workitem")
-        args.Add("attach")
-        args.Add("summary")
+        args.Add("attachments")
+        args.Add("add")
         args.Add(Guid.NewGuid().ToString())
+        args.Add("--type")
+        args.Add("summary")
 
         if useFile then
             args.Add("--file")

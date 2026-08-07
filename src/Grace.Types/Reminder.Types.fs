@@ -2,6 +2,7 @@ namespace Grace.Types
 
 open Grace.Shared.Utilities
 open Grace.Types.Branch
+open Grace.Types.Artifact
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
 open Grace.Types.Organization
@@ -31,6 +32,7 @@ module Reminder =
         | DirectoryVersionDeleteZipFile of DirectoryVersion.PhysicalDeletionReminderState
         | DiffDeleteCachedState of Diff.DeleteCachedStateReminderState
         | UploadSessionPhysicalDeletion of UploadSession.PhysicalDeletionReminderState
+        | ArtifactPhysicalDeletion of Artifact.PhysicalDeletionReminderState
 
     /// Defines all reminders used in Grace.
     type ReminderDto =

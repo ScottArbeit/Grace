@@ -80,7 +80,6 @@ module CommandOutputContractRegistryTests =
         | "--scope" -> "repository"
         | "--role" -> "RepositoryReader"
         | "--search-visibility" -> "Visible"
-        | "--set" -> "Active"
         | "--status" -> "Active"
         | "--type" -> "summary"
         | "--url" -> "https://example.test/webhook"
@@ -238,16 +237,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 208
+        |> should equal 205
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 199
+        |> should equal 196
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 187
+        |> should equal 184
 
         countBy ImmediateJsonErrorOnly |> should equal 0
 
@@ -298,7 +297,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 187
+        jsonReady |> should equal 184
         intentionallyHumanOnly |> should equal 0
         conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
@@ -456,6 +455,101 @@ module CommandOutputContractRegistryTests =
             |> should equal CompositeLocalAndServer
         | None -> Assert.Fail("branch annotate should have a registry entry.")
 
+    /// Verifies that the work item status mutation has only its explicit mutating registry identity.
+    [<Test>]
+    let ``workitem set-status registry entry is the only status mutation identity`` () =
+        let identity = CommandOutputContract.commandIdentity [ "workitem" ] "set-status"
+        let oldIdentity = CommandOutputContract.commandIdentity [ "workitem" ] "status"
+
+        CommandOutputContract.tryFind oldIdentity
+        |> should equal None
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Mutating |> should equal true
+
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.Category
+            |> should equal MutatingStateTransition
+
+            entry.ExecutionScope |> should equal ServerViaSdk
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
+
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+
+            entry.Features.Schema
+            |> should equal ExistingBehavior
+
+            entry.Features.Examples
+            |> should equal ExistingBehavior
+
+            entry.Features.Select
+            |> should equal ExistingBehavior
+
+            entry.ReturnValueContract.Name
+            |> should equal "string"
+        | None -> Assert.Fail("workitem.set-status should have a registry entry.")
+
+    /// Verifies that attachment creation has one canonical registry identity and no removed attach rows.
+    [<Test>]
+    let ``workitem attachments add is the only attachment creation registry identity`` () =
+        let identity = CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "add"
+
+        for oldCommand in [ "summary"; "prompt"; "notes" ] do
+            CommandOutputContract.commandIdentity [ "workitem"; "attach" ] oldCommand
+            |> CommandOutputContract.tryFind
+            |> should equal None
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Mutating |> should equal true
+
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.Category
+            |> should equal MutatingStateTransition
+
+            entry.ExecutionScope
+            |> should equal CompositeLocalAndServer
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope RequiresCliDto)
+
+            entry.ReturnValueContract.Name
+            |> should equal "AttachmentResult"
+        | None -> Assert.Fail("workitem.attachments.add should have a registry entry.")
+
+    /// Verifies that recoverable attachment deletion replaces bulk type-unlink registry identities.
+    [<Test>]
+    let ``workitem attachment deletion registry is specific and recoverable`` () =
+        for oldCommand in [ "summary"; "prompt"; "notes" ] do
+            CommandOutputContract.commandIdentity [ "workitem"; "links"; "remove" ] oldCommand
+            |> CommandOutputContract.tryFind
+            |> should equal None
+
+        let deleteEntry =
+            CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "delete"
+            |> CommandOutputContract.tryFind
+
+        let undeleteEntry =
+            CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "undelete"
+            |> CommandOutputContract.tryFind
+
+        deleteEntry.IsSome |> should equal true
+        undeleteEntry.IsSome |> should equal true
+
+        deleteEntry.Value.ReturnValueContract.Name
+        |> should equal "ArtifactDeletionResult"
+
+        undeleteEntry.Value.ReturnValueContract.Name
+        |> should equal "string"
+
     /// Verifies that diff blake3 json mode is centrally rendered instead of human progress only.
     [<Test>]
     let ``diff blake3 json mode is centrally rendered instead of human-progress only`` () =
@@ -480,7 +574,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 187
+        commonEntries.Length |> should equal 184
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -498,7 +592,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 187
+        commonEntries.Length |> should equal 184
 
         let parserInvalidEntries =
             commonEntries
@@ -960,7 +1054,7 @@ module CommandOutputContractRegistryTests =
                 | ConditionalGraceResultEnvelope _ -> true
                 | _ -> false)
 
-        eligibleEntries.Length |> should equal 188
+        eligibleEntries.Length |> should equal 185
 
         for entry in eligibleEntries do
             entry.ReturnValueContract.Status

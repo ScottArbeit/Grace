@@ -21,6 +21,7 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/ArtifactDeletionResult.md
 docs/AssignParameters.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
@@ -61,6 +62,7 @@ docs/DeleteBranchParameters.md
 docs/DeleteOrganizationParameters.md
 docs/DeleteOwnerParameters.md
 docs/DeleteRepositoryParameters.md
+docs/DeleteWorkItemAttachmentParameters.md
 docs/DiffApiDto.md
 docs/DiffDto.md
 docs/DiffParameters.md
@@ -132,6 +134,8 @@ docs/InlineObject4.md
 docs/InlineObject5.md
 docs/InlineObject6.md
 docs/InlineObject7.md
+docs/InlineObject8.md
+docs/InlineObject9.md
 docs/IsEmptyParameters.md
 docs/IssueDedupeDiscoveryParameters.md
 docs/ListApprovalPoliciesParameters.md
@@ -213,6 +217,7 @@ docs/TypedReferenceApiDto.md
 docs/UndeleteOrganizationParameters.md
 docs/UndeleteOwnerParameters.md
 docs/UndeleteRepositoryParameters.md
+docs/UndeleteWorkItemAttachmentParameters.md
 docs/UploadMetadata.md
 docs/UploadMetadataArrayReturnValue.md
 docs/UploadSessionBlockUploadConfirmedEvent.md
@@ -245,6 +250,8 @@ docs/WebhookRuleParameters.md
 docs/WebhookRuleStatus.md
 docs/WebhookScope.md
 docs/WebhooksApi.md
+docs/WorkItemParameters.md
+docs/WorkItemsApi.md
 package.json
 src/apis/ApprovalsApi.ts
 src/apis/BranchesApi.ts
@@ -255,6 +262,7 @@ src/apis/OrganizationsApi.ts
 src/apis/OwnersApi.ts
 src/apis/RepositoriesApi.ts
 src/apis/WebhooksApi.ts
+src/apis/WorkItemsApi.ts
 src/apis/index.ts
 src/index.ts
 src/models/AnnotateParameters.ts
@@ -275,6 +283,7 @@ src/models/ApprovalRequestStatus.ts
 src/models/ApprovalScope.ts
 src/models/ApprovalTimeoutAction.ts
 src/models/ApproveApprovalRequestParameters.ts
+src/models/ArtifactDeletionResult.ts
 src/models/AssignParameters.ts
 src/models/BlockUploadIntent.ts
 src/models/BranchAnnotationApiDto.ts
@@ -313,6 +322,7 @@ src/models/DeleteBranchParameters.ts
 src/models/DeleteOrganizationParameters.ts
 src/models/DeleteOwnerParameters.ts
 src/models/DeleteRepositoryParameters.ts
+src/models/DeleteWorkItemAttachmentParameters.ts
 src/models/DiffApiDto.ts
 src/models/DiffDto.ts
 src/models/DiffParameters.ts
@@ -382,6 +392,8 @@ src/models/InlineObject4.ts
 src/models/InlineObject5.ts
 src/models/InlineObject6.ts
 src/models/InlineObject7.ts
+src/models/InlineObject8.ts
+src/models/InlineObject9.ts
 src/models/IsEmptyParameters.ts
 src/models/IssueDedupeDiscoveryParameters.ts
 src/models/ListApprovalPoliciesParameters.ts
@@ -460,6 +472,7 @@ src/models/TypedReferenceApiDto.ts
 src/models/UndeleteOrganizationParameters.ts
 src/models/UndeleteOwnerParameters.ts
 src/models/UndeleteRepositoryParameters.ts
+src/models/UndeleteWorkItemAttachmentParameters.ts
 src/models/UploadMetadata.ts
 src/models/UploadMetadataArrayReturnValue.ts
 src/models/UploadSessionBlockUploadConfirmedEvent.ts
@@ -491,6 +504,7 @@ src/models/WebhookRule.ts
 src/models/WebhookRuleParameters.ts
 src/models/WebhookRuleStatus.ts
 src/models/WebhookScope.ts
+src/models/WorkItemParameters.ts
 src/models/index.ts
 src/runtime.ts
 tsconfig.esm.json
