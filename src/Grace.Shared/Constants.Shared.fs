@@ -198,6 +198,10 @@ module Constants =
     [<Literal>]
     let ClientVersionHeaderKey = "X-Grace-Client-Version"
 
+    /// The best-effort delivery header that identifies one live Grace Watch process.
+    [<Literal>]
+    let WatchProcessIdHeaderKey = "X-Grace-Watch-Process-Id"
+
     /// The response header that exposes SDK lifecycle status for recognized Grace clients.
     [<Literal>]
     let SdkLifecycleStatusHeaderKey = "X-Grace-Client-Support-Status"

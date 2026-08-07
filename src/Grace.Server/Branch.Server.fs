@@ -40,6 +40,142 @@ module Branch =
 
     let private branchHashLookupErrorItemKey = "BranchHashLookupError"
 
+    /// Identifies one live Watch subscription without treating process identity as repository identity.
+    [<Struct>]
+    type internal WatchSourceSubscriptionKey = { ProcessId: Guid; RepositoryId: RepositoryId; BranchId: BranchId }
+
+    /// Identifies one transient live publication independently from the durable replay stream.
+    [<Struct>]
+    type internal WatchPublicationKey = { RepositoryId: RepositoryId; BranchId: BranchId; ReferenceId: ReferenceId }
+
+    /// Retains the exact connection selected before Reference publication begins.
+    type private PendingWatchPublication = { Subscription: WatchSourceSubscriptionKey; ConnectionId: string; ExpiresAtUtc: DateTimeOffset }
+
+    let private watchSourceSuppressionLock = obj ()
+    let private watchSubscriptionByConnection = Dictionary<string, WatchSourceSubscriptionKey>(StringComparer.Ordinal)
+    let private watchConnectionBySubscription = Dictionary<WatchSourceSubscriptionKey, string>()
+    let private pendingWatchPublications = Dictionary<WatchPublicationKey, PendingWatchPublication>()
+    let private watchPublicationBindingLifetime = TimeSpan.FromMinutes(2.0)
+
+    /// Removes one exact connection binding without disturbing a replacement registered for the same process identity.
+    let private unregisterWatchSourceSubscriptionLocked connectionId =
+        match watchSubscriptionByConnection.TryGetValue connectionId with
+        | true, subscription ->
+            watchSubscriptionByConnection.Remove connectionId
+            |> ignore
+
+            match watchConnectionBySubscription.TryGetValue subscription with
+            | true, currentConnectionId when String.Equals(currentConnectionId, connectionId, StringComparison.Ordinal) ->
+                watchConnectionBySubscription.Remove subscription
+                |> ignore
+            | _ -> ()
+        | _ -> ()
+
+    /// Binds a fresh Watch process identity to the exact authorized SignalR connection and branch subscription.
+    let internal registerWatchSourceSubscription connectionId processId repositoryId branchId =
+        lock watchSourceSuppressionLock (fun () ->
+            unregisterWatchSourceSubscriptionLocked connectionId
+
+            if
+                processId <> Guid.Empty
+                && not (String.IsNullOrWhiteSpace connectionId)
+            then
+                let subscription = { ProcessId = processId; RepositoryId = repositoryId; BranchId = branchId }
+
+                match watchConnectionBySubscription.TryGetValue subscription with
+                | true, replacedConnectionId ->
+                    watchSubscriptionByConnection.Remove replacedConnectionId
+                    |> ignore
+                | _ -> ()
+
+                watchConnectionBySubscription[subscription] <- connectionId
+                watchSubscriptionByConnection[connectionId] <- subscription)
+
+    /// Removes the disconnected connection from transient Watch source delivery state.
+    let internal unregisterWatchSourceSubscription connectionId =
+        lock watchSourceSuppressionLock (fun () -> unregisterWatchSourceSubscriptionLocked connectionId)
+
+    /// Drops expired publication bindings while holding the shared transient lifecycle lock.
+    let private pruneExpiredWatchPublicationsLocked now =
+        pendingWatchPublications
+        |> Seq.choose (fun entry -> if entry.Value.ExpiresAtUtc <= now then Some entry.Key else None)
+        |> Seq.toArray
+        |> Array.iter (fun key -> pendingWatchPublications.Remove key |> ignore)
+
+    /// Captures the exact active connection before the authorized Reference mutation can publish its broker event.
+    let internal prepareWatchPublicationSourceAt now processId repositoryId branchId referenceId =
+        lock watchSourceSuppressionLock (fun () ->
+            pruneExpiredWatchPublicationsLocked now
+            let publication = { RepositoryId = repositoryId; BranchId = branchId; ReferenceId = referenceId }
+
+            pendingWatchPublications.Remove publication
+            |> ignore
+
+            if processId = Guid.Empty then
+                None
+            else
+                let subscription = { ProcessId = processId; RepositoryId = repositoryId; BranchId = branchId }
+
+                match watchConnectionBySubscription.TryGetValue subscription with
+                | true, connectionId ->
+                    pendingWatchPublications[publication] <- {
+                                                                 Subscription = subscription
+                                                                 ConnectionId = connectionId
+                                                                 ExpiresAtUtc = now + watchPublicationBindingLifetime
+                                                             }
+
+                    Some publication
+                | _ -> None)
+
+    /// Captures a source connection using the current server clock.
+    let internal prepareWatchPublicationSource processId repositoryId branchId referenceId =
+        prepareWatchPublicationSourceAt DateTimeOffset.UtcNow processId repositoryId branchId referenceId
+
+    /// Removes a pending binding when the corresponding Reference mutation fails or is cancelled.
+    let internal removeWatchPublicationSource publication =
+        lock watchSourceSuppressionLock (fun () ->
+            pendingWatchPublications.Remove publication
+            |> ignore)
+
+    /// Consumes one live source binding only while its original connection and branch subscription remain exact.
+    let internal tryTakeWatchPublicationSourceConnectionAt now repositoryId branchId referenceId =
+        lock watchSourceSuppressionLock (fun () ->
+            pruneExpiredWatchPublicationsLocked now
+            let publication = { RepositoryId = repositoryId; BranchId = branchId; ReferenceId = referenceId }
+
+            match pendingWatchPublications.TryGetValue publication with
+            | true, pending ->
+                pendingWatchPublications.Remove publication
+                |> ignore
+
+                match watchConnectionBySubscription.TryGetValue pending.Subscription, watchSubscriptionByConnection.TryGetValue pending.ConnectionId with
+                | (true, currentConnectionId), (true, currentSubscription) when
+                    String.Equals(currentConnectionId, pending.ConnectionId, StringComparison.Ordinal)
+                    && currentSubscription = pending.Subscription
+                    ->
+                    Some pending.ConnectionId
+                | _ -> None
+            | _ -> None)
+
+    /// Consumes one live source binding using the current server clock.
+    let internal tryTakeWatchPublicationSourceConnection repositoryId branchId referenceId =
+        tryTakeWatchPublicationSourceConnectionAt DateTimeOffset.UtcNow repositoryId branchId referenceId
+
+    /// Reads one well-formed Watch process identity from delivery metadata without rejecting the HTTP request.
+    let internal tryGetWatchProcessId (context: HttpContext) =
+        match context.Request.Headers.TryGetValue Constants.WatchProcessIdHeaderKey with
+        | true, values when values.Count = 1 ->
+            let mutable processId = Guid.Empty
+
+            if
+                Guid.TryParseExact(values[0], "N", &processId)
+                && processId <> Guid.Empty
+            then
+                Some processId
+            else
+                None
+        | _ -> None
+
     /// Implements branch hash lookup description for the server request pipeline.
     let private branchHashLookupDescription (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
         let sha256HashText = string sha256Hash
@@ -715,6 +851,7 @@ module Branch =
         (validations: Validations<'T>)
         (command: 'T -> ValueTask<BranchCommand>)
         (postSuccess: unit -> Task<Result<unit, GraceError>>)
+        (onFailure: unit -> unit)
         =
         task {
             let startTime = getCurrentInstant ()
@@ -769,6 +906,8 @@ module Branch =
 
                                 return! context |> result500ServerError graceError
                         | Error graceError ->
+                            onFailure ()
+
                             graceError
                                 .enhance(parameterDictionary)
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
@@ -796,7 +935,9 @@ module Branch =
                     let! cmd = command parameters
 
                     match tryGetBranchHashLookupError context with
-                    | Some graceError -> return! context |> result400BadRequest graceError
+                    | Some graceError ->
+                        onFailure ()
+                        return! context |> result400BadRequest graceError
                     | None ->
                         let! result = handleCommand cmd
                         let duration = getDurationRightAligned_ms startTime
@@ -834,6 +975,8 @@ module Branch =
                     return! context |> result400BadRequest graceError
             with
             | ex ->
+                onFailure ()
+
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Branch.Server.processCommand. CorrelationId: {correlationId}.",
@@ -855,7 +998,16 @@ module Branch =
 
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
-        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok())) ignore
+
+    /// Coordinates a branch command whose transient pre-publication state must be cleared after failure or cancellation.
+    let processCommandWithFailure<'T when 'T :> BranchParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<BranchCommand>)
+        onFailure
+        =
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok())) onFailure
 
     /// Resolves resolve root directory version for reference command data from request or repository state.
     let private resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId =
@@ -1116,7 +1268,7 @@ module Branch =
                     }
 
                 context.Items.Add("Command", nameof Create)
-                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin
+                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin ignore
             }
 
     /// Rebases a branch on its parent branch.
@@ -1378,6 +1530,14 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
+                let mutable pendingWatchPublication: WatchPublicationKey option = None
+
+                /// Clears delivery-only source state when the durable Reference mutation does not succeed.
+                let clearPendingWatchPublication () =
+                    pendingWatchPublication
+                    |> Option.iter removeWatchPublicationSource
+
+                    pendingWatchPublication <- None
 
                 /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
@@ -1400,20 +1560,33 @@ module Branch =
 
                 /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
-                    referenceCommandFromRoot
-                        context
-                        BranchCommand.Save
-                        graceIds.RepositoryId
-                        parameters.ReferenceId
-                        parameters.DirectoryVersionId
-                        parameters.Sha256Hash
-                        parameters.Blake3Hash
-                        (ReferenceText parameters.Message)
-                        parameters.CorrelationId
+                    task {
+                        let! branchCommand =
+                            referenceCommandFromRoot
+                                context
+                                BranchCommand.Save
+                                graceIds.RepositoryId
+                                parameters.ReferenceId
+                                parameters.DirectoryVersionId
+                                parameters.Sha256Hash
+                                parameters.Blake3Hash
+                                (ReferenceText parameters.Message)
+                                parameters.CorrelationId
+
+                        pendingWatchPublication <-
+                            prepareWatchPublicationSource
+                                (tryGetWatchProcessId context
+                                 |> Option.defaultValue Guid.Empty)
+                                graceIds.RepositoryId
+                                graceIds.BranchId
+                                parameters.ReferenceId
+
+                        return branchCommand
+                    }
                     |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Save)
-                return! processCommand context validations command
+                return! processCommandWithFailure context validations command clearPendingWatchPublication
             }
 
     /// Creates a tag reference pointing to the specified root directory version in the branch.

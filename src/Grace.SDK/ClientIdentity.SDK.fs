@@ -65,6 +65,7 @@ module ClientIdentity =
 
     let mutable private configuredClientType: ClientType option = Some(ClientType.CLI(getSdkAssemblyFileVersion ()))
     let mutable private configuredApiContractVersion: string option = None
+    let mutable private configuredWatchProcessId: Guid option = None
 
     /// Sets the client type and version stamped into future SDK request headers.
     let configure (clientType: ClientType) = configuredClientType <- Some clientType
@@ -78,16 +79,30 @@ module ClientIdentity =
     /// Clears the API contract version override so requests use the released default.
     let clearApiContractVersionOverride () = configuredApiContractVersion <- None
 
-    /// Restores default SDK identity headers and removes any API contract version override.
+    /// Sets the opaque process identity used only to optimize live Grace Watch notification delivery.
+    let configureWatchProcessId watchProcessId =
+        if watchProcessId = Guid.Empty then
+            invalidArg (nameof watchProcessId) "Grace Watch process identity must not be empty."
+
+        configuredWatchProcessId <- Some watchProcessId
+
+    /// Clears the process-local Grace Watch delivery identity from future SDK requests.
+    let clearWatchProcessId () = configuredWatchProcessId <- None
+
+    /// Restores default SDK identity headers and removes API-version and Watch-process overrides.
     let clear () =
         configuredClientType <- Some(ClientType.CLI(getSdkAssemblyFileVersion ()))
         configuredApiContractVersion <- None
+        configuredWatchProcessId <- None
 
     /// Exposes the currently configured client identity for tests and host diagnostics.
     let tryGetConfiguredClientType () = configuredClientType
 
     /// Exposes the optional API contract version override for tests and host diagnostics.
     let tryGetConfiguredApiContractVersion () = configuredApiContractVersion
+
+    /// Exposes the optional Grace Watch process identity for tests and host diagnostics.
+    let tryGetConfiguredWatchProcessId () = configuredWatchProcessId
 
     /// Converts a client identity into the type and version header values expected by Grace Server.
     let private toHeaderValues clientType =
@@ -115,6 +130,15 @@ module ClientIdentity =
             |> ignore
 
             httpClient.DefaultRequestHeaders.TryAddWithoutValidation(Constants.ClientVersionHeaderKey, clientVersion)
+            |> ignore
+        | None -> ()
+
+        httpClient.DefaultRequestHeaders.Remove(Constants.WatchProcessIdHeaderKey)
+        |> ignore
+
+        match configuredWatchProcessId with
+        | Some watchProcessId ->
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation(Constants.WatchProcessIdHeaderKey, watchProcessId.ToString("N"))
             |> ignore
         | None -> ()
 
