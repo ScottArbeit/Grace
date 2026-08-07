@@ -16215,8 +16215,148 @@ module WatchTests =
             File.ReadAllText(Services.IpcFileName())
             |> should equal dirtyJson)
 
+    /// Verifies coordinator-owned pending state remains distinct from ordinary local observation work.
+    [<Test; Category("WatchPendingReasons")>]
+    let ``watch pending reasons keep manual materialization separate from local candidates`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+
+            Watch.pendingWatchWorkReasonNamesForWatchTests ()
+            |> should
+                equal
+                [|
+                    "remote materialization is applying"
+                |]
+
+            let filePath = Path.Combine(root, "reasoned-pending.txt")
+            File.WriteAllText(filePath, "pending content")
+            Watch.OnChanged(changedEvent filePath)
+
+            Watch.pendingWatchWorkReasonNamesForWatchTests ()
+            |> should
+                equal
+                [|
+                    "file uploads are pending"
+                    "remote materialization is applying"
+                |])
+
+    /// Verifies reason transitions remain diagnostic while an unchanged public dirty contract is not rewritten.
+    [<Test; Category("WatchPendingReasons")>]
+    let ``watch reason transition logs once without rewriting unchanged dirty ipc`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let diagnostics = ResizeArray<string>()
+
+            try
+                Watch.setPendingWatchReasonDiagnosticForWatchTests diagnostics.Add
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+                Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                let manualDirtyJson = File.ReadAllText(Services.IpcFileName())
+
+                Watch.forgetPendingWatchWorkPublicationForWatchTests ()
+                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                File.ReadAllText(Services.IpcFileName())
+                |> should equal manualDirtyJson
+
+                let filePath = Path.Combine(root, "reason-transition.txt")
+                File.WriteAllText(filePath, "pending content")
+
+                Watch.OnChanged(changedEvent filePath)
+                Watch.OnChanged(changedEvent filePath)
+
+                File.ReadAllText(Services.IpcFileName())
+                |> should equal manualDirtyJson
+
+                diagnostics.ToArray()
+                |> should
+                    equal
+                    [|
+                        "remote materialization is applying"
+                        "file uploads are pending; remote materialization is applying"
+                    |]
+            finally
+                Watch.resetPendingWatchReasonDiagnosticForWatchTests ())
+
+    /// Verifies duplicate cursor wakes stay quiet while a changed safe-point reason remains visible.
+    [<Test; Category("WatchPendingReasons")>]
+    let ``remote event wait diagnostics are transition based`` () =
+        withTempRepo (fun _ ->
+            let current = Current()
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    ReferenceId = Guid.NewGuid()
+                }
+
+            let diagnostics = ResizeArray<string>()
+
+            try
+                Watch.setCurrentBranchWaitDiagnosticForWatchTests (fun _ waitKind reason -> diagnostics.Add($"{waitKind}: {reason}"))
+
+                Watch.reportCurrentBranchWaitTransitionForWatchTests payload (Watch.CurrentBranchMaterializationStatusGate.Blocked "file uploads are pending")
+                Watch.reportCurrentBranchWaitTransitionForWatchTests payload (Watch.CurrentBranchMaterializationStatusGate.Blocked "file uploads are pending")
+
+                Watch.reportCurrentBranchWaitTransitionForWatchTests
+                    payload
+                    (Watch.CurrentBranchMaterializationStatusGate.Blocked "durable Watch journal observations are pending")
+
+                diagnostics.ToArray()
+                |> should
+                    equal
+                    [|
+                        "safe local Watch point: file uploads are pending"
+                        "safe local Watch point: durable Watch journal observations are pending"
+                    |]
+            finally
+                Watch.resetCurrentBranchWaitDiagnosticForWatchTests ())
+
+    /// Verifies unreadable durable evidence stays dirty and observable without repeating an unchanged error reason.
+    [<Test; Category("WatchPendingReasons")>]
+    let ``unreadable durable journal reason remains dirty and logs once`` () =
+        withTempRepo (fun _ ->
+            let diagnostics = ResizeArray<string>()
+
+            try
+                Watch.setPendingWatchReasonDiagnosticForWatchTests diagnostics.Add
+
+                Watch.setWatchJournalStatusClientForWatchTests (fun () ->
+                    Task.FromException<LocalStateDb.WatchJournalPendingWorkSummary>(InvalidOperationException("injected unreadable journal")))
+
+                Watch.pendingWatchWorkReasonNamesForWatchTests ()
+                |> should
+                    equal
+                    [|
+                        "durable Watch journal is unreadable"
+                    |]
+
+                let processablePending, hasPending = Watch.pendingWatchWorkEvidenceForWatchTests ()
+                processablePending |> should equal false
+                hasPending |> should equal true
+
+                diagnostics.ToArray()
+                |> should
+                    equal
+                    [|
+                        "durable Watch journal is unreadable"
+                    |]
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.resetPendingWatchReasonDiagnosticForWatchTests ())
+
     /// Verifies that durable journal evidence marks Watch status dirty even when process-local queues are empty.
-    [<Test>]
+    [<Test; Category("WatchPendingReasons")>]
     let ``watch durable pending journal evidence publishes dirty transition`` () =
         withTempRepo (fun _ ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
@@ -16235,6 +16375,13 @@ module WatchTests =
                     .GetResult()
 
                 Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                let durableDirtyJson = File.ReadAllText(Services.IpcFileName())
+                Watch.forgetPendingWatchWorkPublicationForWatchTests ()
+                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                File.ReadAllText(Services.IpcFileName())
+                |> should equal durableDirtyJson
 
                 readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
                 |> should equal true
@@ -19132,20 +19279,23 @@ module WatchTests =
 
                     Services.updateGraceWatchInterprocessFile currentStatus directoryIds
 
-                (Watch.processChangedFilesWithClients
-                    readStatus
-                    readStatus
-                    upload
-                    updateGraceStatus
-                    scanForDifferences
-                    updateGraceStatusFromDifferences
-                    applyIncremental
-                    updateIpc)
-                    .GetAwaiter()
-                    .GetResult()
+                /// Drives the active resync recovery helper with the same unchanged durable-only journal state.
+                let processRecovery () =
+                    (Watch.processChangedFilesWithClients
+                        readStatus
+                        readStatus
+                        upload
+                        updateGraceStatus
+                        scanForDifferences
+                        updateGraceStatusFromDifferences
+                        applyIncremental
+                        updateIpc)
+                        .GetAwaiter()
+                        .GetResult()
 
-                publicationCalls
-                |> should be (greaterThanOrEqualTo 2)
+                processRecovery ()
+
+                publicationCalls |> should equal 1
 
                 Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
                 |> should equal true
@@ -19158,16 +19308,46 @@ module WatchTests =
 
                 pendingRows |> should equal 1L
 
-                let inspection = Services.inspectGraceWatchStatus().Result
+                let firstInspection = Services.inspectGraceWatchStatus().Result
 
-                match inspection.Status with
-                | Some publishedStatus ->
-                    publishedStatus.HasPendingWatchWork
-                    |> should equal true
+                let firstPublishedStatus =
+                    firstInspection.Status
+                    |> Option.defaultWith (fun () -> failwith "Expected verified dirty Watch IPC after durable work arrived during recovery publication.")
 
-                    publishedStatus.IsWorkingTreeClean
-                    |> should equal false
-                | None -> Assert.Fail("Expected verified dirty Watch IPC after durable work arrived during recovery publication.")
+                firstPublishedStatus.HasPendingWatchWork
+                |> should equal true
+
+                firstPublishedStatus.IsWorkingTreeClean
+                |> should equal false
+
+                Watch.lastPublishedHasPendingWatchWorkForWatchTests ()
+                |> should equal (Some true)
+
+                firstPublishedStatus.UpdatedAt.Minus(Duration.FromMilliseconds(1.0))
+                |> updatePersistedWatchStatusUpdatedAt
+
+                let unchangedContractJson = File.ReadAllText(Services.IpcFileName())
+
+                processRecovery ()
+
+                publicationCalls |> should equal 1
+
+                File.ReadAllText(Services.IpcFileName())
+                |> should equal unchangedContractJson
+
+                let retryInspection = Services.inspectGraceWatchStatus().Result
+
+                match retryInspection.Status with
+                | Some retryStatus ->
+                    retryStatus.LastFileUploadInstant
+                    |> should equal firstPublishedStatus.LastFileUploadInstant
+
+                    retryStatus.LastDirectoryVersionInstant
+                    |> should equal firstPublishedStatus.LastDirectoryVersionInstant
+                | None -> Assert.Fail("Expected unchanged verified dirty Watch IPC after durable-only recovery retry.")
+
+                Watch.lastPublishedHasPendingWatchWorkForWatchTests ()
+                |> should equal (Some true)
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
@@ -26065,28 +26245,41 @@ module WatchTests =
 
             let reestablishIpc _ _ = Task.FromResult(())
             let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("process-local Watch queues must not apply"))
+            let diagnostics = ResizeArray<string>()
 
-            let outcome =
-                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
-                    getBranch
-                    inspectStatus
-                    requestDegradedResync
-                    waitForSafePoint
-                    reestablishIpc
-                    applyReference
-                    notification)
-                    .Result
+            try
+                Watch.setCurrentBranchWaitDiagnosticForWatchTests (fun _ waitKind reason -> diagnostics.Add($"{waitKind}: {reason}"))
 
-            outcome.Value.Reason
-            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                let outcome =
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        notification)
+                        .Result
 
-            safePointWaits.ToArray()
-            |> should
-                equal
-                [|
-                    "process-local Watch queues have pending local observations"
-                    "process-local Watch queues have pending local observations"
-                |])
+                outcome.Value.Reason
+                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+
+                safePointWaits.ToArray()
+                |> should
+                    equal
+                    [|
+                        "file uploads are pending"
+                        "file uploads are pending"
+                    |]
+
+                diagnostics.ToArray()
+                |> should
+                    equal
+                    [|
+                        "safe local Watch point: file uploads are pending"
+                    |]
+            finally
+                Watch.resetCurrentBranchWaitDiagnosticForWatchTests ())
 
     /// Verifies that the materialization gate waits while the existing Grace update marker is present.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
