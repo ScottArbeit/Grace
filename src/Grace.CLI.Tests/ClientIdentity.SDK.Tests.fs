@@ -182,6 +182,23 @@ type ClientIdentitySdkTests() =
         Assert.That(httpClient.DefaultRequestHeaders.GetValues(Constants.ClientTypeHeaderKey), Is.EquivalentTo([ "CLI" ]))
         Assert.That(httpClient.DefaultRequestHeaders.GetValues(Constants.ClientVersionHeaderKey), Is.Not.Empty)
 
+    /// Verifies that Watch delivery identity is emitted only while the current process explicitly configures it.
+    [<Test>]
+    member _.WatchProcessIdentityHeaderIsOptionalAndClearable() =
+        let processId = Guid.NewGuid()
+
+        use clientWithoutWatchIdentity = ClientIdentity.getHttpClient "corr-sdk-no-watch"
+        Assert.That(clientWithoutWatchIdentity.DefaultRequestHeaders.Contains(Constants.WatchProcessIdHeaderKey), Is.False)
+
+        ClientIdentity.configureWatchProcessId processId
+        use clientWithWatchIdentity = ClientIdentity.getHttpClient "corr-sdk-watch"
+
+        Assert.That(clientWithWatchIdentity.DefaultRequestHeaders.GetValues(Constants.WatchProcessIdHeaderKey), Is.EquivalentTo([ processId.ToString("N") ]))
+
+        ClientIdentity.clearWatchProcessId ()
+        use clientAfterClear = ClientIdentity.getHttpClient "corr-sdk-watch-cleared"
+        Assert.That(clientAfterClear.DefaultRequestHeaders.Contains(Constants.WatchProcessIdHeaderKey), Is.False)
+
     /// Verifies that lifecycle diagnostics are added to success and error results.
     [<Test>]
     member _.LifecycleDiagnosticsAreAddedToSuccessAndErrorResults() =

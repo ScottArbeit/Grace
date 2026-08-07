@@ -50,6 +50,7 @@ open Microsoft.Extensions.DependencyInjection
 module Watch =
     exception private WatchCommandExit of int
 
+    let private watchProcessId = Guid.NewGuid()
     let mutable private graceWatchRuntimeModeValue = int GraceWatchRuntimeMode.HealthyIncremental
 
     /// Reads the process-local Grace Watch runtime mode used to gate scans and filesystem observations.
@@ -8258,7 +8259,8 @@ module Watch =
             (fun () -> $"{signalRConnection.State}")
             (fun () -> $"{signalRConnection.ConnectionId}")
             Branch.GetParentBranch
-            (fun repositoryId branchId cancellationToken -> signalRConnection.InvokeAsync("RegisterCurrentBranch", repositoryId, branchId, cancellationToken))
+            (fun repositoryId branchId cancellationToken ->
+                signalRConnection.InvokeAsync("RegisterCurrentBranchSource", repositoryId, branchId, watchProcessId.ToString("N"), cancellationToken))
             (fun branchId parentBranchId cancellationToken ->
                 signalRConnection.InvokeAsync("RegisterParentBranch", branchId, parentBranchId, cancellationToken))
             cancellationToken
@@ -10122,6 +10124,13 @@ module Watch =
                     if not claimedGraceWatchStatus then
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
+
+                    ClientIdentity.configureWatchProcessId watchProcessId
+
+                    use watchProcessIdentityLifetime =
+                        { new IDisposable with
+                            member _.Dispose() = ClientIdentity.clearWatchProcessId ()
+                        }
 
                     setGraceWatchRuntimeMode GraceWatchRuntimeMode.StartingUp
 
