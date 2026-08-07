@@ -29,7 +29,7 @@ Method | HTTP request | Description
 [**promote_branch**](BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 [**rebase_branch**](BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
 [**replay_reference_events**](BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
-[**resolve_reference_event_boundary**](BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve an absent Watch event boundary.
+[**resolve_reference_event_boundary**](BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 [**save_branch**](BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 [**tag_branch**](BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 
@@ -2062,9 +2062,9 @@ Name | Type | Description  | Notes
 # **resolve_reference_event_boundary**
 > ReferenceMaterializationBoundaryReturnValue resolve_reference_event_boundary(resolve_reference_event_boundary_parameters)
 
-Resolve an absent Watch event boundary.
+Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 
-Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
+Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
 
 ### Example
 
@@ -2100,7 +2100,7 @@ with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     resolve_reference_event_boundary_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"DirectoryVersionId":"1686fe2c-954c-4f7d-b630-8db88ffc5982","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d"} # ResolveReferenceEventBoundaryParameters | 
 
     try:
-        # Resolve an absent Watch event boundary.
+        # Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
         api_response = api_instance.resolve_reference_event_boundary(resolve_reference_event_boundary_parameters)
         print("The response of BranchesApi->resolve_reference_event_boundary:\n")
         pprint(api_response)

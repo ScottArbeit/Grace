@@ -92,7 +92,7 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**promoteBranch**](docs/BranchesApi.md#promotebranch) | **POST** /branch/promote | Promote the current branch content.
 *BranchesApi* | [**rebaseBranch**](docs/BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch.
 *BranchesApi* | [**replayReferenceEvents**](docs/BranchesApi.md#replayreferenceevents) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
-*BranchesApi* | [**resolveReferenceEventBoundary**](docs/BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve an absent Watch event boundary.
+*BranchesApi* | [**resolveReferenceEventBoundary**](docs/BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.

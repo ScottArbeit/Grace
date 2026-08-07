@@ -28,7 +28,7 @@ from pydantic_core import to_jsonable_python
 
 class ResolveReferenceEventBoundaryParameters(BaseModel):
     """
-    Supplies the exact materialized local root whose missing Watch cursor must match or baseline.
+    Supplies the full local root tuple for missing-cursor recovery. Only a matching Save, Commit, or Checkpoint for the same repository and branch returns its exact cursor; Created and Rebased branch bases, every other Reference kind, and unmatched roots use the same immutable-snapshot tail baseline, even when the tuple matches.
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")

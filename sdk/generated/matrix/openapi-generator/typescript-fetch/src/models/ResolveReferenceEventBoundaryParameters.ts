@@ -14,7 +14,7 @@
 
 import { mapValues } from '../runtime';
 /**
- * Supplies the exact materialized local root whose missing Watch cursor must match or baseline.
+ * Supplies the full local root tuple for missing-cursor recovery. Only a matching Save, Commit, or Checkpoint for the same repository and branch returns its exact cursor; Created and Rebased branch bases, every other Reference kind, and unmatched roots use the same immutable-snapshot tail baseline, even when the tuple matches.
  * @export
  * @interface ResolveReferenceEventBoundaryParameters
  */

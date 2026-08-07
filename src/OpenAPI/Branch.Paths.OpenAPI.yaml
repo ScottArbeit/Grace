@@ -582,8 +582,11 @@
     post:
       tags:
         - Branches
-      summary: Resolve an absent Watch event boundary.
-      description: Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
+      summary: Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+      description: >-
+        Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same
+        repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return
+        the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
       operationId: ResolveReferenceEventBoundary
       requestBody:
         required: true
@@ -593,7 +596,7 @@
               $ref: './Branch.Components.OpenAPI.yaml#/ResolveReferenceEventBoundaryParameters'
             examples:
               localRoot:
-                summary: Resolve or baseline one exact materialized local root
+                summary: Resolve one eligible materialized root or establish its baseline
                 value:
                   <<: *getBranchExample
                   DirectoryVersionId: 1686fe2c-954c-4f7d-b630-8db88ffc5982

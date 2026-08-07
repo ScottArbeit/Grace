@@ -7072,9 +7072,9 @@ class BranchesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ReferenceMaterializationBoundaryReturnValue:
-        """Resolve an absent Watch event boundary.
+        """Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 
-        Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
+        Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
 
         :param resolve_reference_event_boundary_parameters: (required)
         :type resolve_reference_event_boundary_parameters: ResolveReferenceEventBoundaryParameters
@@ -7141,9 +7141,9 @@ class BranchesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[ReferenceMaterializationBoundaryReturnValue]:
-        """Resolve an absent Watch event boundary.
+        """Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 
-        Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
+        Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
 
         :param resolve_reference_event_boundary_parameters: (required)
         :type resolve_reference_event_boundary_parameters: ResolveReferenceEventBoundaryParameters
@@ -7210,9 +7210,9 @@ class BranchesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Resolve an absent Watch event boundary.
+        """Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 
-        Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
+        Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
 
         :param resolve_reference_event_boundary_parameters: (required)
         :type resolve_reference_event_boundary_parameters: ResolveReferenceEventBoundaryParameters

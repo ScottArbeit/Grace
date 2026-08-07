@@ -11,7 +11,7 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// ResolveReferenceEventBoundaryParameters : Supplies the exact materialized local root whose missing Watch cursor must match or baseline.
+/// ResolveReferenceEventBoundaryParameters : Supplies the full local root tuple for missing-cursor recovery. Only a matching Save, Commit, or Checkpoint for the same repository and branch returns its exact cursor; Created and Rebased branch bases, every other Reference kind, and unmatched roots use the same immutable-snapshot tail baseline, even when the tuple matches.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveReferenceEventBoundaryParameters {
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
@@ -47,7 +47,7 @@ pub struct ResolveReferenceEventBoundaryParameters {
 }
 
 impl ResolveReferenceEventBoundaryParameters {
-    /// Supplies the exact materialized local root whose missing Watch cursor must match or baseline.
+    /// Supplies the full local root tuple for missing-cursor recovery. Only a matching Save, Commit, or Checkpoint for the same repository and branch returns its exact cursor; Created and Rebased branch bases, every other Reference kind, and unmatched roots use the same immutable-snapshot tail baseline, even when the tuple matches.
     pub fn new(directory_version_id: uuid::Uuid, sha256_hash: String, blake3_hash: String) -> ResolveReferenceEventBoundaryParameters {
         ResolveReferenceEventBoundaryParameters {
             correlation_id: None,

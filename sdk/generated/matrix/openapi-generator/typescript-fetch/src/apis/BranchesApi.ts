@@ -1699,8 +1699,8 @@ export class BranchesApi extends runtime.BaseAPI {
     }
 
     /**
-     * Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
-     * Resolve an absent Watch event boundary.
+     * Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+     * Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
      */
     async resolveReferenceEventBoundaryRaw(requestParameters: ResolveReferenceEventBoundaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ReferenceMaterializationBoundaryReturnValue>> {
         const requestOptions = await this.resolveReferenceEventBoundaryRequestOpts(requestParameters);
@@ -1710,8 +1710,8 @@ export class BranchesApi extends runtime.BaseAPI {
     }
 
     /**
-     * Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
-     * Resolve an absent Watch event boundary.
+     * Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+     * Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
      */
     async resolveReferenceEventBoundary(requestParameters: ResolveReferenceEventBoundaryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ReferenceMaterializationBoundaryReturnValue> {
         const response = await this.resolveReferenceEventBoundaryRaw(requestParameters, initOverrides);

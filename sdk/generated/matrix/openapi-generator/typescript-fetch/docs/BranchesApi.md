@@ -29,7 +29,7 @@ All URIs are relative to *http://localhost:5000*
 | [**promoteBranch**](BranchesApi.md#promotebranch) | **POST** /branch/promote | Promote the current branch content. |
 | [**rebaseBranch**](BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch. |
 | [**replayReferenceEvents**](BranchesApi.md#replayreferenceevents) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events. |
-| [**resolveReferenceEventBoundary**](BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve an absent Watch event boundary. |
+| [**resolveReferenceEventBoundary**](BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline. |
 | [**saveBranch**](BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content. |
 | [**tagBranch**](BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content. |
 
@@ -1864,9 +1864,9 @@ example().catch(console.error);
 
 > ReferenceMaterializationBoundaryReturnValue resolveReferenceEventBoundary(resolveReferenceEventBoundaryParameters)
 
-Resolve an absent Watch event boundary.
+Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 
-Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
+Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
 
 ### Example
 

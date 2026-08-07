@@ -1293,7 +1293,7 @@ pub async fn replay_reference_events(configuration: &configuration::Configuratio
     }
 }
 
-/// Matches the exact local root in ordered branch history or captures the same-snapshot tail without materializing history.
+/// Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
 pub async fn resolve_reference_event_boundary(configuration: &configuration::Configuration, resolve_reference_event_boundary_parameters: models::ResolveReferenceEventBoundaryParameters) -> Result<models::ReferenceMaterializationBoundaryReturnValue, Error<ResolveReferenceEventBoundaryError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_resolve_reference_event_boundary_parameters = resolve_reference_event_boundary_parameters;
