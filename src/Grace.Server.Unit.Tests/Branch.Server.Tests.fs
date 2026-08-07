@@ -270,6 +270,24 @@ type BranchActorReferenceRetryTests() =
             Assert.That(shouldPersistBranchEvent branchEventType, Is.True)
             Assert.That(shouldPublishBranchEvent branchEventType, Is.False)
 
+    /// Verifies an exact retry repairs a missing eligible replay event once without taking over Reference publication.
+    [<Test>]
+    member _.MatchingRetryRepairsMissingWatchTransitionExactlyOnce() =
+        let durableCommit = persistedCommit ()
+        let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+        let persistedEvent = ({ Event = committed; Metadata = EventMetadata.New "persisted-commit" GraceSystemUser }: BranchEvent)
+
+        Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed Seq.empty, Is.True)
+
+        Assert.That(
+            shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed [ persistedEvent ],
+            Is.False,
+            "A retry after the Branch event was persisted must not append a duplicate."
+        )
+
+        Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.NewReference committed Seq.empty, Is.False)
+        Assert.That(shouldPublishBranchEvent committed, Is.False, "The repair must never duplicate Reference-owned publication.")
+
     /// Verifies a fresh-correlation retry against a completed projection is a projection no-op.
     [<Test>]
     member _.FreshCorrelationRetryAfterCompletedCommitIsProjectionNoOp() =
@@ -761,6 +779,39 @@ type ReferenceEventReplayTests() =
             )
 
             Assert.That(replay.ScannedThroughCursor, Is.EqualTo("branch-event-v1:4"))
+
+    /// A publication-failed Reference retry appends its absent replay transition once at the durable Branch order boundary.
+    [<Test>]
+    member _.MatchingRetryRepairReplaysExactlyOnceInDurableOrder() =
+        let events =
+            ResizeArray<BranchEvent>(
+                [
+                    referenceEvent 0 ReferenceType.Tag
+                    referenceEvent 1 ReferenceType.Commit
+                ]
+            )
+
+        let repaired = referenceEvent 2 ReferenceType.Save
+
+        if shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry repaired.Event events then
+            events.Add repaired
+
+        if shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry repaired.Event events then
+            events.Add repaired
+
+        match Grace.Server.Branch.replayReferenceEventsAfterCursor repositoryId branchId repositoryId branchId "branch-event-v1:0" events with
+        | Error failure -> Assert.Fail($"Expected replay success, got {failure}.")
+        | Ok replay ->
+            Assert.That(replay.Events, Has.Length.EqualTo(2))
+
+            Assert.That(
+                replay.Events
+                |> Array.map (fun replayEvent -> $"{replayEvent.EventCursor}:{replayEvent.Reference.ReferenceType}")
+                |> String.concat "|",
+                Is.EqualTo("branch-event-v1:1:ReferenceType.Commit|branch-event-v1:2:ReferenceType.Save")
+            )
+
+            Assert.That(replay.ScannedThroughCursor, Is.EqualTo("branch-event-v1:2"))
 
     /// An empty eligible interval advances only to the exact end of the immutable scanned snapshot.
     [<Test>]

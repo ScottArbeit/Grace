@@ -144,6 +144,17 @@ module Branch =
         | ExternalCreated (referenceDto, _, _, _, _) -> Some referenceDto
         | _ -> None
 
+    /// Detects whether an exact Reference retry must append its missing Watch replay transition.
+    let internal shouldRepairMatchingRetryBranchEvent disposition branchEventType (existingEvents: seq<BranchEvent>) =
+        match disposition, tryGetReferenceFromBranchEvent branchEventType with
+        | MatchingRetry, Some referenceDto when shouldPersistBranchEvent branchEventType ->
+            existingEvents
+            |> Seq.exists (fun branchEvent ->
+                tryGetReferenceFromBranchEvent branchEvent.Event
+                |> Option.exists (fun existingReference -> existingReference.ReferenceId = referenceDto.ReferenceId))
+            |> not
+        | _ -> false
+
     /// Reconciles one successfully republished durable Reference into missing or older Branch projection slots.
     let internal reconcileReferenceProjection (branchDto: BranchDto) (referenceDto: ReferenceDto) =
         let shouldAdvance (currentReference: ReferenceDto) =
@@ -1214,12 +1225,15 @@ module Branch =
                                     return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                                 | _ -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, Some MatchingRetry ->
-                                match tryGetReferenceFromBranchEvent event with
-                                | Some referenceDto ->
-                                    let recoveredBranchDto, _ = reconcileReferenceProjection branchDto referenceDto
-                                    branchDto <- recoveredBranchDto
-                                    return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
-                                | None -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                                if shouldRepairMatchingRetryBranchEvent MatchingRetry event state.State then
+                                    return! this.ApplyEvent { Event = event; Metadata = metadata }
+                                else
+                                    match tryGetReferenceFromBranchEvent event with
+                                    | Some referenceDto ->
+                                        let recoveredBranchDto, _ = reconcileReferenceProjection branchDto referenceDto
+                                        branchDto <- recoveredBranchDto
+                                        return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                                    | None -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, Some disposition when not (shouldApplyReferenceEvent disposition) ->
                                 return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, _ -> return! this.ApplyEvent { Event = event; Metadata = metadata }
