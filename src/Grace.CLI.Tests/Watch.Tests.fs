@@ -1595,6 +1595,156 @@ module WatchTests =
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies the normal maintenance/status/save scan treats the root ignore definition as repository content.
+    [<Test; Category("WatchPathClassification")>]
+    let ``normal working tree scan includes root graceignore`` () =
+        withTempRepo (fun root ->
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            File.WriteAllText(graceIgnorePath, "ignored.tmp")
+            Services.clearShouldIgnoreCache ()
+
+            Services.shouldIgnoreFile graceIgnorePath
+            |> should equal false
+
+            let differences =
+                (Services.scanForDifferences status)
+                    .GetAwaiter()
+                    .GetResult()
+
+            differences
+            |> Seq.exists (fun difference ->
+                difference.DifferenceType = DifferenceType.Add
+                && difference.FileSystemEntryType = FileSystemEntryType.File
+                && string difference.RelativePath = Constants.GraceIgnoreFileName)
+            |> should equal true
+
+            let indexedStatus = graceStatusTracking [| Constants.GraceIgnoreFileName |] Array.empty<string>
+
+            let indexedDifferences =
+                (Services.scanForDifferences indexedStatus)
+                    .GetAwaiter()
+                    .GetResult()
+
+            indexedDifferences
+            |> Seq.exists (fun difference ->
+                (difference.DifferenceType = DifferenceType.Add
+                 || difference.DifferenceType = DifferenceType.Delete)
+                && difference.FileSystemEntryType = FileSystemEntryType.File
+                && string difference.RelativePath = Constants.GraceIgnoreFileName)
+            |> should equal false)
+
+    /// Verifies the shared classifier distinguishes repository, ignore, Grace namespace, and exact local-state identities.
+    [<Test; Category("WatchPathClassification")>]
+    let ``shared repository path classifier is boundary aware`` () =
+        withTempRepo (fun root ->
+            let current = Current()
+
+            let input: Services.RepositoryPathClassifierInput =
+                {
+                    RootDirectory = root
+                    GraceDirectory = current.GraceDirectory
+                    GraceStatusFile = current.GraceStatusFile
+                    DirectoryIgnoreEntries = Array.empty
+                    FileIgnoreEntries = [| "ignored.tmp" |]
+                    PathComparison = StringComparison.OrdinalIgnoreCase
+                }
+
+            let classify kind path = Services.classifyRepositoryPath input kind path
+            let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+            let sharedPrefixPath = Path.Combine(root, ".grace-old", "ordinary.txt")
+            let internalPath = Path.Combine(current.GraceDirectory, "objects", "cached.bin")
+            let outsidePath = Path.Combine(Path.GetDirectoryName(root), $"outside-{Guid.NewGuid():N}.txt")
+
+            classify Services.RepositoryPathKind.FilePath graceIgnorePath
+            |> should equal Services.RepositoryPathClassification.Eligible
+
+            classify Services.RepositoryPathKind.FilePath sharedPrefixPath
+            |> should equal Services.RepositoryPathClassification.Eligible
+
+            classify Services.RepositoryPathKind.FilePath (internalPath.ToUpperInvariant())
+            |> should equal Services.RepositoryPathClassification.GraceInternal
+
+            classify Services.RepositoryPathKind.FilePath (Path.Combine(root, "ignored.tmp"))
+            |> should equal Services.RepositoryPathClassification.Ignored
+
+            classify Services.RepositoryPathKind.FilePath outsidePath
+            |> should equal Services.RepositoryPathClassification.Ignored
+
+            for suffix in
+                [|
+                    String.Empty
+                    "-wal"
+                    "-shm"
+                    "-journal"
+                |] do
+                classify Services.RepositoryPathKind.FilePath (current.GraceStatusFile + suffix)
+                |> should equal Services.RepositoryPathClassification.LocalStateArtifact
+
+            classify Services.RepositoryPathKind.FilePath (current.GraceStatusFile + "-wal.extra")
+            |> should equal Services.RepositoryPathClassification.GraceInternal)
+
+    /// Verifies a configured ignore match cannot create a raw candidate, pending transition, IPC file, or callback output.
+    [<Test; Category("WatchPathClassification"); Category("WatchSilentObservation")>]
+    let ``raw ignored callback stops before ordinary Watch side effects`` () =
+        withTempRepo (fun root ->
+            let ignoredPath = Path.Combine(root, "ignored.tmp")
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "ignored.tmp")
+            File.WriteAllText(ignoredPath, "ignored payload")
+            resetConfiguration ()
+            activateWatchIgnoreSnapshot ()
+            Watch.setGraceStatusForWatchTests status
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+            Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+            let output =
+                captureAnsiConsoleOutput (fun () ->
+                    Watch.OnCreated(createdEvent ignoredPath)
+                    Watch.OnChanged(changedEvent ignoredPath)
+                    Watch.OnDeleted(deletedEvent ignoredPath))
+
+            output |> should equal String.Empty
+
+            Watch.localObservationCandidateSnapshotForWatchTests ()
+            |> should equal Array.empty<Watch.WatchObservationCandidate>
+
+            Watch.pendingWatchWorkEvidenceForWatchTests ()
+            |> should equal (false, false)
+
+            File.Exists(Services.IpcFileName())
+            |> should equal false)
+
+    /// Verifies rename admission classifies old and new endpoints independently before ordinary Watch work.
+    [<Test; Category("WatchPathClassification"); Category("WatchSilentObservation")>]
+    let ``raw rename admits only eligible endpoint across ignore boundary`` () =
+        let verifyRename oldFileName newFileName expectedPath expectedKind =
+            withTempRepo (fun root ->
+                let oldPath = Path.Combine(root, oldFileName)
+                let newPath = Path.Combine(root, newFileName)
+
+                File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "ignored.tmp")
+                File.WriteAllText(newPath, "renamed payload")
+                resetConfiguration ()
+                activateWatchIgnoreSnapshot ()
+                Watch.setLocalObservationCandidateSchedulingForWatchTests true
+
+                Watch.OnRenamed(renamedEvent oldPath newPath)
+
+                Watch.localObservationCandidateSnapshotForWatchTests ()
+                |> Array.map (fun candidate -> candidate.FullPath, candidate.Kind)
+                |> should
+                    equal
+                    [|
+                        Path.Combine(root, expectedPath), expectedKind
+                    |])
+
+        verifyRename "ignored.tmp" "eligible.txt" "eligible.txt" Watch.CreatedOrChanged
+        verifyRename "eligible.txt" "ignored.tmp" "eligible.txt" Watch.Deleted
+
     /// Verifies that explicit filesystem watcher failures remain visible while discarded observations become silent.
     [<Test; Category("WatchInternalAdmission"); Category("WatchSilentObservation")>]
     let ``filesystem watcher errors retain explicit resync diagnostics`` () =
@@ -3896,7 +4046,7 @@ module WatchTests =
             |> should equal true)
 
     /// Verifies Watch treats only the `.grace` directory and its descendants as internal while ordinary similarly prefixed paths retain normal ignore behavior.
-    [<Test>]
+    [<Test; Category("WatchPathClassification")>]
     let ``Watch ignores only separator bounded grace directory paths`` () =
         withTempRepo (fun root ->
             let gracePath = Path.Combine(root, Constants.GraceConfigDirectory, "objects", "cache.bin")
@@ -16744,7 +16894,7 @@ module WatchTests =
                 |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}")
 
     /// Verifies that local-state artifact callbacks remain quiet until their committed revision is checked.
-    [<Test>]
+    [<Test; Category("WatchPathClassification")>]
     let ``watch local-state artifact callbacks do not publish pending ipc`` () =
         withTempRepo (fun _ ->
             let status = graceStatusTracking Array.empty<string> Array.empty<string>
@@ -16773,7 +16923,9 @@ module WatchTests =
                             "-shm"
                             "-journal"
                         |] do
-                        Watch.OnChanged(changedEvent (Current().GraceStatusFile + suffix)))
+                        Watch.OnCreated(createdEvent (Current().GraceStatusFile + suffix))
+                        Watch.OnChanged(changedEvent (Current().GraceStatusFile + suffix))
+                        Watch.OnDeleted(deletedEvent (Current().GraceStatusFile + suffix)))
 
             callbackOutput |> should equal String.Empty
 
@@ -16958,7 +17110,7 @@ module WatchTests =
             |> should equal false)
 
     /// Verifies duplicate SQLite callbacks coalesce into one quiet revision read for a Watch-owned commit.
-    [<Test>]
+    [<Test; Category("WatchPathClassification")>]
     let ``watch duplicate local-state callbacks perform one quiet revision check`` () =
         withTempRepo (fun _ ->
             let mutable reads = 0
@@ -16967,9 +17119,10 @@ module WatchTests =
 
             Watch.setKnownLocalStatusRevisionForWatchTests 7L
 
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+            Watch.OnCreated(createdEvent (Current().GraceStatusFile))
             Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
-            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-shm"))
+            Watch.OnDeleted(deletedEvent (Current().GraceStatusFile + "-shm"))
+            Watch.OnDeleted(deletedEvent (Current().GraceStatusFile + "-journal"))
 
             (Watch.processLocalStatusRevisionCheckForWatchTests
                 (fun () ->
