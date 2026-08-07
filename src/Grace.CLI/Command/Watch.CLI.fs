@@ -3350,34 +3350,77 @@ module Watch =
 
             Ok summary.HasPendingRows
         with
-        | ex ->
-            logToAnsiConsole
-                Colors.Error
-                $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
+        | ex -> Error ex.Message
 
-            Error ex.Message
+    /// Names each active producer that can prevent Watch from advertising a clean local boundary.
+    type internal PendingWatchWorkReason =
+        | ResyncRequired
+        | LocalObservationConfidenceLost
+        | GraceStatusRefreshPending
+        | LocalObservationCandidatesPending
+        | FileUploadsPending
+        | FileRecoveryPending
+        | DirectoryInspectionsPending
+        | StatusTriggersPending
+        | StatusDifferencesPending
+        | DurableJournalPending
+        | DurableJournalUnreadable
+        | RemoteMaterializationApplying
 
-    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
-    let private hasPendingDurableWatchJournalEvidence () =
-        match inspectDurableWatchJournalPendingEvidence () with
-        | Ok hasPendingRows -> hasPendingRows
-        | Error _ -> true
+        /// Describes the concrete producer in diagnostics without changing the public Watch IPC contract.
+        member this.Description =
+            match this with
+            | ResyncRequired -> "Watch resync is pending"
+            | LocalObservationConfidenceLost -> "local observation confidence is lost"
+            | GraceStatusRefreshPending -> "Grace Status refresh is pending"
+            | LocalObservationCandidatesPending -> "local observation candidates are pending"
+            | FileUploadsPending -> "file uploads are pending"
+            | FileRecoveryPending -> "file recovery evidence is pending"
+            | DirectoryInspectionsPending -> "directory inspections are pending"
+            | StatusTriggersPending -> "status triggers are pending"
+            | StatusDifferencesPending -> "status differences are pending"
+            | DurableJournalPending -> "durable Watch journal observations are pending"
+            | DurableJournalUnreadable -> "durable Watch journal is unreadable"
+            | RemoteMaterializationApplying -> "remote materialization is applying"
 
-    /// Describes pending Watch work without merging process-local queues and durable journal evidence.
+        /// Reports whether this reason is ordinary local work rather than durable or coordinator-owned evidence.
+        member this.IsProcessableLocalWork =
+            match this with
+            | DurableJournalPending
+            | DurableJournalUnreadable
+            | RemoteMaterializationApplying -> false
+            | _ -> true
+
+    /// Describes pending Watch work without merging distinct local, durable, and coordinator-owned causes.
     type private PendingWatchWorkEvidence =
         {
-            HasProcessablePendingWork: bool
-            HasManualPendingStatusEvidence: bool
-            HasDurableWatchJournalEvidence: bool
-            HasLocalObservationConfidenceLoss: bool
+            Reasons: PendingWatchWorkReason array
         }
 
         /// Reports whether Watch work, confidence loss, or durable journal evidence must keep IPC dirty.
-        member this.HasPendingWork =
-            this.HasProcessablePendingWork
-            || this.HasManualPendingStatusEvidence
-            || this.HasDurableWatchJournalEvidence
-            || this.HasLocalObservationConfidenceLoss
+        member this.HasPendingWork = this.Reasons.Length > 0
+
+        /// Reports whether process-local work can advance during the current timer pass.
+        member this.HasProcessablePendingWork =
+            this.Reasons
+            |> Array.exists (fun reason -> reason.IsProcessableLocalWork)
+
+        /// Reports whether the coordinator-owned remote apply latch contributes to this snapshot.
+        member this.HasManualPendingStatusEvidence =
+            this.Reasons
+            |> Array.contains RemoteMaterializationApplying
+
+        /// Reports whether durable journal rows or an unreadable journal contribute to this snapshot.
+        member this.HasDurableWatchJournalEvidence =
+            this.Reasons
+            |> Array.exists (fun reason ->
+                reason = DurableJournalPending
+                || reason = DurableJournalUnreadable)
+
+        /// Reports whether raw local observation confidence has been lost.
+        member this.HasLocalObservationConfidenceLoss =
+            this.Reasons
+            |> Array.contains LocalObservationConfidenceLost
 
         /// Reports whether durable journal evidence is the only reason IPC must be dirty.
         member this.HasDurableOnlyPendingWork =
@@ -3385,6 +3428,56 @@ module Watch =
             && not this.HasProcessablePendingWork
             && not this.HasManualPendingStatusEvidence
             && not this.HasLocalObservationConfidenceLoss
+
+    let private pendingWatchReasonDiagnosticLock = obj ()
+    let mutable private lastReportedPendingWatchReasons: PendingWatchWorkReason array option = None
+
+    let mutable private pendingWatchReasonDiagnostic =
+        fun (description: string) ->
+            let color =
+                if description.Contains("unreadable", StringComparison.Ordinal) then
+                    Colors.Error
+                else
+                    Colors.Important
+
+            logToAnsiConsole color $"Grace Watch pending reason transition: {description}."
+
+    /// Emits one diagnostic only when the concrete pending-reason set changes.
+    let private reportPendingWatchReasonTransition (evidence: PendingWatchWorkEvidence) =
+        let descriptionToReport =
+            lock pendingWatchReasonDiagnosticLock (fun () ->
+                match lastReportedPendingWatchReasons, evidence.Reasons with
+                | Some previous, current when previous = current -> None
+                | None, current when current.Length = 0 ->
+                    lastReportedPendingWatchReasons <- Some Array.empty
+                    None
+                | _ ->
+                    lastReportedPendingWatchReasons <- Some(Array.copy evidence.Reasons)
+
+                    evidence.Reasons
+                    |> Array.map (fun reason -> reason.Description)
+                    |> String.concat "; "
+                    |> function
+                        | "" -> Some "no pending Watch reason"
+                        | description -> Some description)
+
+        descriptionToReport
+        |> Option.iter pendingWatchReasonDiagnostic
+
+    /// Captures the concrete process-local producers without treating the manual remote-apply latch as local work.
+    let private readProcessLocalPendingWatchReasons () =
+        [|
+            if isGraceWatchResyncPending () then ResyncRequired
+            if hasLocalObservationConfidenceLoss () then LocalObservationConfidenceLost
+            if graceStatusHasChanged then GraceStatusRefreshPending
+            if hasPendingLocalObservationCandidates () then
+                LocalObservationCandidatesPending
+            if not filesToProcess.IsEmpty then FileUploadsPending
+            if not fileRecoveryEvidence.IsEmpty then FileRecoveryPending
+            if not directoriesToProcess.IsEmpty then DirectoryInspectionsPending
+            if not statusUpdateTriggers.IsEmpty then StatusTriggersPending
+            if hasPendingStatusDifferences () then StatusDifferencesPending
+        |]
 
     /// Distinguishes exact IPC verification from the pending-work state that snapshot advertises.
     type private PendingWatchWorkPublicationVerification =
@@ -3404,50 +3497,71 @@ module Watch =
         /// Recovery could not prove a clean result and must retain fail-closed pending state.
         | UnverifiedRecoveryPublication
 
-    /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
-    let private hasProcessablePendingWatchWorkExceptManual () =
-        isGraceWatchResyncPending ()
-        || hasLocalObservationConfidenceLoss ()
-        || graceStatusHasChanged
-        || hasPendingLocalObservationCandidates ()
-        || not (
-            filesToProcess.IsEmpty
-            && fileRecoveryEvidence.IsEmpty
-            && directoriesToProcess.IsEmpty
-            && statusUpdateTriggers.IsEmpty
-            && not (hasPendingStatusDifferences ())
-        )
+    /// Reads process-local and durable pending-work facts once for a single status publication decision.
+    let private readPendingWatchWorkEvidence () =
+        let durableReason =
+            match inspectDurableWatchJournalPendingEvidence () with
+            | Ok true -> Some DurableJournalPending
+            | Ok false -> None
+            | Error _ -> Some DurableJournalUnreadable
 
-    /// Evaluates pending Watch work without counting the startup catch-up marker against its own clean publication.
+        let reasons =
+            [|
+                yield! readProcessLocalPendingWatchReasons ()
+                match durableReason with
+                | Some reason -> yield reason
+                | None -> ()
+                if hasManualPendingWatchWorkStatusFlag () then
+                    yield RemoteMaterializationApplying
+            |]
+
+        let evidence = { Reasons = reasons }
+        reportPendingWatchReasonTransition evidence
+        evidence
+
+    /// Reports whether Watch has queued process-local work other than the remote materialization latch.
+    let private hasProcessablePendingWatchWorkExceptManual () =
+        readProcessLocalPendingWatchReasons ()
+        |> Array.exists (fun reason -> reason.IsProcessableLocalWork)
+
+    /// Evaluates pending Watch work without counting the coordinator-owned remote materialization latch.
     let private hasPendingWatchWorkExceptManual () =
-        hasProcessablePendingWatchWorkExceptManual ()
-        || hasPendingDurableWatchJournalEvidence ()
+        let evidence = readPendingWatchWorkEvidence ()
+
+        evidence.Reasons
+        |> Array.exists (fun reason -> reason <> RemoteMaterializationApplying)
 
     /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
     let private hasProcessablePendingWatchWork () = hasProcessablePendingWatchWorkExceptManual ()
 
-    /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
-    let private hasPendingWatchWork () =
-        hasManualPendingWatchWorkStatusFlag ()
-        || hasProcessablePendingWatchWork ()
-        || hasPendingDurableWatchJournalEvidence ()
-
-    /// Reads process-local and durable pending-work facts once for a single status publication decision.
-    let private readPendingWatchWorkEvidence () =
-        let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
-
-        {
-            HasProcessablePendingWork = hasProcessablePendingWork
-            HasManualPendingStatusEvidence = hasManualPendingWatchWorkStatusFlag ()
-            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
-            HasLocalObservationConfidenceLoss = hasLocalObservationConfidenceLoss ()
-        }
+    /// Evaluates all pending Watch reasons from one coherent publication snapshot.
+    let private hasPendingWatchWork () = (readPendingWatchWorkEvidence ()).HasPendingWork
 
     /// Exposes pending Watch work checks to tests without running the foreground timer loop.
     let internal pendingWatchWorkEvidenceForWatchTests () =
         let evidence = readPendingWatchWorkEvidence ()
 
         evidence.HasProcessablePendingWork, evidence.HasPendingWork
+
+    /// Lists the concrete pending reasons in stable diagnostic order for focused Watch tests.
+    let internal pendingWatchWorkReasonNamesForWatchTests () =
+        (readPendingWatchWorkEvidence ()).Reasons
+        |> Array.map (fun reason -> reason.Description)
+
+    /// Captures pending-reason transition diagnostics without redirecting process-wide console output.
+    let internal setPendingWatchReasonDiagnosticForWatchTests diagnostic = pendingWatchReasonDiagnostic <- diagnostic
+
+    /// Restores production pending-reason diagnostics after a focused Watch test.
+    let internal resetPendingWatchReasonDiagnosticForWatchTests () =
+        pendingWatchReasonDiagnostic <-
+            fun (description: string) ->
+                let color =
+                    if description.Contains("unreadable", StringComparison.Ordinal) then
+                        Colors.Error
+                    else
+                        Colors.Important
+
+                logToAnsiConsole color $"Grace Watch pending reason transition: {description}."
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -3599,6 +3713,9 @@ module Watch =
     /// Reports the cached pending-work result so recovery tests can prove failed dirty reassertion discards clean evidence.
     let internal lastPublishedHasPendingWatchWorkForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork)
 
+    /// Drops the in-memory publication cache so tests can prove persisted semantic equality prevents a rewrite.
+    let internal forgetPendingWatchWorkPublicationForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- None)
+
     /// Returns the exact verified status scope retained for callback admission in focused Watch tests.
     let internal lastPublishedWatchObservationScopeForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedWatchObservationScope)
 
@@ -3619,6 +3736,9 @@ module Watch =
         else
             Blake3Hash String.Empty
 
+    /// Supplies one process-stable non-incremental status payload so unchanged recovery reasons do not change observable IPC timestamps.
+    let private nonIncrementalPendingWorkPublicationStatus = GraceStatus.Default
+
     /// Verifies the on-disk Watch IPC snapshot has the exact pending-work and content identity expected by a publication.
     let private statusMatchesExpectedPendingWorkPublication
         (expectedStatus: GraceStatus)
@@ -3626,11 +3746,20 @@ module Watch =
         hasPendingWork
         (status: GraceWatchStatus)
         =
-        status.HasPendingWatchWork = hasPendingWork
+        let current = Current()
+
+        status.RepositoryId = current.RepositoryId
+        && status.RepositoryName = current.RepositoryName
+        && status.BranchId = current.BranchId
+        && status.BranchName = current.BranchName
+        && String.Equals(status.RootDirectory, current.RootDirectory, watchPathComparison)
+        && status.HasPendingWatchWork = hasPendingWork
         && status.IsWorkingTreeClean = not hasPendingWork
         && status.RootDirectoryId = expectedStatus.RootDirectoryId
         && status.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
         && status.RootDirectoryBlake3Hash = expectedRootDirectoryBlake3Hash expectedStatus
+        && status.LastFileUploadInstant = expectedStatus.LastSuccessfulFileUpload
+        && status.LastDirectoryVersionInstant = expectedStatus.LastSuccessfulDirectoryVersionUpload
         && not (isNull status.DirectoryIds)
         && status.DirectoryIds.SetEquals(expectedDirectoryIds)
 
@@ -3659,6 +3788,18 @@ module Watch =
     let private statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt (status: GraceWatchStatus) =
         status.UpdatedAt >= publicationStartedAt
         && statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork status
+
+    /// Compares the observable Watch IPC contract while deliberately ignoring only its heartbeat timestamp.
+    let private inspectionMatchesExpectedPendingWorkContract
+        expectedStatus
+        expectedDirectoryIds
+        expectedMode
+        hasPendingWork
+        (inspection: GraceWatchStatusInspection)
+        =
+        inspection.EffectiveMode = Some expectedMode
+        && (inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork))
 
     /// Advances pending-work and observation-scope caches together only after the exact IPC snapshot proves it reached disk.
     let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds expectedObservationScope hasPendingWork publicationStartedAt =
@@ -3790,24 +3931,34 @@ module Watch =
             isGraceWatchResyncAttemptCurrent attempt
             && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
 
+        let durableReason =
+            match inspectDurableWatchJournalPendingEvidence () with
+            | Ok true -> Some DurableJournalPending
+            | Ok false -> None
+            | Error _ -> Some DurableJournalUnreadable
+
         {
-            HasProcessablePendingWork =
-                not recoveryStillOwnsPublication
-                || graceStatusHasChanged
-                || hasPendingLocalObservationCandidates ()
-                || not (
-                    filesToProcess.IsEmpty
-                    && directoriesToProcess.IsEmpty
-                    && statusUpdateTriggers.IsEmpty
-                    && not (hasPendingStatusDifferences ())
-                )
-            HasManualPendingStatusEvidence = false
-            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
-            HasLocalObservationConfidenceLoss =
-                hasUnconsumedLocalObservationConfidenceLoss ()
-                || (not recoveryStillOwnsPublication
-                    && Volatile.Read(&localObservationConfidenceLossActive)
-                       <> 0)
+            Reasons =
+                [|
+                    if not recoveryStillOwnsPublication then yield ResyncRequired
+                    if graceStatusHasChanged then yield GraceStatusRefreshPending
+                    if hasPendingLocalObservationCandidates () then
+                        yield LocalObservationCandidatesPending
+                    if not filesToProcess.IsEmpty then yield FileUploadsPending
+                    if not directoriesToProcess.IsEmpty then yield DirectoryInspectionsPending
+                    if not statusUpdateTriggers.IsEmpty then yield StatusTriggersPending
+                    if hasPendingStatusDifferences () then yield StatusDifferencesPending
+
+                    if hasUnconsumedLocalObservationConfidenceLoss ()
+                       || (not recoveryStillOwnsPublication
+                           && Volatile.Read(&localObservationConfidenceLossActive)
+                              <> 0) then
+                        yield LocalObservationConfidenceLost
+
+                    match durableReason with
+                    | Some reason -> yield reason
+                    | None -> ()
+                |]
         }
 
     /// Publishes clean IPC for one recovered resync attempt while retaining its own fail-closed pending anchors.
@@ -3861,18 +4012,14 @@ module Watch =
             let hasPendingWork = pendingEvidence.HasPendingWork
             let mutable transitionWasPublished = false
 
-            if
-                File.Exists(IpcFileName())
-                && lastPublishedHasPendingWatchWork
-                   <> Some hasPendingWork
-            then
+            if File.Exists(IpcFileName()) then
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
 
                 let runtimeMode = currentGraceWatchRuntimeMode ()
 
                 let shouldPublish, statusForPublish, directoryIdsForPublish =
                     if pendingEvidence.HasDurableOnlyPendingWork then
-                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                        true, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
                     elif
                         runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
@@ -3892,7 +4039,7 @@ module Watch =
                                     Colors.Error
                                     $"Grace Watch could not read Grace Status for pending-work dirty status transition; publishing non-incremental status and retrying later: {ex.Message}"
 
-                                true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                                true, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
                             else
                                 lastPublishedHasPendingWatchWork <- None
 
@@ -3900,44 +4047,64 @@ module Watch =
                                     Colors.Error
                                     $"Grace Watch could not read Grace Status for pending-work clean status transition; retrying later: {ex.Message}"
 
-                                false, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                                false, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
                     else
-                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                        true, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
 
                 if shouldPublish then
-                    let publicationStartedAt = getCurrentInstant ()
+                    let expectedDirectoryIds =
+                        directoryIdsForPublish
+                        |> Option.defaultWith (fun () -> statusForPublish.Index.Keys.ToHashSet())
 
-                    try
-                        let writeTask =
-                            if runtimeMode = GraceWatchRuntimeMode.Suspended then
-                                updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
-                            else
-                                updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
+                    let expectedMode =
+                        if runtimeMode = GraceWatchRuntimeMode.Suspended then
+                            GraceWatchRuntimeMode.Suspended
+                        elif hasWatchObservationRootIdentity statusForPublish then
+                            GraceWatchRuntimeMode.HealthyIncremental
+                        else
+                            GraceWatchRuntimeMode.Resynchronizing
 
-                        writeTask.GetAwaiter().GetResult()
-                    with
-                    | ex ->
-                        lastPublishedHasPendingWatchWork <- None
-                        logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
-
-                    transitionWasPublished <-
+                    let existingContractMatches =
                         try
-                            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
-
-                            let expectedDirectoryIds =
-                                directoryIdsForPublish
-                                |> Option.defaultWith (fun () -> statusForPublish.Index.Keys.ToHashSet())
-
-                            inspection.Status
-                            |> Option.exists (statusMatchesVerifiedPublication statusForPublish expectedDirectoryIds hasPendingWork publicationStartedAt)
+                            inspectGraceWatchStatus().GetAwaiter().GetResult()
+                            |> inspectionMatchesExpectedPendingWorkContract statusForPublish expectedDirectoryIds expectedMode hasPendingWork
                         with
                         | _ -> false
 
-                    if transitionWasPublished then
+                    if existingContractMatches then
+                        transitionWasPublished <- true
                         lastPublishedHasPendingWatchWork <- Some hasPendingWork
                     else
-                        lastPublishedHasPendingWatchWork <- None
-                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
+                        let publicationStartedAt = getCurrentInstant ()
+
+                        try
+                            let writeTask =
+                                if runtimeMode = GraceWatchRuntimeMode.Suspended then
+                                    updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
+                                else
+                                    updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
+
+                            writeTask.GetAwaiter().GetResult()
+                        with
+                        | ex ->
+                            lastPublishedHasPendingWatchWork <- None
+                            logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
+
+                        transitionWasPublished <-
+                            try
+                                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                                inspectionMatchesExpectedPendingWorkContract statusForPublish expectedDirectoryIds expectedMode hasPendingWork inspection
+                                && (inspection.Status
+                                    |> Option.exists (fun status -> status.UpdatedAt >= publicationStartedAt))
+                            with
+                            | _ -> false
+
+                        if transitionWasPublished then
+                            lastPublishedHasPendingWatchWork <- Some hasPendingWork
+                        else
+                            lastPublishedHasPendingWatchWork <- None
+                            logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
 
             transitionWasPublished)
 
@@ -3994,9 +4161,10 @@ module Watch =
             setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+        let dirtyStatus = nonIncrementalPendingWorkPublicationStatus
 
         let dirtyPublicationVerified =
-            tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () -> writeSnapshot GraceStatus.Default emptyDirectoryIds)
+            tryPublishWatchIpcWithFreshPendingWorkProbe dirtyStatus emptyDirectoryIds (fun () -> writeSnapshot dirtyStatus emptyDirectoryIds)
             && (try
                     inspectGraceWatchStatus().GetAwaiter().GetResult()
                     |> isGraceWatchResyncRequiredStatusPublished
@@ -4078,7 +4246,7 @@ module Watch =
 
                     let status, directoryIds =
                         if pendingEvidence.HasDurableOnlyPendingWork then
-                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+                            nonIncrementalPendingWorkPublicationStatus, HashSet<DirectoryVersionId>()
                         elif
                             runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                             && not (isGraceWatchResyncPending ())
@@ -4090,7 +4258,7 @@ module Watch =
 
                             status, status.Index.Keys.ToHashSet()
                         else
-                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+                            nonIncrementalPendingWorkPublicationStatus, HashSet<DirectoryVersionId>()
 
                     if tryVerifyCurrentPendingWorkPublication status directoryIds true then
                         lastPublishedHasPendingWatchWork <- Some true
@@ -4874,6 +5042,9 @@ module Watch =
         lock watchStatusPublishLock (fun () ->
             lastPublishedHasPendingWatchWork <- None
             setGraceWatchHasPendingWorkForStatus false)
+
+        lock pendingWatchReasonDiagnosticLock (fun () -> lastReportedPendingWatchReasons <- None)
+        resetPendingWatchReasonDiagnosticForWatchTests ()
 
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
@@ -6595,6 +6766,63 @@ module Watch =
         | Blocked of string
         | Degraded of string
 
+    let private currentBranchWaitTransitionLock = obj ()
+    let mutable private lastReportedCurrentBranchWait: (RepositoryId * BranchId * ReferenceId * string * string) option = None
+
+    let mutable private currentBranchWaitDiagnostic =
+        fun (payload: CurrentBranchReferenceNotification) waitKind reason ->
+            let color = if waitKind = "safe local Watch point" then Colors.Verbose else Colors.Important
+
+            logToAnsiConsole color $"Current-branch reference notification {payload.ReferenceId} is waiting for {waitKind}: {reason}."
+
+    /// Reports a changed event wait reason once while suppressing duplicate replay diagnostics for the same reason.
+    let private reportCurrentBranchWaitTransition (payload: CurrentBranchReferenceNotification) gate =
+        let waitKind, reason =
+            match gate with
+            | Blocked reason -> "safe local Watch point", reason
+            | Degraded reason -> "degraded Watch IPC resync", reason
+            | _ -> invalidArg (nameof gate) "Only waiting materialization gates have transition diagnostics."
+
+        let transition = payload.RepositoryId, payload.BranchId, payload.ReferenceId, waitKind, reason
+
+        let changed =
+            lock currentBranchWaitTransitionLock (fun () ->
+                if lastReportedCurrentBranchWait = Some transition then
+                    false
+                else
+                    lastReportedCurrentBranchWait <- Some transition
+                    true)
+
+        if changed then currentBranchWaitDiagnostic payload waitKind reason
+
+    /// Retires diagnostic state only after the matching remote event reaches a non-waiting outcome.
+    let private retireCurrentBranchWaitTransition (payload: CurrentBranchReferenceNotification) =
+        lock currentBranchWaitTransitionLock (fun () ->
+            match lastReportedCurrentBranchWait with
+            | Some (repositoryId, branchId, referenceId, _, _) when
+                repositoryId = payload.RepositoryId
+                && branchId = payload.BranchId
+                && referenceId = payload.ReferenceId
+                ->
+                lastReportedCurrentBranchWait <- None
+            | _ -> ())
+
+    /// Captures transition-filtered remote wait diagnostics for focused tests.
+    let internal setCurrentBranchWaitDiagnosticForWatchTests diagnostic = currentBranchWaitDiagnostic <- diagnostic
+
+    /// Exercises the production wait-transition filter without starting SignalR or cursor replay.
+    let internal reportCurrentBranchWaitTransitionForWatchTests payload gate = reportCurrentBranchWaitTransition payload gate
+
+    /// Restores production remote wait diagnostics after a focused Watch test.
+    let internal resetCurrentBranchWaitDiagnosticForWatchTests () =
+        currentBranchWaitDiagnostic <-
+            fun payload waitKind reason ->
+                let color = if waitKind = "safe local Watch point" then Colors.Verbose else Colors.Important
+
+                logToAnsiConsole color $"Current-branch reference notification {payload.ReferenceId} is waiting for {waitKind}: {reason}."
+
+        lock currentBranchWaitTransitionLock (fun () -> lastReportedCurrentBranchWait <- None)
+
     /// Coordinates a same-branch Reference once clean IPC and BranchDto latest authority have both been proven.
     type private CurrentBranchMaterializationCoordinatorClients =
         {
@@ -6645,6 +6873,8 @@ module Watch =
         payload
         (inspection: GraceWatchStatusInspection)
         =
+        let processLocalReasons = readProcessLocalPendingWatchReasons ()
+
         let inspectionMatchesOwnedPendingPublication =
             match ownedPendingPublication, inspection.Status, inspection.EffectiveMode with
             | Some publication, Some status, Some GraceWatchRuntimeMode.HealthyIncremental when
@@ -6663,8 +6893,11 @@ module Watch =
         elif not ignoreOwnedMaterializationPendingLatch
              && hasManualPendingWatchWorkStatusFlag () then
             Blocked "materialization pending status has not reached IPC"
-        elif hasProcessablePendingWatchWork () then
-            Blocked "process-local Watch queues have pending local observations"
+        elif processLocalReasons.Length > 0 then
+            processLocalReasons
+            |> Array.map (fun reason -> reason.Description)
+            |> String.concat "; "
+            |> Blocked
         elif inspection.IsUsable
              || inspectionMatchesOwnedPendingPublication then
             if not (hasReadableLocalStateDbAuthority ()) then
@@ -6971,9 +7204,7 @@ module Watch =
                                                                             publishPendingWatchWorkTransitionIfNeeded ()
                                                                             return raise ex
                                                 | Blocked reason ->
-                                                    logToAnsiConsole
-                                                        Colors.Verbose
-                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point after lease acquisition: {reason}."
+                                                    reportCurrentBranchWaitTransition payload (Blocked reason)
 
                                                     postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
 
@@ -6984,9 +7215,7 @@ module Watch =
                                                             Decision = Some acceptedDecision
                                                         }
                                                 | Degraded reason ->
-                                                    logToAnsiConsole
-                                                        Colors.Important
-                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync after lease acquisition: {reason}."
+                                                    reportCurrentBranchWaitTransition payload (Degraded reason)
 
                                                     postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
 
@@ -7038,9 +7267,7 @@ module Watch =
                                 terminalOutcome <- cleanOutcome
                                 terminal <- true
                         | Blocked reason as gate ->
-                            logToAnsiConsole
-                                Colors.Verbose
-                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+                            reportCurrentBranchWaitTransition payload gate
 
                             if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
@@ -7077,9 +7304,7 @@ module Watch =
                                 degradedResyncRequestedForReason <- Some reason
 
                             if not terminal then
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+                                reportCurrentBranchWaitTransition payload (Degraded reason)
 
                                 if canRetry () then
                                     do! clients.ReestablishIpc payload reason
@@ -7143,9 +7368,7 @@ module Watch =
 
                             terminal <- true
                         | Blocked reason as gate ->
-                            logToAnsiConsole
-                                Colors.Verbose
-                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+                            reportCurrentBranchWaitTransition payload gate
 
                             if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
@@ -7182,9 +7405,7 @@ module Watch =
                                 degradedResyncRequestedForReason <- Some reason
 
                             if not terminal then
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+                                reportCurrentBranchWaitTransition payload (Degraded reason)
 
                                 if canRetry () then
                                     do! clients.ReestablishIpc payload reason
@@ -7219,10 +7440,19 @@ module Watch =
             let! localSelfEchoConsumed = localCurrentBranchReferenceEchoLedger.TryConsume(payload)
 
             if localSelfEchoConsumed then
+                retireCurrentBranchWaitTransition payload
+
                 return
                     { ReferenceId = payload.ReferenceId; Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed; Decision = None }
             else
-                return! WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+                let! outcome = WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+
+                match outcome.Reason with
+                | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync -> ()
+                | _ -> retireCurrentBranchWaitTransition payload
+
+                return outcome
         }
 
     /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
@@ -7575,7 +7805,9 @@ module Watch =
                     | CurrentBranchReferenceCatchUpResult.Processed, Some coordinatorOutcome ->
                         match coordinatorOutcome.Reason, coordinatorOutcome.Decision with
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint, _ ->
-                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch work is still pending"
+                            // Cursor replay owns active remote waits and already reports their concrete safe-point reason.
+                            // This legacy BranchDto test seam retains only its bounded scheduling behavior.
+                            scheduler.Retry(claim, nowUtc) |> ignore
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync, _ ->
                             retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch state requires resync"
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected, Some decision when
@@ -8008,8 +8240,7 @@ module Watch =
                     logToAnsiConsole Colors.Verbose "Watch replay kept the current local root unchanged because no safe remote event boundary was established."
                 | CurrentBranchReferenceReplayOutcomeReason.ReplayFailed ->
                     logToAnsiConsole Colors.Error "Watch could not replay the current branch cursor; the durable cursor remains unchanged."
-                | CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged ->
-                    logToAnsiConsole Colors.Verbose "Watch replay stopped at an event that has not reached a safe terminal acknowledgement."
+                | CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged -> ()
                 | CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged -> ()
                 | _ -> logToAnsiConsole Colors.Error "Watch replay returned an unsupported local outcome; the durable cursor remains unchanged."
             with
@@ -10071,6 +10302,11 @@ module Watch =
                 use localCurrentBranchReferenceEchoLifetime =
                     { new IDisposable with
                         member _.Dispose() = localCurrentBranchReferenceEchoLedger.Clear()
+                    }
+
+                use currentBranchWaitDiagnosticLifetime =
+                    { new IDisposable with
+                        member _.Dispose() = resetCurrentBranchWaitDiagnosticForWatchTests ()
                     }
 
                 try
