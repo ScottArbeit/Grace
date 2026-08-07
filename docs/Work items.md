@@ -32,6 +32,8 @@ All work item routes are `POST` endpoints under `/work`.
 - `/work/attachments/list`
 - `/work/attachments/show`
 - `/work/attachments/download`
+- `/work/attachments/delete`
+- `/work/attachments/undelete`
 
 ## CLI workflows
 
@@ -142,7 +144,43 @@ bash / zsh:
   --output-file ./summary.md
 ```
 
-### Inspect and clean up links
+### Delete and recover attachments
+
+Attachment deletion is separate from generic link cleanup. An attachment created through `attachments add` or
+`agent add-summary` belongs to one work item and cannot be linked to a second work item.
+
+Use `attachments delete` to logically delete one attachment. Grace requires a reason, keeps the bytes and owning link
+for recovery, and hides the attachment from normal list, show, and download operations. The cleanup deadline is based
+on the repository's stored `LogicalDeleteDays` value when deletion is accepted. The repository default is 30 days;
+an override is honored and later policy changes do not alter an existing deletion deadline.
+
+Use `attachments undelete` before that deadline to restore the attachment. If the deadline passes, durable cleanup
+removes the blob, work-item link, and artifact state. A stale cleanup operation from an earlier deletion cannot remove
+a restored or re-deleted attachment.
+
+PowerShell:
+
+```powershell
+./grace workitem attachments delete 42 `
+  --artifact-id 11111111-2222-3333-4444-555555555555 `
+  --delete-reason "Superseded by the approved summary"
+
+./grace workitem attachments undelete 42 `
+  --artifact-id 11111111-2222-3333-4444-555555555555
+```
+
+bash / zsh:
+
+```bash
+./grace workitem attachments delete 42 \
+  --artifact-id 11111111-2222-3333-4444-555555555555 \
+  --delete-reason "Superseded by the approved summary"
+
+./grace workitem attachments undelete 42 \
+  --artifact-id 11111111-2222-3333-4444-555555555555
+```
+
+### Inspect and clean up nonattachment links
 
 PowerShell:
 
@@ -183,6 +221,16 @@ let linksParameters =
     )
 
 let! links = WorkItem.GetLinks(linksParameters)
+
+let deleteParameters =
+    DeleteWorkItemAttachmentParameters(
+        WorkItemId = "42",
+        ArtifactId = "11111111-2222-3333-4444-555555555555",
+        DeleteReason = "Superseded by the approved summary",
+        CorrelationId = "corr-0003"
+    )
+
+let! deletion = WorkItem.DeleteAttachment(deleteParameters)
 ```
 
 ## Current limitations

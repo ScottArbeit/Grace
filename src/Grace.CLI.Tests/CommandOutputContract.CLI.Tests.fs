@@ -237,16 +237,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 206
+        |> should equal 205
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 197
+        |> should equal 196
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 185
+        |> should equal 184
 
         countBy ImmediateJsonErrorOnly |> should equal 0
 
@@ -297,7 +297,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 185
+        jsonReady |> should equal 184
         intentionallyHumanOnly |> should equal 0
         conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
@@ -525,6 +525,31 @@ module CommandOutputContractRegistryTests =
             |> should equal "AttachmentResult"
         | None -> Assert.Fail("workitem.attachments.add should have a registry entry.")
 
+    /// Verifies that recoverable attachment deletion replaces bulk type-unlink registry identities.
+    [<Test>]
+    let ``workitem attachment deletion registry is specific and recoverable`` () =
+        for oldCommand in [ "summary"; "prompt"; "notes" ] do
+            CommandOutputContract.commandIdentity [ "workitem"; "links"; "remove" ] oldCommand
+            |> CommandOutputContract.tryFind
+            |> should equal None
+
+        let deleteEntry =
+            CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "delete"
+            |> CommandOutputContract.tryFind
+
+        let undeleteEntry =
+            CommandOutputContract.commandIdentity [ "workitem"; "attachments" ] "undelete"
+            |> CommandOutputContract.tryFind
+
+        deleteEntry.IsSome |> should equal true
+        undeleteEntry.IsSome |> should equal true
+
+        deleteEntry.Value.ReturnValueContract.Name
+        |> should equal "ArtifactDeletionResult"
+
+        undeleteEntry.Value.ReturnValueContract.Name
+        |> should equal "string"
+
     /// Verifies that diff blake3 json mode is centrally rendered instead of human progress only.
     [<Test>]
     let ``diff blake3 json mode is centrally rendered instead of human-progress only`` () =
@@ -549,7 +574,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 184
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -567,7 +592,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 184
 
         let parserInvalidEntries =
             commonEntries
@@ -1029,7 +1054,7 @@ module CommandOutputContractRegistryTests =
                 | ConditionalGraceResultEnvelope _ -> true
                 | _ -> false)
 
-        eligibleEntries.Length |> should equal 186
+        eligibleEntries.Length |> should equal 185
 
         for entry in eligibleEntries do
             entry.ReturnValueContract.Status

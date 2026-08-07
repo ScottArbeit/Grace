@@ -498,7 +498,7 @@ module Interfaces =
     /// Defines the operations for the Artifact actor.
     [<Interface>]
     type IArtifactActor =
-        inherit IGrainWithGuidKey
+        inherit IGraceReminderWithGuidKey
 
         /// Returns true if this artifact already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -508,6 +508,9 @@ module Interfaces =
 
         /// Returns the list of events handled by this artifact.
         abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ArtifactEvent>>
+
+        /// Serializes a retained generic WorkItem unlink with attachment lifecycle decisions.
+        abstract member UnlinkFromWorkItem: workItemId: WorkItemId -> repositoryId: RepositoryId -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ArtifactCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>

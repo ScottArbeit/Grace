@@ -31,6 +31,9 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
 6. `ManifestContributionWorkflowActor` is keyed by RepositoryId, StoragePoolId, and ManifestAddress. It owns only
    durable fan-out progress for active range-count contribution; repository-local reference counts stay in
    `RepositoryContentCounterActor`, and physical range metadata stays in `ContentBlockMetadataActor`.
+7. Artifact attachment cleanup reminders are generation-bound. Revalidate the exact artifact, repository, work-item,
+   deletion generation, tombstone time, and stored deadline before every cleanup run. Persist blob and link progress
+   separately, require exact unlink-event proof when retrying after a missing link, and treat stale reminders as no-ops.
 
 ## Validation
 
