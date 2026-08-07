@@ -372,53 +372,42 @@ module Watch =
 
     /// Reports whether a candidate path is the Grace internal directory itself or belongs to its descendant namespace.
     let private isPathWithinDirectoryForWatch (directoryPath: string) (candidatePath: string) =
-        let normalizedDirectory =
-            directoryPath
-            |> Path.GetFullPath
-            |> Path.TrimEndingDirectorySeparator
-
-        let normalizedCandidate =
-            candidatePath
-            |> Path.GetFullPath
-            |> Path.TrimEndingDirectorySeparator
-
-        String.Equals(normalizedCandidate, normalizedDirectory, watchPathComparison)
-        || normalizedCandidate.StartsWith(
-            normalizedDirectory
-            + string Path.DirectorySeparatorChar,
-            watchPathComparison
-        )
+        isPathWithinDirectoryWithComparison watchPathComparison directoryPath candidatePath
 
     /// Exposes Watch namespace containment for deterministic path-comparison tests.
     let internal isPathWithinDirectoryForWatchTests directoryPath candidatePath = isPathWithinDirectoryForWatch directoryPath candidatePath
 
+    /// Converts the immutable Watch-lifetime ignore snapshot into the shared repository path-classification contract.
+    let private repositoryPathClassifierInputForWatch (snapshot: WatchIgnoreSnapshot) =
+        {
+            RootDirectory = snapshot.RootDirectory
+            GraceDirectory = snapshot.GraceDirectory
+            GraceStatusFile = snapshot.GraceStatusFile
+            DirectoryIgnoreEntries = snapshot.DirectoryEntries
+            FileIgnoreEntries = snapshot.FileEntries
+            PathComparison = watchPathComparison
+        }
+
+    /// Classifies one Watch path against the immutable lifetime snapshot before ordinary observation side effects.
+    let private classifyRepositoryPathForWatch pathKind fullPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        classifyRepositoryPath (repositoryPathClassifierInputForWatch snapshot) pathKind fullPath
+
     /// Checks a file path against the copied Watch-lifetime ignore snapshot.
     let private shouldIgnoreFileForWatch fullPath =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        let fileInfo = FileInfo(fullPath)
+        let pathKind =
+            if Directory.Exists(fullPath) then
+                RepositoryPathKind.DirectoryPath
+            else
+                RepositoryPathKind.FilePath
 
-        isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
-        || fullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
-        || fullPath.EndsWith(".gracetmp", watchPathComparison)
-        || Directory.Exists(fullPath)
-        || (not (isNull fileInfo.Directory)
-            && snapshot.DirectoryEntries
-               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine))
-        || snapshot.DirectoryEntries
-           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
-        || snapshot.FileEntries
-           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+        classifyRepositoryPathForWatch pathKind fullPath
+        <> Eligible
 
     /// Checks a directory path against the copied Watch-lifetime ignore snapshot.
     let private shouldIgnoreDirectoryForWatch directoryPath =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        let directoryInfo = DirectoryInfo(directoryPath)
-
-        isPathWithinDirectoryForWatch snapshot.GraceDirectory directoryInfo.FullName
-        || snapshot.DirectoryEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+        classifyRepositoryPathForWatch RepositoryPathKind.DirectoryPath directoryPath
+        <> Eligible
 
     /// Checks whether a directory remains eligible under the copied Watch-lifetime ignore snapshot.
     let private shouldNotIgnoreDirectoryForWatch directoryPath = not <| shouldIgnoreDirectoryForWatch directoryPath
@@ -442,7 +431,7 @@ module Watch =
                 FileIgnoreEntries = snapshot.FileEntries
             }
 
-        scanWorkingTreeForDifferencesReadOnly scanInput previousGraceStatus
+        scanWorkingTreeForDifferencesReadOnlyWithComparison watchPathComparison scanInput previousGraceStatus
 
     /// Scans the working tree with the copied Watch-lifetime ignore inputs instead of live configuration values.
     let private scanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
@@ -932,6 +921,14 @@ module Watch =
         | DeletedPathKindUnknown
         | DeletedPathStatusUnavailable
 
+    /// Maps tracked or uncertain removals to reconciliation while unknown paths retain configured-ignore admission.
+    let private repositoryPathKindForDeletedPath pathKind =
+        match pathKind with
+        | DeletedFile
+        | DeletedDirectory
+        | DeletedPathStatusUnavailable -> RepositoryPathKind.RemovalReconciliationPath
+        | DeletedPathKindUnknown -> RepositoryPathKind.UnknownPath
+
     /// Coordinates repository relative path behavior for this CLI command path.
     let private repositoryRelativePath (fullPath: string) =
         let rootDirectory =
@@ -1388,23 +1385,6 @@ module Watch =
         | :? IOException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
         | :? UnauthorizedAccessException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
 
-    /// Evaluates is grace status artifact against parsed options and command state.
-    let private isGraceStatusArtifact (fullPath: string) =
-        let statusFile = Current().GraceStatusFile
-
-        fullPath.Equals(statusFile, watchPathComparison)
-        || fullPath.Equals(statusFile + "-wal", watchPathComparison)
-        || fullPath.Equals(statusFile + "-shm", watchPathComparison)
-        || fullPath.Equals(statusFile + "-journal", watchPathComparison)
-
-    /// Identifies Grace-owned paths using only the Watch-lifetime namespace snapshot, without consulting final filesystem state.
-    let private isGraceInternalRawObservationPath fullPath =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
-
-    /// Rejects Grace-owned paths before raw candidate scope capture.
-    let private tryClassifyRawLocalObservation fallbackKind fullPath = if isGraceInternalRawObservationPath fullPath then None else Some fallbackKind
-
     /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
     let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
         let normalizedRelativePath = normalizeRelativePath relativePath
@@ -1824,6 +1804,26 @@ module Watch =
             trackedDeletedPathKind status relativePath
         with
         | _ -> DeletedPathStatusUnavailable
+
+    /// Classifies one raw callback path from current filesystem shape or trusted tracked delete evidence.
+    let private classifyRawLocalObservation (fallbackKind: WatchObservationKind) (fullPath: string) =
+        match fallbackKind with
+        | Deleted ->
+            match classifyRepositoryPathForWatch RepositoryPathKind.RemovalReconciliationPath fullPath with
+            | RepositoryPathClassification.Eligible ->
+                let pathKind =
+                    match repositoryRelativePath fullPath with
+                    | Some relativePath ->
+                        relativePath
+                        |> readTrackedDeletedPathKind
+                        |> repositoryPathKindForDeletedPath
+                    | None -> RepositoryPathKind.UnknownPath
+
+                classifyRepositoryPathForWatch pathKind fullPath
+            | classification -> classification
+        | _ when Directory.Exists(fullPath) -> classifyRepositoryPathForWatch RepositoryPathKind.DirectoryPath fullPath
+        | _ when File.Exists(fullPath) -> classifyRepositoryPathForWatch RepositoryPathKind.FilePath fullPath
+        | _ -> classifyRepositoryPathForWatch RepositoryPathKind.UnknownPath fullPath
 
     /// Reports whether a marker completion instant is recent enough to suppress delayed Watch callbacks.
     let private isRecentGraceUpdateMarkerCompletion completedUtc =
@@ -2465,48 +2465,10 @@ module Watch =
 
         { Applicable = applicable; Resolved = resolved }
 
-    /// Coordinates should ignore deleted path behavior for this CLI command path.
+    /// Checks a deleted path against the shared classifier while preserving status-unavailable recovery behavior.
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        let normalizedFullPath = Path.GetFullPath(fullPath)
-        let graceDirectory = Path.TrimEndingDirectorySeparator(snapshot.GraceDirectory)
-        let fileInfo = FileInfo(fullPath)
-        let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
-
-        let isInGraceDirectory = isPathWithinDirectoryForWatch graceDirectory normalizedFullPath
-
-        let isGraceStatusArtifact =
-            normalizedFullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
-
-        if isInGraceDirectory || isGraceStatusArtifact then
-            true
-        elif pathKind = DeletedPathStatusUnavailable then
-            false
-        else
-            /// Coordinates directory ignore matches behavior for this CLI command path.
-            let directoryIgnoreMatches graceIgnoreLine =
-                if isNull fileInfo.Directory then
-                    false
-                else
-                    checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
-
-            (pathKind <> DeletedDirectory
-             && normalizedFullPath.EndsWith(".gracetmp", watchPathComparison))
-            || (pathKind = DeletedPathKindUnknown
-                && snapshot.DirectoryEntries
-                   |> Array.exists directoryIgnoreMatches)
-            || (pathKind = DeletedPathKindUnknown
-                && snapshot.DirectoryEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
-            || (pathKind <> DeletedDirectory
-                && snapshot.DirectoryEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
-            || (pathKind = DeletedPathKindUnknown
-                && snapshot.FileEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
+        classifyRepositoryPathForWatch (repositoryPathKindForDeletedPath pathKind) fullPath
+        <> Eligible
 
     /// Coordinates enqueue status update trigger behavior for this CLI command path.
     let private enqueueStatusUpdateTrigger fullPath =
@@ -8265,16 +8227,15 @@ module Watch =
                 signalRConnection.InvokeAsync("RegisterParentBranch", branchId, parentBranchId, cancellationToken))
             cancellationToken
 
-    /// Admits one raw callback through the shared Grace-internal namespace guard before scheduling or direct test processing.
+    /// Admits one raw callback only after the shared classifier selects its complete side-effect boundary.
     let private admitRawLocalObservation fallbackKind fullPath seenAt =
-        if isGraceStatusArtifact fullPath then
-            recordLocalStatusRevisionCheckObservation ()
-        else
-            match tryClassifyRawLocalObservation fallbackKind fullPath with
-            | None -> ()
-            | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
-            | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
-            | Some _ -> ()
+        match classifyRawLocalObservation fallbackKind fullPath with
+        | LocalStateArtifact -> recordLocalStatusRevisionCheckObservation ()
+        | GraceInternal
+        | Ignored -> ()
+        | Eligible when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate fallbackKind fullPath seenAt
+        | Eligible when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately fallbackKind fullPath
+        | Eligible -> ()
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
