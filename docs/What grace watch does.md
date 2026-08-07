@@ -41,10 +41,11 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   opaque cursor stored for the current repository and branch. Watch advances that cursor only after successful
   materialization or verified same-root acknowledgement.
 - If `.grace/grace-local.db` is reset and the current branch cursor is missing, Watch does not choose the branch's
-  latest Reference or overwrite the working directory. For a clean, fully materialized local root, Grace Server either
-  finds the exact repository, branch, root ID, SHA-256, and BLAKE3 tuple in ordered history or captures the current
-  server event boundary as a conservative baseline. The exact-match path replays only later events; the baseline path
-  preserves every local file and follows only future events.
+  latest Reference or overwrite the working directory. Grace Server recovers an exact cursor only when the repository,
+  branch, root ID, SHA-256, and BLAKE3 tuple belongs to a Save, Commit, or Checkpoint event for that same repository and
+  branch. Watch then replays only later events. Branch bases (Created or Rebased), every other Reference kind, and
+  unmatched roots use the same immutable server-history snapshot's tail as a conservative baseline, even when a root
+  tuple matches. This baseline preserves every local file and follows only future events.
 - `grace connect --retrieve-default-branch false` does not establish a materialized local root. Watch treats a missing
   or incomplete root as non-incremental state and never selects a historical Reference to fill it implicitly.
 - When it starts, it scans the working directory and all (not-ignored) subdirectories and files for changes since the last time the local Grace Status file was updated.
