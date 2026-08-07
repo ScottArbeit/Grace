@@ -1915,6 +1915,11 @@ type BranchServer() =
             let parentBranchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ResolveBoundary{Guid.NewGuid():N}"
+            let eligibleRoot = BranchServerTestHelpers.createSlashRootDirectoryVersion repositoryId
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ eligibleRoot ]
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch eligibleRoot.DirectoryVersionId eligibleRoot.Sha256Hash
+            let! saveBody = saveResponse.Content.ReadAsStringAsync()
+            Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
 
             do!
                 BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
@@ -1926,9 +1931,9 @@ type BranchServer() =
                         parameters.OrganizationId <- organizationId
                         parameters.RepositoryId <- repositoryId
                         parameters.BranchId <- $"{branch.BranchId}"
-                        parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
-                        parameters.Sha256Hash <- branch.BasedOn.Sha256Hash
-                        parameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        parameters.DirectoryVersionId <- eligibleRoot.DirectoryVersionId
+                        parameters.Sha256Hash <- eligibleRoot.Sha256Hash
+                        parameters.Blake3Hash <- eligibleRoot.Blake3Hash
                         parameters.CorrelationId <- generateCorrelationId ()
 
                         let! exactResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
@@ -1942,10 +1947,44 @@ type BranchServer() =
 
                         Assert.That(exactBoundary.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
                         Assert.That(exactBoundary.BranchId, Is.EqualTo(branch.BranchId))
-                        Assert.That(exactBoundary.DirectoryId, Is.EqualTo(branch.BasedOn.DirectoryId))
-                        Assert.That(exactBoundary.Sha256Hash, Is.EqualTo(branch.BasedOn.Sha256Hash))
-                        Assert.That(exactBoundary.Blake3Hash, Is.EqualTo(branch.BasedOn.Blake3Hash))
-                        Assert.That(exactBoundary.EventCursor, Does.StartWith("branch-event-v1:"))
+                        Assert.That(exactBoundary.DirectoryId, Is.EqualTo(eligibleRoot.DirectoryVersionId))
+                        Assert.That(exactBoundary.Sha256Hash, Is.EqualTo(eligibleRoot.Sha256Hash))
+                        Assert.That(exactBoundary.Blake3Hash, Is.EqualTo(eligibleRoot.Blake3Hash))
+                        Assert.That(exactBoundary.EventCursor, Is.EqualTo("branch-event-v1:1"))
+
+                        parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+                        parameters.Sha256Hash <- branch.BasedOn.Sha256Hash
+                        parameters.Blake3Hash <- branch.BasedOn.Blake3Hash
+                        parameters.CorrelationId <- generateCorrelationId ()
+
+                        let! parentBaseResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
+
+                        let parentBaseBoundary =
+                            match parentBaseResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected parent-base conservative boundary success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceMaterializationBoundaryDto>
+
+                        Assert.That(parentBaseBoundary.EventCursor, Is.EqualTo("branch-event-v1:1"))
+
+                        let replayParameters = Parameters.Branch.ReplayReferenceEventsParameters()
+                        replayParameters.OwnerId <- ownerId
+                        replayParameters.OrganizationId <- organizationId
+                        replayParameters.RepositoryId <- repositoryId
+                        replayParameters.BranchId <- $"{branch.BranchId}"
+                        replayParameters.CursorRepositoryId <- repositoryId
+                        replayParameters.CursorBranchId <- $"{branch.BranchId}"
+                        replayParameters.EventCursor <- parentBaseBoundary.EventCursor
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! parentBaseReplayResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match parentBaseReplayResult with
+                        | Ok returnValue ->
+                            Assert.That(returnValue.ReturnValue.Events, Is.Empty)
+                            Assert.That(returnValue.ReturnValue.ScannedThroughCursor, Is.EqualTo("branch-event-v1:1"))
+                        | Error error -> Assert.Fail($"Expected parent-base replay closure success, got {error.Error}.")
 
                         parameters.DirectoryVersionId <- Guid.NewGuid()
                         parameters.Sha256Hash <- Sha256Hash "unmatched-local-sha"
@@ -1954,13 +1993,45 @@ type BranchServer() =
 
                         let! baselineResult = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
 
-                        match baselineResult with
+                        let unmatchedBoundary =
+                            match baselineResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected conservative missing-cursor baseline success, got {error.Error}.")
+                                Unchecked.defaultof<Reference.ReferenceMaterializationBoundaryDto>
+
+                        Assert.That(unmatchedBoundary.DirectoryId, Is.EqualTo(parameters.DirectoryVersionId))
+                        Assert.That(unmatchedBoundary.Sha256Hash, Is.EqualTo(parameters.Sha256Hash))
+                        Assert.That(unmatchedBoundary.Blake3Hash, Is.EqualTo(parameters.Blake3Hash))
+                        Assert.That(unmatchedBoundary.EventCursor, Is.EqualTo("branch-event-v1:1"))
+
+                        let futureRoot = BranchServerTestHelpers.createSlashRootDirectoryVersion repositoryId
+                        do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ futureRoot ]
+
+                        let! futureSave =
+                            BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch futureRoot.DirectoryVersionId futureRoot.Sha256Hash
+
+                        let! futureSaveBody = futureSave.Content.ReadAsStringAsync()
+                        Assert.That(futureSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), futureSaveBody)
+
+                        replayParameters.EventCursor <- unmatchedBoundary.EventCursor
+                        replayParameters.CorrelationId <- generateCorrelationId ()
+                        let! unmatchedReplayResult = Grace.SDK.Branch.ReplayReferenceEvents replayParameters
+
+                        match unmatchedReplayResult with
                         | Ok returnValue ->
-                            Assert.That(returnValue.ReturnValue.DirectoryId, Is.EqualTo(parameters.DirectoryVersionId))
-                            Assert.That(returnValue.ReturnValue.Sha256Hash, Is.EqualTo(parameters.Sha256Hash))
-                            Assert.That(returnValue.ReturnValue.Blake3Hash, Is.EqualTo(parameters.Blake3Hash))
-                            Assert.That(returnValue.ReturnValue.EventCursor, Does.StartWith("branch-event-v1:"))
-                        | Error error -> Assert.Fail($"Expected conservative missing-cursor baseline success, got {error.Error}.")
+                            Assert.That(returnValue.ReturnValue.Events, Has.Length.EqualTo(1))
+
+                            Assert.That(
+                                returnValue.ReturnValue.Events[0]
+                                    .Reference
+                                    .DirectoryId,
+                                Is.EqualTo(futureRoot.DirectoryVersionId)
+                            )
+
+                            Assert.That(returnValue.ReturnValue.Events[0].EventCursor, Is.EqualTo("branch-event-v1:2"))
+                            Assert.That(returnValue.ReturnValue.ScannedThroughCursor, Is.EqualTo("branch-event-v1:2"))
+                        | Error error -> Assert.Fail($"Expected unmatched-boundary future replay success, got {error.Error}.")
 
                         parameters.DirectoryVersionId <- DirectoryVersionId.Empty
                         parameters.CorrelationId <- generateCorrelationId ()
@@ -1969,6 +2040,132 @@ type BranchServer() =
                         Assert.That(invalidResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), invalidBody)
                         Assert.That(invalidBody, Does.Contain("cannot establish a Watch event boundary for this branch"))
                         Assert.That(invalidBody, Does.Not.Contain("System."))
+                    })
+        }
+
+    /// A reset local database recovers through production Watch, materializes one later event, and durably acknowledges its cursor.
+    [<Test; NonParallelizable>]
+    member _.ProductionWatchMissingBoundaryRecoveryReplaysExactlyOneLaterReference() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let parentBranchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"WatchRecovery{Guid.NewGuid():N}"
+            let recoveredRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath []
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ recoveredRoot ]
+
+            let! recoveredSave =
+                BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch recoveredRoot.DirectoryVersionId recoveredRoot.Sha256Hash
+
+            let! recoveredSaveBody = recoveredSave.Content.ReadAsStringAsync()
+            Assert.That(recoveredSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), recoveredSaveBody)
+
+            let relativePath = RelativePath $"watch-runtime-{Guid.NewGuid():N}.txt"
+            let payload = Encoding.UTF8.GetBytes("production missing-boundary replay")
+
+            let fileVersion =
+                FileVersion.CreateWithHashes
+                    relativePath
+                    (BranchServerTestHelpers.sha256Hex payload)
+                    (BranchServerTestHelpers.blake3Hex payload)
+                    String.Empty
+                    false
+                    (int64 payload.Length)
+
+            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload fileVersion
+            let laterRoot = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId Constants.RootDirectoryPath fileVersion
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ laterRoot ]
+            let! laterSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch laterRoot.DirectoryVersionId laterRoot.Sha256Hash
+            let! laterSaveBody = laterSave.Content.ReadAsStringAsync()
+            Assert.That(laterSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), laterSaveBody)
+
+            do!
+                BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
+                    task {
+                        do! BranchServerTestHelpers.configureSdkForServerAsync ()
+                        let configuration = Current()
+                        configuration.OwnerId <- Guid.Parse(ownerId)
+                        configuration.OrganizationId <- Guid.Parse(organizationId)
+                        configuration.RepositoryId <- Guid.Parse(repositoryId)
+                        configuration.RepositoryName <- "watch-runtime-repository"
+                        configuration.BranchId <- branch.BranchId
+                        configuration.BranchName <- string branch.BranchName
+
+                        saveConfigFile (Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)) configuration
+
+                        let localRoot = recoveredRoot.ToLocalDirectoryVersion(DateTime.UtcNow)
+                        let index = GraceIndex()
+
+                        index.TryAdd(localRoot.DirectoryVersionId, localRoot)
+                        |> ignore
+
+                        let initialStatus =
+                            { GraceStatus.Default with
+                                Index = index
+                                RootDirectoryId = localRoot.DirectoryVersionId
+                                RootDirectorySha256Hash = localRoot.Sha256Hash
+                                RootDirectoryBlake3Hash = localRoot.Blake3Hash
+                            }
+
+                        let objectCachePath = Grace.CLI.Services.getLocalObjectCachePathForFileVersion fileVersion
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(objectCachePath))
+                        |> ignore
+
+                        File.WriteAllBytes(objectCachePath, payload)
+
+                        Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        do! Grace.CLI.LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                        do! Grace.CLI.Services.writeGraceStatusFile initialStatus
+                        do! Grace.CLI.Services.updateGraceWatchInterprocessFile initialStatus (Some(HashSet<DirectoryVersionId>(index.Keys)))
+
+                        let ipcPath = Grace.CLI.Services.IpcFileName()
+
+                        try
+                            let! before =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(before, Is.EqualTo(None))
+
+                            use cancelled = new System.Threading.CancellationTokenSource()
+                            cancelled.Cancel()
+                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests cancelled.Token
+
+                            let! afterCancellation =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(afterCancellation, Is.EqualTo(None))
+
+                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None
+
+                            let materializedPath = Path.Combine(configuration.RootDirectory, string relativePath)
+                            Assert.That(File.Exists(materializedPath), Is.True)
+                            Assert.That(Convert.ToHexString(File.ReadAllBytes(materializedPath)), Is.EqualTo(Convert.ToHexString(payload)))
+
+                            let! durableStatus = Grace.CLI.Services.readGraceStatusFile ()
+                            Assert.That(durableStatus.RootDirectoryId, Is.EqualTo(laterRoot.DirectoryVersionId))
+                            Assert.That(durableStatus.RootDirectorySha256Hash, Is.EqualTo(laterRoot.Sha256Hash))
+                            Assert.That(durableStatus.RootDirectoryBlake3Hash, Is.EqualTo(laterRoot.Blake3Hash))
+
+                            let! boundary =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(boundary.IsSome, Is.True)
+                            Assert.That(boundary.Value.DirectoryId, Is.EqualTo(laterRoot.DirectoryVersionId))
+                            Assert.That(boundary.Value.EventCursor, Is.EqualTo("branch-event-v1:2"))
+                        finally
+                            Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                            if File.Exists(ipcPath) then File.Delete(ipcPath)
                     })
         }
 

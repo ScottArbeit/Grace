@@ -810,6 +810,11 @@ type ReferenceMaterializationBoundarySelectionTests() =
                     CreatedAt = Instant.FromUnixTimeSeconds(100L - position)
                 }
             EstablishesBranchBase = establishesBranchBase
+            EligibleForWatchReplay =
+                not establishesBranchBase
+                && (referenceType = ReferenceType.Save
+                    || referenceType = ReferenceType.Commit
+                    || referenceType = ReferenceType.Checkpoint)
         }
 
     /// A later event wins even when its wall-clock timestamp is older.
@@ -861,22 +866,47 @@ type ReferenceMaterializationBoundarySelectionTests() =
         Assert.That(promoted.Value.DirectoryId, Is.EqualTo(promotion.Reference.DirectoryId))
         Assert.That(basedOnly.Value.DirectoryId, Is.EqualTo(branchBase.Reference.DirectoryId))
 
-    /// An exact local root tuple recovers the matching ordered event rather than the snapshot tail.
+    /// The latest exact eligible local root tuple wins even when an earlier eligible event has the same immutable root.
     [<Test>]
-    member _.MissingCursorResolutionUsesExactRootTuple() =
+    member _.MissingCursorResolutionUsesLatestExactEligibleRootTuple() =
         let matching = candidate 3L (Guid.NewGuid()) (Guid.NewGuid()) ReferenceType.Save false
+        let laterDuplicate = { matching with EventPosition = 4L; Reference = { matching.Reference with ReferenceId = Guid.NewGuid() } }
         let parameters = ResolveReferenceEventBoundaryParameters()
         parameters.DirectoryVersionId <- matching.Reference.DirectoryId
         parameters.Sha256Hash <- matching.Reference.Sha256Hash
         parameters.Blake3Hash <- matching.Reference.Blake3Hash
 
-        let result = Grace.Server.Branch.tryResolveReferenceEventBoundary repositoryId branchId parameters 6 [| matching |]
+        let result = Grace.Server.Branch.tryResolveReferenceEventBoundary repositoryId branchId parameters 6 [| matching; laterDuplicate |]
 
         Assert.That(result.IsSome, Is.True)
         Assert.That(result.Value.DirectoryId, Is.EqualTo(matching.Reference.DirectoryId))
         Assert.That(result.Value.Sha256Hash, Is.EqualTo(matching.Reference.Sha256Hash))
         Assert.That(result.Value.Blake3Hash, Is.EqualTo(matching.Reference.Blake3Hash))
-        Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:3"))
+        Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:4"))
+
+    /// Exact roots carried only by ineligible or branch-base events establish the immutable snapshot tail.
+    [<Test>]
+    member _.MissingCursorResolutionBaselinesExactIneligibleAndParentBaseRoots() =
+        let cases =
+            [|
+                ReferenceType.Tag, false
+                ReferenceType.Promotion, false
+                ReferenceType.External, false
+                ReferenceType.Commit, true
+                ReferenceType.Rebase, true
+            |]
+
+        for referenceType, establishesBranchBase in cases do
+            let ineligible = candidate 2L (Guid.NewGuid()) (Guid.NewGuid()) referenceType establishesBranchBase
+            let parameters = ResolveReferenceEventBoundaryParameters()
+            parameters.DirectoryVersionId <- ineligible.Reference.DirectoryId
+            parameters.Sha256Hash <- ineligible.Reference.Sha256Hash
+            parameters.Blake3Hash <- ineligible.Reference.Blake3Hash
+
+            let result = Grace.Server.Branch.tryResolveReferenceEventBoundary repositoryId branchId parameters 6 [| ineligible |]
+
+            Assert.That(result.IsSome, Is.True)
+            Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:5"), $"{referenceType}, base={establishesBranchBase}")
 
     /// An unmatched local root is preserved while the same immutable snapshot tail becomes its conservative boundary.
     [<Test>]
@@ -901,6 +931,18 @@ type ReferenceMaterializationBoundarySelectionTests() =
         Assert.That(result.Value.Sha256Hash, Is.EqualTo(parameters.Sha256Hash))
         Assert.That(result.Value.Blake3Hash, Is.EqualTo(parameters.Blake3Hash))
         Assert.That(result.Value.EventCursor, Is.EqualTo("branch-event-v1:5"))
+
+    /// Empty branch history cannot invent an opaque cursor for an otherwise complete local root tuple.
+    [<Test>]
+    member _.MissingCursorResolutionLeavesEmptyHistoryUnresolved() =
+        let parameters = ResolveReferenceEventBoundaryParameters()
+        parameters.DirectoryVersionId <- Guid.NewGuid()
+        parameters.Sha256Hash <- Sha256Hash "empty-history-sha"
+        parameters.Blake3Hash <- Blake3Hash "empty-history-blake3"
+
+        let result = Grace.Server.Branch.tryResolveReferenceEventBoundary repositoryId branchId parameters 0 Array.empty
+
+        Assert.That(result, Is.EqualTo(None))
 
     /// A matching tuple from another branch cannot authorize recovery in the requested branch.
     [<Test>]

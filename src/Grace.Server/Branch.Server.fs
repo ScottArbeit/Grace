@@ -100,6 +100,7 @@ module Branch =
             BranchId: BranchId
             Reference: Reference.ReferenceDto
             EstablishesBranchBase: bool
+            EligibleForWatchReplay: bool
         }
 
     /// Encodes a branch event position without exposing cursor interpretation to clients.
@@ -270,8 +271,8 @@ module Branch =
                     candidate.RepositoryId = repositoryId
                     && candidate.BranchId = branchId
                     && candidate.Reference.RepositoryId = repositoryId
-                    && (candidate.EstablishesBranchBase
-                        || candidate.Reference.BranchId = branchId)
+                    && candidate.Reference.BranchId = branchId
+                    && candidate.EligibleForWatchReplay
                     && candidate.Reference.DirectoryId = parameters.DirectoryVersionId
                     && candidate.Reference.Sha256Hash = parameters.Sha256Hash
                     && candidate.Reference.Blake3Hash = parameters.Blake3Hash)
@@ -1810,7 +1811,7 @@ module Branch =
 
     /// Resolves Reference-bearing candidates from one durable branch-event snapshot.
     let private getReferenceMaterializationBoundaryCandidates repositoryId branchId correlationId (branchEvents: IReadOnlyList<BranchEvent>) =
-        let candidate position establishesBranchBase (referenceDto: Reference.ReferenceDto) =
+        let candidate position establishesBranchBase eligibleForWatchReplay (referenceDto: Reference.ReferenceDto) =
             if referenceDto.RepositoryId = repositoryId
                && (establishesBranchBase
                    || referenceDto.BranchId = branchId) then
@@ -1821,6 +1822,7 @@ module Branch =
                         BranchId = branchId
                         Reference = referenceDto
                         EstablishesBranchBase = establishesBranchBase
+                        EligibleForWatchReplay = eligibleForWatchReplay
                     }
             else
                 None
@@ -1832,7 +1834,7 @@ module Branch =
                 else
                     let referenceActor = Grace.Actors.Extensions.ActorProxy.Reference.CreateActorProxy referenceId repositoryId correlationId
                     let! referenceDto = referenceActor.Get correlationId
-                    return candidate position establishesBranchBase referenceDto
+                    return candidate position establishesBranchBase false referenceDto
             }
 
         task {
@@ -1850,7 +1852,12 @@ module Branch =
                         | BranchEventType.Checkpointed (referenceDto, _, _, _, _)
                         | BranchEventType.Saved (referenceDto, _, _, _, _)
                         | BranchEventType.Tagged (referenceDto, _, _, _, _)
-                        | BranchEventType.ExternalCreated (referenceDto, _, _, _, _) -> return candidate position false referenceDto
+                        | BranchEventType.ExternalCreated (referenceDto, _, _, _, _) ->
+                            let eligibleForWatchReplay =
+                                tryCreateReferenceReplayEvent repositoryId branchId (int64 position) branchEvent
+                                |> Option.isSome
+
+                            return candidate position false eligibleForWatchReplay referenceDto
                         | _ -> return None
                     })
                 |> Seq.toArray

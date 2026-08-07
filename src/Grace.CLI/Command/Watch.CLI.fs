@@ -8077,6 +8077,9 @@ module Watch =
     let internal replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients cancellationToken =
         replayCurrentBranchReferenceEventsWithClients replayGate clients cancellationToken
 
+    /// Runs the composed production missing-boundary, SDK replay, materialization, and cursor-acknowledgement path for hosted acceptance tests.
+    let internal replayCurrentBranchReferenceEventsForHostedTests cancellationToken = replayCurrentBranchReferenceEvents cancellationToken
+
     /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
     let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
 
