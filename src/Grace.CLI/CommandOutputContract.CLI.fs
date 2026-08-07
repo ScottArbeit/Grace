@@ -783,7 +783,7 @@ module CommandOutputContract =
         | "workitem.links.remove.prset"
         | "workitem.links.remove.ref"
         | "workitem.links.remove.summary"
-        | "workitem.status" -> typeof<string>
+        | "workitem.set-status" -> typeof<string>
         | "workitem.links.list" -> typeof<Grace.Types.WorkItem.WorkItemLinksDto>
         | "workitem.show" -> typeof<Grace.Types.WorkItem.WorkItemDto>
         | unknown -> invalidOp $"JSON-success command '{unknown}' does not declare a ReturnValue type in CommandOutputContract."
@@ -1409,7 +1409,7 @@ module CommandOutputContract =
                 server_via_sdk
                 ReuseExistingApiOrSdkDto
             row [ "workitem" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem" ] "set-status" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
         ]
 
     /// Tries to map find and returns a GraceError instead of throwing on unsupported input.

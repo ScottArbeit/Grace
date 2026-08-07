@@ -46,6 +46,28 @@ module WorkItemCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that set-status dispatches the existing work item validation handler.
+    [<Test>]
+    let ``workitem set-status rejects invalid work item identifier through its bound action`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "set-status"
+                                    "not-a-work-item"
+                                    "--status"
+                                    "Done" |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        parseResult.CommandResult.Command.Name
+        |> should equal "set-status"
+
+        parseResult.CommandResult.Command.Action.GetType()
+        |> should equal typeof<Grace.CLI.Command.WorkItemCommand.SetStatus>
+
+        parseResult.Invoke() |> should equal -1
+
     /// Verifies that workitem link ref rejects invalid reference id.
     [<Test>]
     let ``workitem link ref rejects invalid reference id`` () =

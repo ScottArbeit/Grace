@@ -80,7 +80,6 @@ module CommandOutputContractRegistryTests =
         | "--scope" -> "repository"
         | "--role" -> "RepositoryReader"
         | "--search-visibility" -> "Visible"
-        | "--set" -> "Active"
         | "--status" -> "Active"
         | "--type" -> "summary"
         | "--url" -> "https://example.test/webhook"
@@ -455,6 +454,46 @@ module CommandOutputContractRegistryTests =
             entry.ExecutionScope
             |> should equal CompositeLocalAndServer
         | None -> Assert.Fail("branch annotate should have a registry entry.")
+
+    /// Verifies that the work item status mutation has only its explicit mutating registry identity.
+    [<Test>]
+    let ``workitem set-status registry entry is the only status mutation identity`` () =
+        let identity = CommandOutputContract.commandIdentity [ "workitem" ] "set-status"
+        let oldIdentity = CommandOutputContract.commandIdentity [ "workitem" ] "status"
+
+        CommandOutputContract.tryFind oldIdentity
+        |> should equal None
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Mutating |> should equal true
+
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.Category
+            |> should equal MutatingStateTransition
+
+            entry.ExecutionScope |> should equal ServerViaSdk
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
+
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+
+            entry.Features.Schema
+            |> should equal ExistingBehavior
+
+            entry.Features.Examples
+            |> should equal ExistingBehavior
+
+            entry.Features.Select
+            |> should equal ExistingBehavior
+
+            entry.ReturnValueContract.Name
+            |> should equal "string"
+        | None -> Assert.Fail("workitem.set-status should have a registry entry.")
 
     /// Verifies that diff blake3 json mode is centrally rendered instead of human progress only.
     [<Test>]

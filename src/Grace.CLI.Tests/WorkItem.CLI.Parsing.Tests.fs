@@ -30,6 +30,11 @@ module WorkItemCommandParsingTests =
         let parseResult = GraceCommand.rootCommand.Parse(args)
         parseResult.Errors.Count |> should equal 0
 
+    /// Asserts that the actual root parser rejects the supplied command line.
+    let private assertRejected (args: string array) =
+        let parseResult = GraceCommand.rootCommand.Parse(args)
+        Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+
     /// Builds attach args for test scenarios.
     let private buildAttachArgs (noun: string) (attachmentType: string) (workItemIdentifier: string) (extraArgs: string array) =
         [|
@@ -82,6 +87,46 @@ module WorkItemCommandParsingTests =
                        "--title"
                        "Alias command" |]
         )
+
+    /// Verifies that every supported status value routes through set-status for both work item identifier shapes.
+    [<TestCase("42", "--status", "Active")>]
+    [<TestCase("43", "--status", "Backlog")>]
+    [<TestCase("44", "--status", "Blocked")>]
+    [<TestCase("45", "--status", "Canceled")>]
+    [<TestCase("46", "--status", "Done")>]
+    [<TestCase("9e4c0f72-9b4f-4f28-8d8f-d7d73ec4f6fd", "-s", "InReview")>]
+    let ``workitem set-status accepts every status exactly once plus guid and positive-number identifiers``
+        (
+            workItemIdentifier: string,
+            statusOption: string,
+            status: string
+        )
+        =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "workitem"
+                           "set-status"
+                           workItemIdentifier
+                           statusOption
+                           status |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        parseResult.CommandResult.Command.Name
+        |> should equal "set-status"
+
+    /// Verifies that missing and unsupported status values are rejected by the actual root parser.
+    [<TestCase("workitem", "set-status", "42")>]
+    [<TestCase("workitem", "set-status", "42", "--status")>]
+    [<TestCase("workitem", "set-status", "42", "--status", "Unknown")>]
+    let ``workitem set-status rejects missing or unsupported status values`` ([<ParamArray>] args: string array) = args |> withIds |> assertRejected
+
+    /// Verifies that neither the old command nor the old option remains registered.
+    [<TestCase("workitem", "status", "42", "--set", "Done")>]
+    [<TestCase("workitem", "status", "42", "--status", "Done")>]
+    [<TestCase("workitem", "set-status", "42", "--set", "Done")>]
+    let ``workitem status and set option are unavailable`` ([<ParamArray>] args: string array) = args |> withIds |> assertRejected
 
     /// Verifies that workitem link ref parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "40")>]

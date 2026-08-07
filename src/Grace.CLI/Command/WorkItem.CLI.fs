@@ -48,8 +48,15 @@ module WorkItemCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let statusSet =
-            (new Option<string>("--set", Required = true, Description = "Set the work item status.", Arity = ArgumentArity.ExactlyOne))
+        /// Selects the durable status assigned by the set-status command.
+        let status =
+            (new Option<string>(
+                OptionName.Status,
+                [| "-s" |],
+                Required = true,
+                Description = "Status to assign to the work item.",
+                Arity = ArgumentArity.ExactlyOne
+            ))
                 .AcceptOnlyFromAmong(listCases<WorkItemStatus> ())
 
         let file =
@@ -463,8 +470,8 @@ module WorkItemCommand =
                 return result |> renderOutput parseResult
             }
 
-    /// Routes the status command from parsed options through validation, the SDK call, and result rendering.
-    let private statusHandler (parseResult: ParseResult) =
+    /// Routes the set-status command from parsed options through validation and the existing SDK update call.
+    let private setStatusHandler (parseResult: ParseResult) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
@@ -474,7 +481,7 @@ module WorkItemCommand =
                 match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
                 | Error error -> return Error error
                 | Ok workItem ->
-                    let statusValue = parseResult.GetValue(Options.statusSet)
+                    let statusValue = parseResult.GetValue(Options.status)
 
                     match discriminatedUnionFromString<WorkItemStatus> statusValue with
                     | None -> return Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidStatus) (getCorrelationId parseResult))
@@ -497,14 +504,14 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
-    /// Executes the status command by binding ParseResult values to the SDK request and CLI output contract.
-    type Status() =
+    /// Executes set-status while preserving the existing work item update result envelope.
+    type SetStatus() =
         inherit AsynchronousCommandLineAction()
 
-        /// Runs the asynchronous status action when System.CommandLine dispatches the parsed command.
+        /// Runs the asynchronous set-status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
-                let! result = statusHandler parseResult
+                let! result = setStatusHandler parseResult
                 return result |> renderOutput parseResult
             }
 
@@ -1227,14 +1234,14 @@ module WorkItemCommand =
         showCommand.Action <- new Show()
         workCommand.Subcommands.Add(showCommand)
 
-        let statusCommand =
-            new Command("status", Description = "Update the status of a work item by ID or number.")
-            |> addOption Options.statusSet
+        let setStatusCommand =
+            new Command("set-status", Description = "Set the status of a work item by ID or number.")
+            |> addOption Options.status
             |> addCommonOptions
 
-        statusCommand.Arguments.Add(Arguments.workItemIdentifier)
-        statusCommand.Action <- new Status()
-        workCommand.Subcommands.Add(statusCommand)
+        setStatusCommand.Arguments.Add(Arguments.workItemIdentifier)
+        setStatusCommand.Action <- new SetStatus()
+        workCommand.Subcommands.Add(setStatusCommand)
 
         let linkCommand = new Command("link", Description = "Link related entities to a work item.")
 
