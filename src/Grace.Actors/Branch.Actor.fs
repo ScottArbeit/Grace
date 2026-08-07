@@ -111,8 +111,8 @@ module Branch =
             && durablePermissions.SetEquals(initialPermissions)
         | _ -> false
 
-    /// Reports whether a Branch event owns durable state and publication rather than only updating the in-memory projection.
-    let internal shouldPersistAndPublishBranchEvent branchEventType =
+    /// Reports whether a Branch event is published from the Branch actor rather than by its Reference actor.
+    let internal shouldPublishBranchEvent branchEventType =
         match branchEventType with
         | Assigned _
         | Promoted _
@@ -123,6 +123,14 @@ module Branch =
         | ExternalCreated _
         | Rebased _ -> false
         | _ -> true
+
+    /// Reports whether a Branch event belongs in the durable stream consumed by ordered Watch replay.
+    let internal shouldPersistBranchEvent branchEventType =
+        match branchEventType with
+        | Committed _
+        | Checkpointed _
+        | Saved _ -> true
+        | _ -> shouldPublishBranchEvent branchEventType
 
     /// Extracts the durable Reference projection carried by one Branch Reference transition.
     let internal tryGetReferenceFromBranchEvent branchEventType =
@@ -448,7 +456,7 @@ module Branch =
                     branchDto <- branchDto |> BranchDto.UpdateDto branchEvent
                     branchEvent.Metadata.Properties[ nameof RepositoryId ] <- $"{branchDto.RepositoryId}"
 
-                    // Reference creation events update only this activation's projection; the Reference actor owns their durable event and publication.
+                    // Reference actors own publication; eligible Watch transitions also persist here to give each branch one durable replay order.
                     match branchEvent.Event with
                     | Assigned (referenceDto, _, _, _, _)
                     | Promoted (referenceDto, _, _, _, _)
@@ -460,10 +468,11 @@ module Branch =
                     | Rebased referenceId -> applyReferenceIdMetadata branchEvent.Metadata.Properties referenceId
                     | _ -> ()
 
-                    if shouldPersistAndPublishBranchEvent branchEvent.Event then
+                    if shouldPersistBranchEvent branchEvent.Event then
                         state.State.Add branchEvent
                         do! state.WriteStateAsync()
 
+                    if shouldPublishBranchEvent branchEvent.Event then
                         let graceEvent = GraceEvent.BranchEvent branchEvent
                         do! publishGraceEvent graceEvent branchEvent.Metadata
 

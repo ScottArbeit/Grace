@@ -256,7 +256,19 @@ type BranchActorReferenceRetryTests() =
         Assert.That(recovered.LatestCommit, Is.EqualTo(durableCommit))
         Assert.That(recovered.LatestReference, Is.EqualTo(durableCommit))
         Assert.That(recovered.ShouldRecomputeLatestReferences, Is.True)
-        Assert.That(shouldPersistAndPublishBranchEvent (Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)), Is.False)
+        Assert.That(shouldPublishBranchEvent (Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)), Is.False)
+
+    /// Verifies eligible Watch transitions persist in Branch order without duplicating Reference-owned publication.
+    [<Test>]
+    member _.EligibleWatchTransitionsPersistWithoutBranchPublication() =
+        let durableCommit = persistedCommit ()
+        let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+        let checkpointed = Checkpointed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+        let saved = Saved(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+
+        for branchEventType in [ committed; checkpointed; saved ] do
+            Assert.That(shouldPersistBranchEvent branchEventType, Is.True)
+            Assert.That(shouldPublishBranchEvent branchEventType, Is.False)
 
     /// Verifies a fresh-correlation retry against a completed projection is a projection no-op.
     [<Test>]
