@@ -10,8 +10,87 @@ open Grace.Types.Reference
 open Grace.Types.Repository
 open NodaTime
 open NUnit.Framework
+open Orleans.Runtime
 open System
 open System.Collections.Generic
+open System.Threading.Tasks
+
+/// Simulates durable Branch state with a bounded number of definite write failures.
+type private ScriptedBranchEventState(initialDurableEvents: seq<BranchEvent>, failedWrites: int, failedReads: int) =
+    let mutable durableEvents = List<BranchEvent>(initialDurableEvents)
+    let mutable activationEvents = List<BranchEvent>(durableEvents)
+    let mutable remainingFailedWrites = failedWrites
+    let mutable remainingFailedReads = failedReads
+    let mutable writeCount = 0
+
+    member _.WriteCount = writeCount
+
+    member _.CreateReactivatedState() = ScriptedBranchEventState(durableEvents, 0, 0)
+
+    interface IPersistentState<List<BranchEvent>> with
+        member _.State
+            with get () = activationEvents
+            and set value = activationEvents <- value
+
+        member _.Etag = null
+        member _.RecordExists = durableEvents.Count > 0
+
+        member _.ReadStateAsync() =
+            if remainingFailedReads > 0 then
+                remainingFailedReads <- remainingFailedReads - 1
+                Task.FromException(InvalidOperationException("simulated Branch reload failure"))
+            else
+                activationEvents <- List<BranchEvent>(durableEvents)
+                Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            writeCount <- writeCount + 1
+
+            if remainingFailedWrites > 0 then
+                remainingFailedWrites <- remainingFailedWrites - 1
+                Task.FromException(InvalidOperationException("simulated Branch persistence failure"))
+            else
+                durableEvents <- List<BranchEvent>(activationEvents)
+                Task.CompletedTask
+
+        member _.ClearStateAsync() =
+            durableEvents.Clear()
+            activationEvents.Clear()
+            Task.CompletedTask
+
+/// Simulates a Branch write that commits durably before returning an unknown failure outcome.
+type private UnknownOutcomeBranchEventState(initialDurableEvents: seq<BranchEvent>) =
+    let mutable durableEvents = List<BranchEvent>(initialDurableEvents)
+    let mutable activationEvents = List<BranchEvent>(durableEvents)
+    let mutable firstWrite = true
+
+    member _.CreateReactivatedState() = UnknownOutcomeBranchEventState(durableEvents)
+
+    interface IPersistentState<List<BranchEvent>> with
+        member _.State
+            with get () = activationEvents
+            and set value = activationEvents <- value
+
+        member _.Etag = null
+        member _.RecordExists = durableEvents.Count > 0
+
+        member _.ReadStateAsync() =
+            activationEvents <- List<BranchEvent>(durableEvents)
+            Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            durableEvents <- List<BranchEvent>(activationEvents)
+
+            if firstWrite then
+                firstWrite <- false
+                Task.FromException(InvalidOperationException("simulated unknown Branch write outcome"))
+            else
+                Task.CompletedTask
+
+        member _.ClearStateAsync() =
+            durableEvents.Clear()
+            activationEvents.Clear()
+            Task.CompletedTask
 
 /// Covers branch Server Validation behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
@@ -287,6 +366,77 @@ type BranchActorReferenceRetryTests() =
 
         Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.NewReference committed Seq.empty, Is.False)
         Assert.That(shouldPublishBranchEvent committed, Is.False, "The repair must never duplicate Reference-owned publication.")
+
+    /// A failed repair write reloads durable evidence, retries once, and remains exactly once after reactivation.
+    [<Test>]
+    member _.MatchingRetryRepairRequiresDurableWriteAndSurvivesReactivation() =
+        task {
+            let durableCommit = persistedCommit ()
+            let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+            let branchEvent = ({ Event = committed; Metadata = EventMetadata.New "repair-write" GraceSystemUser }: BranchEvent)
+            let state = ScriptedBranchEventState(Seq.empty, 1, 0)
+            let persistentState = state :> IPersistentState<List<BranchEvent>>
+
+            match! persistBranchEventWithDurableRecovery persistentState branchEvent with
+            | BranchEventPersistenceOutcome.Persisted -> Assert.Fail("The forced first write must not report durable success.")
+            | BranchEventPersistenceOutcome.FailedRecovered error -> Assert.That(error.Message, Is.EqualTo("simulated Branch persistence failure"))
+            | BranchEventPersistenceOutcome.FailedUnrecoverable _ -> Assert.Fail("The durable reload should succeed in this witness.")
+
+            Assert.That(persistentState.State, Is.Empty, "Failed activation-only mutation must be replaced by durable state.")
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed persistentState.State, Is.True)
+
+            match! persistBranchEventWithDurableRecovery persistentState branchEvent with
+            | BranchEventPersistenceOutcome.Persisted -> ()
+            | outcome -> Assert.Fail($"The eventual successful write returned {outcome}.")
+
+            Assert.That(state.WriteCount, Is.EqualTo(2))
+            Assert.That(persistentState.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed persistentState.State, Is.False)
+
+            let reactivated = state.CreateReactivatedState() :> IPersistentState<List<BranchEvent>>
+            Assert.That(reactivated.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed reactivated.State, Is.False)
+            Assert.That(shouldPublishBranchEvent committed, Is.False)
+        }
+
+    /// A failed write plus failed durable reload is never admitted as success and requires actor deactivation.
+    [<Test>]
+    member _.MatchingRetryRepairReloadFailureRequiresDeactivation() =
+        task {
+            let durableCommit = persistedCommit ()
+            let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+            let branchEvent = ({ Event = committed; Metadata = EventMetadata.New "repair-reload" GraceSystemUser }: BranchEvent)
+            let state = ScriptedBranchEventState(Seq.empty, 1, 1) :> IPersistentState<List<BranchEvent>>
+
+            match! persistBranchEventWithDurableRecovery state branchEvent with
+            | BranchEventPersistenceOutcome.FailedUnrecoverable (writeError, reloadError) as outcome ->
+                Assert.That(writeError.Message, Is.EqualTo("simulated Branch persistence failure"))
+                Assert.That(reloadError.Message, Is.EqualTo("simulated Branch reload failure"))
+                Assert.That(branchPersistenceRequiresDeactivation outcome, Is.True)
+            | outcome -> Assert.Fail($"Expected an unrecoverable persistence outcome, got {outcome}.")
+        }
+
+    /// An unknown write outcome reloads the committed event and prevents an exact retry from appending it again.
+    [<Test>]
+    member _.MatchingRetryUnknownWriteOutcomeUsesReloadedDurableEvidence() =
+        task {
+            let durableCommit = persistedCommit ()
+            let committed = Committed(durableCommit, directoryVersionId, sha256Hash, blake3Hash, referenceText)
+            let branchEvent = ({ Event = committed; Metadata = EventMetadata.New "repair-unknown" GraceSystemUser }: BranchEvent)
+            let scriptedState = UnknownOutcomeBranchEventState(Seq.empty)
+            let state = scriptedState :> IPersistentState<List<BranchEvent>>
+
+            match! persistBranchEventWithDurableRecovery state branchEvent with
+            | BranchEventPersistenceOutcome.FailedRecovered error -> Assert.That(error.Message, Is.EqualTo("simulated unknown Branch write outcome"))
+            | outcome -> Assert.Fail($"Expected a recovered unknown write outcome, got {outcome}.")
+
+            Assert.That(state.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed state.State, Is.False)
+
+            let reactivated = scriptedState.CreateReactivatedState() :> IPersistentState<List<BranchEvent>>
+            Assert.That(reactivated.State, Has.Count.EqualTo(1))
+            Assert.That(shouldRepairMatchingRetryBranchEvent ReferenceOperationDisposition.MatchingRetry committed reactivated.State, Is.False)
+        }
 
     /// Verifies a fresh-correlation retry against a completed projection is a projection no-op.
     [<Test>]

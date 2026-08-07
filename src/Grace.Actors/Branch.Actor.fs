@@ -43,6 +43,12 @@ module Branch =
         | MatchingRetry
         | ConflictingReference
 
+    /// Reports whether one Branch event write succeeded or restored the activation from durable state after failure.
+    type internal BranchEventPersistenceOutcome =
+        | Persisted
+        | FailedRecovered of writeError: exn
+        | FailedUnrecoverable of writeError: exn * reloadError: exn
+
     /// Compares a Reference Create command with durable state under its caller-owned identity.
     let internal classifyReferenceOperation command existingReference =
         match command, existingReference with
@@ -131,6 +137,30 @@ module Branch =
         | Checkpointed _
         | Saved _ -> true
         | _ -> shouldPublishBranchEvent branchEventType
+
+    /// Appends one Branch event and reloads durable state when the write outcome is not acknowledged.
+    let internal persistBranchEventWithDurableRecovery (state: IPersistentState<List<BranchEvent>>) branchEvent =
+        task {
+            state.State.Add branchEvent
+
+            try
+                do! state.WriteStateAsync()
+                return Persisted
+            with
+            | writeError ->
+                try
+                    do! state.ReadStateAsync()
+                    return FailedRecovered writeError
+                with
+                | reloadError -> return FailedUnrecoverable(writeError, reloadError)
+        }
+
+    /// Requires deactivation when durable reload cannot replace an activation-only Branch mutation.
+    let internal branchPersistenceRequiresDeactivation outcome =
+        match outcome with
+        | FailedUnrecoverable _ -> true
+        | Persisted
+        | FailedRecovered _ -> false
 
     /// Extracts the durable Reference projection carried by one Branch Reference transition.
     let internal tryGetReferenceFromBranchEvent branchEventType =
@@ -480,8 +510,18 @@ module Branch =
                     | _ -> ()
 
                     if shouldPersistBranchEvent branchEvent.Event then
-                        state.State.Add branchEvent
-                        do! state.WriteStateAsync()
+                        match! persistBranchEventWithDurableRecovery state branchEvent with
+                        | Persisted -> ()
+                        | FailedRecovered writeError ->
+                            branchDto <-
+                                state.State
+                                |> Seq.fold (fun durableBranch branchEvent -> durableBranch |> BranchDto.UpdateDto branchEvent) BranchDto.Default
+
+                            raise writeError
+                        | FailedUnrecoverable (writeError, reloadError) as outcome ->
+                            if branchPersistenceRequiresDeactivation outcome then this.DeactivateOnIdle()
+
+                            raise (AggregateException("Branch persistence failed and durable state could not be reloaded.", writeError, reloadError))
 
                     if shouldPublishBranchEvent branchEvent.Event then
                         let graceEvent = GraceEvent.BranchEvent branchEvent
