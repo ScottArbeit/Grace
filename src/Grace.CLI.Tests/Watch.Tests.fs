@@ -19279,20 +19279,23 @@ module WatchTests =
 
                     Services.updateGraceWatchInterprocessFile currentStatus directoryIds
 
-                (Watch.processChangedFilesWithClients
-                    readStatus
-                    readStatus
-                    upload
-                    updateGraceStatus
-                    scanForDifferences
-                    updateGraceStatusFromDifferences
-                    applyIncremental
-                    updateIpc)
-                    .GetAwaiter()
-                    .GetResult()
+                /// Drives the active resync recovery helper with the same unchanged durable-only journal state.
+                let processRecovery () =
+                    (Watch.processChangedFilesWithClients
+                        readStatus
+                        readStatus
+                        upload
+                        updateGraceStatus
+                        scanForDifferences
+                        updateGraceStatusFromDifferences
+                        applyIncremental
+                        updateIpc)
+                        .GetAwaiter()
+                        .GetResult()
 
-                publicationCalls
-                |> should be (greaterThanOrEqualTo 2)
+                processRecovery ()
+
+                publicationCalls |> should equal 1
 
                 Watch.hasManualPendingWatchWorkStatusFlagForWatchTests ()
                 |> should equal true
@@ -19305,16 +19308,46 @@ module WatchTests =
 
                 pendingRows |> should equal 1L
 
-                let inspection = Services.inspectGraceWatchStatus().Result
+                let firstInspection = Services.inspectGraceWatchStatus().Result
 
-                match inspection.Status with
-                | Some publishedStatus ->
-                    publishedStatus.HasPendingWatchWork
-                    |> should equal true
+                let firstPublishedStatus =
+                    firstInspection.Status
+                    |> Option.defaultWith (fun () -> failwith "Expected verified dirty Watch IPC after durable work arrived during recovery publication.")
 
-                    publishedStatus.IsWorkingTreeClean
-                    |> should equal false
-                | None -> Assert.Fail("Expected verified dirty Watch IPC after durable work arrived during recovery publication.")
+                firstPublishedStatus.HasPendingWatchWork
+                |> should equal true
+
+                firstPublishedStatus.IsWorkingTreeClean
+                |> should equal false
+
+                Watch.lastPublishedHasPendingWatchWorkForWatchTests ()
+                |> should equal (Some true)
+
+                firstPublishedStatus.UpdatedAt.Minus(Duration.FromMilliseconds(1.0))
+                |> updatePersistedWatchStatusUpdatedAt
+
+                let unchangedContractJson = File.ReadAllText(Services.IpcFileName())
+
+                processRecovery ()
+
+                publicationCalls |> should equal 1
+
+                File.ReadAllText(Services.IpcFileName())
+                |> should equal unchangedContractJson
+
+                let retryInspection = Services.inspectGraceWatchStatus().Result
+
+                match retryInspection.Status with
+                | Some retryStatus ->
+                    retryStatus.LastFileUploadInstant
+                    |> should equal firstPublishedStatus.LastFileUploadInstant
+
+                    retryStatus.LastDirectoryVersionInstant
+                    |> should equal firstPublishedStatus.LastDirectoryVersionInstant
+                | None -> Assert.Fail("Expected unchanged verified dirty Watch IPC after durable-only recovery retry.")
+
+                Watch.lastPublishedHasPendingWatchWorkForWatchTests ()
+                |> should equal (Some true)
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 

@@ -3848,7 +3848,7 @@ module Watch =
 
                 let statusForVerification, directoryIdsForVerification =
                     if pendingEvidence.HasDurableOnlyPendingWork then
-                        GraceStatus.Default, HashSet<DirectoryVersionId>()
+                        nonIncrementalPendingWorkPublicationStatus, HashSet<DirectoryVersionId>()
                     else
                         expectedStatus, expectedDirectoryIds
 
@@ -3859,23 +3859,39 @@ module Watch =
                         None
 
                 try
-                    if pendingEvidence.HasDurableOnlyPendingWork then
-                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let existingDurableOnlyContractMatches =
+                        pendingEvidence.HasDurableOnlyPendingWork
+                        && (try
+                                let expectedMode =
+                                    match currentGraceWatchRuntimeMode () with
+                                    | GraceWatchRuntimeMode.Suspended -> GraceWatchRuntimeMode.Suspended
+                                    | _ -> GraceWatchRuntimeMode.Resynchronizing
 
-                        match currentGraceWatchRuntimeMode () with
-                        | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
-                        | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds)
-                        |> fun writeTask -> writeTask.GetAwaiter().GetResult()
+                                inspectGraceWatchStatus().GetAwaiter().GetResult()
+                                |> inspectionMatchesExpectedPendingWorkContract statusForVerification directoryIdsForVerification expectedMode hasPendingWork
+                            with
+                            | _ -> false)
+
+                    if existingDurableOnlyContractMatches then
+                        transitionWasPublished <- true
+                        lastPublishedHasPendingWatchWork <- Some hasPendingWork
                     else
-                        writeSnapshot().GetAwaiter().GetResult()
+                        if pendingEvidence.HasDurableOnlyPendingWork then
+                            match currentGraceWatchRuntimeMode () with
+                            | GraceWatchRuntimeMode.Suspended ->
+                                updateGraceWatchInterprocessFileForSuspendedMode statusForVerification (Some directoryIdsForVerification)
+                            | _ -> updateGraceWatchInterprocessFile statusForVerification (Some directoryIdsForVerification)
+                            |> fun writeTask -> writeTask.GetAwaiter().GetResult()
+                        else
+                            writeSnapshot().GetAwaiter().GetResult()
 
-                    transitionWasPublished <-
-                        cachePendingWatchWorkPublicationIfVerified
-                            statusForVerification
-                            directoryIdsForVerification
-                            observationScopeForVerification
-                            hasPendingWork
-                            publicationStartedAt
+                        transitionWasPublished <-
+                            cachePendingWatchWorkPublicationIfVerified
+                                statusForVerification
+                                directoryIdsForVerification
+                                observationScopeForVerification
+                                hasPendingWork
+                                publicationStartedAt
 
                     publishedHasPendingWork <- if transitionWasPublished then Some hasPendingWork else None
                 with
@@ -4457,14 +4473,16 @@ module Watch =
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
         let hasPendingWork = hasPendingWatchWork ()
+        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
 
         try
             lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
 
             let writeTask =
                 match currentGraceWatchRuntimeMode () with
-                | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
-                | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+                | GraceWatchRuntimeMode.Suspended ->
+                    updateGraceWatchInterprocessFileForSuspendedMode nonIncrementalPendingWorkPublicationStatus (Some emptyDirectoryIds)
+                | _ -> updateGraceWatchInterprocessFile nonIncrementalPendingWorkPublicationStatus (Some emptyDirectoryIds)
 
             writeTask.GetAwaiter().GetResult()
 
@@ -4734,11 +4752,12 @@ module Watch =
     /// Publishes a branch-scoped non-incremental transition snapshot when Watch cannot safely resume.
     let private publishNonIncrementalTransitionCompletionStatus context =
         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+        let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+        publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
             match currentGraceWatchRuntimeMode () with
-            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
-            | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds))
+            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode nonIncrementalStatus (Some emptyDirectoryIds)
+            | _ -> updateGraceWatchInterprocessFile nonIncrementalStatus (Some emptyDirectoryIds))
 
         logToAnsiConsole Colors.Important $"Grace Watch published non-incremental IPC for branch transition completion: {context}."
 
@@ -9006,10 +9025,11 @@ module Watch =
                         updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds))
                 else
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
                     let verified =
-                        tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                            updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                        tryPublishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient nonIncrementalStatus (Some emptyDirectoryIds))
 
                     logToAnsiConsole
                         Colors.Important
@@ -9500,22 +9520,41 @@ module Watch =
                                                 logToAnsiConsole
                                                     (if dirtyPublicationVerified then Colors.Important else Colors.Error)
                                                     $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
-                                        | recoveryPublication ->
+                                        | VerifiedDirtyRecoveryPublication ->
+                                            let dirtyResyncIpcAlreadyVerified =
+                                                try
+                                                    inspectGraceWatchStatus().GetAwaiter().GetResult()
+                                                    |> isGraceWatchResyncRequiredStatusPublished
+                                                with
+                                                | _ -> false
+
+                                            if dirtyResyncIpcAlreadyVerified then
+                                                if isGraceWatchResyncAttemptCurrent resyncAttempt then
+                                                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                                logToAnsiConsole
+                                                    Colors.Important
+                                                    $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was verified dirty, not a verified clean recovery; dirty resync IPC was already verified before return."
+                                            else
+                                                let dirtyPublicationVerified =
+                                                    reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                                        updateGraceWatchInterprocessFileClient status (Some directoryIds))
+
+                                                let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                                logToAnsiConsole
+                                                    (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                                    $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was verified dirty, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                        | UnverifiedRecoveryPublication ->
                                             let dirtyPublicationVerified =
                                                 reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
                                                     updateGraceWatchInterprocessFileClient status (Some directoryIds))
-
-                                            let recoveryPublicationOutcome =
-                                                match recoveryPublication with
-                                                | VerifiedDirtyRecoveryPublication -> "verified dirty"
-                                                | UnverifiedRecoveryPublication -> "unproven"
-                                                | VerifiedCleanRecoveryPublication -> "unexpected verified clean"
 
                                             let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
 
                                             logToAnsiConsole
                                                 (if dirtyPublicationVerified then Colors.Important else Colors.Error)
-                                                $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                                $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was unproven, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
                                     else
                                         let clearedResyncAttempt = tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss resyncAttempt
 
@@ -9872,9 +9911,10 @@ module Watch =
                             updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
                     else
                         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                        let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-                        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                            updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                        publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient nonIncrementalStatus (Some emptyDirectoryIds))
 
                         logToAnsiConsole
                             Colors.Important
@@ -9907,14 +9947,16 @@ module Watch =
                         updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds))
                 elif runtimeMode = GraceWatchRuntimeMode.Suspended then
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                        updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds))
+                    publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileForSuspendedMode nonIncrementalStatus (Some emptyDirectoryIds))
                 else
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                        updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                    publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileClient nonIncrementalStatus (Some emptyDirectoryIds))
 
                     logToAnsiConsole
                         Colors.Important
