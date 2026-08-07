@@ -26,6 +26,26 @@ open System.Threading.Tasks
 /// Groups the work item command parser, handlers, and output helpers.
 module WorkItemCommand =
 
+    /// Classifies the supported user-facing work-item attachment kinds at the CLI boundary.
+    type internal AttachmentType =
+        | Summary
+        | Prompt
+        | Notes
+
+        /// Returns the canonical lower-case value used by CLI output and existing work-item attachment APIs.
+        member this.Label =
+            match this with
+            | Summary -> "summary"
+            | Prompt -> "prompt"
+            | Notes -> "notes"
+
+        /// Maps CLI attachment classification to the existing durable artifact type.
+        member this.ArtifactType =
+            match this with
+            | Summary -> ArtifactType.AgentSummary
+            | Prompt -> ArtifactType.Prompt
+            | Notes -> ArtifactType.ReviewNotes
+
     /// Defines the options parsed by the work item command handlers.
     module private Options =
         let workItemId =
@@ -74,13 +94,25 @@ module WorkItemCommand =
         let stdin = new Option<bool>("--stdin", Required = false, Description = "Read attachment content from standard input.", Arity = ArgumentArity.ZeroOrOne)
 
         let attachmentType =
-            (new Option<string>(
-                "--type",
-                Required = true,
-                Description = "Attachment type to target: summary, prompt, or notes.",
-                Arity = ArgumentArity.ExactlyOne
-            ))
-                .AcceptOnlyFromAmong([| "summary"; "prompt"; "notes" |])
+            let option =
+                new Option<AttachmentType>(
+                    "--type",
+                    Required = true,
+                    Description = "Attachment type to target: summary, prompt, or notes.",
+                    Arity = ArgumentArity.ExactlyOne
+                )
+
+            option.CustomParser <-
+                Func<ArgumentResult, AttachmentType> (fun argumentResult ->
+                    match argumentResult.Tokens[0].Value with
+                    | "summary" -> AttachmentType.Summary
+                    | "prompt" -> AttachmentType.Prompt
+                    | "notes" -> AttachmentType.Notes
+                    | value ->
+                        argumentResult.AddError($"Argument '{value}' not recognized. Must be one of: summary, prompt, notes.")
+                        Unchecked.defaultof<AttachmentType>)
+
+            option.AcceptOnlyFromAmong([| "summary"; "prompt"; "notes" |])
 
         let latest =
             new Option<bool>(
@@ -308,18 +340,6 @@ module WorkItemCommand =
                                 graceIds.CorrelationId
                         )
         }
-
-    /// Tries to map resolve attachment type and returns a GraceError instead of throwing on unsupported input.
-    let private tryResolveAttachmentType (parseResult: ParseResult) =
-        let attachmentTypeRaw =
-            parseResult.GetValue(Options.attachmentType)
-            |> Option.ofObj
-            |> Option.defaultValue String.Empty
-
-        if String.IsNullOrWhiteSpace attachmentTypeRaw then
-            Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidArtifactType) (getCorrelationId parseResult))
-        else
-            Ok(attachmentTypeRaw.Trim().ToLowerInvariant())
 
     /// Tries to map resolve output file path and returns a GraceError instead of throwing on unsupported input.
     let private tryResolveOutputFilePath (parseResult: ParseResult) =
@@ -603,13 +623,14 @@ module WorkItemCommand =
                 return result |> renderOutput parseResult
             }
 
-    /// Routes the attach command from parsed options through validation, the SDK call, and result rendering.
-    let private attachHandler (artifactType: ArtifactType) (artifactTypeLabel: string) (parseResult: ParseResult) =
+    /// Routes canonical attachment creation through input validation, upload, linking, and result rendering once.
+    let private attachmentsAddHandler (parseResult: ParseResult) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
                 let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
+                let attachmentType = parseResult.GetValue(Options.attachmentType)
 
                 match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
                 | Error error -> return Error error
@@ -617,7 +638,7 @@ module WorkItemCommand =
                     match! tryGetAttachmentInput parseResult with
                     | Error error -> return Error error
                     | Ok attachmentInput ->
-                        match! createAndUploadArtifact graceIds artifactType attachmentInput with
+                        match! createAndUploadArtifact graceIds attachmentType.ArtifactType attachmentInput with
                         | Error error -> return Error error
                         | Ok artifactId ->
                             let linkParameters =
@@ -636,14 +657,14 @@ module WorkItemCommand =
                             match! WorkItem.LinkArtifact(linkParameters) with
                             | Error error -> return Error error
                             | Ok _ ->
-                                let result = { WorkItem = workItem; ArtifactId = artifactId; ArtifactType = artifactTypeLabel }
+                                let result = { WorkItem = workItem; ArtifactId = artifactId; ArtifactType = attachmentType.Label }
 
                                 if
                                     not (parseResult |> json)
                                     && not (parseResult |> silent)
                                 then
                                     AnsiConsole.MarkupLine(
-                                        $"[green]Attached {Markup.Escape(artifactTypeLabel)} content[/] [grey](artifact {Markup.Escape(artifactId.ToString())})[/] [green]to work item[/] {Markup.Escape(workItem)}"
+                                        $"[green]Attached {Markup.Escape(attachmentType.Label)} content[/] [grey](artifact {Markup.Escape(artifactId.ToString())})[/] [green]to work item[/] {Markup.Escape(workItem)}"
                                     )
 
                                 return Ok(GraceReturnValue.Create result graceIds.CorrelationId)
@@ -651,36 +672,14 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
-    /// Executes the attach summary command by binding ParseResult values to the SDK request and CLI output contract.
-    type AttachSummary() =
+    /// Executes canonical attachment creation by binding one typed command to the generic workflow.
+    type AttachmentsAdd() =
         inherit AsynchronousCommandLineAction()
 
-        /// Runs the asynchronous attach summary action when System.CommandLine dispatches the parsed command.
+        /// Runs the asynchronous attachments add action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
-                let! result = attachHandler ArtifactType.AgentSummary "summary" parseResult
-                return result |> renderOutput parseResult
-            }
-
-    /// Executes the attach prompt command by binding ParseResult values to the SDK request and CLI output contract.
-    type AttachPrompt() =
-        inherit AsynchronousCommandLineAction()
-
-        /// Runs the asynchronous attach prompt action when System.CommandLine dispatches the parsed command.
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
-            task {
-                let! result = attachHandler ArtifactType.Prompt "prompt" parseResult
-                return result |> renderOutput parseResult
-            }
-
-    /// Executes the attach notes command by binding ParseResult values to the SDK request and CLI output contract.
-    type AttachNotes() =
-        inherit AsynchronousCommandLineAction()
-
-        /// Runs the asynchronous attach notes action when System.CommandLine dispatches the parsed command.
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
-            task {
-                let! result = attachHandler ArtifactType.ReviewNotes "notes" parseResult
+                let! result = attachmentsAddHandler parseResult
                 return result |> renderOutput parseResult
             }
 
@@ -805,37 +804,35 @@ module WorkItemCommand =
             match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
             | Error error -> return Error error
             | Ok workItem ->
-                match tryResolveAttachmentType parseResult with
+                let attachmentType = parseResult.GetValue(Options.attachmentType)
+                let latest = parseResult.GetValue(Options.latest)
+
+                let parameters =
+                    Parameters.WorkItem.ShowWorkItemAttachmentParameters(
+                        WorkItemId = workItem,
+                        AttachmentType = attachmentType.Label,
+                        Latest = latest,
+                        OwnerId = graceIds.OwnerIdString,
+                        OwnerName = graceIds.OwnerName,
+                        OrganizationId = graceIds.OrganizationIdString,
+                        OrganizationName = graceIds.OrganizationName,
+                        RepositoryId = graceIds.RepositoryIdString,
+                        RepositoryName = graceIds.RepositoryName,
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                let! result = WorkItem.ShowAttachment(parameters)
+
+                match result with
                 | Error error -> return Error error
-                | Ok attachmentType ->
-                    let latest = parseResult.GetValue(Options.latest)
+                | Ok graceReturnValue ->
+                    if
+                        not (parseResult |> json)
+                        && not (parseResult |> silent)
+                    then
+                        writeShowAttachmentOutput workItem graceReturnValue.ReturnValue
 
-                    let parameters =
-                        Parameters.WorkItem.ShowWorkItemAttachmentParameters(
-                            WorkItemId = workItem,
-                            AttachmentType = attachmentType,
-                            Latest = latest,
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            CorrelationId = graceIds.CorrelationId
-                        )
-
-                    let! result = WorkItem.ShowAttachment(parameters)
-
-                    match result with
-                    | Error error -> return Error error
-                    | Ok graceReturnValue ->
-                        if
-                            not (parseResult |> json)
-                            && not (parseResult |> silent)
-                        then
-                            writeShowAttachmentOutput workItem graceReturnValue.ReturnValue
-
-                        return Ok graceReturnValue
+                    return Ok graceReturnValue
         }
 
     /// Routes the attachments show command from parsed options through validation, the SDK call, and result rendering.
@@ -1265,38 +1262,17 @@ module WorkItemCommand =
 
         workCommand.Subcommands.Add(linkCommand)
 
-        let attachCommand = new Command("attach", Description = "Attach summary, prompt, or notes content to a work item.")
+        let attachmentsCommand = new Command("attachments", Description = "Add, list, show, and download reviewer attachments by work item ID or number.")
 
-        let attachSummaryCommand =
-            new Command("summary", Description = "Attach summary content to a work item.")
+        let attachmentsAddCommand =
+            new Command("add", Description = "Add summary, prompt, or notes content to a work item.")
+            |> addOption Options.attachmentType
             |> addAttachInputOptions
             |> addCommonOptions
 
-        attachSummaryCommand.Arguments.Add(Arguments.workItemIdentifier)
-        attachSummaryCommand.Action <- new AttachSummary()
-        attachCommand.Subcommands.Add(attachSummaryCommand)
-
-        let attachPromptCommand =
-            new Command("prompt", Description = "Attach prompt content to a work item.")
-            |> addAttachInputOptions
-            |> addCommonOptions
-
-        attachPromptCommand.Arguments.Add(Arguments.workItemIdentifier)
-        attachPromptCommand.Action <- new AttachPrompt()
-        attachCommand.Subcommands.Add(attachPromptCommand)
-
-        let attachNotesCommand =
-            new Command("notes", Description = "Attach notes content to a work item.")
-            |> addAttachInputOptions
-            |> addCommonOptions
-
-        attachNotesCommand.Arguments.Add(Arguments.workItemIdentifier)
-        attachNotesCommand.Action <- new AttachNotes()
-        attachCommand.Subcommands.Add(attachNotesCommand)
-
-        workCommand.Subcommands.Add(attachCommand)
-
-        let attachmentsCommand = new Command("attachments", Description = "List, show, and download reviewer attachments by work item ID or number.")
+        attachmentsAddCommand.Arguments.Add(Arguments.workItemIdentifier)
+        attachmentsAddCommand.Action <- new AttachmentsAdd()
+        attachmentsCommand.Subcommands.Add(attachmentsAddCommand)
 
         let attachmentsListCommand =
             new Command("list", Description = "List summary, prompt, and notes attachments for a work item.")

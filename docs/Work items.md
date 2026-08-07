@@ -99,22 +99,25 @@ bash / zsh:
   3d5c4d9a-0123-4567-89ab-987654321000
 ```
 
-### Attach summary, prompt, and notes content
+### Add summary, prompt, and notes attachments
+
+Use `--type` to classify the attachment as a summary, prompt, or notes. Every supported type follows the same add,
+upload, and link workflow and requires exactly one of `--file`, `--text`, or `--stdin`.
 
 PowerShell:
 
 ```powershell
-./grace workitem attach summary 42 --file .\summary.md
-./grace workitem attach prompt 42 --file .\prompt.md
-./grace workitem attach notes 42 --text "Reviewer follow-up required before merge."
+./grace workitem attachments add 42 --type summary --file .\summary.md
+./grace workitem attachments add 42 --type prompt --file .\prompt.md
+./grace workitem attachments add 42 --type notes --text "Reviewer follow-up required before merge."
 ```
 
 bash / zsh:
 
 ```bash
-./grace workitem attach summary 42 --file ./summary.md
-./grace workitem attach prompt 42 --file ./prompt.md
-./grace workitem attach notes 42 --text "Reviewer follow-up required before merge."
+./grace workitem attachments add 42 --type summary --file ./summary.md
+./grace workitem attachments add 42 --type prompt --file ./prompt.md
+./grace workitem attachments add 42 --type notes --text "Reviewer follow-up required before merge."
 ```
 
 ### Retrieve reviewer attachments

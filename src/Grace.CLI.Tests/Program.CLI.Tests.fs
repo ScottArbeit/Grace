@@ -1144,8 +1144,13 @@ module HelpDoesNotReadConfigTests =
             /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "workitem"
-                                         "attach"
+                                         "attachments"
+                                         "add"
+                                         "42"
+                                         "--type"
                                          "summary"
+                                         "--text"
+                                         "content"
                                          "--schema" |]
 
             exitCode |> should equal 0
@@ -1160,7 +1165,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Command")
                 .GetProperty("Id")
                 .GetString()
-            |> should equal "workitem.attach.summary")
+            |> should equal "workitem.attachments.add")
 
     /// Verifies that set-status machine-readable introspection resolves the renamed command without runtime setup.
     [<TestCase("--schema", "schema")>]
@@ -1193,6 +1198,60 @@ module HelpDoesNotReadConfigTests =
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that attachment help and machine-readable introspection never execute the mutation handler.
+    [<TestCase("--help")>]
+    [<TestCase("--schema")>]
+    [<TestCase("--examples")>]
+    let ``workitem attachments add help schema and examples are inert`` (introspectionOption: string) =
+        withTempDir (fun root ->
+            let args =
+                if introspectionOption = "--help" then
+                    [|
+                        "workitem"
+                        "attachments"
+                        "add"
+                        introspectionOption
+                    |]
+                else
+                    [|
+                        "workitem"
+                        "attachments"
+                        "add"
+                        "42"
+                        "--type"
+                        "summary"
+                        "--text"
+                        "content"
+                        introspectionOption
+                    |]
+
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, _ = runWithCapturedOutput args
+            exitCode |> should equal 0
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
+    /// Verifies that parser rejection stops attachment creation before local or remote setup begins.
+    [<Test>]
+    let ``workitem attachments add parse failure is inert`` () =
+        withTempDir (fun root ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, _, _ =
+                runWithCapturedStdoutAndStderr [| "workitem"
+                                                  "attachments"
+                                                  "add"
+                                                  "42"
+                                                  "--type"
+                                                  "binary"
+                                                  "--text"
+                                                  "content" |]
+
+            exitCode |> should not' (equal 0)
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
     /// Verifies that root output json is honored for nested commands before config errors.
     [<Test>]
     let ``root output json is honored for nested commands before config errors`` () =
@@ -1209,9 +1268,11 @@ module HelpDoesNotReadConfigTests =
                 |]
                 [|
                     "workitem"
-                    "attach"
-                    "summary"
+                    "attachments"
+                    "add"
                     "123"
+                    "--type"
+                    "summary"
                     "--text"
                     "summary text"
                 |]
@@ -2770,6 +2831,23 @@ module RootHelpGroupingTests =
 
             createAndUpdate
             |> should not' (contain $"{Environment.NewLine}    status "))
+
+    /// Verifies that grouped work-item help exposes only the canonical attachment command tree.
+    [<Test>]
+    let ``workitem help groups attachments without the old attach command`` () =
+        withGraceUserFileBackups (fun () ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
+            let exitCode, output =
+                runWithCapturedOutput [| "workitem"
+                                         "-h" |]
+
+            exitCode |> should equal 0
+
+            let linkAndAttach = output.Substring(output.IndexOf("Link and attach:", StringComparison.Ordinal))
+            linkAndAttach |> should contain "attachments"
+
+            linkAndAttach
+            |> should not' (contain $"{Environment.NewLine}    attach "))
 
 
 namespace Grace.CLI.Tests

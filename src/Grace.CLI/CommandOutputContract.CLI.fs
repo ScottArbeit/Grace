@@ -769,9 +769,7 @@ module CommandOutputContract =
         | "webhook.delivery.show"
         | "webhook.test" -> typeof<Grace.Types.Webhooks.WebhookDelivery>
         | "webhook.list" -> typeof<IReadOnlyList<Grace.Types.Webhooks.WebhookRule>>
-        | "workitem.attach.notes"
-        | "workitem.attach.prompt"
-        | "workitem.attach.summary" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentResult"
+        | "workitem.attachments.add" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentResult"
         | "workitem.attachments.download" -> cliLocalResultType "Grace.CLI.Command.WorkItemCommand+AttachmentDownloadResult"
         | "workitem.attachments.list" -> typeof<Grace.Shared.Parameters.WorkItem.ListWorkItemAttachmentsResult>
         | "workitem.attachments.show" -> typeof<Grace.Shared.Parameters.WorkItem.ShowWorkItemAttachmentResult>
@@ -1361,9 +1359,7 @@ module CommandOutputContract =
             row [ "webhook" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "test" true false common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "update" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attach" ] "notes" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attach" ] "prompt" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attach" ] "summary" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem"; "attachments" ] "add" true true common_renderOutput_envelope mutating_state_transition composite_local_server RequiresCliDto
             row [ "workitem"; "attachments" ] "download" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "workitem"; "attachments" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attachments" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
