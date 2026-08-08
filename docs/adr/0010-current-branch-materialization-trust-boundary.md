@@ -30,7 +30,8 @@ overwrite local work when IPC, local durable state, or the object cache is incom
 - Materialization uses exact Reference targets. It does not broad-scan the repository, maintain root-history policy,
   or download missing objects while applying. Required cached objects are preflighted before mutation.
 - Missing, stale, unreadable, blocked, or ambiguous IPC/local-state evidence leaves the current event cursor
-  unacknowledged. Missing-cursor recovery is a separate decision and does not fall back to `BranchDto`.
+  unacknowledged. Watch fails closed; only explicit exact `grace doctor --repair-local-state` maintenance may reconstruct
+  missing status and its matching boundary, and it does not fall back to `BranchDto`.
 - Remote materialization creates no local Save. Its Grace-owned marker suppresses apply-owned observations while the
   exact target plan mutates the working tree.
 - Watch publishes a clean IPC snapshot only after the exact apply succeeds, durable `GraceStatus` is updated, the

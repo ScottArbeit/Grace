@@ -47,6 +47,118 @@ module Services =
 
     let mutable lockObject = new Lock()
 
+    /// Freezes every configured input that selects a CLI command's server, repository tree, or local-state database.
+    type internal OperationalConfigurationSnapshot =
+        {
+            OwnerId: OwnerId
+            OwnerName: OwnerName
+            OrganizationId: OrganizationId
+            OrganizationName: OrganizationName
+            RepositoryId: RepositoryId
+            RepositoryName: RepositoryName
+            BranchId: BranchId
+            BranchName: BranchName
+            ObjectStorageProvider: ObjectStorageProvider
+            ServerUri: string
+            ConfigurationPath: string
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+            GraceFileIgnoreEntries: string array
+            GraceDirectoryIgnoreEntries: string array
+        }
+
+    /// Canonicalizes the configured HTTP endpoint used by operational snapshot comparisons.
+    let private canonicalOperationalServerUri (value: string) =
+        match Uri.TryCreate(value, UriKind.Absolute) with
+        | true, uri when
+            uri.Scheme = Uri.UriSchemeHttp
+            || uri.Scheme = Uri.UriSchemeHttps
+            ->
+            uri.AbsoluteUri.TrimEnd('/')
+        | _ -> invalidOp $"Grace requires an absolute HTTP or HTTPS server URI: {value}"
+
+    /// Copies mutable Grace configuration into the immutable shape used across command trust boundaries.
+    let private operationalConfigurationSnapshot configurationPath (configuration: GraceConfiguration) =
+        {
+            OwnerId = configuration.OwnerId
+            OwnerName = configuration.OwnerName
+            OrganizationId = configuration.OrganizationId
+            OrganizationName = configuration.OrganizationName
+            RepositoryId = configuration.RepositoryId
+            RepositoryName = configuration.RepositoryName
+            BranchId = configuration.BranchId
+            BranchName = configuration.BranchName
+            ObjectStorageProvider = configuration.ObjectStorageProvider
+            ServerUri = canonicalOperationalServerUri configuration.ServerUri
+            ConfigurationPath = Path.GetFullPath(configurationPath)
+            RootDirectory = Path.GetFullPath(configuration.RootDirectory)
+            GraceDirectory = Path.GetFullPath(configuration.GraceDirectory)
+            GraceStatusFile = Path.GetFullPath(configuration.GraceStatusFile)
+            GraceFileIgnoreEntries = Array.copy configuration.GraceFileIgnoreEntries
+            GraceDirectoryIgnoreEntries = Array.copy configuration.GraceDirectoryIgnoreEntries
+        }
+
+    /// Compares operational snapshots with platform path semantics and exact server/configuration semantics.
+    let private operationalConfigurationSnapshotsMatch expected actual =
+        let pathComparison =
+            if OperatingSystem.IsWindows() then
+                StringComparison.OrdinalIgnoreCase
+            else
+                StringComparison.Ordinal
+
+        let samePath left right = String.Equals(left, right, pathComparison)
+
+        actual.OwnerId = expected.OwnerId
+        && actual.OwnerName = expected.OwnerName
+        && actual.OrganizationId = expected.OrganizationId
+        && actual.OrganizationName = expected.OrganizationName
+        && actual.RepositoryId = expected.RepositoryId
+        && actual.RepositoryName = expected.RepositoryName
+        && actual.BranchId = expected.BranchId
+        && actual.BranchName = expected.BranchName
+        && actual.ObjectStorageProvider = expected.ObjectStorageProvider
+        && String.Equals(actual.ServerUri, expected.ServerUri, StringComparison.Ordinal)
+        && samePath actual.ConfigurationPath expected.ConfigurationPath
+        && samePath actual.RootDirectory expected.RootDirectory
+        && samePath actual.GraceDirectory expected.GraceDirectory
+        && samePath actual.GraceStatusFile expected.GraceStatusFile
+        && actual.GraceFileIgnoreEntries.Length = expected.GraceFileIgnoreEntries.Length
+        && Array.forall2 (=) actual.GraceFileIgnoreEntries expected.GraceFileIgnoreEntries
+        && actual.GraceDirectoryIgnoreEntries.Length = expected.GraceDirectoryIgnoreEntries.Length
+        && Array.forall2 (=) actual.GraceDirectoryIgnoreEntries expected.GraceDirectoryIgnoreEntries
+
+    /// Captures persisted operational configuration only after it agrees with the already-loaded process configuration.
+    let internal captureOperationalConfigurationSnapshot commandName (cached: GraceConfiguration) =
+        let cachedConfigurationPath = Path.Combine(cached.ConfigurationDirectory, Constants.GraceConfigFileName)
+        let cachedSnapshot = operationalConfigurationSnapshot cachedConfigurationPath cached
+
+        let persistedSnapshot =
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection -> operationalConfigurationSnapshot inspection.Path inspection.Configuration
+            | Error error -> invalidOp $"Grace {commandName} could not read persisted repository configuration: {error}"
+
+        if not (operationalConfigurationSnapshotsMatch cachedSnapshot persistedSnapshot) then
+            invalidOp $"Grace {commandName} cached and persisted repository configuration do not match."
+
+        persistedSnapshot
+
+    /// Revalidates cached and freshly persisted inputs against the exact operational snapshot accepted at command entry.
+    let internal requireOperationalConfigurationSnapshotCurrent commandName (cached: GraceConfiguration) expected =
+        let cachedConfigurationPath = Path.Combine(cached.ConfigurationDirectory, Constants.GraceConfigFileName)
+        let cachedCandidate = operationalConfigurationSnapshot cachedConfigurationPath cached
+
+        let persistedCandidate =
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection -> operationalConfigurationSnapshot inspection.Path inspection.Configuration
+            | Error error -> invalidOp $"Grace {commandName} could not reread persisted repository configuration: {error}"
+
+        if
+            not (operationalConfigurationSnapshotsMatch expected cachedCandidate)
+            || not (operationalConfigurationSnapshotsMatch expected persistedCandidate)
+        then
+            invalidOp $"Grace {commandName} operational repository configuration changed after validation."
+
     /// Utility method to write to the console using color.
     let logToAnsiConsole (color: string) message =
         lock lockObject (fun () ->
@@ -2371,7 +2483,7 @@ module Services =
         task {
 
             let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
-            let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+            let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
 
             let directoryVersion =
                 let mutable changedDirectoryVersion = LocalDirectoryVersion.Default
@@ -2439,7 +2551,7 @@ module Services =
         =
 
         let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
-        let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+        let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
 
         let directoryVersion =
             newGraceStatus
@@ -2825,12 +2937,12 @@ module Services =
 
         IpcFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
-    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
-    let inspectGraceWatchStatus () =
+    /// Reads one explicit Watch IPC path without consulting mutable process configuration.
+    let private inspectGraceWatchStatusAtPath ipcFileName =
         task {
-            if System.IO.File.Exists(IpcFileName()) then
+            if System.IO.File.Exists(ipcFileName) then
                 try
-                    let json = System.IO.File.ReadAllText(IpcFileName())
+                    let json = System.IO.File.ReadAllText(ipcFileName)
 
                     let status = deserializeNormalizedGraceWatchStatus json
 
@@ -2872,6 +2984,14 @@ module Services =
                         ReadError = None
                     }
         }
+
+    /// Reads Watch IPC status for an immutable operational repository identity.
+    let internal inspectGraceWatchStatusForOperationalConfiguration (snapshot: OperationalConfigurationSnapshot) =
+        IpcFileNameForIdentity snapshot.RepositoryId snapshot.RepositoryName snapshot.RootDirectory snapshot.BranchId snapshot.BranchName
+        |> inspectGraceWatchStatusAtPath
+
+    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
+    let inspectGraceWatchStatus () = inspectGraceWatchStatusAtPath (IpcFileName())
 
     /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
     let private createGraceWatchStatusWithPendingWork

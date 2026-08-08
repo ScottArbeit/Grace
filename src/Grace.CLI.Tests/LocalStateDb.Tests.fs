@@ -733,6 +733,77 @@ module LocalStateDbTests =
                 Assert.That(storedBoundary, Is.EqualTo(None))
             })
 
+    /// A writer that claims SQLite after Doctor's final validation remains authoritative and makes repair fail closed.
+    [<Test; Category("LocalStateRepairWriterExclusion")>]
+    let ``local state repair refuses writer claiming database before replacement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let writerRoot = Guid.Parse("67676767-8020-4000-8000-676767676767")
+                let writerStatus = { createTestStatus writerRoot (Sha256Hash "writer") 11L with RootDirectoryBlake3Hash = Blake3Hash "writer-blake3" }
+
+                let writerBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = writerRoot
+                        Sha256Hash = writerStatus.RootDirectorySha256Hash
+                        Blake3Hash = writerStatus.RootDirectoryBlake3Hash
+                        EventCursor = "writer-boundary"
+                    }
+
+                let doctorRoot = Guid.Parse("68686868-8020-4000-8000-686868686868")
+                let doctorStatus = { createTestStatus doctorRoot (Sha256Hash "doctor") 12L with RootDirectoryBlake3Hash = Blake3Hash "doctor-blake3" }
+
+                let doctorBoundary =
+                    { writerBoundary with
+                        DirectoryId = doctorRoot
+                        Sha256Hash = doctorStatus.RootDirectorySha256Hash
+                        Blake3Hash = doctorStatus.RootDirectoryBlake3Hash
+                        EventCursor = "doctor-boundary"
+                    }
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                let! baseline = LocalStateDb.captureLocalStateRepairBaseline configuration.GraceStatusFile
+                use writer = openRawConnection configuration.GraceStatusFile
+
+                let beginAndStageWriter () =
+                    executeNonQuery writer "BEGIN IMMEDIATE;"
+                    executeNonQuery writer "DELETE FROM status_directories;"
+                    executeNonQuery writer "DELETE FROM status_files;"
+
+                    executeNonQuery
+                        writer
+                        $"UPDATE status_meta SET root_directory_version_id = '{writerRoot}', root_directory_sha256_hash = 'writer', root_directory_blake3_hash = 'writer-blake3' WHERE id = 1;"
+
+                    executeNonQuery
+                        writer
+                        $"INSERT INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ('.', '', '{writerRoot}', 'writer', 'writer-blake3', 0, 0, 0);"
+
+                    executeNonQuery
+                        writer
+                        $"INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ('{configuration.RepositoryId}', '{configuration.BranchId}', '{writerRoot}', 'writer', 'writer-blake3', 'writer-boundary');"
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepairWithBeforeWriteClaim
+                            configuration.GraceStatusFile
+                            baseline
+                            doctorStatus
+                            doctorBoundary
+                            CancellationToken.None
+                            beginAndStageWriter
+                        :> Task)
+                )
+                |> ignore
+
+                executeNonQuery writer "COMMIT;"
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(writerStatus.RootDirectoryId))
+                Assert.That(storedBoundary, Is.EqualTo(Some writerBoundary))
+            })
+
     /// A terminal replay acknowledgement advances the exact cursor and accepted root without rewriting status tables.
     [<Test; Category("CurrentBranchCursorReplay")>]
     let ``remote reference cursor acknowledgement advances exact boundary`` () =
@@ -3646,10 +3717,13 @@ module LocalStateDbTests =
             })
 
     /// Verifies that ensure db initialized treats paths case insensitively on windows.
-    [<Test>]
+    [<Test; Category("LocalStatePathComparison")>]
     let ``ensureDbInitialized treats paths case-insensitively on Windows`` () =
         withTempDir (fun _ configuration ->
             task {
+                if not (OperatingSystem.IsWindows()) then
+                    Assert.Ignore("Windows path aliases are case-insensitive only on Windows.")
+
                 let pathA = configuration.GraceStatusFile.ToLowerInvariant()
                 let pathB = configuration.GraceStatusFile.ToUpperInvariant()
 
@@ -3667,6 +3741,40 @@ module LocalStateDbTests =
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
                 schemaVersion |> should equal "9"
+            })
+
+    /// Verifies non-Windows filesystems can initialize case-distinct local-state paths without rewriting the temp root.
+    [<Test; Category("LocalStatePathComparison")>]
+    let ``ensureDbInitialized preserves case-distinct paths on non-Windows`` () =
+        withTempDir (fun root configuration ->
+            task {
+                if OperatingSystem.IsWindows() then
+                    Assert.Ignore("Case-distinct local-state paths are a non-Windows contract.")
+
+                let alternateGraceDirectory = Path.Combine(root, Constants.GraceConfigDirectory.ToUpperInvariant())
+
+                Directory.CreateDirectory(alternateGraceDirectory)
+                |> ignore
+
+                let alternatePath = Path.Combine(alternateGraceDirectory, Constants.GraceLocalStateDbFileName)
+
+                do!
+                    Task
+                        .WhenAll(
+                            [|
+                                LocalStateDb.ensureDbInitialized configuration.GraceStatusFile :> Task
+                                LocalStateDb.ensureDbInitialized alternatePath :> Task
+                            |]
+                        )
+                        .WaitAsync(TimeSpan.FromSeconds(15.0))
+
+                File.Exists(configuration.GraceStatusFile)
+                |> should equal true
+
+                File.Exists(alternatePath) |> should equal true
+
+                Path.GetFullPath(configuration.GraceStatusFile)
+                |> should not' (equal (Path.GetFullPath(alternatePath)))
             })
 
     /// Verifies that replace status snapshot fully clears old snapshot rows.
@@ -4068,6 +4176,111 @@ module LocalStateDbTests =
 
                     error
                     |> should contain "reset the local state database"
+            })
+
+    /// Verifies Watch's shared local-state reader accepts a complete nested graph and rejects truncation or malformed relationships.
+    [<TestCase("valid")>]
+    [<TestCase("truncated")>]
+    [<TestCase("disconnected")>]
+    [<TestCase("duplicate-path")>]
+    [<TestCase("malformed-file-parent")>]
+    [<Category("CompleteLocalStatusTree")>]
+    let ``complete status reader validates the full rooted graph`` shape =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(2001L)
+                let lastWrite = DateTime(2025, 2, 3, 4, 5, 6, DateTimeKind.Utc)
+                let rootId = Guid.NewGuid()
+                let childId = Guid.NewGuid()
+                let file = createFileVersionWithHashes "src/nested.txt" "file-sha" "file-blake3" false 12L now lastWrite
+
+                let childEntries =
+                    [|
+                        Grace.Shared.Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+                    |]
+
+                let childSha = Grace.Shared.Services.computeSha256ForDirectoryEntries "src" childEntries
+                let childBlake3 = Grace.Shared.Services.computeBlake3ForDirectory "src" childEntries
+
+                let child =
+                    LocalDirectoryVersion.CreateWithHashes
+                        childId
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+                        "src"
+                        childSha
+                        childBlake3
+                        (List<DirectoryVersionId>())
+                        (List<LocalFileVersion>([| file |]))
+                        file.Size
+                        lastWrite
+
+                let rootEntries =
+                    [|
+                        Grace.Shared.Services.DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+                    |]
+
+                let rootSha = Grace.Shared.Services.computeSha256ForDirectoryEntries Constants.RootDirectoryPath rootEntries
+                let rootBlake3 = Grace.Shared.Services.computeBlake3ForDirectory Constants.RootDirectoryPath rootEntries
+
+                let root =
+                    LocalDirectoryVersion.CreateWithHashes
+                        rootId
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+                        Constants.RootDirectoryPath
+                        rootSha
+                        rootBlake3
+                        (List<DirectoryVersionId>([| childId |]))
+                        (List<LocalFileVersion>())
+                        child.Size
+                        lastWrite
+
+                let index = GraceIndex()
+                index.TryAdd(rootId, root) |> ignore
+                index.TryAdd(childId, child) |> ignore
+
+                let status =
+                    { GraceStatus.Default with
+                        Index = index
+                        RootDirectoryId = rootId
+                        RootDirectorySha256Hash = rootSha
+                        RootDirectoryBlake3Hash = rootBlake3
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    match shape with
+                    | "valid" -> ()
+                    | "truncated" ->
+                        executeNonQuery connection "DELETE FROM status_files WHERE relative_path = 'src/nested.txt';"
+                        executeNonQuery connection "DELETE FROM status_directories WHERE relative_path = 'src';"
+                    | "disconnected" -> executeNonQuery connection "UPDATE status_directories SET parent_path = 'missing' WHERE relative_path = 'src';"
+                    | "duplicate-path" ->
+                        executeNonQuery
+                            connection
+                            $"UPDATE status_files SET relative_path = 'src', directory_path = '.', directory_version_id = '{rootId}' WHERE relative_path = 'src/nested.txt';"
+                    | "malformed-file-parent" ->
+                        executeNonQuery connection "UPDATE status_files SET directory_path = '.' WHERE relative_path = 'src/nested.txt';"
+                    | _ -> invalidOp $"Unexpected complete-tree test shape: {shape}"
+
+                let! result =
+                    LocalStateDb.readCompleteStatusSnapshotReadOnly
+                        configuration.GraceStatusFile
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+
+                match shape, result with
+                | "valid", Ok readBack -> readBack.Index.Count |> should equal 2
+                | "valid", Error error -> Assert.Fail($"Expected a valid complete status tree, got: {error}")
+                | _, Error error -> error |> should contain "status tree"
+                | _, Ok _ -> Assert.Fail($"Expected malformed status shape '{shape}' to fail closed.")
             })
 
     /// Verifies that read status snapshot tolerates missing status meta row.

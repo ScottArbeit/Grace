@@ -14,6 +14,7 @@ open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.PersonalAccessToken
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.Collections.Generic
 open System.IO
@@ -26,6 +27,23 @@ open System.Threading.Tasks
 
 /// Groups shared helpers for branch server test helpers.
 module BranchServerTestHelpers =
+    /// Runs one public Grace CLI command while capturing its machine-readable stdout contract.
+    let runGraceCommandWithCapturedStdout args =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+        let originalConsole = AnsiConsole.Console
+
+        try
+            Console.SetOut(writer)
+            let settings = AnsiConsoleSettings()
+            settings.Out <- AnsiConsoleOutput(writer)
+            AnsiConsole.Console <- AnsiConsole.Create(settings)
+            let exitCode = Grace.CLI.GraceCommand.main args
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            AnsiConsole.Console <- originalConsole
+
     /// Asserts ok for integration responses.
     let private assertOk (response: HttpResponseMessage) =
         task {
@@ -907,6 +925,7 @@ module BranchServerTestHelpers =
             let configurationDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
             let configurationPath = Path.Combine(configurationDirectory, Constants.GraceConfigFileName)
             let previousDirectory = Environment.CurrentDirectory
+            let previousGraceToken = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
 
             try
                 Directory.CreateDirectory(configurationDirectory)
@@ -924,6 +943,7 @@ module BranchServerTestHelpers =
                 return! testBody ()
             finally
                 Grace.SDK.Auth.clearTokenProvider ()
+                Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, previousGraceToken)
                 Environment.CurrentDirectory <- previousDirectory
                 resetConfiguration ()
 
@@ -944,6 +964,9 @@ module BranchServerTestHelpers =
 
             Grace.SDK.Auth.setTokenProvider (fun () -> task { return Some token })
         }
+
+    /// Creates a real PAT for hosted public CLI command tests that configure authentication from the process environment.
+    let createPublicCliTokenAsync () = createPersonalAccessTokenAsync ()
 
     /// Gets first annotatable file from the running test server.
     let getFirstAnnotatableFileAsync (repositoryId: string) (branch: Branch.BranchDto) =
@@ -2080,345 +2103,437 @@ type BranchServer() =
                     })
         }
 
-    /// A reset local database recovers through production Watch, materializes one later event, and durably acknowledges its cursor.
+    /// Repository creation from nested existing code records exact status only after its matching Save and event boundary succeed.
     [<Test; NonParallelizable>]
-    member _.ProductionWatchMissingBoundaryRecoveryReplaysExactlyOneLaterReference() =
+    member _.ProductionRepositoryInitializationCommitsExactStateOnlyAfterPublication() =
         task {
-            let repositoryId = repositoryIds[0]
-            let parentBranchId = repositoryDefaultBranchIds[0]
-            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
-            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"WatchRecovery{Guid.NewGuid():N}"
-            let retainedDirectoryPath = RelativePath $"retained-{Guid.NewGuid():N}"
-            let retainedRelativePath = RelativePath $"{retainedDirectoryPath}/baseline.txt"
-            let retainedPayload = Encoding.UTF8.GetBytes("retained baseline content")
-
-            let retainedFileVersion =
-                FileVersion.CreateWithHashes
-                    retainedRelativePath
-                    (BranchServerTestHelpers.sha256Hex retainedPayload)
-                    (BranchServerTestHelpers.blake3Hex retainedPayload)
-                    String.Empty
-                    false
-                    (int64 retainedPayload.Length)
-
-            let retainedDirectory = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId retainedDirectoryPath retainedFileVersion
-            let recoveredRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ retainedDirectory ]
-
-            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId retainedPayload retainedFileVersion
-            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ retainedDirectory; recoveredRoot ]
-
-            let! recoveredSave =
-                BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch recoveredRoot.DirectoryVersionId recoveredRoot.Sha256Hash
-
-            let! recoveredSaveBody = recoveredSave.Content.ReadAsStringAsync()
-            Assert.That(recoveredSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), recoveredSaveBody)
-
-            let! retainedBaselineBlob = BranchServerTestHelpers.getFileObjectAzuriteBlockBlobClientAsync repositoryId retainedFileVersion
-            let! _ = retainedBaselineBlob.DeleteIfExistsAsync()
-            let! retainedBaselineBlobBeforeReset = retainedBaselineBlob.ExistsAsync()
-            Assert.That(retainedBaselineBlobBeforeReset.Value, Is.False)
-
-            let relativePath = RelativePath $"watch-runtime-{Guid.NewGuid():N}.txt"
-            let payload = Encoding.UTF8.GetBytes("production missing-boundary replay")
-
-            let fileVersion =
-                FileVersion.CreateWithHashes
-                    relativePath
-                    (BranchServerTestHelpers.sha256Hex payload)
-                    (BranchServerTestHelpers.blake3Hex payload)
-                    String.Empty
-                    false
-                    (int64 payload.Length)
-
-            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload fileVersion
-            let laterRoot = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId Constants.RootDirectoryPath fileVersion
-            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ laterRoot ]
-            let! laterSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch laterRoot.DirectoryVersionId laterRoot.Sha256Hash
-            let! laterSaveBody = laterSave.Content.ReadAsStringAsync()
-            Assert.That(laterSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), laterSaveBody)
-
-            do!
+            let runInitialization outputMode shouldFailBeforeSave =
                 BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
                     task {
                         do! BranchServerTestHelpers.configureSdkForServerAsync ()
-                        let configuration = Current()
-                        configuration.OwnerId <- Guid.Parse(ownerId)
-                        configuration.OrganizationId <- Guid.Parse(organizationId)
-                        configuration.RepositoryId <- Guid.Parse(repositoryId)
-                        configuration.RepositoryName <- "watch-runtime-repository"
-                        configuration.BranchId <- branch.BranchId
-                        configuration.BranchName <- string branch.BranchName
-
-                        saveConfigFile (Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)) configuration
-
-                        let localRetainedDirectory = retainedDirectory.ToLocalDirectoryVersion(DateTime.UtcNow)
-                        let localRoot = recoveredRoot.ToLocalDirectoryVersion(DateTime.UtcNow)
-                        let index = GraceIndex()
-
-                        index.TryAdd(localRetainedDirectory.DirectoryVersionId, localRetainedDirectory)
-                        |> ignore
-
-                        index.TryAdd(localRoot.DirectoryVersionId, localRoot)
-                        |> ignore
-
-                        let initialStatus =
-                            { GraceStatus.Default with
-                                Index = index
-                                RootDirectoryId = localRoot.DirectoryVersionId
-                                RootDirectorySha256Hash = localRoot.Sha256Hash
-                                RootDirectoryBlake3Hash = localRoot.Blake3Hash
-                            }
-
-                        let objectCachePath = Grace.CLI.Services.getLocalObjectCachePathForFileVersion fileVersion
-
-                        Directory.CreateDirectory(Path.GetDirectoryName(objectCachePath))
-                        |> ignore
-
-                        File.WriteAllBytes(objectCachePath, payload)
-
-                        let retainedPath = Path.Combine(configuration.RootDirectory, string retainedRelativePath)
-
-                        Directory.CreateDirectory(Path.GetDirectoryName(retainedPath))
-                        |> ignore
-
-                        File.WriteAllBytes(retainedPath, retainedPayload)
-
-                        Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
-                        Grace.CLI.Command.Watch.resetWatchIgnoreSnapshotForWatchTests ()
-                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
-                        do! Grace.CLI.LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
-                        do! Grace.CLI.Services.writeGraceStatusFile initialStatus
-                        do! Grace.CLI.Services.updateGraceWatchInterprocessFile initialStatus (Some(HashSet<DirectoryVersionId>(index.Keys)))
-
-                        let ipcPath = Grace.CLI.Services.IpcFileName()
-                        let retainedStatus = deserialize<Grace.CLI.Services.GraceWatchStatus> (File.ReadAllText(ipcPath))
-
-                        File.WriteAllText(
-                            ipcPath,
-                            serialize { retainedStatus with UpdatedAt = retainedStatus.UpdatedAt.Minus(NodaTime.Duration.FromMinutes(10.0)) }
-                        )
-
-                        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
-                        GC.Collect()
-                        GC.WaitForPendingFinalizers()
-
-                        [|
-                            configuration.GraceStatusFile
-                            configuration.GraceStatusFile + "-wal"
-                            configuration.GraceStatusFile + "-shm"
-                            configuration.GraceStatusFile + "-journal"
-                        |]
-                        |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
+                        let! publicCliToken = BranchServerTestHelpers.createPublicCliTokenAsync ()
+                        let previousGraceToken = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, publicCliToken)
 
                         try
-                            Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
-                            Assert.That(File.Exists(ipcPath), Is.True)
+                            let initialConfiguration = Current()
+                            initialConfiguration.OwnerId <- Guid.Parse(ownerId)
+                            initialConfiguration.OrganizationId <- Guid.Parse(organizationId)
+                            initialConfiguration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
 
-                            let! claim = Grace.CLI.Services.claimGraceWatchInterprocessFile ()
-                            Assert.That(claim.Claimed, Is.True)
-                            Assert.That(claim.RetainedStatus.IsSome, Is.True)
-                            Grace.CLI.Command.Watch.setGraceWatchRuntimeModeForWatchTests Grace.CLI.Services.GraceWatchRuntimeMode.StartingUp
+                            let configPath = Path.Combine(initialConfiguration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
 
-                            match Grace.CLI.Command.Watch.tryActivateWatchIgnoreSnapshotForWatchTests () with
-                            | Ok () -> ()
-                            | Error error -> Assert.Fail($"Expected production Watch ignore snapshot activation, got {error}.")
+                            saveConfigFile configPath initialConfiguration
+                            let nestedParentPath = RelativePath $"create-{Guid.NewGuid():N}"
+                            let nestedDirectoryPath = RelativePath $"{nestedParentPath}/deeper"
+                            let nestedFilePath = Path.Combine(initialConfiguration.RootDirectory, string nestedDirectoryPath, "existing.txt")
 
-                            let! resetStatus = Grace.CLI.Services.readGraceStatusFile ()
-                            Assert.That(resetStatus.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
-                            let materializedPath = Path.Combine(configuration.RootDirectory, string relativePath)
-                            Assert.That(Directory.Exists(Path.Combine(configuration.RootDirectory, string retainedDirectoryPath)), Is.True)
-                            Assert.That(Convert.ToHexString(File.ReadAllBytes(retainedPath)), Is.EqualTo(Convert.ToHexString(retainedPayload)))
-
-                            use cancelled = new System.Threading.CancellationTokenSource()
-                            cancelled.Cancel()
-
-                            Assert.ThrowsAsync<OperationCanceledException>(
-                                Func<Task> (fun () ->
-                                    Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
-                                        claim.RetainedStatus
-                                        resetStatus
-                                        cancelled.Token
-                                    :> Task)
-                            )
+                            Directory.CreateDirectory(Path.GetDirectoryName(nestedFilePath))
                             |> ignore
 
-                            let! afterCancellation =
-                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
-                                    configuration.GraceStatusFile
-                                    configuration.RepositoryId
-                                    configuration.BranchId
+                            File.WriteAllText(nestedFilePath, "nested repository initialization")
+                            let newRepositoryId = Guid.NewGuid()
+                            let newRepositoryName = $"ExistingCode{Guid.NewGuid():N}"
 
-                            Assert.That(afterCancellation, Is.EqualTo(None))
-                            Assert.That(File.Exists(materializedPath), Is.False)
+                            let createExitCode =
+                                Grace.CLI.GraceCommand.main [| "repository"
+                                                               "create"
+                                                               "--repository-name"
+                                                               newRepositoryName
+                                                               "--repository-id"
+                                                               string newRepositoryId
+                                                               "--owner-id"
+                                                               ownerId
+                                                               "--organization-id"
+                                                               organizationId
+                                                               "--output"
+                                                               "Json" |]
 
-                            let configPath = Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
-                            File.Delete(configPath)
+                            Assert.That(createExitCode, Is.EqualTo(0))
+                            resetConfiguration ()
+                            let repositoryConfiguration = Current()
+                            Assert.That(repositoryConfiguration.RepositoryId, Is.EqualTo(newRepositoryId))
+                            Assert.That(File.Exists(repositoryConfiguration.GraceStatusFile), Is.False)
 
-                            try
-                                Assert.ThrowsAsync<InvalidOperationException>(
-                                    Func<Task> (fun () ->
-                                        Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
-                                            claim.RetainedStatus
-                                            resetStatus
-                                            System.Threading.CancellationToken.None
-                                        :> Task)
+                            let! referencesBeforeInitialization =
+                                BranchServerTestHelpers.getBranchReferencesAsync (string newRepositoryId) (string repositoryConfiguration.BranchId)
+
+                            if shouldFailBeforeSave then
+                                Grace.CLI.Command.Repository.setBeforeRepositoryInitializationSaveForTests (fun () ->
+                                    invalidOp "forced repository initialization publication failure")
+
+                            let initExitCode, initOutput =
+                                BranchServerTestHelpers.runGraceCommandWithCapturedStdout [| "repository"
+                                                                                             "init"
+                                                                                             "--directory"
+                                                                                             repositoryConfiguration.RootDirectory
+                                                                                             "--output"
+                                                                                             outputMode |]
+
+                            Grace.CLI.Command.Repository.resetBeforeRepositoryInitializationSaveForTests ()
+
+                            if outputMode = "Json" then
+                                use initJson = System.Text.Json.JsonDocument.Parse(initOutput)
+
+                                Assert.That(
+                                    initJson
+                                        .RootElement
+                                        .GetProperty("CorrelationId")
+                                        .GetString(),
+                                    Is.Not.Empty,
+                                    initOutput
                                 )
-                                |> ignore
-                            finally
-                                saveConfigFile configPath configuration
 
-                            let! afterFailure =
-                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
-                                    configuration.GraceStatusFile
-                                    configuration.RepositoryId
-                                    configuration.BranchId
+                                if shouldFailBeforeSave then
+                                    Assert.That(
+                                        initJson
+                                            .RootElement
+                                            .GetProperty("Error")
+                                            .GetString(),
+                                        Does.Contain("forced repository initialization publication failure")
+                                    )
+                                else
+                                    let initReturnValue = initJson.RootElement.GetProperty("ReturnValue")
+                                    Assert.That(initReturnValue.GetProperty("Message").GetString(), Is.EqualTo("Initialized repository."))
 
-                            Assert.That(afterFailure, Is.EqualTo(None))
-                            Assert.That(File.Exists(materializedPath), Is.False)
+                                    Assert.That(
+                                        initReturnValue
+                                            .GetProperty("DirectoryCount")
+                                            .GetInt32(),
+                                        Is.EqualTo(3)
+                                    )
+                            else
+                                Assert.That(initOutput, Is.Empty, $"{outputMode} output must not leak human progress or result text.")
 
-                            let! recoveredStatus =
-                                Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
-                                    claim.RetainedStatus
-                                    resetStatus
-                                    System.Threading.CancellationToken.None
+                            if shouldFailBeforeSave then
+                                Assert.That(initExitCode, Is.EqualTo(-1))
 
-                            let! referencesBeforeStartupScan = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
-                            let! retainedBaselineBlobBeforeStartupScan = retainedBaselineBlob.ExistsAsync()
-                            Assert.That(retainedBaselineBlobBeforeStartupScan.Value, Is.False)
+                                let! statusAfterFailure = Grace.CLI.LocalStateDb.readStatusMeta repositoryConfiguration.GraceStatusFile
+                                Assert.That(statusAfterFailure.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
 
-                            let! startupScan = Grace.CLI.Command.Watch.tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests recoveredStatus
+                                let! boundaryAfterFailure =
+                                    Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                        repositoryConfiguration.GraceStatusFile
+                                        repositoryConfiguration.RepositoryId
+                                        repositoryConfiguration.BranchId
 
-                            let startupDifferences =
-                                match startupScan with
-                                | Ok differences -> differences
-                                | Error error ->
-                                    Assert.Fail($"Expected production startup scan success, got {error}.")
-                                    List<FileSystemDifference>()
+                                Assert.That(boundaryAfterFailure, Is.EqualTo(None))
 
-                            for difference in startupDifferences do
-                                Grace.CLI.Command.Watch.queueStartupDifferenceForWatch difference
+                                let! referencesAfterFailure =
+                                    BranchServerTestHelpers.getBranchReferencesAsync (string newRepositoryId) (string repositoryConfiguration.BranchId)
 
-                            do! Grace.CLI.Command.Watch.processChangedFiles ()
+                                Assert.That(referencesAfterFailure.Length, Is.EqualTo(referencesBeforeInitialization.Length))
+                            else
+                                Assert.That(initExitCode, Is.EqualTo(0))
+                                let! initializedStatus = Grace.CLI.Services.readGraceStatusFile ()
+                                Assert.That(initializedStatus.RootDirectoryId, Is.Not.EqualTo(DirectoryVersionId.Empty))
+                                Assert.That(initializedStatus.Index.Count, Is.EqualTo(3))
 
-                            let! referencesAfterStartupProcessing = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                                let initializedPaths =
+                                    initializedStatus.Index.Values
+                                    |> Seq.map (fun directory -> directory.RelativePath)
+                                    |> Set.ofSeq
 
-                            Assert.That(startupDifferences, Is.Empty, "The reconstructed retained baseline must be empty at the production scanner seam.")
+                                Assert.That(initializedPaths, Does.Contain(Constants.RootDirectoryPath))
+                                Assert.That(initializedPaths, Does.Contain(nestedParentPath))
+                                Assert.That(initializedPaths, Does.Contain(nestedDirectoryPath))
 
-                            Assert.That(
-                                referencesAfterStartupProcessing
-                                |> Array.map (fun reference -> $"{reference.ReferenceId}")
-                                |> Array.sort
-                                |> String.concat ",",
-                                Is.EqualTo(
-                                    referencesBeforeStartupScan
-                                    |> Array.map (fun reference -> $"{reference.ReferenceId}")
-                                    |> Array.sort
-                                    |> String.concat ","
-                                ),
-                                "Production startup processing must not publish a Save for retained baseline content."
-                            )
+                                let! initializedBoundary =
+                                    Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                        repositoryConfiguration.GraceStatusFile
+                                        repositoryConfiguration.RepositoryId
+                                        repositoryConfiguration.BranchId
 
-                            let! retainedBaselineBlobAfterStartupProcessing = retainedBaselineBlob.ExistsAsync()
+                                Assert.That(initializedBoundary.IsSome, Is.True)
+                                Assert.That(initializedBoundary.Value.DirectoryId, Is.EqualTo(initializedStatus.RootDirectoryId))
+                                Assert.That(initializedBoundary.Value.Sha256Hash, Is.EqualTo(initializedStatus.RootDirectorySha256Hash))
+                                Assert.That(initializedBoundary.Value.Blake3Hash, Is.EqualTo(initializedStatus.RootDirectoryBlake3Hash))
+                                Assert.That(initializedBoundary.Value.EventCursor, Is.Not.Empty)
+                                let! branch = BranchServerTestHelpers.getBranchAsync (string newRepositoryId) (string repositoryConfiguration.BranchId)
 
-                            Assert.That(
-                                retainedBaselineBlobAfterStartupProcessing.Value,
-                                Is.False,
-                                "Production startup must not upload retained baseline bytes."
-                            )
+                                let! closureResponse =
+                                    BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync
+                                        (string newRepositoryId)
+                                        branch
+                                        initializedStatus.RootDirectorySha256Hash
+                                        initializedStatus.RootDirectoryBlake3Hash
 
-                            Assert.That(
-                                referencesAfterStartupProcessing
-                                |> Array.exists (fun reference -> reference.DirectoryId = laterRoot.DirectoryVersionId),
-                                Is.True,
-                                "The server Reference set must still contain the cursor-new Reference after baseline processing."
-                            )
+                                let! closureBody = closureResponse.Content.ReadAsStringAsync()
+                                Assert.That(closureResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), closureBody)
 
-                            Assert.That(Convert.ToHexString(File.ReadAllBytes(retainedPath)), Is.EqualTo(Convert.ToHexString(retainedPayload)))
+                                let closure =
+                                    (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> closureBody)
+                                        .ReturnValue
 
-                            do!
-                                Grace.CLI.Command.Watch.completeStartupRecoveryIfPendingWorkDrainedWithCatchUpForWatchTests
-                                    Grace.CLI.Services.readGraceStatusFile
-                                    Grace.CLI.Services.updateGraceWatchInterprocessFile
-                                    Grace.CLI.Command.Watch.processChangedFiles
-                                    (fun () -> Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None)
+                                let localIds =
+                                    initializedStatus.Index.Keys
+                                    |> Seq.map string
+                                    |> Set.ofSeq
 
-                            Assert.That(File.Exists(materializedPath), Is.True)
-                            Assert.That(Convert.ToHexString(File.ReadAllBytes(materializedPath)), Is.EqualTo(Convert.ToHexString(payload)))
+                                let serverIds =
+                                    closure
+                                    |> Seq.map (fun directory -> string directory.DirectoryVersion.DirectoryVersionId)
+                                    |> Set.ofSeq
 
-                            let! durableStatus = Grace.CLI.Services.readGraceStatusFile ()
-                            Assert.That(durableStatus.RootDirectoryId, Is.EqualTo(laterRoot.DirectoryVersionId))
-                            Assert.That(durableStatus.RootDirectorySha256Hash, Is.EqualTo(laterRoot.Sha256Hash))
-                            Assert.That(durableStatus.RootDirectoryBlake3Hash, Is.EqualTo(laterRoot.Blake3Hash))
-
-                            let! boundary =
-                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
-                                    configuration.GraceStatusFile
-                                    configuration.RepositoryId
-                                    configuration.BranchId
-
-                            Assert.That(boundary.IsSome, Is.True)
-                            Assert.That(boundary.Value.DirectoryId, Is.EqualTo(laterRoot.DirectoryVersionId))
-                            Assert.That(boundary.Value.EventCursor, Is.EqualTo("branch-event-v1:2"))
+                                Assert.That((serverIds = localIds), Is.True)
                         finally
-                            Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
-                            Grace.CLI.Command.Watch.resetWatchIgnoreSnapshotForWatchTests ()
-                            if File.Exists(ipcPath) then File.Delete(ipcPath)
+                            Grace.CLI.Command.Repository.resetBeforeRepositoryInitializationSaveForTests ()
+                            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, previousGraceToken)
                     })
+
+            do! runInitialization "Json" false
+            do! runInitialization "Json" true
+            do! runInitialization "Minimal" false
+            do! runInitialization "Silent" false
         }
 
-    /// A real DB reset with an unmatched retained root preserves local files and starts at the current server tail.
+    /// Explicit Doctor repair restores exact nested identities, then ordinary Save and one-time remote replay remain healthy.
     [<Test; NonParallelizable>]
-    member _.ProductionWatchMissingBoundaryRecoveryBaselinesUnmatchedRootWithoutMutation() =
+    member _.ProductionDoctorRepairRestoresExactStateThenSaveAndReplaySucceed() =
         task {
             let repositoryId = repositoryIds[0]
             let parentBranchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId parentBranchId
-            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"WatchBaseline{Guid.NewGuid():N}"
-            let serverRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath []
-            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ serverRoot ]
-            let! serverSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch serverRoot.DirectoryVersionId serverRoot.Sha256Hash
-            let! serverSaveBody = serverSave.Content.ReadAsStringAsync()
-            Assert.That(serverSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), serverSaveBody)
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"DoctorRepair{Guid.NewGuid():N}"
+            let nestedParentPath = RelativePath $"nested-{Guid.NewGuid():N}"
+            let nestedDirectoryPath = RelativePath $"{nestedParentPath}/deeper"
+            let nestedRelativePath = RelativePath $"{nestedDirectoryPath}/baseline.txt"
+            let nestedPayload = Encoding.UTF8.GetBytes("doctor exact nested baseline")
+
+            let nestedFileVersion =
+                FileVersion.CreateWithHashes
+                    nestedRelativePath
+                    (BranchServerTestHelpers.sha256Hex nestedPayload)
+                    (BranchServerTestHelpers.blake3Hex nestedPayload)
+                    String.Empty
+                    false
+                    (int64 nestedPayload.Length)
+
+            let nestedDirectory = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId nestedDirectoryPath nestedFileVersion
+            let nestedParent = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId nestedParentPath [ nestedDirectory ]
+            let exactRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ nestedParent ]
+
+            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId nestedPayload nestedFileVersion
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        nestedDirectory
+                        nestedParent
+                        exactRoot
+                    ]
+
+            let! firstExactSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch exactRoot.DirectoryVersionId exactRoot.Sha256Hash
+            let! firstExactSaveBody = firstExactSave.Content.ReadAsStringAsync()
+            Assert.That(firstExactSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstExactSaveBody)
+
+            let! secondExactSave = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch exactRoot.DirectoryVersionId exactRoot.Sha256Hash
+            let! secondExactSaveBody = secondExactSave.Content.ReadAsStringAsync()
+            Assert.That(secondExactSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondExactSaveBody)
 
             do!
                 BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
                     task {
                         do! BranchServerTestHelpers.configureSdkForServerAsync ()
+                        let! publicCliToken = BranchServerTestHelpers.createPublicCliTokenAsync ()
+                        let previousGraceToken = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, publicCliToken)
                         let configuration = Current()
                         configuration.OwnerId <- Guid.Parse(ownerId)
+                        configuration.OwnerName <- String.Empty
                         configuration.OrganizationId <- Guid.Parse(organizationId)
+                        configuration.OrganizationName <- String.Empty
                         configuration.RepositoryId <- Guid.Parse(repositoryId)
-                        configuration.RepositoryName <- "watch-baseline-repository"
+                        configuration.RepositoryName <- String.Empty
                         configuration.BranchId <- branch.BranchId
-                        configuration.BranchName <- string branch.BranchName
+                        configuration.BranchName <- String.Empty
+                        configuration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
 
-                        saveConfigFile (Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)) configuration
+                        let configPath = Path.Combine(configuration.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+                        saveConfigFile configPath configuration
+                        let nestedPath = Path.Combine(configuration.RootDirectory, string nestedRelativePath)
 
-                        let retainedFilePath = Path.Combine(configuration.RootDirectory, $"retained-{Guid.NewGuid():N}.txt")
-                        let retainedBytes = Encoding.UTF8.GetBytes("unmatched local content wins")
-                        File.WriteAllBytes(retainedFilePath, retainedBytes)
+                        Directory.CreateDirectory(Path.GetDirectoryName(nestedPath))
+                        |> ignore
 
-                        let! initialStatus =
-                            Grace.CLI.Services.createNewGraceStatusFileForRoot (DirectoryVersionId.NewGuid()) GraceStatus.Default Grace.CLI.Services.parseResult
+                        File.WriteAllBytes(nestedPath, nestedPayload)
+                        let originalBytes = File.ReadAllBytes(nestedPath)
+                        let! retainedStatus = Grace.CLI.Services.createNewGraceStatusFile GraceStatus.Default Grace.CLI.Services.parseResult
 
-                        Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
-                        Grace.CLI.Command.Watch.resetWatchIgnoreSnapshotForWatchTests ()
-                        do! Grace.CLI.LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
-                        do! Grace.CLI.Services.writeGraceStatusFile initialStatus
-
-                        do! Grace.CLI.Services.updateGraceWatchInterprocessFile initialStatus (Some(HashSet<DirectoryVersionId>(initialStatus.Index.Keys)))
-
-                        let ipcPath = Grace.CLI.Services.IpcFileName()
-                        let retainedStatus = deserialize<Grace.CLI.Services.GraceWatchStatus> (File.ReadAllText(ipcPath))
-
-                        File.WriteAllText(
-                            ipcPath,
-                            serialize { retainedStatus with UpdatedAt = retainedStatus.UpdatedAt.Minus(NodaTime.Duration.FromMinutes(10.0)) }
+                        Assert.That(
+                            string retainedStatus.RootDirectorySha256Hash,
+                            Is.EqualTo(string exactRoot.Sha256Hash),
+                            $"retained BLAKE3={retainedStatus.RootDirectoryBlake3Hash}; server BLAKE3={exactRoot.Blake3Hash}"
                         )
 
+                        Assert.That(retainedStatus.RootDirectoryBlake3Hash, Is.EqualTo(exactRoot.Blake3Hash))
+
+                        let lookup =
+                            Parameters.DirectoryVersion.GetBySha256HashParameters(
+                                OwnerId = ownerId,
+                                OrganizationId = organizationId,
+                                RepositoryId = repositoryId,
+                                Sha256Hash = retainedStatus.RootDirectorySha256Hash,
+                                CorrelationId = generateCorrelationId ()
+                            )
+
+                        let! lookupResult = Grace.SDK.DirectoryVersion.GetBySha256Hash lookup
+
+                        match lookupResult with
+                        | Ok value ->
+                            Assert.That(value.ReturnValue.DirectoryVersionId, Is.EqualTo(exactRoot.DirectoryVersionId))
+                            Assert.That(value.ReturnValue.RelativePath, Is.EqualTo(Constants.RootDirectoryPath))
+                            Assert.That(value.ReturnValue.Blake3Hash, Is.EqualTo(exactRoot.Blake3Hash))
+                        | Error error -> Assert.Fail($"Expected exact hosted root lookup, got {error.Error}.")
+
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        let! referencesBeforeRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                        let! nestedBlob = BranchServerTestHelpers.getFileObjectAzuriteBlockBlobClientAsync repositoryId nestedFileVersion
+                        let! nestedBlobBeforeRepair = nestedBlob.ExistsAsync()
+                        Assert.That(nestedBlobBeforeRepair.Value, Is.True)
+
+                        let nestedBlobNamespace =
+                            let separator = nestedBlob.Name.LastIndexOf('/')
+                            if separator < 0 then nestedBlob.Name else nestedBlob.Name[..separator]
+
+                        let blobNamesBeforeRepair =
+                            nestedBlob
+                                .GetParentBlobContainerClient()
+                                .GetBlobs()
+                            |> Seq.filter (fun blob -> blob.Name.StartsWith(nestedBlobNamespace, StringComparison.Ordinal))
+                            |> Seq.map (fun blob -> blob.Name)
+                            |> Set.ofSeq
+
+                        Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () -> File.AppendAllText(nestedPath, "stale"))
+
+                        let changedBytesExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                        Assert.That(changedBytesExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        File.WriteAllBytes(nestedPath, originalBytes)
+
+                        let originalConfig = File.ReadAllText(configPath)
+                        let changedBranchId = Guid.NewGuid().ToString()
+
+                        Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () ->
+                            File.WriteAllText(configPath, originalConfig.Replace(branch.BranchId.ToString(), changedBranchId)))
+
+                        let changedConfigExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                        Assert.That(changedConfigExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        File.WriteAllText(configPath, originalConfig)
+                        resetConfiguration ()
+
+                        let changedServerUri = "http://127.0.0.1:59999"
+
+                        Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () ->
+                            File.WriteAllText(configPath, originalConfig.Replace(configuration.ServerUri, changedServerUri)))
+
+                        let changedServerExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                        Assert.That(changedServerExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        File.WriteAllText(configPath, originalConfig)
+                        resetConfiguration ()
+
+                        let originalWorkingDirectory = Environment.CurrentDirectory
+                        let alternateRoot = Path.Combine(Path.GetTempPath(), $"grace-doctor-config-race-{Guid.NewGuid():N}")
+                        let alternateGraceDirectory = Path.Combine(alternateRoot, Constants.GraceConfigDirectory)
+
+                        Directory.CreateDirectory(alternateGraceDirectory)
+                        |> ignore
+
+                        File.WriteAllText(Path.Combine(alternateGraceDirectory, Constants.GraceConfigFileName), originalConfig)
+
+                        try
+                            Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () -> Environment.CurrentDirectory <- alternateRoot)
+
+                            let changedRootAndStatusPathExitCode =
+                                Grace.CLI.GraceCommand.main [| "doctor"
+                                                               "--repair-local-state"
+                                                               "--output"
+                                                               "Json" |]
+
+                            Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                            Assert.That(changedRootAndStatusPathExitCode, Is.EqualTo(-1))
+                            Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                            Assert.That(File.Exists(Path.Combine(alternateGraceDirectory, Constants.GraceLocalStateDbFileName)), Is.False)
+                        finally
+                            Environment.CurrentDirectory <- originalWorkingDirectory
+                            Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                            resetConfiguration ()
+                            Directory.Delete(alternateRoot, true)
+
+                        do! Grace.CLI.LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                        do
+                            use connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={configuration.GraceStatusFile}")
+                            connection.Open()
+                            use command = connection.CreateCommand()
+
+                            command.CommandText <-
+                                "CREATE TRIGGER reject_doctor_boundary BEFORE INSERT ON remote_reference_boundaries BEGIN SELECT RAISE(ABORT, 'forced doctor boundary failure'); END;"
+
+                            command.ExecuteNonQuery() |> ignore
+
+                        let sqliteFailureExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Assert.That(sqliteFailureExitCode, Is.EqualTo(-1))
+                        let! statusAfterSqliteFailure = Grace.CLI.LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                        Assert.That(statusAfterSqliteFailure.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
+
+                        let! boundaryAfterSqliteFailure =
+                            Grace.CLI.LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                        Assert.That(boundaryAfterSqliteFailure, Is.EqualTo(None))
+
+                        do
+                            use activeWriter = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={configuration.GraceStatusFile};Pooling=False")
+                            activeWriter.Open()
+                            use beginWriter = activeWriter.CreateCommand()
+                            beginWriter.CommandText <- "BEGIN IMMEDIATE;"
+                            beginWriter.ExecuteNonQuery() |> ignore
+
+                            let activeWriterExitCode =
+                                Grace.CLI.GraceCommand.main [| "doctor"
+                                                               "--repair-local-state"
+                                                               "--output"
+                                                               "Json" |]
+
+                            Assert.That(activeWriterExitCode, Is.EqualTo(-1))
+                            use rollbackWriter = activeWriter.CreateCommand()
+                            rollbackWriter.CommandText <- "ROLLBACK;"
+                            rollbackWriter.ExecuteNonQuery() |> ignore
+
+                        let! statusAfterActiveWriter = Grace.CLI.LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                        Assert.That(statusAfterActiveWriter.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
+
+                        let! boundaryAfterActiveWriter =
+                            Grace.CLI.LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                        Assert.That(boundaryAfterActiveWriter, Is.EqualTo(None))
                         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
-                        GC.Collect()
-                        GC.WaitForPendingFinalizers()
 
                         [|
                             configuration.GraceStatusFile
@@ -2428,88 +2543,267 @@ type BranchServer() =
                         |]
                         |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
 
-                        try
-                            let! claim = Grace.CLI.Services.claimGraceWatchInterprocessFile ()
-                            Assert.That(claim.Claimed, Is.True)
-                            Assert.That(claim.RetainedStatus.IsSome, Is.True)
-                            Grace.CLI.Command.Watch.setGraceWatchRuntimeModeForWatchTests Grace.CLI.Services.GraceWatchRuntimeMode.StartingUp
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, "not-a-valid-pat")
 
+                        let serverFailureExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, publicCliToken)
+                        Assert.That(serverFailureExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+
+                        let repairExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Assert.That(repairExitCode, Is.EqualTo(0))
+                        resetConfiguration ()
+                        let configuration = Current()
+                        Assert.That(configuration.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.True)
+                        Assert.That(Convert.ToHexString(File.ReadAllBytes(nestedPath)), Is.EqualTo(Convert.ToHexString(originalBytes)))
+
+                        let! repairedStatus = Grace.CLI.Services.readGraceStatusFile ()
+                        Assert.That(repairedStatus.RootDirectoryId, Is.EqualTo(exactRoot.DirectoryVersionId))
+                        Assert.That(repairedStatus.Index.Keys, Does.Contain(exactRoot.DirectoryVersionId))
+                        Assert.That(repairedStatus.Index.Keys, Does.Contain(nestedParent.DirectoryVersionId))
+                        Assert.That(repairedStatus.Index.Keys, Does.Contain(nestedDirectory.DirectoryVersionId))
+
+                        for directoryVersion in repairedStatus.Index.Values do
+                            Assert.That(
+                                directoryVersion.RepositoryId,
+                                Is.EqualTo(Guid.Parse(repositoryId)),
+                                $"Repaired directory {directoryVersion.RelativePath} must retain repository scope."
+                            )
+
+                        let repairedNestedDirectory = repairedStatus.Index[nestedDirectory.DirectoryVersionId]
+                        Assert.That(repairedNestedDirectory.Files, Has.Count.EqualTo(1))
+                        Assert.That(repairedNestedDirectory.Files[0].Sha256Hash, Is.EqualTo(nestedFileVersion.Sha256Hash))
+                        Assert.That(repairedNestedDirectory.Files[0].Blake3Hash, Is.EqualTo(nestedFileVersion.Blake3Hash))
+
+                        let! repairedBoundary =
+                            Grace.CLI.LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                        Assert.That(repairedBoundary.IsSome, Is.True)
+                        Assert.That(repairedBoundary.Value.DirectoryId, Is.EqualTo(exactRoot.DirectoryVersionId))
+                        Assert.That(repairedBoundary.Value.EventCursor, Is.EqualTo("branch-event-v1:2"))
+
+                        let! referencesAfterRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+
+                        let referenceIds (references: Reference.ReferenceDto array) =
+                            references
+                            |> Array.map (fun reference -> string reference.ReferenceId)
+                            |> Array.sort
+                            |> String.concat ","
+
+                        Assert.That(referenceIds referencesAfterRepair, Is.EqualTo(referenceIds referencesBeforeRepair))
+
+                        let! nestedBlobAfterRepair = nestedBlob.ExistsAsync()
+                        Assert.That(nestedBlobAfterRepair.Value, Is.True)
+
+                        let blobNamesAfterRepair =
+                            nestedBlob
+                                .GetParentBlobContainerClient()
+                                .GetBlobs()
+                            |> Seq.filter (fun blob -> blob.Name.StartsWith(nestedBlobNamespace, StringComparison.Ordinal))
+                            |> Seq.map (fun blob -> blob.Name)
+                            |> Set.ofSeq
+
+                        Assert.That((blobNamesAfterRepair = blobNamesBeforeRepair), Is.True)
+
+                        let! closureAfterRepairResponse =
+                            BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId branch exactRoot.Sha256Hash exactRoot.Blake3Hash
+
+                        let! closureAfterRepairBody = closureAfterRepairResponse.Content.ReadAsStringAsync()
+                        Assert.That(closureAfterRepairResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), closureAfterRepairBody)
+
+                        let closureAfterRepair =
+                            (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> closureAfterRepairBody)
+                                .ReturnValue
+
+                        let closureIdsAfterRepair =
+                            closureAfterRepair
+                            |> Seq.map (fun directory -> directory.DirectoryVersion.DirectoryVersionId)
+                            |> Set.ofSeq
+
+                        let expectedClosureIds =
+                            [
+                                exactRoot.DirectoryVersionId
+                                nestedParent.DirectoryVersionId
+                                nestedDirectory.DirectoryVersionId
+                            ]
+                            |> Set.ofList
+
+                        Assert.That((closureIdsAfterRepair = expectedClosureIds), Is.True)
+
+                        Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                        Grace.CLI.Command.Watch.resetWatchIgnoreSnapshotForWatchTests ()
+                        Grace.CLI.Command.Watch.setGraceWatchRuntimeModeForWatchTests Grace.CLI.Services.GraceWatchRuntimeMode.StartingUp
+
+                        try
                             match Grace.CLI.Command.Watch.tryActivateWatchIgnoreSnapshotForWatchTests () with
                             | Ok () -> ()
                             | Error error -> Assert.Fail($"Expected production Watch ignore snapshot activation, got {error}.")
 
-                            let! resetStatus = Grace.CLI.Services.readGraceStatusFile ()
+                            let localEditPath = Path.Combine(configuration.RootDirectory, string nestedDirectoryPath, "local-edit.txt")
+                            File.WriteAllText(localEditPath, "ordinary local edit after Doctor repair")
+                            let! localDifferences = Grace.CLI.Command.Watch.tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests repairedStatus
 
-                            let! recoveredStatus =
-                                Grace.CLI.Command.Watch.establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests
-                                    claim.RetainedStatus
-                                    resetStatus
-                                    System.Threading.CancellationToken.None
+                            let localDifferences =
+                                match localDifferences with
+                                | Ok differences -> differences
+                                | Error error ->
+                                    Assert.Fail($"Expected post-repair production scan success, got {error}.")
+                                    List<FileSystemDifference>()
 
-                            Assert.That(Convert.ToHexString(File.ReadAllBytes(retainedFilePath)), Is.EqualTo(Convert.ToHexString(retainedBytes)))
-                            Assert.That(recoveredStatus.RootDirectoryId, Is.EqualTo(initialStatus.RootDirectoryId))
+                            Assert.That(localDifferences, Is.Not.Empty)
 
-                            let! boundary =
+                            let! _, projectedDirectoryVersions = Grace.CLI.Services.getNewGraceStatusAndDirectoryVersions repairedStatus localDifferences
+
+                            for directoryVersion in projectedDirectoryVersions do
+                                Assert.That(
+                                    directoryVersion.RepositoryId,
+                                    Is.EqualTo(Guid.Parse(repositoryId)),
+                                    $"Projected directory {directoryVersion.RelativePath} must retain repository scope."
+                                )
+
+                            for difference in localDifferences do
+                                Grace.CLI.Command.Watch.queueStartupDifferenceForWatch difference
+
+                            do! Grace.CLI.Command.Watch.processChangedFiles ()
+
+                            let! referencesAfterLocalSave = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                            Assert.That(referencesAfterLocalSave, Has.Length.EqualTo(referencesAfterRepair.Length + 1))
+                            let! statusAfterLocalSave = Grace.CLI.Services.readGraceStatusFile ()
+                            Assert.That(statusAfterLocalSave.RootDirectoryId, Is.Not.EqualTo(exactRoot.DirectoryVersionId))
+                            Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
+                            Grace.CLI.Command.Watch.setGraceStatusForWatchTests statusAfterLocalSave
+                            Grace.CLI.Command.Watch.updateGraceStatusDirectoryIds statusAfterLocalSave
+
+                            do!
+                                Grace.CLI.Services.updateGraceWatchInterprocessFile
+                                    statusAfterLocalSave
+                                    (Some(HashSet<DirectoryVersionId>(statusAfterLocalSave.Index.Keys)))
+
+                            let remoteRelativePath = RelativePath $"remote-{Guid.NewGuid():N}.txt"
+                            let remotePayload = Encoding.UTF8.GetBytes("one later remote reference")
+
+                            let remoteFileVersion =
+                                FileVersion.CreateWithHashes
+                                    remoteRelativePath
+                                    (BranchServerTestHelpers.sha256Hex remotePayload)
+                                    (BranchServerTestHelpers.blake3Hex remotePayload)
+                                    String.Empty
+                                    false
+                                    (int64 remotePayload.Length)
+
+                            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId remotePayload remoteFileVersion
+                            let remoteObjectCachePath = Grace.CLI.Services.getLocalObjectCachePathForFileVersion remoteFileVersion
+
+                            Directory.CreateDirectory(Path.GetDirectoryName(remoteObjectCachePath))
+                            |> ignore
+
+                            File.WriteAllBytes(remoteObjectCachePath, remotePayload)
+                            let remoteRoot = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId Constants.RootDirectoryPath remoteFileVersion
+                            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ remoteRoot ]
+
+                            let! remoteSave =
+                                BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch remoteRoot.DirectoryVersionId remoteRoot.Sha256Hash
+
+                            let! remoteSaveBody = remoteSave.Content.ReadAsStringAsync()
+                            Assert.That(remoteSave.StatusCode, Is.EqualTo(HttpStatusCode.OK), remoteSaveBody)
+
+                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None
+                            let remotePath = Path.Combine(configuration.RootDirectory, string remoteRelativePath)
+                            Assert.That(Convert.ToHexString(File.ReadAllBytes(remotePath)), Is.EqualTo(Convert.ToHexString(remotePayload)))
+
+                            let! replayedBoundary =
                                 Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
                                     configuration.GraceStatusFile
                                     configuration.RepositoryId
                                     configuration.BranchId
 
-                            Assert.That(boundary.IsSome, Is.True)
-                            Assert.That(boundary.Value.DirectoryId, Is.EqualTo(initialStatus.RootDirectoryId))
-                            Assert.That(boundary.Value.Sha256Hash, Is.EqualTo(initialStatus.RootDirectorySha256Hash))
-                            Assert.That(boundary.Value.Blake3Hash, Is.EqualTo(initialStatus.RootDirectoryBlake3Hash))
-                            Assert.That(boundary.Value.EventCursor, Is.EqualTo("branch-event-v1:1"))
+                            Assert.That(replayedBoundary.IsSome, Is.True)
+                            Assert.That(replayedBoundary.Value.DirectoryId, Is.EqualTo(remoteRoot.DirectoryVersionId))
 
-                            let! referencesBeforeStartupScan = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                            let replayedCursor = replayedBoundary.Value.EventCursor
+                            do! Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None
 
-                            let! startupScan = Grace.CLI.Command.Watch.tryScanForDifferencesWithWatchIgnoreSnapshotForWatchTests recoveredStatus
+                            let! replayedAgainBoundary =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
 
-                            let startupDifferences =
-                                match startupScan with
-                                | Ok differences -> differences
-                                | Error error ->
-                                    Assert.Fail($"Expected production startup scan success, got {error}.")
-                                    List<FileSystemDifference>()
+                            Assert.That(replayedAgainBoundary.Value.EventCursor, Is.EqualTo(replayedCursor))
+                            Assert.That(Convert.ToHexString(File.ReadAllBytes(remotePath)), Is.EqualTo(Convert.ToHexString(remotePayload)))
 
-                            for difference in startupDifferences do
-                                Grace.CLI.Command.Watch.queueStartupDifferenceForWatch difference
+                            let ipcFilePath = Grace.CLI.Services.IpcFileName()
 
-                            do! Grace.CLI.Command.Watch.processChangedFiles ()
+                            if File.Exists(ipcFilePath) then File.Delete(ipcFilePath)
 
-                            let! referencesAfterStartupProcessing = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
 
-                            Assert.That(startupDifferences, Is.Empty, "Unmatched retained content must be the production scanner baseline.")
+                            [|
+                                configuration.GraceStatusFile
+                                configuration.GraceStatusFile + "-wal"
+                                configuration.GraceStatusFile + "-shm"
+                                configuration.GraceStatusFile + "-journal"
+                            |]
+                            |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
 
-                            Assert.That(
-                                referencesAfterStartupProcessing
-                                |> Array.map (fun reference -> $"{reference.ReferenceId}")
-                                |> Array.sort
-                                |> String.concat ",",
-                                Is.EqualTo(
-                                    referencesBeforeStartupScan
-                                    |> Array.map (fun reference -> $"{reference.ReferenceId}")
-                                    |> Array.sort
-                                    |> String.concat ","
-                                ),
-                                "Unmatched startup processing must not publish retained local content."
-                            )
+                            let stateDirectory = Path.GetDirectoryName(configuration.GraceStatusFile)
 
-                            do!
-                                Grace.CLI.Command.Watch.completeStartupRecoveryIfPendingWorkDrainedWithCatchUpForWatchTests
-                                    Grace.CLI.Services.readGraceStatusFile
-                                    Grace.CLI.Services.updateGraceWatchInterprocessFile
-                                    Grace.CLI.Command.Watch.processChangedFiles
-                                    (fun () -> Grace.CLI.Command.Watch.replayCurrentBranchReferenceEventsForHostedTests System.Threading.CancellationToken.None)
+                            let corruptBackupsBefore =
+                                Directory
+                                    .GetFiles(
+                                        stateDirectory,
+                                        "grace-local.corrupt.*.db"
+                                    )
+                                    .Length
 
-                            Assert.That(Convert.ToHexString(File.ReadAllBytes(retainedFilePath)), Is.EqualTo(Convert.ToHexString(retainedBytes)))
+                            File.WriteAllBytes(configuration.GraceStatusFile, Encoding.UTF8.GetBytes("corrupt local state"))
+                            let! referencesBeforeCorruptRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
 
-                            let! branchAfterRecovery = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
-                            Assert.That(branchAfterRecovery.LatestReference.DirectoryId, Is.EqualTo(serverRoot.DirectoryVersionId))
+                            let corruptRepairExitCode =
+                                Grace.CLI.GraceCommand.main [| "doctor"
+                                                               "--repair-local-state"
+                                                               "--output"
+                                                               "Json" |]
+
+                            Assert.That(corruptRepairExitCode, Is.EqualTo(0))
+
+                            let corruptBackupsAfter =
+                                Directory
+                                    .GetFiles(
+                                        stateDirectory,
+                                        "grace-local.corrupt.*.db"
+                                    )
+                                    .Length
+
+                            Assert.That(corruptBackupsAfter, Is.EqualTo(corruptBackupsBefore + 1))
+                            let! repairedAfterCorruption = Grace.CLI.Services.readGraceStatusFile ()
+                            Assert.That(repairedAfterCorruption.RootDirectoryId, Is.EqualTo(remoteRoot.DirectoryVersionId))
+
+                            let! boundaryAfterCorruption =
+                                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                                    configuration.GraceStatusFile
+                                    configuration.RepositoryId
+                                    configuration.BranchId
+
+                            Assert.That(boundaryAfterCorruption.Value.DirectoryId, Is.EqualTo(remoteRoot.DirectoryVersionId))
+                            let! referencesAfterCorruptRepair = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{branch.BranchId}"
+                            Assert.That(referenceIds referencesAfterCorruptRepair, Is.EqualTo(referenceIds referencesBeforeCorruptRepair))
                         finally
                             Grace.CLI.Command.Watch.clearPendingWatchWorkForTests ()
                             Grace.CLI.Command.Watch.resetWatchIgnoreSnapshotForWatchTests ()
-                            if File.Exists(ipcPath) then File.Delete(ipcPath)
+                            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, previousGraceToken)
                     })
         }
 
