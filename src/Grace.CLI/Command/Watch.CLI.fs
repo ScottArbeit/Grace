@@ -8067,35 +8067,10 @@ module Watch =
     let internal resetBeforeWatchCallbackRuntimeSetupForTests () = beforeWatchCallbackRuntimeSetup <- fun () -> ()
 
     /// Reads only a complete status tree whose root and branch boundary agree without mutating local state.
-    let private requireInitializedLocalStateForWatch () =
+    let private requireInitializedLocalStateForWatch cachedConfiguration operationalConfiguration =
         task {
-            let current = Current()
-
-            let pathComparison =
-                if OperatingSystem.IsWindows() then
-                    StringComparison.OrdinalIgnoreCase
-                else
-                    StringComparison.Ordinal
-
-            let persistedConfiguration =
-                match tryInspectCurrentDirectoryConfiguration () with
-                | Ok inspection -> inspection.Configuration
-                | Error error -> invalidOp $"Grace Watch could not read persisted repository configuration before startup: {error}"
-
-            if
-                persistedConfiguration.OwnerId <> current.OwnerId
-                || persistedConfiguration.OrganizationId
-                   <> current.OrganizationId
-                || persistedConfiguration.RepositoryId
-                   <> current.RepositoryId
-                || persistedConfiguration.BranchId
-                   <> current.BranchId
-                || not (String.Equals(Path.GetFullPath(persistedConfiguration.RootDirectory), Path.GetFullPath(current.RootDirectory), pathComparison))
-                || not (String.Equals(Path.GetFullPath(persistedConfiguration.GraceStatusFile), Path.GetFullPath(current.GraceStatusFile), pathComparison))
-            then
-                invalidOp "Grace Watch cached and persisted repository configuration do not match."
-
-            let inspection = Grace.CLI.LocalStateDb.inspectReadOnly current.GraceStatusFile
+            requireOperationalConfigurationSnapshotCurrent "Watch" cachedConfiguration operationalConfiguration
+            let inspection = Grace.CLI.LocalStateDb.inspectReadOnly operationalConfiguration.GraceStatusFile
 
             if not inspection.OpenedReadOnly
                || inspection.SchemaVersion
@@ -8106,10 +8081,14 @@ module Watch =
                || inspection.ForeignKeyViolations.Length > 0 then
                 invalidOp "Grace Watch requires healthy initialized local state; run materializing grace connect or grace doctor --repair-local-state."
 
-            let! revisionBefore = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+            let! revisionBefore = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly operationalConfiguration.GraceStatusFile
 
             let! statusResult =
-                Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly current.GraceStatusFile current.OwnerId current.OrganizationId current.RepositoryId
+                Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly
+                    operationalConfiguration.GraceStatusFile
+                    operationalConfiguration.OwnerId
+                    operationalConfiguration.OrganizationId
+                    operationalConfiguration.RepositoryId
 
             let status =
                 match statusResult with
@@ -8128,7 +8107,11 @@ module Watch =
                || root.Blake3Hash <> status.RootDirectoryBlake3Hash then
                 invalidOp "Grace Watch requires a complete initialized local status tree; run materializing grace connect or grace doctor --repair-local-state."
 
-            let! boundaryResult = Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+            let! boundaryResult =
+                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                    operationalConfiguration.GraceStatusFile
+                    operationalConfiguration.RepositoryId
+                    operationalConfiguration.BranchId
 
             let boundary =
                 match boundaryResult with
@@ -8143,7 +8126,7 @@ module Watch =
                     invalidOp
                         "Grace Watch requires a matching initialized remote-event boundary; run materializing grace connect or grace doctor --repair-local-state."
 
-            let! revisionAfter = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+            let! revisionAfter = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly operationalConfiguration.GraceStatusFile
 
             if revisionAfter <> revisionBefore then
                 invalidOp "Grace Watch local state changed while startup trust was being validated."
@@ -8151,12 +8134,12 @@ module Watch =
             return
                 {
                     Status = status
-                    OwnerId = current.OwnerId
-                    OrganizationId = current.OrganizationId
-                    RepositoryId = current.RepositoryId
-                    BranchId = current.BranchId
-                    RootDirectory = Path.GetFullPath(current.RootDirectory)
-                    GraceStatusFile = Path.GetFullPath(current.GraceStatusFile)
+                    OwnerId = operationalConfiguration.OwnerId
+                    OrganizationId = operationalConfiguration.OrganizationId
+                    RepositoryId = operationalConfiguration.RepositoryId
+                    BranchId = operationalConfiguration.BranchId
+                    RootDirectory = operationalConfiguration.RootDirectory
+                    GraceStatusFile = operationalConfiguration.GraceStatusFile
                     LocalStatusRevision = revisionAfter
                     Boundary = boundary
                 }
@@ -10412,7 +10395,11 @@ module Watch =
                         let watchCheckStatus = toWatchCheckStatusDto trustInspection
                         raise (WatchCommandExit(renderWatchCheckStatus parseResult watchCheckStatus))
 
-                    let! initializedStateBeforeClaim = requireInitializedLocalStateForWatch ()
+                    let cachedOperationalConfiguration = Current()
+
+                    let operationalConfiguration = captureOperationalConfigurationSnapshot "Watch" cachedOperationalConfiguration
+
+                    let! initializedStateBeforeClaim = requireInitializedLocalStateForWatch cachedOperationalConfiguration operationalConfiguration
 
                     let! graceWatchClaim = claimGraceWatchInterprocessFile ()
 
@@ -10421,7 +10408,7 @@ module Watch =
                         raise (WatchCommandExit -1)
 
                     afterWatchStartupClaim ()
-                    let! initializedStateAfterClaim = requireInitializedLocalStateForWatch ()
+                    let! initializedStateAfterClaim = requireInitializedLocalStateForWatch cachedOperationalConfiguration operationalConfiguration
                     requireWatchLocalStateUnchangedAfterClaim initializedStateBeforeClaim initializedStateAfterClaim
                     beforeWatchCallbackRuntimeSetup ()
                     let initializedStatus = initializedStateAfterClaim.Status
@@ -10446,7 +10433,7 @@ module Watch =
                     setLocalObservationCandidateSchedulingActive true
 
                     // Create the FileSystemWatcher, but don't enable it yet.
-                    use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
+                    use rootDirectoryFileSystemWatcher = createFileSystemWatcher operationalConfiguration.RootDirectory
 
                     use created =
                         Observable
@@ -10522,7 +10509,7 @@ module Watch =
 
                     do!
                         initializeLocalStatusRevisionBeforeArtifactCallbacks
-                            (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                            (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision operationalConfiguration.GraceStatusFile)
                             (fun () ->
                                 task {
                                     // Create the inter-process communication file.
@@ -10539,7 +10526,7 @@ module Watch =
                     logToAnsiConsole Colors.Verbose $"The change processor timer will tick every {timerTimeSpan.TotalSeconds:F1} seconds."
 
                     // Open a SignalR connection to the server.
-                    let signalRUrl = Uri($"{Current().ServerUri}/notifications")
+                    let signalRUrl = Uri($"{operationalConfiguration.ServerUri}/notifications")
                     logToConsole $"signalRUrl: {signalRUrl}."
 
                     match! getSignalRAccessToken () with
@@ -10646,11 +10633,11 @@ module Watch =
 
                     do! signalRConnection.StartAsync(cancellationToken)
                     // Repository-wide notifications are keyed only by RepositoryId, so same-process branch switches do not change this group.
-                    do! signalRConnection.InvokeAsync("RegisterRepository", Current().RepositoryId, cancellationToken)
+                    do! signalRConnection.InvokeAsync("RegisterRepository", operationalConfiguration.RepositoryId, cancellationToken)
 
                     logToAnsiConsole
                         Colors.Highlighted
-                        $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in repository {Current().RepositoryName} ({Current().RepositoryId}); connectionId: {signalRConnection.ConnectionId}."
+                        $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in repository {operationalConfiguration.RepositoryName} ({operationalConfiguration.RepositoryId}); connectionId: {signalRConnection.ConnectionId}."
 
                     match! registerCurrentSignalRParentBranch signalRConnection cancellationToken with
                     | Ok _ -> ()
@@ -10720,7 +10707,7 @@ module Watch =
                                     task {
                                         do!
                                             processLocalStatusRevisionCheck
-                                                (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                                                (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision operationalConfiguration.GraceStatusFile)
                                                 recordGraceStatusRefreshObservation
                                                 requestGraceWatchExplicitResync
 

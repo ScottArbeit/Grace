@@ -15972,6 +15972,71 @@ module WatchTests =
                     Watch.resetAfterWatchStartupClaimForTests ()
                     Watch.resetBeforeWatchCallbackRuntimeSetupForTests ()))
 
+    /// Verifies a persisted server-only rewrite after claim aborts before callback, network, scan, or cursor work.
+    [<Test; Category("WatchStartupLocalStateTrust"); Category("OperationalConfigurationSnapshotRace")>]
+    let ``watch rejects persisted server uri rewrite after startup claim`` () =
+        withTempRepo (fun root ->
+            clearWatchAuthEnv (fun () ->
+                let nestedDirectory = Path.Combine(root, "src")
+
+                Directory.CreateDirectory(nestedDirectory)
+                |> ignore
+
+                File.WriteAllText(Path.Combine(nestedDirectory, "nested.txt"), "trusted nested bytes")
+                writeTrustedNestedWatchState root
+                Services.setLastScanForDifferencesSuccessfulForWatchTests false
+                let configPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+                let cachedServerUri = Current().ServerUri
+                let changedServerUri = "http://127.0.0.1:59999"
+                let originalConfig = File.ReadAllText(configPath)
+
+                let boundaryBefore =
+                    LocalStateDb.readRemoteReferenceBoundary (Current().GraceStatusFile) (Current().RepositoryId) (Current().BranchId)
+                    |> fun pending -> pending.GetAwaiter().GetResult()
+
+                let mutable callbackRuntimeSetupCalls = 0
+                Watch.setBeforeWatchCallbackRuntimeSetupForTests (fun () -> callbackRuntimeSetupCalls <- callbackRuntimeSetupCalls + 1)
+
+                Watch.setAfterWatchStartupClaimForTests (fun () -> File.WriteAllText(configPath, originalConfig.Replace(cachedServerUri, changedServerUri)))
+
+                try
+                    let exitCode, output = runWithCapturedOutput [| "watch" |]
+                    exitCode |> should equal -1
+
+                    output |> should contain "operational repository"
+
+                    output
+                    |> should contain "changed after validation"
+
+                    output |> should not' (contain "access token")
+                    callbackRuntimeSetupCalls |> should equal 0
+
+                    Services.wasLastScanForDifferencesSuccessful ()
+                    |> should equal false
+
+                    let claimStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+                    claimStatus.IsStartupClaim |> should equal true
+
+                    Watch
+                        .pendingWatchWorkSnapshotForTests()
+                        .FilesToProcess
+                    |> should equal Array.empty<string>
+
+                    Watch
+                        .pendingWatchWorkSnapshotForTests()
+                        .StatusUpdateTriggers
+                    |> should equal Array.empty<string>
+
+                    let boundaryAfter =
+                        LocalStateDb.readRemoteReferenceBoundary (Current().GraceStatusFile) (Current().RepositoryId) (Current().BranchId)
+                        |> Async.AwaitTask
+                        |> Async.RunSynchronously
+
+                    boundaryAfter |> should equal boundaryBefore
+                finally
+                    Watch.resetAfterWatchStartupClaimForTests ()
+                    Watch.resetBeforeWatchCallbackRuntimeSetupForTests ()))
+
     /// Verifies that watch exits nonzero when live watcher status already exists.
     [<Test>]
     let ``watch exits nonzero when live watcher status already exists`` () =

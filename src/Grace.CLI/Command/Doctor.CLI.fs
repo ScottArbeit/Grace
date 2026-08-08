@@ -1428,92 +1428,46 @@ module Doctor =
 
     let mutable private beforeRepairFinalValidation = fun () -> ()
 
+    let mutable private afterRepairCachedConfiguration = fun () -> ()
+
+    let mutable private beforeRepairFirstServerRead = fun () -> ()
+
+    /// Installs the deterministic seam used to rewrite persisted configuration after repair acquires cached configuration.
+    let internal setAfterRepairCachedConfigurationForTests probe = afterRepairCachedConfiguration <- probe
+
+    /// Restores production repair configuration capture after deterministic cache-race tests.
+    let internal resetAfterRepairCachedConfigurationForTests () = afterRepairCachedConfiguration <- fun () -> ()
+
+    /// Installs an observer at repair's first server read so configuration races can prove an early abort.
+    let internal setBeforeRepairFirstServerReadForTests probe = beforeRepairFirstServerRead <- probe
+
+    /// Restores the production first-server-read boundary after deterministic repair tests.
+    let internal resetBeforeRepairFirstServerReadForTests () = beforeRepairFirstServerRead <- fun () -> ()
+
     /// Installs the deterministic seam used to prove stale local bytes and configuration cannot cross repair validation.
     let internal setBeforeRepairFinalValidationForTests probe = beforeRepairFinalValidation <- probe
 
     /// Restores production repair validation after deterministic stale-state tests.
     let internal resetBeforeRepairFinalValidationForTests () = beforeRepairFinalValidation <- fun () -> ()
 
-    /// Identifies every effective server, working-tree, and local-state input used by exact repair.
-    type private LocalStateRepairConfigurationIdentity =
-        {
-            RepositoryId: RepositoryId
-            BranchId: BranchId
-            ServerUri: string
-            ConfigurationPath: string
-            RootDirectory: string
-            GraceDirectory: string
-            GraceStatusFile: string
-        }
-
-    /// Canonicalizes an effective repair URI so equivalent trailing separators do not look like server changes.
-    let private canonicalRepairServerUri (value: string) =
-        match Uri.TryCreate(value, UriKind.Absolute) with
-        | true, uri when
-            uri.Scheme = Uri.UriSchemeHttp
-            || uri.Scheme = Uri.UriSchemeHttps
-            ->
-            uri.AbsoluteUri.TrimEnd('/')
-        | _ -> invalidOp $"Grace Doctor requires an absolute HTTP or HTTPS server URI for local-state repair: {value}"
-
-    /// Captures the effective persisted inputs that select repair's server, working tree, and SQLite database.
-    let private localStateRepairConfigurationIdentity (inspection: Grace.Shared.Client.Configuration.GraceConfigurationInspection) =
-        let configuration = inspection.Configuration
-
-        {
-            RepositoryId = configuration.RepositoryId
-            BranchId = configuration.BranchId
-            ServerUri = canonicalRepairServerUri configuration.ServerUri
-            ConfigurationPath = Path.GetFullPath(inspection.Path)
-            RootDirectory = Path.GetFullPath(configuration.RootDirectory)
-            GraceDirectory = Path.GetFullPath(configuration.GraceDirectory)
-            GraceStatusFile = Path.GetFullPath(configuration.GraceStatusFile)
-        }
-
     /// Performs exact-only local-state reconstruction while revalidating configuration and bytes before the atomic commit.
     let private repairLocalState (parseResult: ParseResult) (cancellationToken: CancellationToken) =
         task {
             cancellationToken.ThrowIfCancellationRequested()
             let current = Current()
-            let! watchInspection = Grace.CLI.Services.inspectGraceWatchStatus ()
+            afterRepairCachedConfiguration ()
+            let operationalConfiguration = Grace.CLI.Services.captureOperationalConfigurationSnapshot "Doctor" current
+            let! watchInspection = Grace.CLI.Services.inspectGraceWatchStatusForOperationalConfiguration operationalConfiguration
 
             if watchInspection.IsFresh
                && watchInspection.HasCurrentRepositoryIdentity then
                 invalidOp "Grace Doctor refused local-state repair because Grace Watch is active for this repository and branch."
 
-            let capturedConfigurationIdentity =
-                match tryInspectCurrentDirectoryConfiguration () with
-                | Ok inspection -> localStateRepairConfigurationIdentity inspection
-                | Error error -> invalidOp $"Grace Doctor could not read the configured repository identity: {error}"
-
-            let pathComparison =
-                if OperatingSystem.IsWindows() then
-                    StringComparison.OrdinalIgnoreCase
-                else
-                    StringComparison.Ordinal
-
-            let requireCurrentConfiguration () =
-                match tryInspectCurrentDirectoryConfiguration () with
-                | Ok persisted ->
-                    let candidate = localStateRepairConfigurationIdentity persisted
-
-                    if
-                        candidate.RepositoryId
-                        <> capturedConfigurationIdentity.RepositoryId
-                        || candidate.BranchId
-                           <> capturedConfigurationIdentity.BranchId
-                        || not (String.Equals(candidate.ServerUri, capturedConfigurationIdentity.ServerUri, StringComparison.Ordinal))
-                        || not (String.Equals(candidate.ConfigurationPath, capturedConfigurationIdentity.ConfigurationPath, pathComparison))
-                        || not (String.Equals(candidate.RootDirectory, capturedConfigurationIdentity.RootDirectory, pathComparison))
-                        || not (String.Equals(candidate.GraceDirectory, capturedConfigurationIdentity.GraceDirectory, pathComparison))
-                        || not (String.Equals(candidate.GraceStatusFile, capturedConfigurationIdentity.GraceStatusFile, pathComparison))
-                    then
-                        invalidOp "Server, working-tree, or local-state configuration changed during local-state repair."
-                | Error error -> invalidOp $"Grace Doctor could not read the configured repository identity: {error}"
+            let requireCurrentConfiguration () = Grace.CLI.Services.requireOperationalConfigurationSnapshotCurrent "Doctor" current operationalConfiguration
 
             requireCurrentConfiguration ()
-            LocalStateDb.ensureNoActiveWriterForLocalStateRepair current.GraceStatusFile
-            let! repairBaseline = LocalStateDb.captureLocalStateRepairBaseline current.GraceStatusFile
+            LocalStateDb.ensureNoActiveWriterForLocalStateRepair operationalConfiguration.GraceStatusFile
+            let! repairBaseline = LocalStateDb.captureLocalStateRepairBaseline operationalConfiguration.GraceStatusFile
             let! retained = Grace.CLI.Services.createNewGraceStatusFile GraceStatus.Default parseResult
 
             if
@@ -1524,16 +1478,17 @@ module Doctor =
 
             let lookup =
                 Grace.Shared.Parameters.DirectoryVersion.GetBySha256HashParameters(
-                    OwnerId = $"{current.OwnerId}",
-                    OwnerName = current.OwnerName,
-                    OrganizationId = $"{current.OrganizationId}",
-                    OrganizationName = current.OrganizationName,
-                    RepositoryId = $"{current.RepositoryId}",
-                    RepositoryName = current.RepositoryName,
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
                     Sha256Hash = retained.RootDirectorySha256Hash,
                     CorrelationId = getCorrelationId parseResult
                 )
 
+            beforeRepairFirstServerRead ()
             let! resolvedRootResult = DirectoryVersion.GetBySha256Hash lookup
 
             let resolvedRoot =
@@ -1548,14 +1503,14 @@ module Doctor =
 
             let referencesParameters =
                 GetReferencesParameters(
-                    OwnerId = $"{current.OwnerId}",
-                    OwnerName = current.OwnerName,
-                    OrganizationId = $"{current.OrganizationId}",
-                    OrganizationName = current.OrganizationName,
-                    RepositoryId = $"{current.RepositoryId}",
-                    RepositoryName = current.RepositoryName,
-                    BranchId = $"{current.BranchId}",
-                    BranchName = current.BranchName,
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
+                    BranchId = $"{operationalConfiguration.BranchId}",
+                    BranchName = operationalConfiguration.BranchName,
                     MaxCount = Int32.MaxValue,
                     CorrelationId = getCorrelationId parseResult
                 )
@@ -1564,8 +1519,8 @@ module Doctor =
             | Ok value when
                 value.ReturnValue
                 |> Array.exists (fun (reference: ReferenceDto) ->
-                    reference.RepositoryId = current.RepositoryId
-                    && reference.BranchId = current.BranchId
+                    reference.RepositoryId = operationalConfiguration.RepositoryId
+                    && reference.BranchId = operationalConfiguration.BranchId
                     && reference.DirectoryId = resolvedRoot.DirectoryVersionId
                     && reference.Sha256Hash = resolvedRoot.Sha256Hash
                     && reference.Blake3Hash = resolvedRoot.Blake3Hash)
@@ -1575,14 +1530,14 @@ module Doctor =
 
             let boundaryParameters =
                 ResolveReferenceEventBoundaryParameters(
-                    OwnerId = $"{current.OwnerId}",
-                    OwnerName = current.OwnerName,
-                    OrganizationId = $"{current.OrganizationId}",
-                    OrganizationName = current.OrganizationName,
-                    RepositoryId = $"{current.RepositoryId}",
-                    RepositoryName = current.RepositoryName,
-                    BranchId = $"{current.BranchId}",
-                    BranchName = current.BranchName,
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
+                    BranchId = $"{operationalConfiguration.BranchId}",
+                    BranchName = operationalConfiguration.BranchName,
                     DirectoryVersionId = resolvedRoot.DirectoryVersionId,
                     Sha256Hash = resolvedRoot.Sha256Hash,
                     Blake3Hash = resolvedRoot.Blake3Hash,
@@ -1604,12 +1559,12 @@ module Doctor =
 
             let closureParameters =
                 Grace.Shared.Parameters.DirectoryVersion.GetParameters(
-                    OwnerId = $"{current.OwnerId}",
-                    OwnerName = current.OwnerName,
-                    OrganizationId = $"{current.OrganizationId}",
-                    OrganizationName = current.OrganizationName,
-                    RepositoryId = $"{current.RepositoryId}",
-                    RepositoryName = current.RepositoryName,
+                    OwnerId = $"{operationalConfiguration.OwnerId}",
+                    OwnerName = operationalConfiguration.OwnerName,
+                    OrganizationId = $"{operationalConfiguration.OrganizationId}",
+                    OrganizationName = operationalConfiguration.OrganizationName,
+                    RepositoryId = $"{operationalConfiguration.RepositoryId}",
+                    RepositoryName = operationalConfiguration.RepositoryName,
                     DirectoryVersionId = $"{resolvedRoot.DirectoryVersionId}",
                     CorrelationId = getCorrelationId parseResult
                 )
@@ -1643,19 +1598,22 @@ module Doctor =
             then
                 invalidOp "Working-tree bytes changed before local-state repair could commit."
 
-            let! finalWatchInspection = Grace.CLI.Services.inspectGraceWatchStatus ()
+            let! finalWatchInspection = Grace.CLI.Services.inspectGraceWatchStatusForOperationalConfiguration operationalConfiguration
 
             if finalWatchInspection.IsFresh
                && finalWatchInspection.HasCurrentRepositoryIdentity then
                 invalidOp "Grace Watch started before local-state repair could commit."
 
             match repairBaseline with
-            | LocalStateDb.UnreadableLocalStateDatabase _ -> LocalStateDb.invalidateInitializationCacheForLocalStateRepair current.GraceStatusFile
+            | LocalStateDb.UnreadableLocalStateDatabase _ ->
+                LocalStateDb.invalidateInitializationCacheForLocalStateRepair operationalConfiguration.GraceStatusFile
             | _ -> ()
+
+            requireCurrentConfiguration ()
 
             let! _ =
                 LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepair
-                    current.GraceStatusFile
+                    operationalConfiguration.GraceStatusFile
                     repairBaseline
                     exactStatus
                     boundary

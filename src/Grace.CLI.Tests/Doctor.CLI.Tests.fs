@@ -163,6 +163,50 @@ module DoctorCliTests =
     /// Builds local state db path test data used to exercise CLI doctor behavior.
     let private localStateDbPath root = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
+    /// Verifies repair rejects a persisted rewrite after cached configuration acquisition before server or SQLite work.
+    [<Test; Category("OperationalConfigurationSnapshotRace")>]
+    let ``doctor repair rejects cached and first persisted configuration mismatch before side effects`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                let cachedServerUri = "http://127.0.0.1:59999"
+                let persistedServerUri = "http://127.0.0.1:59998"
+                let configPath = writeGraceConfig root cachedServerUri
+                Configuration.resetConfiguration ()
+                Configuration.Current() |> ignore
+                let originalConfig = File.ReadAllText(configPath)
+                let mutable serverReadCalls = 0
+
+                Doctor.setAfterRepairCachedConfigurationForTests (fun () ->
+                    File.WriteAllText(configPath, originalConfig.Replace(cachedServerUri, persistedServerUri)))
+
+                Doctor.setBeforeRepairFirstServerReadForTests (fun () -> serverReadCalls <- serverReadCalls + 1)
+
+                try
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--repair-local-state" |]
+
+                    exitCode |> should equal -1
+                    standardError |> should equal String.Empty
+
+                    use document = JsonDocument.Parse(standardOut)
+
+                    document
+                        .RootElement
+                        .GetProperty("Error")
+                        .GetString()
+                    |> should contain "cached and persisted repository configuration do not match"
+
+                    serverReadCalls |> should equal 0
+
+                    File.Exists(localStateDbPath root)
+                    |> should equal false
+                finally
+                    Doctor.resetAfterRepairCachedConfigurationForTests ()
+                    Doctor.resetBeforeRepairFirstServerReadForTests ()))
+
     /// Gets corrupt backups needed by the test scenario.
     let private getCorruptBackups root =
         let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
