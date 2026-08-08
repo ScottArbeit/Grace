@@ -418,9 +418,21 @@ module Repository =
                             if isEmpty.ReturnValue = true then
                                 let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
-                                if parseResult |> hasOutput then
+                                match parseResult |> hasOutput with
+                                | showProgress ->
+                                    let initializationProgress =
+                                        if showProgress then
+                                            progress
+                                        else
+                                            let settings = AnsiConsoleSettings()
+                                            settings.Out <- AnsiConsoleOutput(TextWriter.Null)
+
+                                            AnsiConsole
+                                                .Create(settings)
+                                                .Progress(AutoRefresh = false, AutoClear = true, HideCompleted = true)
+
                                     let! graceStatus =
-                                        progress
+                                        initializationProgress
                                             .Columns(progressColumns)
                                             .StartAsync(fun progressContext ->
                                                 task {
@@ -599,7 +611,9 @@ module Repository =
 
                                                                             | Error error ->
                                                                                 fileUploadFailed <- true
-                                                                                AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
+
+                                                                                if showProgress then
+                                                                                    AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
                                                                         }
                                                                     ))
                                                             )
@@ -609,13 +623,14 @@ module Repository =
                                                             ()
                                                         else
                                                             fileUploadFailed <- true
-                                                            AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
+                                                            if showProgress then AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
 
                                                             let mutable error = GraceError.Create String.Empty String.Empty
 
                                                             while not <| errors.IsEmpty do
                                                                 if errors.TryDequeue(&error) then
-                                                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
+                                                                    if showProgress then
+                                                                        AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
                                                             ()
                                                     | AWSS3 -> ()
@@ -683,7 +698,8 @@ module Repository =
 
                                                     t6.Value <- 100.0
 
-                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]succeeded: {succeeded.Count}; errors: {errors.Count}.[/]")
+                                                    if showProgress then
+                                                        AnsiConsole.MarkupLine($"[{Colors.Important}]succeeded: {succeeded.Count}; errors: {errors.Count}.[/]")
 
                                                     let directoryUploadFailed = not errors.IsEmpty
                                                     let mutable error = GraceError.Create String.Empty String.Empty
@@ -693,7 +709,8 @@ module Repository =
 
                                                         if error.Error.Contains("TRetval") then logToConsole $"********* {error.Error}"
 
-                                                        AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
+                                                        if showProgress then
+                                                            AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
                                                     if directoryUploadFailed then
                                                         invalidOp "Repository initialization could not publish every directory version."
@@ -784,13 +801,14 @@ module Repository =
 
                                     let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
-                                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
+                                    if showProgress then
+                                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
 
-                                    AnsiConsole.MarkupLine(
-                                        $"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]"
-                                    )
+                                        AnsiConsole.MarkupLine(
+                                            $"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]"
+                                        )
 
-                                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
+                                        AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
 
                                     let output: LocalOutputDto.RepositoryInitDto =
                                         {
@@ -802,13 +820,6 @@ module Repository =
                                         }
 
                                     return Ok(GraceReturnValue.Create output (parseResult |> getCorrelationId))
-                                else
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                "Repository initialization requires normal or verbose output until its progress workflow supports an inert renderer."
-                                                (parseResult |> getCorrelationId)
-                                        )
                             else
                                 return
                                     Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIsAlreadyInitialized) (parseResult |> getCorrelationId))

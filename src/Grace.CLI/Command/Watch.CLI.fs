@@ -8037,10 +8037,64 @@ module Watch =
             invalidOp "Watch local root does not acknowledge the replayed Reference."
         | _ -> ()
 
-    /// Reads only a complete status tree whose root and branch boundary agree before Watch creates callback infrastructure.
+    /// Captures every durable and configured identity that must remain stable across the Watch IPC startup claim.
+    type private InitializedWatchLocalState =
+        {
+            Status: GraceStatus
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            RootDirectory: string
+            GraceStatusFile: string
+            LocalStatusRevision: int64
+            Boundary: ReferenceMaterializationBoundaryDto
+        }
+
+    let mutable private afterWatchStartupClaim = fun () -> ()
+    let mutable private beforeWatchCallbackRuntimeSetup = fun () -> ()
+
+    /// Installs a deterministic mutation after IPC claim so tests can prove the second trust boundary fails closed.
+    let internal setAfterWatchStartupClaimForTests probe = afterWatchStartupClaim <- probe
+
+    /// Restores the production Watch startup path after post-claim race tests.
+    let internal resetAfterWatchStartupClaimForTests () = afterWatchStartupClaim <- fun () -> ()
+
+    /// Installs an observer at the first callback/runtime setup boundary for public startup-order tests.
+    let internal setBeforeWatchCallbackRuntimeSetupForTests probe = beforeWatchCallbackRuntimeSetup <- probe
+
+    /// Restores the production callback/runtime setup boundary after public startup-order tests.
+    let internal resetBeforeWatchCallbackRuntimeSetupForTests () = beforeWatchCallbackRuntimeSetup <- fun () -> ()
+
+    /// Reads only a complete status tree whose root and branch boundary agree without mutating local state.
     let private requireInitializedLocalStateForWatch () =
         task {
             let current = Current()
+
+            let pathComparison =
+                if OperatingSystem.IsWindows() then
+                    StringComparison.OrdinalIgnoreCase
+                else
+                    StringComparison.Ordinal
+
+            let persistedConfiguration =
+                match tryInspectCurrentDirectoryConfiguration () with
+                | Ok inspection -> inspection.Configuration
+                | Error error -> invalidOp $"Grace Watch could not read persisted repository configuration before startup: {error}"
+
+            if
+                persistedConfiguration.OwnerId <> current.OwnerId
+                || persistedConfiguration.OrganizationId
+                   <> current.OrganizationId
+                || persistedConfiguration.RepositoryId
+                   <> current.RepositoryId
+                || persistedConfiguration.BranchId
+                   <> current.BranchId
+                || not (String.Equals(Path.GetFullPath(persistedConfiguration.RootDirectory), Path.GetFullPath(current.RootDirectory), pathComparison))
+                || not (String.Equals(Path.GetFullPath(persistedConfiguration.GraceStatusFile), Path.GetFullPath(current.GraceStatusFile), pathComparison))
+            then
+                invalidOp "Grace Watch cached and persisted repository configuration do not match."
+
             let inspection = Grace.CLI.LocalStateDb.inspectReadOnly current.GraceStatusFile
 
             if not inspection.OpenedReadOnly
@@ -8051,6 +8105,8 @@ module Watch =
                || inspection.IntegrityCheckRows <> [| "ok" |]
                || inspection.ForeignKeyViolations.Length > 0 then
                 invalidOp "Grace Watch requires healthy initialized local state; run materializing grace connect or grace doctor --repair-local-state."
+
+            let! revisionBefore = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
 
             let! statusResult =
                 Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly current.GraceStatusFile current.OwnerId current.OrganizationId current.RepositoryId
@@ -8072,19 +8128,77 @@ module Watch =
                || root.Blake3Hash <> status.RootDirectoryBlake3Hash then
                 invalidOp "Grace Watch requires a complete initialized local status tree; run materializing grace connect or grace doctor --repair-local-state."
 
-            match! Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId with
-            | Some boundary when
-                boundary.DirectoryId = status.RootDirectoryId
-                && boundary.Sha256Hash = status.RootDirectorySha256Hash
-                && boundary.Blake3Hash = status.RootDirectoryBlake3Hash
-                && not (String.IsNullOrWhiteSpace boundary.EventCursor)
-                ->
-                return status
-            | _ ->
-                return
+            let! boundaryResult = Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+
+            let boundary =
+                match boundaryResult with
+                | Some boundary when
+                    boundary.DirectoryId = status.RootDirectoryId
+                    && boundary.Sha256Hash = status.RootDirectorySha256Hash
+                    && boundary.Blake3Hash = status.RootDirectoryBlake3Hash
+                    && not (String.IsNullOrWhiteSpace boundary.EventCursor)
+                    ->
+                    boundary
+                | _ ->
                     invalidOp
                         "Grace Watch requires a matching initialized remote-event boundary; run materializing grace connect or grace doctor --repair-local-state."
+
+            let! revisionAfter = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly current.GraceStatusFile
+
+            if revisionAfter <> revisionBefore then
+                invalidOp "Grace Watch local state changed while startup trust was being validated."
+
+            return
+                {
+                    Status = status
+                    OwnerId = current.OwnerId
+                    OrganizationId = current.OrganizationId
+                    RepositoryId = current.RepositoryId
+                    BranchId = current.BranchId
+                    RootDirectory = Path.GetFullPath(current.RootDirectory)
+                    GraceStatusFile = Path.GetFullPath(current.GraceStatusFile)
+                    LocalStatusRevision = revisionAfter
+                    Boundary = boundary
+                }
         }
+
+    /// Rejects any configured or durable identity change across the atomic Watch IPC startup claim.
+    let private requireWatchLocalStateUnchangedAfterClaim expected actual =
+        let pathComparison =
+            if OperatingSystem.IsWindows() then
+                StringComparison.OrdinalIgnoreCase
+            else
+                StringComparison.Ordinal
+
+        let samePath left right = String.Equals(Path.GetFullPath(left), Path.GetFullPath(right), pathComparison)
+
+        if actual.OwnerId <> expected.OwnerId
+           || actual.OrganizationId <> expected.OrganizationId
+           || actual.RepositoryId <> expected.RepositoryId
+           || actual.BranchId <> expected.BranchId
+           || not (samePath actual.RootDirectory expected.RootDirectory)
+           || not (samePath actual.GraceStatusFile expected.GraceStatusFile)
+           || actual.LocalStatusRevision
+              <> expected.LocalStatusRevision
+           || actual.Status.RootDirectoryId
+              <> expected.Status.RootDirectoryId
+           || actual.Status.RootDirectorySha256Hash
+              <> expected.Status.RootDirectorySha256Hash
+           || actual.Status.RootDirectoryBlake3Hash
+              <> expected.Status.RootDirectoryBlake3Hash
+           || actual.Boundary.RepositoryId
+              <> expected.Boundary.RepositoryId
+           || actual.Boundary.BranchId
+              <> expected.Boundary.BranchId
+           || actual.Boundary.DirectoryId
+              <> expected.Boundary.DirectoryId
+           || actual.Boundary.Sha256Hash
+              <> expected.Boundary.Sha256Hash
+           || actual.Boundary.Blake3Hash
+              <> expected.Boundary.Blake3Hash
+           || actual.Boundary.EventCursor
+              <> expected.Boundary.EventCursor then
+            invalidOp "Grace Watch local state changed after the Watch startup claim; startup was aborted before callback or runtime setup."
 
     /// Persists an opaque cursor only after current branch, safe-state, root, and prior-boundary evidence are reread.
     let private acknowledgeCurrentBranchReferenceReplayCursor
@@ -10298,13 +10412,19 @@ module Watch =
                         let watchCheckStatus = toWatchCheckStatusDto trustInspection
                         raise (WatchCommandExit(renderWatchCheckStatus parseResult watchCheckStatus))
 
+                    let! initializedStateBeforeClaim = requireInitializedLocalStateForWatch ()
+
                     let! graceWatchClaim = claimGraceWatchInterprocessFile ()
 
                     if not graceWatchClaim.Claimed then
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
 
-                    let! initializedStatus = requireInitializedLocalStateForWatch ()
+                    afterWatchStartupClaim ()
+                    let! initializedStateAfterClaim = requireInitializedLocalStateForWatch ()
+                    requireWatchLocalStateUnchangedAfterClaim initializedStateBeforeClaim initializedStateAfterClaim
+                    beforeWatchCallbackRuntimeSetup ()
+                    let initializedStatus = initializedStateAfterClaim.Status
 
                     ClientIdentity.configureWatchProcessId watchProcessId
 

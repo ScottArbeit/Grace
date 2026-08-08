@@ -171,6 +171,9 @@ module WatchTests =
     /// Builds a healthy live Watch status snapshot for IPC compatibility tests.
     let private liveWatchStatus rootDirectoryId : Services.GraceWatchStatus =
         let current = Current()
+        let entries = Array.empty<DirectoryVersionPreimageEntry>
+        let rootSha = computeSha256ForDirectoryEntries Constants.RootDirectoryPath entries
+        let rootBlake3 = computeBlake3ForDirectory Constants.RootDirectoryPath entries
 
         {
             UpdatedAt = getCurrentInstant ()
@@ -183,12 +186,58 @@ module WatchTests =
             HasPendingWatchWork = false
             IsWorkingTreeClean = true
             RootDirectoryId = rootDirectoryId
-            RootDirectorySha256Hash = Sha256Hash "live-watch-root"
-            RootDirectoryBlake3Hash = Blake3Hash "live-watch-root-blake3"
+            RootDirectorySha256Hash = rootSha
+            RootDirectoryBlake3Hash = rootBlake3
             LastFileUploadInstant = Instant.MinValue
             LastDirectoryVersionInstant = Instant.MinValue
             DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
         }
+
+    /// Persists a complete root-only status and matching boundary for valid Watch IPC lifecycle tests.
+    let private writeTrustedRootOnlyWatchState rootDirectoryId =
+        let current = Current()
+        let status = liveWatchStatus rootDirectoryId
+
+        let rootDirectory =
+            LocalDirectoryVersion.CreateWithHashes
+                rootDirectoryId
+                current.OwnerId
+                current.OrganizationId
+                current.RepositoryId
+                Constants.RootDirectoryPath
+                status.RootDirectorySha256Hash
+                status.RootDirectoryBlake3Hash
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>())
+                0L
+                DateTime.UtcNow
+
+        let index = GraceIndex()
+
+        index.TryAdd(rootDirectoryId, rootDirectory)
+        |> ignore
+
+        let graceStatus =
+            { GraceStatus.Default with
+                Index = index
+                RootDirectoryId = rootDirectoryId
+                RootDirectorySha256Hash = status.RootDirectorySha256Hash
+                RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+            }
+
+        let boundary =
+            { ReferenceMaterializationBoundaryDto.Default with
+                RepositoryId = current.RepositoryId
+                BranchId = current.BranchId
+                DirectoryId = rootDirectoryId
+                Sha256Hash = status.RootDirectorySha256Hash
+                Blake3Hash = status.RootDirectoryBlake3Hash
+                EventCursor = "branch-event-v1:1"
+            }
+
+        (Services.writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
 
     /// Applies the current repository identity used by Watch IPC trust tests.
     let private configureCurrentWatchIdentity rootDirectory repositoryName branchName =
@@ -364,9 +413,7 @@ module WatchTests =
 
         let ipcFileName = Services.IpcFileName()
 
-        (LocalStateDb.ensureDbInitialized (Current().GraceStatusFile))
-            .GetAwaiter()
-            .GetResult()
+        writeTrustedRootOnlyWatchState rootDirectoryId
 
         Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
         |> ignore
@@ -376,6 +423,9 @@ module WatchTests =
 
     /// Reads file if exists needed by the test scenario.
     let private readFileIfExists path = if File.Exists(path) then Some(File.ReadAllText(path)) else None
+
+    /// Reads binary file bytes without treating SQLite state as text.
+    let private readBytesIfExists path = if File.Exists(path) then Some(File.ReadAllBytes(path)) else None
 
     /// Deletes local-state database files so status trust tests can prove fail-closed durable inspection.
     let private deleteLocalStateDbFiles () =
@@ -15711,24 +15761,216 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal [| newPath |])
 
-    /// Verifies that Watch refuses a missing local database before authentication or runtime callback setup.
-    [<Test>]
-    let ``watch fails closed when local state is missing`` () =
+    /// Builds a canonical nested status and matching branch boundary for public Watch startup tests.
+    let private writeTrustedNestedWatchState root =
+        let current = Current()
+        let now = getCurrentInstant ()
+        let lastWrite = DateTime(2025, 2, 3, 4, 5, 6, DateTimeKind.Utc)
+        let rootId = DirectoryVersionId.NewGuid()
+        let childId = DirectoryVersionId.NewGuid()
+        let file = localFileVersionFromWorkingTree root "src/nested.txt"
+
+        let childEntries =
+            [|
+                DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+            |]
+
+        let childSha = computeSha256ForDirectoryEntries "src" childEntries
+        let childBlake3 = computeBlake3ForDirectory "src" childEntries
+
+        let child =
+            LocalDirectoryVersion.CreateWithHashes
+                childId
+                current.OwnerId
+                current.OrganizationId
+                current.RepositoryId
+                "src"
+                childSha
+                childBlake3
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| file |]))
+                file.Size
+                lastWrite
+
+        let rootEntries =
+            [|
+                DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+            |]
+
+        let rootSha = computeSha256ForDirectoryEntries Constants.RootDirectoryPath rootEntries
+        let rootBlake3 = computeBlake3ForDirectory Constants.RootDirectoryPath rootEntries
+
+        let rootDirectory =
+            LocalDirectoryVersion.CreateWithHashes
+                rootId
+                current.OwnerId
+                current.OrganizationId
+                current.RepositoryId
+                Constants.RootDirectoryPath
+                rootSha
+                rootBlake3
+                (List<DirectoryVersionId>([| childId |]))
+                (List<LocalFileVersion>())
+                child.Size
+                lastWrite
+
+        let index = GraceIndex()
+        index.TryAdd(rootId, rootDirectory) |> ignore
+        index.TryAdd(childId, child) |> ignore
+
+        let status =
+            { GraceStatus.Default with
+                Index = index
+                RootDirectoryId = rootId
+                RootDirectorySha256Hash = rootSha
+                RootDirectoryBlake3Hash = rootBlake3
+                LastSuccessfulFileUpload = now
+                LastSuccessfulDirectoryVersionUpload = now
+            }
+
+        let boundary =
+            { ReferenceMaterializationBoundaryDto.Default with
+                RepositoryId = current.RepositoryId
+                BranchId = current.BranchId
+                DirectoryId = rootId
+                Sha256Hash = rootSha
+                Blake3Hash = rootBlake3
+                EventCursor = "branch-event-v1:1"
+            }
+
+        (Services.writeGraceStatusFileWithRemoteReferenceBoundary status boundary CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
+
+    /// Applies a readable malformed SQLite status shape after a complete trusted snapshot is written.
+    let private mutateWatchState shape =
+        use connection = new SqliteConnection($"Data Source={Current().GraceStatusFile}")
+        connection.Open()
+        use command = connection.CreateCommand()
+
+        command.CommandText <-
+            match shape with
+            | "truncated" -> "DELETE FROM status_directories WHERE relative_path = 'src';"
+            | "cyclic" -> "UPDATE status_directories SET parent_path = 'src' WHERE relative_path = '.';"
+            | "hash-inconsistent" -> "UPDATE status_directories SET sha256_hash = 'changed-child-sha' WHERE relative_path = 'src';"
+            | _ -> invalidOp $"Unexpected malformed Watch state shape: {shape}."
+
+        command.ExecuteNonQuery() |> ignore
+
+    /// Verifies the public Watch command refuses untrusted SQLite state without creating or replacing its IPC file.
+    [<TestCase("missing")>]
+    [<TestCase("schema-only")>]
+    [<TestCase("truncated")>]
+    [<TestCase("cyclic")>]
+    [<TestCase("hash-inconsistent")>]
+    [<Category("WatchStartupLocalStateTrust")>]
+    let ``watch refuses untrusted local state before IPC claim`` shape =
         withTempRepo (fun root ->
             clearWatchAuthEnv (fun () ->
-                /// Verifies that the CLI watch scenario exits with the expected process status.
-                let exitCode, output = runWithCapturedOutput [| "watch" |]
+                let nestedDirectory = Path.Combine(root, "src")
 
-                if exitCode <> -1 then
-                    Assert.Fail(
-                        $"Expected watch to exit with -1 when auth is missing. Actual: {exitCode}.{Environment.NewLine}Output:{Environment.NewLine}{output}"
-                    )
+                Directory.CreateDirectory(nestedDirectory)
+                |> ignore
 
-                output
-                |> should contain "requires healthy initialized local"
+                File.WriteAllText(Path.Combine(nestedDirectory, "nested.txt"), "trusted nested bytes")
 
-                File.Exists(Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName))
-                |> should equal false))
+                match shape with
+                | "missing" -> deleteLocalStateDbFiles ()
+                | "schema-only" ->
+                    (LocalStateDb.ensureDbInitialized (Current().GraceStatusFile))
+                        .GetAwaiter()
+                        .GetResult()
+                | _ ->
+                    writeTrustedNestedWatchState root
+                    mutateWatchState shape
+
+                SqliteConnection.ClearAllPools()
+                let dbBytesBefore = readBytesIfExists (Current().GraceStatusFile)
+                let ipcFileName = Services.IpcFileName()
+
+                Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+                |> ignore
+
+                let stoppedBytes = $"stopped-watch-bytes-{shape}"
+                File.WriteAllText(ipcFileName, stoppedBytes)
+                Services.setLastScanForDifferencesSuccessfulForWatchTests false
+                let mutable callbackRuntimeSetupCalls = 0
+                Watch.setBeforeWatchCallbackRuntimeSetupForTests (fun () -> callbackRuntimeSetupCalls <- callbackRuntimeSetupCalls + 1)
+
+                try
+                    /// Verifies that the CLI watch scenario exits with the expected process status.
+                    let exitCode, output = runWithCapturedOutput [| "watch" |]
+
+                    if exitCode <> -1 then
+                        Assert.Fail(
+                            $"Expected watch to exit with -1 for {shape} local state. Actual: {exitCode}.{Environment.NewLine}Output:{Environment.NewLine}{output}"
+                        )
+
+                    output |> should contain "initialized local"
+
+                    output |> should not' (contain "access token")
+
+                    File.ReadAllText(ipcFileName)
+                    |> should equal stoppedBytes
+
+                    callbackRuntimeSetupCalls |> should equal 0
+
+                    Services.wasLastScanForDifferencesSuccessful ()
+                    |> should equal false
+
+                    SqliteConnection.ClearAllPools()
+
+                    readBytesIfExists (Current().GraceStatusFile)
+                    |> should equal dbBytesBefore
+                finally
+                    Watch.resetBeforeWatchCallbackRuntimeSetupForTests ()))
+
+    /// Verifies a trusted state changed after the IPC claim is rejected before callback setup or scanning.
+    [<Test; Category("WatchStartupLocalStateTrust")>]
+    let ``watch revalidates trusted local state after IPC claim`` () =
+        withTempRepo (fun root ->
+            clearWatchAuthEnv (fun () ->
+                let nestedDirectory = Path.Combine(root, "src")
+
+                Directory.CreateDirectory(nestedDirectory)
+                |> ignore
+
+                File.WriteAllText(Path.Combine(nestedDirectory, "nested.txt"), "trusted nested bytes")
+                writeTrustedNestedWatchState root
+                Services.setLastScanForDifferencesSuccessfulForWatchTests false
+                let mutable callbackRuntimeSetupCalls = 0
+
+                Watch.setBeforeWatchCallbackRuntimeSetupForTests (fun () -> callbackRuntimeSetupCalls <- callbackRuntimeSetupCalls + 1)
+                Watch.setAfterWatchStartupClaimForTests (fun () -> writeTrustedNestedWatchState root)
+
+                try
+                    let exitCode, output = runWithCapturedOutput [| "watch" |]
+                    exitCode |> should equal -1
+
+                    output
+                    |> should contain "local state changed after"
+
+                    output |> should contain "Watch startup claim"
+
+                    output |> should not' (contain "access token")
+
+                    callbackRuntimeSetupCalls |> should equal 0
+
+                    Services.wasLastScanForDifferencesSuccessful ()
+                    |> should equal false
+
+                    Watch
+                        .pendingWatchWorkSnapshotForTests()
+                        .FilesToProcess
+                    |> should equal Array.empty<string>
+
+                    Watch
+                        .pendingWatchWorkSnapshotForTests()
+                        .StatusUpdateTriggers
+                    |> should equal Array.empty<string>
+                finally
+                    Watch.resetAfterWatchStartupClaimForTests ()
+                    Watch.resetBeforeWatchCallbackRuntimeSetupForTests ()))
 
     /// Verifies that watch exits nonzero when live watcher status already exists.
     [<Test>]
@@ -15780,6 +16022,8 @@ module WatchTests =
     let ``watch startup claim blocks second ordinary start without usable status`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
+                writeTrustedRootOnlyWatchState (DirectoryVersionId.NewGuid())
+
                 let claimed =
                     Services
                         .tryClaimGraceWatchInterprocessFile()

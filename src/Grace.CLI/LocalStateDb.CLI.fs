@@ -2805,6 +2805,17 @@ module LocalStateDb =
             return readLocalStatusRevisionInternal connection
         }
 
+    /// Reads the committed status revision without creating, migrating, or repairing local SQLite state.
+    let internal readLocalStatusRevisionReadOnly (dbPath: string) =
+        task {
+            if not (File.Exists(dbPath)) then
+                invalidOp "Local state database does not exist."
+
+            let immutableSnapshot = shouldUseImmutableReadOnlySnapshot dbPath
+            use connection = openReadOnlyConnection dbPath immutableSnapshot
+            return readLocalStatusRevisionInternal connection
+        }
+
     /// Reads status meta internal data needed by the CLI workflow.
     let private readStatusMetaInternal (connection: SqliteConnection) =
         use cmd = connection.CreateCommand()

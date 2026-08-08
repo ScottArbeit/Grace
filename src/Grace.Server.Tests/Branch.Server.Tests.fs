@@ -14,6 +14,7 @@ open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.PersonalAccessToken
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.Collections.Generic
 open System.IO
@@ -26,6 +27,23 @@ open System.Threading.Tasks
 
 /// Groups shared helpers for branch server test helpers.
 module BranchServerTestHelpers =
+    /// Runs one public Grace CLI command while capturing its machine-readable stdout contract.
+    let runGraceCommandWithCapturedStdout args =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+        let originalConsole = AnsiConsole.Console
+
+        try
+            Console.SetOut(writer)
+            let settings = AnsiConsoleSettings()
+            settings.Out <- AnsiConsoleOutput(writer)
+            AnsiConsole.Console <- AnsiConsole.Create(settings)
+            let exitCode = Grace.CLI.GraceCommand.main args
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            AnsiConsole.Console <- originalConsole
+
     /// Asserts ok for integration responses.
     let private assertOk (response: HttpResponseMessage) =
         task {
@@ -2089,7 +2107,7 @@ type BranchServer() =
     [<Test; NonParallelizable>]
     member _.ProductionRepositoryInitializationCommitsExactStateOnlyAfterPublication() =
         task {
-            let runInitialization shouldFailBeforeSave =
+            let runInitialization outputMode shouldFailBeforeSave =
                 BranchServerTestHelpers.withExplicitSdkConfigurationForServerAsync (fun () ->
                     task {
                         do! BranchServerTestHelpers.configureSdkForServerAsync ()
@@ -2144,18 +2162,52 @@ type BranchServer() =
                                 Grace.CLI.Command.Repository.setBeforeRepositoryInitializationSaveForTests (fun () ->
                                     invalidOp "forced repository initialization publication failure")
 
-                            let initExitCode =
-                                Grace.CLI.GraceCommand.main [| "repository"
-                                                               "init"
-                                                               "--directory"
-                                                               repositoryConfiguration.RootDirectory
-                                                               "--output"
-                                                               "Normal" |]
+                            let initExitCode, initOutput =
+                                BranchServerTestHelpers.runGraceCommandWithCapturedStdout [| "repository"
+                                                                                             "init"
+                                                                                             "--directory"
+                                                                                             repositoryConfiguration.RootDirectory
+                                                                                             "--output"
+                                                                                             outputMode |]
 
                             Grace.CLI.Command.Repository.resetBeforeRepositoryInitializationSaveForTests ()
 
+                            if outputMode = "Json" then
+                                use initJson = System.Text.Json.JsonDocument.Parse(initOutput)
+
+                                Assert.That(
+                                    initJson
+                                        .RootElement
+                                        .GetProperty("CorrelationId")
+                                        .GetString(),
+                                    Is.Not.Empty,
+                                    initOutput
+                                )
+
+                                if shouldFailBeforeSave then
+                                    Assert.That(
+                                        initJson
+                                            .RootElement
+                                            .GetProperty("Error")
+                                            .GetString(),
+                                        Does.Contain("forced repository initialization publication failure")
+                                    )
+                                else
+                                    let initReturnValue = initJson.RootElement.GetProperty("ReturnValue")
+                                    Assert.That(initReturnValue.GetProperty("Message").GetString(), Is.EqualTo("Initialized repository."))
+
+                                    Assert.That(
+                                        initReturnValue
+                                            .GetProperty("DirectoryCount")
+                                            .GetInt32(),
+                                        Is.EqualTo(3)
+                                    )
+                            else
+                                Assert.That(initOutput, Is.Empty, $"{outputMode} output must not leak human progress or result text.")
+
                             if shouldFailBeforeSave then
                                 Assert.That(initExitCode, Is.EqualTo(-1))
+
                                 let! statusAfterFailure = Grace.CLI.LocalStateDb.readStatusMeta repositoryConfiguration.GraceStatusFile
                                 Assert.That(statusAfterFailure.RootDirectoryId, Is.EqualTo(DirectoryVersionId.Empty))
 
@@ -2229,8 +2281,10 @@ type BranchServer() =
                             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken, previousGraceToken)
                     })
 
-            do! runInitialization false
-            do! runInitialization true
+            do! runInitialization "Json" false
+            do! runInitialization "Json" true
+            do! runInitialization "Minimal" false
+            do! runInitialization "Silent" false
         }
 
     /// Explicit Doctor repair restores exact nested identities, then ordinary Save and one-time remote replay remain healthy.
