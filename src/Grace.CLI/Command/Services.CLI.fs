@@ -47,6 +47,118 @@ module Services =
 
     let mutable lockObject = new Lock()
 
+    /// Freezes every configured input that selects a CLI command's server, repository tree, or local-state database.
+    type internal OperationalConfigurationSnapshot =
+        {
+            OwnerId: OwnerId
+            OwnerName: OwnerName
+            OrganizationId: OrganizationId
+            OrganizationName: OrganizationName
+            RepositoryId: RepositoryId
+            RepositoryName: RepositoryName
+            BranchId: BranchId
+            BranchName: BranchName
+            ObjectStorageProvider: ObjectStorageProvider
+            ServerUri: string
+            ConfigurationPath: string
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+            GraceFileIgnoreEntries: string array
+            GraceDirectoryIgnoreEntries: string array
+        }
+
+    /// Canonicalizes the configured HTTP endpoint used by operational snapshot comparisons.
+    let private canonicalOperationalServerUri (value: string) =
+        match Uri.TryCreate(value, UriKind.Absolute) with
+        | true, uri when
+            uri.Scheme = Uri.UriSchemeHttp
+            || uri.Scheme = Uri.UriSchemeHttps
+            ->
+            uri.AbsoluteUri.TrimEnd('/')
+        | _ -> invalidOp $"Grace requires an absolute HTTP or HTTPS server URI: {value}"
+
+    /// Copies mutable Grace configuration into the immutable shape used across command trust boundaries.
+    let private operationalConfigurationSnapshot configurationPath (configuration: GraceConfiguration) =
+        {
+            OwnerId = configuration.OwnerId
+            OwnerName = configuration.OwnerName
+            OrganizationId = configuration.OrganizationId
+            OrganizationName = configuration.OrganizationName
+            RepositoryId = configuration.RepositoryId
+            RepositoryName = configuration.RepositoryName
+            BranchId = configuration.BranchId
+            BranchName = configuration.BranchName
+            ObjectStorageProvider = configuration.ObjectStorageProvider
+            ServerUri = canonicalOperationalServerUri configuration.ServerUri
+            ConfigurationPath = Path.GetFullPath(configurationPath)
+            RootDirectory = Path.GetFullPath(configuration.RootDirectory)
+            GraceDirectory = Path.GetFullPath(configuration.GraceDirectory)
+            GraceStatusFile = Path.GetFullPath(configuration.GraceStatusFile)
+            GraceFileIgnoreEntries = Array.copy configuration.GraceFileIgnoreEntries
+            GraceDirectoryIgnoreEntries = Array.copy configuration.GraceDirectoryIgnoreEntries
+        }
+
+    /// Compares operational snapshots with platform path semantics and exact server/configuration semantics.
+    let private operationalConfigurationSnapshotsMatch expected actual =
+        let pathComparison =
+            if OperatingSystem.IsWindows() then
+                StringComparison.OrdinalIgnoreCase
+            else
+                StringComparison.Ordinal
+
+        let samePath left right = String.Equals(left, right, pathComparison)
+
+        actual.OwnerId = expected.OwnerId
+        && actual.OwnerName = expected.OwnerName
+        && actual.OrganizationId = expected.OrganizationId
+        && actual.OrganizationName = expected.OrganizationName
+        && actual.RepositoryId = expected.RepositoryId
+        && actual.RepositoryName = expected.RepositoryName
+        && actual.BranchId = expected.BranchId
+        && actual.BranchName = expected.BranchName
+        && actual.ObjectStorageProvider = expected.ObjectStorageProvider
+        && String.Equals(actual.ServerUri, expected.ServerUri, StringComparison.Ordinal)
+        && samePath actual.ConfigurationPath expected.ConfigurationPath
+        && samePath actual.RootDirectory expected.RootDirectory
+        && samePath actual.GraceDirectory expected.GraceDirectory
+        && samePath actual.GraceStatusFile expected.GraceStatusFile
+        && actual.GraceFileIgnoreEntries.Length = expected.GraceFileIgnoreEntries.Length
+        && Array.forall2 (=) actual.GraceFileIgnoreEntries expected.GraceFileIgnoreEntries
+        && actual.GraceDirectoryIgnoreEntries.Length = expected.GraceDirectoryIgnoreEntries.Length
+        && Array.forall2 (=) actual.GraceDirectoryIgnoreEntries expected.GraceDirectoryIgnoreEntries
+
+    /// Captures persisted operational configuration only after it agrees with the already-loaded process configuration.
+    let internal captureOperationalConfigurationSnapshot commandName (cached: GraceConfiguration) =
+        let cachedConfigurationPath = Path.Combine(cached.ConfigurationDirectory, Constants.GraceConfigFileName)
+        let cachedSnapshot = operationalConfigurationSnapshot cachedConfigurationPath cached
+
+        let persistedSnapshot =
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection -> operationalConfigurationSnapshot inspection.Path inspection.Configuration
+            | Error error -> invalidOp $"Grace {commandName} could not read persisted repository configuration: {error}"
+
+        if not (operationalConfigurationSnapshotsMatch cachedSnapshot persistedSnapshot) then
+            invalidOp $"Grace {commandName} cached and persisted repository configuration do not match."
+
+        persistedSnapshot
+
+    /// Revalidates cached and freshly persisted inputs against the exact operational snapshot accepted at command entry.
+    let internal requireOperationalConfigurationSnapshotCurrent commandName (cached: GraceConfiguration) expected =
+        let cachedConfigurationPath = Path.Combine(cached.ConfigurationDirectory, Constants.GraceConfigFileName)
+        let cachedCandidate = operationalConfigurationSnapshot cachedConfigurationPath cached
+
+        let persistedCandidate =
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection -> operationalConfigurationSnapshot inspection.Path inspection.Configuration
+            | Error error -> invalidOp $"Grace {commandName} could not reread persisted repository configuration: {error}"
+
+        if
+            not (operationalConfigurationSnapshotsMatch expected cachedCandidate)
+            || not (operationalConfigurationSnapshotsMatch expected persistedCandidate)
+        then
+            invalidOp $"Grace {commandName} operational repository configuration changed after validation."
+
     /// Utility method to write to the console using color.
     let logToAnsiConsole (color: string) message =
         lock lockObject (fun () ->
@@ -550,11 +662,11 @@ module Services =
         && payload.BranchId = branchId
         && CurrentBranchReferenceNotification.IsEligibleReferenceType payload.ReferenceType
 
-    /// Reports whether a remote Reference points at the same root already held by the local Watch status.
-    let private currentBranchReferenceMatchesLocalRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
+    /// Reports whether a remote Reference has the exact root identity already held by the local Watch status.
+    let internal currentBranchReferenceMatchesLocalRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
         status.RootDirectoryId = payload.DirectoryId
-        || (status.RootDirectorySha256Hash = payload.Sha256Hash
-            && status.RootDirectoryBlake3Hash = payload.Blake3Hash)
+        && status.RootDirectorySha256Hash = payload.Sha256Hash
+        && status.RootDirectoryBlake3Hash = payload.Blake3Hash
 
     /// Selects the latest eligible overall Reference, falling back to typed materializable slots when overall latest is ineligible.
     let internal tryLatestEligibleCurrentBranchReference (branchDto: Grace.Types.Branch.BranchDto) =
@@ -627,6 +739,11 @@ module Services =
         | Some decision -> decision
         | None ->
             match localStatus with
+            | Some status when
+                status.RepositoryId <> repositoryId
+                || status.BranchId <> branchId
+                ->
+                LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch, payload)
             | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
                 LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.SameRoot, payload)
             | _ -> { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
@@ -890,6 +1007,133 @@ module Services =
 
             false
 
+    /// Identifies the filesystem shape available when Grace classifies a repository path.
+    type RepositoryPathKind =
+        /// The path is known to represent a file.
+        | FilePath
+        /// The path is known to represent a directory.
+        | DirectoryPath
+        /// The path is missing or its final filesystem shape is not yet known.
+        | UnknownPath
+        /// The path is a tracked removal or status could not be read, so configured ignores cannot discard reconciliation.
+        | RemovalReconciliationPath
+
+    /// Describes the only four admission outcomes shared by repository scans and Watch callbacks.
+    type RepositoryPathClassification =
+        /// The path may continue through ordinary repository processing.
+        | Eligible
+        /// The path is outside the repository, temporary, or matched by configured ignore rules.
+        | Ignored
+        /// The path is the Grace directory itself or a separator-bounded descendant.
+        | GraceInternal
+        /// The path is the exact local SQLite database or one of its supported side files.
+        | LocalStateArtifact
+
+    /// Supplies the repository identity, ignore snapshot, and platform comparison used for one path decision.
+    type RepositoryPathClassifierInput =
+        {
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+            DirectoryIgnoreEntries: string array
+            FileIgnoreEntries: string array
+            PathComparison: StringComparison
+        }
+
+    /// Normalizes a path for boundary-aware repository identity checks.
+    let private normalizeRepositoryClassifierPath path =
+        path
+        |> Path.GetFullPath
+        |> Path.TrimEndingDirectorySeparator
+
+    /// Reports whether a path is a directory itself or a separator-bounded descendant under the supplied comparison policy.
+    let isPathWithinDirectoryWithComparison pathComparison directoryPath candidatePath =
+        let normalizedDirectory = normalizeRepositoryClassifierPath directoryPath
+        let normalizedCandidate = normalizeRepositoryClassifierPath candidatePath
+
+        let directoryPrefix =
+            if Path.EndsInDirectorySeparator(normalizedDirectory) then
+                normalizedDirectory
+            else
+                normalizedDirectory
+                + string Path.DirectorySeparatorChar
+
+        String.Equals(normalizedCandidate, normalizedDirectory, pathComparison)
+        || normalizedCandidate.StartsWith(directoryPrefix, pathComparison)
+
+    /// Classifies a normalized repository path before indexing or Watch can perform ordinary side effects.
+    let classifyRepositoryPath (input: RepositoryPathClassifierInput) pathKind candidatePath =
+        let normalizedCandidate = normalizeRepositoryClassifierPath candidatePath
+        let normalizedStatusFile = normalizeRepositoryClassifierPath input.GraceStatusFile
+
+        let isLocalStateArtifact =
+            String.Equals(normalizedCandidate, normalizedStatusFile, input.PathComparison)
+            || String.Equals(normalizedCandidate, normalizedStatusFile + "-wal", input.PathComparison)
+            || String.Equals(normalizedCandidate, normalizedStatusFile + "-shm", input.PathComparison)
+            || String.Equals(normalizedCandidate, normalizedStatusFile + "-journal", input.PathComparison)
+
+        let isInsideRepository = isPathWithinDirectoryWithComparison input.PathComparison input.RootDirectory normalizedCandidate
+
+        let isGraceInternal = isPathWithinDirectoryWithComparison input.PathComparison input.GraceDirectory normalizedCandidate
+
+        /// Checks whether configured directory rules match the candidate's parent directory.
+        let directoryRuleMatchesParent graceIgnoreLine =
+            let parent = FileInfo(normalizedCandidate).Directory
+
+            not (isNull parent)
+            && checkIgnoreLineAgainstDirectory parent graceIgnoreLine
+
+        /// Checks whether configured directory rules match the candidate as a directory.
+        let directoryRuleMatchesCandidate graceIgnoreLine = checkIgnoreLineAgainstDirectory (DirectoryInfo(normalizedCandidate)) graceIgnoreLine
+
+        let matchesConfiguredIgnore =
+            match pathKind with
+            | RepositoryPathKind.RemovalReconciliationPath -> false
+            | RepositoryPathKind.DirectoryPath ->
+                input.DirectoryIgnoreEntries
+                |> Array.exists directoryRuleMatchesCandidate
+            | RepositoryPathKind.FilePath ->
+                normalizedCandidate.EndsWith(".gracetmp", input.PathComparison)
+                || input.DirectoryIgnoreEntries
+                   |> Array.exists directoryRuleMatchesParent
+                || input.DirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedCandidate graceIgnoreLine)
+                || input.FileIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedCandidate graceIgnoreLine)
+            | RepositoryPathKind.UnknownPath ->
+                normalizedCandidate.EndsWith(".gracetmp", input.PathComparison)
+                || input.DirectoryIgnoreEntries
+                   |> Array.exists directoryRuleMatchesParent
+                || input.DirectoryIgnoreEntries
+                   |> Array.exists directoryRuleMatchesCandidate
+                || input.DirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedCandidate graceIgnoreLine)
+                || input.FileIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedCandidate graceIgnoreLine)
+
+        if isLocalStateArtifact then LocalStateArtifact
+        elif not isInsideRepository then Ignored
+        elif isGraceInternal then GraceInternal
+        elif matchesConfiguredIgnore then Ignored
+        else Eligible
+
+    /// Builds the live repository classification inputs used by normal indexing, status, and save paths.
+    let private currentRepositoryPathClassifierInput () =
+        let current = Current()
+
+        {
+            RootDirectory = current.RootDirectory
+            GraceDirectory = current.GraceDirectory
+            GraceStatusFile = current.GraceStatusFile
+            DirectoryIgnoreEntries = current.GraceDirectoryIgnoreEntries
+            FileIgnoreEntries = current.GraceFileIgnoreEntries
+            PathComparison =
+                if runningOnWindows then
+                    StringComparison.OrdinalIgnoreCase
+                else
+                    StringComparison.Ordinal
+        }
+
     /// Checks whether a repository file path should be skipped by Grace indexing.
     let shouldIgnoreFile (filePath: FilePath) =
         let mutable shouldIgnore = false
@@ -898,29 +1142,15 @@ module Services =
         if wasAlreadyCached then
             shouldIgnore
         else
-            // Ignore it if:
-            //   it's in the .grace directory, or
-            //   it's the Grace Status file, or
-            //   it's a Grace-owned temporary file, or
-            //   it's a directory itself, or
-            //   it matches something in graceignore.txt.
-            let fileInfo = FileInfo(filePath)
-
             let shouldIgnoreThisFile =
-                filePath.StartsWith(Current().GraceDirectory, StringComparison.InvariantCultureIgnoreCase) // it's in the /.grace directory
-                || filePath.Equals(Current().GraceStatusFile, StringComparison.InvariantCultureIgnoreCase) // it's the Grace local state DB
-                || filePath.Equals(Current().GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase) // sqlite WAL
-                || filePath.Equals(Current().GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase) // sqlite SHM
-                || filePath.Equals(Current().GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase) // sqlite journal
-                || filePath.EndsWith(".gracetmp") // it's a Grace temporary file
-                || Directory.Exists(filePath) // it's a directory
-                //|| fileInfo.Attributes.HasFlag(FileAttributes.Temporary)                                          // it's temporary - why doesn't this work
-                || Current().GraceDirectoryIgnoreEntries // one of the directories in the path matches a directory ignore line
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine)
-                || Current().GraceDirectoryIgnoreEntries // the file name matches a directory ignore line (which is weird, but possible)
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
-                || Current().GraceFileIgnoreEntries // the file name matches a file ignore line
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
+                let pathKind =
+                    if Directory.Exists(filePath) then
+                        RepositoryPathKind.DirectoryPath
+                    else
+                        RepositoryPathKind.FilePath
+
+                classifyRepositoryPath (currentRepositoryPathClassifierInput ()) pathKind filePath
+                <> Eligible
 
 
             //logToAnsiConsole Colors.Verbose $"In shouldIgnoreFile: filePath: {filePath}; shouldIgnore: {shouldIgnoreThisFile}"
@@ -939,12 +1169,9 @@ module Services =
         if wasAlreadyCached then
             shouldIgnore
         else
-            let directoryInfo = DirectoryInfo(directoryPath)
-
             let shouldIgnoreDirectory =
-                directoryInfo.FullName.StartsWith(Current().GraceDirectory)
-                || Current()
-                    .GraceDirectoryIgnoreEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+                classifyRepositoryPath (currentRepositoryPathClassifierInput ()) RepositoryPathKind.DirectoryPath directoryPath
+                <> Eligible
 
             shouldIgnoreCache.TryAdd(directoryPath, shouldIgnoreDirectory)
             |> ignore
@@ -1003,52 +1230,33 @@ module Services =
             FileIgnoreEntries: string array
         }
 
-    /// Normalizes Grace ids for full path by keeping explicit scope values and clearing implicit child scopes.
-    let private normalizeFullPath path =
-        Path
-            .GetFullPath(path)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-
-    /// Evaluates is within grace directory against parsed options and command state.
-    let private isWithinGraceDirectory (scanInput: WorkingTreeScanInput) path =
-        let graceDirectory = normalizeFullPath scanInput.GraceDirectory
-        let candidate = Path.GetFullPath(path)
-
-        candidate.Equals(graceDirectory, StringComparison.OrdinalIgnoreCase)
-        || candidate.StartsWith(
-            graceDirectory
-            + string Path.DirectorySeparatorChar,
-            StringComparison.OrdinalIgnoreCase
-        )
-        || candidate.StartsWith(
-            graceDirectory
-            + string Path.AltDirectorySeparatorChar,
-            StringComparison.OrdinalIgnoreCase
-        )
+    /// Converts a copied scan snapshot into the shared repository path-classification contract.
+    let private repositoryPathClassifierInputForScan pathComparison (scanInput: WorkingTreeScanInput) =
+        {
+            RootDirectory = scanInput.RootDirectory
+            GraceDirectory = scanInput.GraceDirectory
+            GraceStatusFile = scanInput.GraceStatusFile
+            DirectoryIgnoreEntries = scanInput.DirectoryIgnoreEntries
+            FileIgnoreEntries = scanInput.FileIgnoreEntries
+            PathComparison = pathComparison
+        }
 
     /// Coordinates should ignore file for scan behavior for this CLI command path.
-    let private shouldIgnoreFileForScan (scanInput: WorkingTreeScanInput) (cache: ConcurrentDictionary<FilePath, bool>) (filePath: FilePath) =
+    let private shouldIgnoreFileForScan pathComparison (scanInput: WorkingTreeScanInput) (cache: ConcurrentDictionary<FilePath, bool>) (filePath: FilePath) =
         let mutable shouldIgnore = false
 
         if cache.TryGetValue(filePath, &shouldIgnore) then
             shouldIgnore
         else
-            let fileInfo = FileInfo(filePath)
-
             let shouldIgnoreThisFile =
-                isWithinGraceDirectory scanInput filePath
-                || filePath.Equals(scanInput.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
-                || filePath.Equals(scanInput.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-                || filePath.Equals(scanInput.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-                || filePath.Equals(scanInput.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
-                || filePath.EndsWith(".gracetmp", StringComparison.OrdinalIgnoreCase)
-                || Directory.Exists(filePath)
-                || scanInput.DirectoryIgnoreEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine)
-                || scanInput.DirectoryIgnoreEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
-                || scanInput.FileIgnoreEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
+                let pathKind =
+                    if Directory.Exists(filePath) then
+                        RepositoryPathKind.DirectoryPath
+                    else
+                        RepositoryPathKind.FilePath
+
+                classifyRepositoryPath (repositoryPathClassifierInputForScan pathComparison scanInput) pathKind filePath
+                <> Eligible
 
             cache.TryAdd(filePath, shouldIgnoreThisFile)
             |> ignore
@@ -1056,17 +1264,20 @@ module Services =
             shouldIgnoreThisFile
 
     /// Coordinates should ignore directory for scan behavior for this CLI command path.
-    let private shouldIgnoreDirectoryForScan (scanInput: WorkingTreeScanInput) (cache: ConcurrentDictionary<FilePath, bool>) (directoryPath: string) =
+    let private shouldIgnoreDirectoryForScan
+        pathComparison
+        (scanInput: WorkingTreeScanInput)
+        (cache: ConcurrentDictionary<FilePath, bool>)
+        (directoryPath: string)
+        =
         let mutable shouldIgnore = false
 
         if cache.TryGetValue(directoryPath, &shouldIgnore) then
             shouldIgnore
         else
-            let directoryInfo = DirectoryInfo(directoryPath)
-
             let shouldIgnoreDirectory =
-                isWithinGraceDirectory scanInput directoryInfo.FullName
-                || scanInput.DirectoryIgnoreEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+                classifyRepositoryPath (repositoryPathClassifierInputForScan pathComparison scanInput) RepositoryPathKind.DirectoryPath directoryPath
+                <> Eligible
 
             cache.TryAdd(directoryPath, shouldIgnoreDirectory)
             |> ignore
@@ -1106,27 +1317,27 @@ module Services =
         }
 
     /// Reads working directory write times for scan from ParseResult, local configuration, or Grace ids.
-    let private getWorkingDirectoryWriteTimesForScan (scanInput: WorkingTreeScanInput) =
+    let private getWorkingDirectoryWriteTimesForScan pathComparison (scanInput: WorkingTreeScanInput) =
         let cache = ConcurrentDictionary<FilePath, bool>()
         let localWriteTimes = Dictionary<FileSystemEntryType * RelativePath, DateTime>()
 
         /// Coordinates rec behavior for this CLI command path.
         let rec collect (directoryInfo: DirectoryInfo) =
-            if not (shouldIgnoreDirectoryForScan scanInput cache directoryInfo.FullName) then
+            if not (shouldIgnoreDirectoryForScan pathComparison scanInput cache directoryInfo.FullName) then
                 let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(scanInput.RootDirectory, directoryInfo.FullName)))
 
                 localWriteTimes[(FileSystemEntryType.Directory, directoryFullPath)] <- directoryInfo.LastWriteTimeUtc
 
                 directoryInfo
                     .GetFiles()
-                    .Where(fun file -> not (shouldIgnoreFileForScan scanInput cache file.FullName))
+                    .Where(fun file -> not (shouldIgnoreFileForScan pathComparison scanInput cache file.FullName))
                 |> Seq.iter (fun fileInfo ->
                     let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(scanInput.RootDirectory, fileInfo.FullName)))
                     localWriteTimes[(FileSystemEntryType.File, fileFullPath)] <- fileInfo.LastWriteTimeUtc)
 
                 directoryInfo
                     .GetDirectories()
-                    .Where(fun directory -> not (shouldIgnoreDirectoryForScan scanInput cache directory.FullName))
+                    .Where(fun directory -> not (shouldIgnoreDirectoryForScan pathComparison scanInput cache directory.FullName))
                 |> Seq.iter collect
 
         collect (DirectoryInfo(scanInput.RootDirectory))
@@ -1138,8 +1349,8 @@ module Services =
         || (existingBlake3Hash <> Blake3Hash String.Empty
             && newFileVersion.Blake3Hash <> existingBlake3Hash)
 
-    /// Coordinates scan working tree for differences read only behavior for this CLI command path.
-    let scanWorkingTreeForDifferencesReadOnly (scanInput: WorkingTreeScanInput) (previousGraceStatus: GraceStatus) =
+    /// Scans a copied working-tree snapshot using the caller's repository path-identity comparison.
+    let scanWorkingTreeForDifferencesReadOnlyWithComparison pathComparison (scanInput: WorkingTreeScanInput) (previousGraceStatus: GraceStatus) =
         task {
             try
                 let lookupCache = Dictionary<FileSystemEntryType * RelativePath, DateTime * Sha256Hash * Blake3Hash>()
@@ -1157,7 +1368,7 @@ module Services =
                         lookupCache.TryAdd((FileSystemEntryType.File, file.RelativePath), (file.LastWriteTimeUtc, file.Sha256Hash, file.Blake3Hash))
                         |> ignore
 
-                let localWriteTimes = getWorkingDirectoryWriteTimesForScan scanInput
+                let localWriteTimes = getWorkingDirectoryWriteTimesForScan pathComparison scanInput
                 let differences = List<FileSystemDifference>()
 
                 for kvp in localWriteTimes do
@@ -1188,6 +1399,16 @@ module Services =
             with
             | ex -> return Error ex.Message
         }
+
+    /// Scans a copied working-tree snapshot using the current platform's default path comparison.
+    let scanWorkingTreeForDifferencesReadOnly (scanInput: WorkingTreeScanInput) (previousGraceStatus: GraceStatus) =
+        let pathComparison =
+            if runningOnWindows then
+                StringComparison.OrdinalIgnoreCase
+            else
+                StringComparison.Ordinal
+
+        scanWorkingTreeForDifferencesReadOnlyWithComparison pathComparison scanInput previousGraceStatus
 
     /// Gets the LocalDirectoryVersion for the root directory of the repository from GraceStatus.
     let getRootDirectoryVersion (graceStatus: GraceStatus) =
@@ -1284,6 +1505,14 @@ module Services =
 
     /// Writes the full Grace status snapshot to disk.
     let writeGraceStatusFile (graceStatus: GraceStatus) = LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
+
+    /// Atomically persists a materialized status snapshot and its matching remote Reference boundary.
+    let writeGraceStatusFileWithRemoteReferenceBoundary graceStatus boundary cancellationToken =
+        task {
+            let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary (getLocalStateDbPath ()) graceStatus boundary cancellationToken
+
+            return ()
+        }
 
     /// Applies incremental Grace status updates to the local DB.
     let applyGraceStatusIncremental
@@ -1536,8 +1765,12 @@ module Services =
                 return (List<LocalDirectoryVersion>(), List<LocalFileVersion>(), Sha256Hash.Empty, Blake3Hash String.Empty)
         }
 
-    /// Scans the repository working directory and writes the Grace index file.
-    let createNewGraceStatusFile (previousGraceStatus: GraceStatus) (parseResult: ParseResult) =
+    /// Scans the working directory while optionally preserving a server-selected root identity for materialization.
+    let private createNewGraceStatusFileCore
+        (selectedRootDirectoryId: DirectoryVersionId option)
+        (previousGraceStatus: GraceStatus)
+        (parseResult: ParseResult)
+        =
         task {
             try
                 // Start with a new GraceStatus instance.
@@ -1570,7 +1803,8 @@ module Services =
                             )
                             .Value
 
-                    if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash
+                    if selectedRootDirectoryId.IsNone
+                       && previousRootDirectoryVersion.Sha256Hash = rootSha256Hash
                        && previousRootDirectoryVersion.Blake3Hash = rootBlake3Hash then
                         previousRootDirectoryVersion
                     else
@@ -1580,8 +1814,13 @@ module Services =
                                 .Select(fun d -> d.DirectoryVersionId)
                                 .ToList()
 
+                        let rootDirectoryId =
+                            match selectedRootDirectoryId with
+                            | Some directoryVersionId -> directoryVersionId
+                            | None -> DirectoryVersionId.NewGuid()
+
                         LocalDirectoryVersion.CreateWithHashes
-                            (Guid.NewGuid())
+                            rootDirectoryId
                             (Current().OwnerId)
                             (Current().OrganizationId)
                             (Current().RepositoryId)
@@ -1602,7 +1841,10 @@ module Services =
                 //do! File.WriteAllTextAsync(@$"C:\Intel\ProcessedThings{sb.Length}.txt", sb.ToString())
                 let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
 
-                if parseResult |> isOutputFormat "Verbose" then
+                if
+                    not (isNull parseResult)
+                    && parseResult |> isOutputFormat "Verbose"
+                then
                     logToAnsiConsole Colors.Verbose $"Finished createNewGraceStatusFile. newGraceStatus.Index.Count: {newGraceStatus.Index.Count}."
 
                 let newGraceStatus =
@@ -1618,6 +1860,13 @@ module Services =
                 logToAnsiConsole Colors.Error $"Exception in createNewGraceStatusFile: {ExceptionResponse.Create ex}"
                 return GraceStatus.Default
         }
+
+    /// Scans the repository working directory and assigns local identity to a changed root.
+    let createNewGraceStatusFile previousGraceStatus parseResult = createNewGraceStatusFileCore None previousGraceStatus parseResult
+
+    /// Scans a materialized working directory using the exact root identity selected by the server boundary.
+    let createNewGraceStatusFileForRoot rootDirectoryId previousGraceStatus parseResult =
+        createNewGraceStatusFileCore (Some rootDirectoryId) previousGraceStatus parseResult
 
     /// Adds a LocalDirectoryVersion to the local object cache.
     let addDirectoryToObjectCache (localDirectoryVersion: LocalDirectoryVersion) =
@@ -2234,7 +2483,7 @@ module Services =
         task {
 
             let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
-            let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+            let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
 
             let directoryVersion =
                 let mutable changedDirectoryVersion = LocalDirectoryVersion.Default
@@ -2302,7 +2551,7 @@ module Services =
         =
 
         let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
-        let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+        let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
 
         let directoryVersion =
             newGraceStatus
@@ -2688,12 +2937,12 @@ module Services =
 
         IpcFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
-    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
-    let inspectGraceWatchStatus () =
+    /// Reads one explicit Watch IPC path without consulting mutable process configuration.
+    let private inspectGraceWatchStatusAtPath ipcFileName =
         task {
-            if System.IO.File.Exists(IpcFileName()) then
+            if System.IO.File.Exists(ipcFileName) then
                 try
-                    let json = System.IO.File.ReadAllText(IpcFileName())
+                    let json = System.IO.File.ReadAllText(ipcFileName)
 
                     let status = deserializeNormalizedGraceWatchStatus json
 
@@ -2735,6 +2984,14 @@ module Services =
                         ReadError = None
                     }
         }
+
+    /// Reads Watch IPC status for an immutable operational repository identity.
+    let internal inspectGraceWatchStatusForOperationalConfiguration (snapshot: OperationalConfigurationSnapshot) =
+        IpcFileNameForIdentity snapshot.RepositoryId snapshot.RepositoryName snapshot.RootDirectory snapshot.BranchId snapshot.BranchName
+        |> inspectGraceWatchStatusAtPath
+
+    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
+    let inspectGraceWatchStatus () = inspectGraceWatchStatusAtPath (IpcFileName())
 
     /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
     let private createGraceWatchStatusWithPendingWork
@@ -2994,8 +3251,11 @@ module Services =
             if inspection.IsUsable then return inspection.Status else return None // The file is stale, a startup claim, unreadable, or does not contain usable root data.
         }
 
-    /// Atomically claims the `grace watch` status IPC file before foreground watch startup.
-    let tryClaimGraceWatchInterprocessFile () =
+    /// Carries the previous clean root snapshot across the atomic Watch startup claim.
+    type GraceWatchInterprocessClaim = { Claimed: bool; RetainedStatus: GraceWatchStatus option }
+
+    /// Atomically claims Watch IPC while retaining a stopped process's clean root for pre-scan boundary recovery.
+    let claimGraceWatchInterprocessFile () =
         task {
             let claimStatus = createGraceWatchStartupClaim ()
 
@@ -3010,7 +3270,7 @@ module Services =
 
             try
                 do! writeGraceWatchStatus FileMode.CreateNew claimStatus
-                return true
+                return { Claimed = true; RetainedStatus = None }
             with
             | :? IOException ->
                 try
@@ -3034,17 +3294,40 @@ module Services =
 
                         if isGraceWatchStatusFresh existingGraceWatchStatus
                            && existingGraceWatchInspection.HasCurrentRepositoryIdentity then
-                            return false
+                            return { Claimed = false; RetainedStatus = None }
                         else
+                            let retainedStatus =
+                                if
+                                    existingGraceWatchInspection.HasCurrentRepositoryIdentity
+                                    && not existingGraceWatchStatus.IsStartupClaim
+                                    && existingGraceWatchStatus.Mode = GraceWatchRuntimeMode.HealthyIncremental
+                                    && existingGraceWatchStatus.IsWorkingTreeClean
+                                    && not existingGraceWatchStatus.HasPendingWatchWork
+                                    && existingGraceWatchStatus.RootDirectoryId
+                                       <> DirectoryVersionId.Empty
+                                    && not (String.IsNullOrWhiteSpace(string existingGraceWatchStatus.RootDirectorySha256Hash))
+                                    && not (String.IsNullOrWhiteSpace(string existingGraceWatchStatus.RootDirectoryBlake3Hash))
+                                then
+                                    Some existingGraceWatchStatus
+                                else
+                                    None
+
                             do! writeClaimToExistingFile fileStream
-                            return true
+                            return { Claimed = true; RetainedStatus = retainedStatus }
                     with
                     | _ ->
                         do! writeClaimToExistingFile fileStream
-                        return true
+                        return { Claimed = true; RetainedStatus = None }
                 with
-                | :? IOException -> return false
+                | :? IOException -> return { Claimed = false; RetainedStatus = None }
 
+        }
+
+    /// Preserves the existing boolean claim contract for callers that do not perform startup recovery.
+    let tryClaimGraceWatchInterprocessFile () =
+        task {
+            let! claim = claimGraceWatchInterprocessFile ()
+            return claim.Claimed
         }
 
     /// Checks if a file already exists in the object cache.

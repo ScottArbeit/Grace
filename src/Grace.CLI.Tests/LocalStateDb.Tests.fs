@@ -15,6 +15,7 @@ open System.IO
 open System.Linq
 open System.Text
 open System.Diagnostics
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups local state db coverage for the CLI test project.
@@ -106,6 +107,7 @@ module LocalStateDbTests =
         (files: LocalFileVersion array)
         sizeBytes
         lastWriteTimeUtc
+        : LocalDirectoryVersion
         =
         LocalDirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -378,11 +380,571 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
                 statusMetaCount |> should equal 1
+            })
+
+    /// Successful Connect persistence commits status and its matching branch cursor together.
+    [<Test>]
+    let ``status snapshot and remote reference boundary commit atomically`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("11111111-8020-4000-8000-111111111111")
+                let rootHash = Sha256Hash "root-sha"
+                let rootBlake3 = Blake3Hash "root-sha-blake3"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = rootBlake3; Index = index }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = rootBlake3
+                        EventCursor = "branch-event-v1:7"
+                    }
+
+                let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status boundary CancellationToken.None
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                Assert.That(stored, Is.EqualTo(Some boundary))
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(rootId))
+                Assert.That(storedStatus.RootDirectorySha256Hash, Is.EqualTo(rootHash))
+                Assert.That(storedStatus.RootDirectoryBlake3Hash, Is.EqualTo(rootBlake3))
+            })
+
+    /// Missing-cursor recovery inserts a boundary only while the complete materialized status root remains current.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary is established by exact local root CAS`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("aaaaaaaa-8040-4000-8000-aaaaaaaaaaaa")
+                let rootHash = Sha256Hash "local-root-sha"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let rootBlake3 = root.Blake3Hash
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = rootBlake3; Index = index }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = rootBlake3
+                        EventCursor = "branch-event-v1:4"
+                    }
+
+                let! stored = LocalStateDb.establishRemoteReferenceBoundaryIfAbsent configuration.GraceStatusFile status boundary CancellationToken.None
+
+                let! durable = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(stored, Is.EqualTo(boundary))
+                Assert.That(durable, Is.EqualTo(Some boundary))
+            })
+
+    /// Cancellation at the missing-boundary commit seam rolls back the inserted cursor without changing local status.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary cancellation rolls back the insert`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("dddddddd-8040-4000-8000-dddddddddddd")
+                let rootHash = Sha256Hash "cancelled-root-sha"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = root.Blake3Hash; Index = index }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = root.Blake3Hash
+                        EventCursor = "branch-event-v1:5"
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+                use cancellation = new CancellationTokenSource()
+
+                Assert.ThrowsAsync<OperationCanceledException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.establishRemoteReferenceBoundaryIfAbsentWithBeforeCommit
+                            configuration.GraceStatusFile
+                            status
+                            boundary
+                            cancellation.Token
+                            cancellation.Cancel
+                        :> Task)
+                )
+                |> ignore
+
+                let! durable = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                let! durableStatus = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+
+                Assert.That(durable, Is.EqualTo(None))
+                Assert.That(durableStatus.RootDirectoryId, Is.EqualTo(rootId))
+                Assert.That(durableStatus.RootDirectorySha256Hash, Is.EqualTo(rootHash))
+                Assert.That(durableStatus.RootDirectoryBlake3Hash, Is.EqualTo(root.Blake3Hash))
+            })
+
+    /// A changed, recreated, or already-bounded database cannot accept a stale missing-cursor decision.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary rejects stale local database state`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let expectedRootId = Guid.Parse("bbbbbbbb-8040-4000-8000-bbbbbbbbbbbb")
+                let expectedHash = Sha256Hash "expected-root-sha"
+
+                let expectedRoot =
+                    createDirectoryVersion configuration expectedRootId Constants.RootDirectoryPath expectedHash Array.empty Array.empty 0L DateTime.UtcNow
+
+                let expectedBlake3 = expectedRoot.Blake3Hash
+
+                let expectedIndex = GraceIndex()
+                expectedIndex[expectedRootId] <- expectedRoot
+
+                let expectedStatus = { createTestStatus expectedRootId expectedHash 123L with RootDirectoryBlake3Hash = expectedBlake3; Index = expectedIndex }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = expectedRootId
+                        Sha256Hash = expectedHash
+                        Blake3Hash = expectedBlake3
+                        EventCursor = "branch-event-v1:5"
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile expectedStatus
+                SqliteConnection.ClearAllPools()
+                File.Delete(configuration.GraceStatusFile)
+                File.Delete(configuration.GraceStatusFile + "-wal")
+                File.Delete(configuration.GraceStatusFile + "-shm")
+
+                let mutable staleDecisionRejected = false
+
+                try
+                    let! _ = LocalStateDb.establishRemoteReferenceBoundaryIfAbsent configuration.GraceStatusFile expectedStatus boundary CancellationToken.None
+
+                    ()
+                with
+                | _ -> staleDecisionRejected <- true
+
+                Assert.That(staleDecisionRejected, Is.True)
+
+                use recreatedConnection = openRawConnection configuration.GraceStatusFile
+
+                let boundaryTableCount =
+                    executeScalarInt recreatedConnection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'remote_reference_boundaries';"
+
+                let boundaryRowCount = executeScalarInt recreatedConnection "SELECT COUNT(*) FROM remote_reference_boundaries;"
+
+                Assert.That(boundaryTableCount, Is.EqualTo(1))
+                Assert.That(boundaryRowCount, Is.EqualTo(0))
+            })
+
+    /// A concurrent or preexisting boundary prevents missing-cursor recovery from overwriting cursor authority.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``missing remote reference boundary rejects an existing boundary`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.Parse("cccccccc-8040-4000-8000-cccccccccccc")
+                let rootHash = Sha256Hash "existing-root-sha"
+                let root = createDirectoryVersion configuration rootId Constants.RootDirectoryPath rootHash Array.empty Array.empty 0L DateTime.UtcNow
+                let index = GraceIndex()
+                index[rootId] <- root
+
+                let status = { createTestStatus rootId rootHash 123L with RootDirectoryBlake3Hash = root.Blake3Hash; Index = index }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = rootId
+                        Sha256Hash = rootHash
+                        Blake3Hash = root.Blake3Hash
+                        EventCursor = "branch-event-v1:5"
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                let! _ = LocalStateDb.establishRemoteReferenceBoundaryIfAbsent configuration.GraceStatusFile status boundary CancellationToken.None
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.establishRemoteReferenceBoundaryIfAbsent
+                            configuration.GraceStatusFile
+                            status
+                            { boundary with EventCursor = "branch-event-v1:6" }
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+            })
+
+    /// A mismatched cursor is rejected before it can replace the previously committed status snapshot.
+    [<Test>]
+    let ``mismatched remote reference boundary leaves status and cursor unchanged`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("22222222-8020-4000-8000-222222222222")
+                let originalStatus = createTestStatus originalRoot (Sha256Hash "original") 10L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile originalStatus
+
+                let replacementRoot = Guid.Parse("33333333-8020-4000-8000-333333333333")
+                let replacementStatus = createTestStatus replacementRoot (Sha256Hash "replacement") 20L
+
+                let mismatched =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = originalRoot
+                        Sha256Hash = Sha256Hash "original"
+                        Blake3Hash = Blake3Hash String.Empty
+                        EventCursor = "branch-event-v1:1"
+                    }
+
+                Assert.ThrowsAsync<ArgumentException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            mismatched
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+                Assert.That(storedBoundary, Is.EqualTo(None))
+            })
+
+    /// A cursor persistence failure rolls back the matching status replacement instead of acknowledging a false boundary.
+    [<Test>]
+    let ``remote reference boundary write failure rolls back status replacement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("44444444-8020-4000-8000-444444444444")
+                let originalStatus = createTestStatus originalRoot (Sha256Hash "original") 10L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile originalStatus
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery
+                        connection
+                        "CREATE TRIGGER reject_remote_reference_boundary BEFORE INSERT ON remote_reference_boundaries BEGIN SELECT RAISE(ABORT, 'forced boundary failure'); END;"
+
+                let replacementRoot = Guid.Parse("55555555-8020-4000-8000-555555555555")
+                let replacementBlake3 = Blake3Hash "replacement-blake3"
+
+                let replacementStatus = { createTestStatus replacementRoot (Sha256Hash "replacement") 20L with RootDirectoryBlake3Hash = replacementBlake3 }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = replacementRoot
+                        Sha256Hash = replacementStatus.RootDirectorySha256Hash
+                        Blake3Hash = replacementBlake3
+                        EventCursor = "branch-event-v1:2"
+                    }
+
+                Assert.ThrowsAsync<SqliteException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            boundary
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+                Assert.That(storedBoundary, Is.EqualTo(None))
+            })
+
+    /// Cancellation after status and boundary staging rolls the entire SQLite transaction back before durable acceptance.
+    [<Test>]
+    let ``remote reference boundary cancellation before commit rolls back status replacement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("66666666-8020-4000-8000-666666666666")
+                let originalStatus = createTestStatus originalRoot (Sha256Hash "original") 10L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile originalStatus
+
+                let replacementRoot = Guid.Parse("77777777-8020-4000-8000-777777777777")
+                let replacementBlake3 = Blake3Hash "replacement-blake3"
+
+                let replacementStatus = { createTestStatus replacementRoot (Sha256Hash "replacement") 20L with RootDirectoryBlake3Hash = replacementBlake3 }
+
+                let boundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = replacementRoot
+                        Sha256Hash = replacementStatus.RootDirectorySha256Hash
+                        Blake3Hash = replacementBlake3
+                        EventCursor = "branch-event-v1:3"
+                    }
+
+                use cancellation = new CancellationTokenSource()
+                let mutable cancelled = false
+
+                try
+                    let! _ =
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryWithBeforeCommit
+                            configuration.GraceStatusFile
+                            replacementStatus
+                            boundary
+                            cancellation.Token
+                            cancellation.Cancel
+
+                    ()
+                with
+                | :? OperationCanceledException -> cancelled <- true
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(cancelled, Is.True)
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+                Assert.That(storedBoundary, Is.EqualTo(None))
+            })
+
+    /// A writer that claims SQLite after Doctor's final validation remains authoritative and makes repair fail closed.
+    [<Test; Category("LocalStateRepairWriterExclusion")>]
+    let ``local state repair refuses writer claiming database before replacement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let writerRoot = Guid.Parse("67676767-8020-4000-8000-676767676767")
+                let writerStatus = { createTestStatus writerRoot (Sha256Hash "writer") 11L with RootDirectoryBlake3Hash = Blake3Hash "writer-blake3" }
+
+                let writerBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = writerRoot
+                        Sha256Hash = writerStatus.RootDirectorySha256Hash
+                        Blake3Hash = writerStatus.RootDirectoryBlake3Hash
+                        EventCursor = "writer-boundary"
+                    }
+
+                let doctorRoot = Guid.Parse("68686868-8020-4000-8000-686868686868")
+                let doctorStatus = { createTestStatus doctorRoot (Sha256Hash "doctor") 12L with RootDirectoryBlake3Hash = Blake3Hash "doctor-blake3" }
+
+                let doctorBoundary =
+                    { writerBoundary with
+                        DirectoryId = doctorRoot
+                        Sha256Hash = doctorStatus.RootDirectorySha256Hash
+                        Blake3Hash = doctorStatus.RootDirectoryBlake3Hash
+                        EventCursor = "doctor-boundary"
+                    }
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                let! baseline = LocalStateDb.captureLocalStateRepairBaseline configuration.GraceStatusFile
+                use writer = openRawConnection configuration.GraceStatusFile
+
+                let beginAndStageWriter () =
+                    executeNonQuery writer "BEGIN IMMEDIATE;"
+                    executeNonQuery writer "DELETE FROM status_directories;"
+                    executeNonQuery writer "DELETE FROM status_files;"
+
+                    executeNonQuery
+                        writer
+                        $"UPDATE status_meta SET root_directory_version_id = '{writerRoot}', root_directory_sha256_hash = 'writer', root_directory_blake3_hash = 'writer-blake3' WHERE id = 1;"
+
+                    executeNonQuery
+                        writer
+                        $"INSERT INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ('.', '', '{writerRoot}', 'writer', 'writer-blake3', 0, 0, 0);"
+
+                    executeNonQuery
+                        writer
+                        $"INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ('{configuration.RepositoryId}', '{configuration.BranchId}', '{writerRoot}', 'writer', 'writer-blake3', 'writer-boundary');"
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepairWithBeforeWriteClaim
+                            configuration.GraceStatusFile
+                            baseline
+                            doctorStatus
+                            doctorBoundary
+                            CancellationToken.None
+                            beginAndStageWriter
+                        :> Task)
+                )
+                |> ignore
+
+                executeNonQuery writer "COMMIT;"
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                let! storedBoundary = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(writerStatus.RootDirectoryId))
+                Assert.That(storedBoundary, Is.EqualTo(Some writerBoundary))
+            })
+
+    /// A terminal replay acknowledgement advances the exact cursor and accepted root without rewriting status tables.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``remote reference cursor acknowledgement advances exact boundary`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let originalRoot = Guid.Parse("88888888-8030-4000-8000-888888888888")
+                let originalStatus = { createTestStatus originalRoot (Sha256Hash "original") 10L with RootDirectoryBlake3Hash = Blake3Hash "original-blake3" }
+
+                let originalBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = originalRoot
+                        Sha256Hash = originalStatus.RootDirectorySha256Hash
+                        Blake3Hash = originalStatus.RootDirectoryBlake3Hash
+                        EventCursor = "opaque-original"
+                    }
+
+                let! _ =
+                    LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary
+                        configuration.GraceStatusFile
+                        originalStatus
+                        originalBoundary
+                        CancellationToken.None
+
+                let acceptedBoundary =
+                    { originalBoundary with
+                        DirectoryId = Guid.Parse("99999999-8030-4000-8000-999999999999")
+                        Sha256Hash = Sha256Hash "accepted"
+                        Blake3Hash = Blake3Hash "accepted-blake3"
+                        EventCursor = "opaque-accepted"
+                    }
+
+                let! advanced =
+                    LocalStateDb.advanceRemoteReferenceBoundaryCursor configuration.GraceStatusFile originalBoundary acceptedBoundary CancellationToken.None
+
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                let! storedStatus = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+                Assert.That(advanced, Is.EqualTo(acceptedBoundary))
+                Assert.That(stored, Is.EqualTo(Some acceptedBoundary))
+                Assert.That(storedStatus.RootDirectoryId, Is.EqualTo(originalRoot))
+            })
+
+    /// A stale response interval cannot overwrite a cursor already acknowledged by another completion.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``stale remote reference cursor acknowledgement leaves newer boundary unchanged`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let root = Guid.Parse("aaaaaaaa-8030-4000-8000-aaaaaaaaaaaa")
+                let status = { createTestStatus root (Sha256Hash "root") 10L with RootDirectoryBlake3Hash = Blake3Hash "root-blake3" }
+
+                let originalBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = root
+                        Sha256Hash = status.RootDirectorySha256Hash
+                        Blake3Hash = status.RootDirectoryBlake3Hash
+                        EventCursor = "opaque-1"
+                    }
+
+                let! _ =
+                    LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status originalBoundary CancellationToken.None
+
+                let newerBoundary = { originalBoundary with EventCursor = "opaque-2" }
+
+                let! _ = LocalStateDb.advanceRemoteReferenceBoundaryCursor configuration.GraceStatusFile originalBoundary newerBoundary CancellationToken.None
+
+                Assert.ThrowsAsync<InvalidOperationException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.advanceRemoteReferenceBoundaryCursor
+                            configuration.GraceStatusFile
+                            originalBoundary
+                            { originalBoundary with EventCursor = "opaque-stale" }
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(stored, Is.EqualTo(Some newerBoundary))
+            })
+
+    /// Cancellation or a SQLite failure before commit leaves the prior opaque cursor replayable.
+    [<Test; Category("CurrentBranchCursorReplay")>]
+    let ``remote reference cursor failure leaves prior boundary replayable`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let root = Guid.Parse("bbbbbbbb-8030-4000-8000-bbbbbbbbbbbb")
+                let status = { createTestStatus root (Sha256Hash "root") 10L with RootDirectoryBlake3Hash = Blake3Hash "root-blake3" }
+
+                let originalBoundary =
+                    { Grace.Types.Reference.ReferenceMaterializationBoundaryDto.Default with
+                        RepositoryId = configuration.RepositoryId
+                        BranchId = configuration.BranchId
+                        DirectoryId = root
+                        Sha256Hash = status.RootDirectorySha256Hash
+                        Blake3Hash = status.RootDirectoryBlake3Hash
+                        EventCursor = "opaque-before"
+                    }
+
+                let! _ =
+                    LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary configuration.GraceStatusFile status originalBoundary CancellationToken.None
+
+                use cancellation = new CancellationTokenSource()
+
+                Assert.ThrowsAsync<OperationCanceledException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.advanceRemoteReferenceBoundaryCursorWithBeforeCommit
+                            configuration.GraceStatusFile
+                            originalBoundary
+                            { originalBoundary with EventCursor = "opaque-cancelled" }
+                            cancellation.Token
+                            cancellation.Cancel
+                        :> Task)
+                )
+                |> ignore
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery
+                        connection
+                        "CREATE TRIGGER reject_remote_reference_cursor BEFORE UPDATE ON remote_reference_boundaries BEGIN SELECT RAISE(ABORT, 'forced cursor failure'); END;"
+
+                Assert.ThrowsAsync<SqliteException>(
+                    Func<Task> (fun () ->
+                        LocalStateDb.advanceRemoteReferenceBoundaryCursor
+                            configuration.GraceStatusFile
+                            originalBoundary
+                            { originalBoundary with EventCursor = "opaque-failed" }
+                            CancellationToken.None
+                        :> Task)
+                )
+                |> ignore
+
+                let! stored = LocalStateDb.readRemoteReferenceBoundary configuration.GraceStatusFile configuration.RepositoryId configuration.BranchId
+
+                Assert.That(stored, Is.EqualTo(Some originalBoundary))
             })
 
     /// Verifies that initializes watch journal schema and applied through metadata.
@@ -1238,7 +1800,7 @@ module LocalStateDbTests =
 
                 let lifecycleColumns = executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('watch_lifecycle_events');"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 lifecycleColumns |> should equal 13
 
                 let corruptAfter =
@@ -1281,7 +1843,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -1570,7 +2132,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -1607,7 +2169,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let sequencePk = executeScalarInt connection "SELECT pk FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
                 sequencePk |> should equal 1
@@ -1659,7 +2221,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -1699,7 +2261,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -1739,7 +2301,7 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
 
                 let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
@@ -1781,7 +2343,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let duplicateRows = executeScalarInt connection "SELECT COUNT(*) FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 duplicateRows |> should equal 1
 
@@ -1826,7 +2388,7 @@ module LocalStateDbTests =
                     with
                     | :? SqliteException -> false
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 duplicateInsertSucceeded |> should equal false
 
@@ -1865,7 +2427,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1904,7 +2466,7 @@ module LocalStateDbTests =
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
                 let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
                 allocationRows |> should equal 0
@@ -1942,7 +2504,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1979,7 +2541,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2016,7 +2578,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2062,7 +2624,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2109,7 +2671,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2155,7 +2717,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2203,7 +2765,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2244,7 +2806,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -2274,7 +2836,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -2329,7 +2891,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "8")
+                |> should equal (Some "9")
 
                 inspection.MissingRequiredTables
                 |> should equal Array.empty<string>
@@ -2374,7 +2936,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "8")
+                |> should equal (Some "9")
 
                 inspection.IntegrityCheckRows
                 |> should equal [| "ok" |]
@@ -2615,6 +3177,34 @@ module LocalStateDbTests =
                 appliedThrough2 |> should equal "0"
             })
 
+    /// Verifies that process-local initialization cannot hide a genuinely deleted SQLite database.
+    [<Test>]
+    let ``ensureDbInitialized recreates a database deleted after initialization`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+
+                [|
+                    configuration.GraceStatusFile
+                    configuration.GraceStatusFile + "-wal"
+                    configuration.GraceStatusFile + "-shm"
+                    configuration.GraceStatusFile + "-journal"
+                |]
+                |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
+
+                Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
+                |> should equal 1
+
+                executeScalarInt connection "SELECT COUNT(*) FROM remote_reference_boundaries;"
+                |> should equal 0
+            })
+
     /// Verifies that ensure db initialized recreates legacy schema v2 database without blake3 columns.
     [<Test>]
     let ``ensureDbInitialized recreates legacy schema v2 database without blake3 columns`` () =
@@ -2652,7 +3242,7 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection2 "SELECT value FROM meta WHERE key = 'schema_version';"
                 let readRootId = executeScalarString connection2 "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection2 "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 readRootId
                 |> should not' (equal (rootId.ToString()))
@@ -2689,7 +3279,7 @@ module LocalStateDbTests =
                 let readRootId = executeScalarString connection "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
                 let readRootBlake3Hash = executeScalarString connection "SELECT root_directory_blake3_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 readRootId |> should equal (rootId.ToString())
                 readRootHash |> should equal rootHash
                 readRootBlake3Hash |> should equal rootBlake3Hash
@@ -2745,7 +3335,7 @@ module LocalStateDbTests =
                 let watchJournalCount = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 watchJournalCount |> should equal 1
                 appliedThrough |> should equal "0"
 
@@ -2797,7 +3387,7 @@ module LocalStateDbTests =
 
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 hiddenRequiredColumns |> should equal 0
                 journalColumns |> should equal 15
                 appliedThrough |> should equal "0"
@@ -2834,7 +3424,7 @@ module LocalStateDbTests =
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 rootBlake3Columns |> should equal 1
                 statusMetaCount |> should equal 1
 
@@ -2875,7 +3465,7 @@ module LocalStateDbTests =
                 let statusDirectoryCount = executeScalarInt connection "SELECT COUNT(*) FROM status_directories;"
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
                 statusDirectoryCount |> should equal 0
                 statusMetaCount |> should equal 1
 
@@ -3120,17 +3710,20 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
             })
 
     /// Verifies that ensure db initialized treats paths case insensitively on windows.
-    [<Test>]
+    [<Test; Category("LocalStatePathComparison")>]
     let ``ensureDbInitialized treats paths case-insensitively on Windows`` () =
         withTempDir (fun _ configuration ->
             task {
+                if not (OperatingSystem.IsWindows()) then
+                    Assert.Ignore("Windows path aliases are case-insensitive only on Windows.")
+
                 let pathA = configuration.GraceStatusFile.ToLowerInvariant()
                 let pathB = configuration.GraceStatusFile.ToUpperInvariant()
 
@@ -3147,7 +3740,41 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "8"
+                schemaVersion |> should equal "9"
+            })
+
+    /// Verifies non-Windows filesystems can initialize case-distinct local-state paths without rewriting the temp root.
+    [<Test; Category("LocalStatePathComparison")>]
+    let ``ensureDbInitialized preserves case-distinct paths on non-Windows`` () =
+        withTempDir (fun root configuration ->
+            task {
+                if OperatingSystem.IsWindows() then
+                    Assert.Ignore("Case-distinct local-state paths are a non-Windows contract.")
+
+                let alternateGraceDirectory = Path.Combine(root, Constants.GraceConfigDirectory.ToUpperInvariant())
+
+                Directory.CreateDirectory(alternateGraceDirectory)
+                |> ignore
+
+                let alternatePath = Path.Combine(alternateGraceDirectory, Constants.GraceLocalStateDbFileName)
+
+                do!
+                    Task
+                        .WhenAll(
+                            [|
+                                LocalStateDb.ensureDbInitialized configuration.GraceStatusFile :> Task
+                                LocalStateDb.ensureDbInitialized alternatePath :> Task
+                            |]
+                        )
+                        .WaitAsync(TimeSpan.FromSeconds(15.0))
+
+                File.Exists(configuration.GraceStatusFile)
+                |> should equal true
+
+                File.Exists(alternatePath) |> should equal true
+
+                Path.GetFullPath(configuration.GraceStatusFile)
+                |> should not' (equal (Path.GetFullPath(alternatePath)))
             })
 
     /// Verifies that replace status snapshot fully clears old snapshot rows.
@@ -3461,7 +4088,7 @@ module LocalStateDbTests =
                 do
                     use connection = openRawConnection configuration.GraceStatusFile
                     executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '8');"
+                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9');"
 
                     executeNonQuery
                         connection
@@ -3549,6 +4176,111 @@ module LocalStateDbTests =
 
                     error
                     |> should contain "reset the local state database"
+            })
+
+    /// Verifies Watch's shared local-state reader accepts a complete nested graph and rejects truncation or malformed relationships.
+    [<TestCase("valid")>]
+    [<TestCase("truncated")>]
+    [<TestCase("disconnected")>]
+    [<TestCase("duplicate-path")>]
+    [<TestCase("malformed-file-parent")>]
+    [<Category("CompleteLocalStatusTree")>]
+    let ``complete status reader validates the full rooted graph`` shape =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(2001L)
+                let lastWrite = DateTime(2025, 2, 3, 4, 5, 6, DateTimeKind.Utc)
+                let rootId = Guid.NewGuid()
+                let childId = Guid.NewGuid()
+                let file = createFileVersionWithHashes "src/nested.txt" "file-sha" "file-blake3" false 12L now lastWrite
+
+                let childEntries =
+                    [|
+                        Grace.Shared.Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash
+                    |]
+
+                let childSha = Grace.Shared.Services.computeSha256ForDirectoryEntries "src" childEntries
+                let childBlake3 = Grace.Shared.Services.computeBlake3ForDirectory "src" childEntries
+
+                let child =
+                    LocalDirectoryVersion.CreateWithHashes
+                        childId
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+                        "src"
+                        childSha
+                        childBlake3
+                        (List<DirectoryVersionId>())
+                        (List<LocalFileVersion>([| file |]))
+                        file.Size
+                        lastWrite
+
+                let rootEntries =
+                    [|
+                        Grace.Shared.Services.DirectoryVersionPreimageEntry.Directory child.RelativePath child.Size child.Blake3Hash child.Sha256Hash
+                    |]
+
+                let rootSha = Grace.Shared.Services.computeSha256ForDirectoryEntries Constants.RootDirectoryPath rootEntries
+                let rootBlake3 = Grace.Shared.Services.computeBlake3ForDirectory Constants.RootDirectoryPath rootEntries
+
+                let root =
+                    LocalDirectoryVersion.CreateWithHashes
+                        rootId
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+                        Constants.RootDirectoryPath
+                        rootSha
+                        rootBlake3
+                        (List<DirectoryVersionId>([| childId |]))
+                        (List<LocalFileVersion>())
+                        child.Size
+                        lastWrite
+
+                let index = GraceIndex()
+                index.TryAdd(rootId, root) |> ignore
+                index.TryAdd(childId, child) |> ignore
+
+                let status =
+                    { GraceStatus.Default with
+                        Index = index
+                        RootDirectoryId = rootId
+                        RootDirectorySha256Hash = rootSha
+                        RootDirectoryBlake3Hash = rootBlake3
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    match shape with
+                    | "valid" -> ()
+                    | "truncated" ->
+                        executeNonQuery connection "DELETE FROM status_files WHERE relative_path = 'src/nested.txt';"
+                        executeNonQuery connection "DELETE FROM status_directories WHERE relative_path = 'src';"
+                    | "disconnected" -> executeNonQuery connection "UPDATE status_directories SET parent_path = 'missing' WHERE relative_path = 'src';"
+                    | "duplicate-path" ->
+                        executeNonQuery
+                            connection
+                            $"UPDATE status_files SET relative_path = 'src', directory_path = '.', directory_version_id = '{rootId}' WHERE relative_path = 'src/nested.txt';"
+                    | "malformed-file-parent" ->
+                        executeNonQuery connection "UPDATE status_files SET directory_path = '.' WHERE relative_path = 'src/nested.txt';"
+                    | _ -> invalidOp $"Unexpected complete-tree test shape: {shape}"
+
+                let! result =
+                    LocalStateDb.readCompleteStatusSnapshotReadOnly
+                        configuration.GraceStatusFile
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+
+                match shape, result with
+                | "valid", Ok readBack -> readBack.Index.Count |> should equal 2
+                | "valid", Error error -> Assert.Fail($"Expected a valid complete status tree, got: {error}")
+                | _, Error error -> error |> should contain "status tree"
+                | _, Ok _ -> Assert.Fail($"Expected malformed status shape '{shape}' to fail closed.")
             })
 
     /// Verifies that read status snapshot tolerates missing status meta row.
@@ -4371,7 +5103,7 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "8"
+                    schemaVersion |> should equal "9"
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1

@@ -1,8 +1,9 @@
 # Grace Doctor
 
-`grace doctor` inspects the local Grace environment and reports diagnostics for people, scripts, and agents. It is a
-read-only command: it does not create configuration, initialize local state, migrate databases, repair object-cache
-rows, acquire credentials, refresh tokens, open a browser, or upload support bundles.
+`grace doctor` inspects the local Grace environment and reports diagnostics for people, scripts, and agents. The default
+command is strictly read-only: it does not create configuration, initialize local state, migrate databases, repair
+object-cache rows, acquire credentials, refresh tokens, open a browser, or upload support bundles. The explicit
+`--repair-local-state` gesture is the sole exception and owns exact, non-destructive local-state reconstruction.
 
 Use it when a Grace checkout, local state database, authentication environment, or server connection looks suspicious and
 you need a structured first look before deciding what to fix.
@@ -14,6 +15,7 @@ grace doctor
 grace --output Json doctor
 grace doctor --list-checks
 grace --output Json doctor --check Authentication --select Summary
+grace doctor --repair-local-state
 ```
 
 bash / zsh:
@@ -23,6 +25,7 @@ grace doctor
 grace --output Json doctor
 grace doctor --list-checks
 grace --output Json doctor --check Authentication --select Summary
+grace doctor --repair-local-state
 ```
 
 ## Command Behavior
@@ -47,6 +50,7 @@ parsing or storing doctor evidence.
 | `--list-checks` | Lists the catalog and marks each returned check as skipped; diagnostic probes do not run. |
 | `--check <id-or-category>` | Runs only matching check IDs or categories. Repeat the option or separate values with commas. |
 | `--strict` | Returns exit code `1` when the report status is `Warning`; failures already return `1`. |
+| `--repair-local-state` | Rebuilds exact status and the matching ordered event boundary without changing working-tree or server content. |
 
 Check selection is case-insensitive. Category tokens can use spaces or hyphens, so `--check working-tree` matches
 `working-tree.scan`. Exact check IDs can also select non-default or full-profile diagnostics without `--full`.
@@ -202,31 +206,37 @@ Doctor can help explain local authentication setup without exposing secrets:
 Do not paste doctor JSON into public places without reviewing paths and environment names. The report is designed to
 avoid raw secrets, but summaries may include local file paths or configured server URIs.
 
-## Repair Deferral
+## Exact Local-State Repair
 
-`grace doctor` does not repair problems in v1. It does not:
+Use `grace doctor --repair-local-state` only when a materialized working tree remains intact but its local SQLite state
+is missing or unusable. Repair:
 
-- Create `.grace` directories or configuration files.
-- Initialize, migrate, rewrite, move, or back up the local SQLite database.
-- Create missing SQLite tables or indexes.
-- Repair object-cache rows.
-- Acquire, refresh, store, revoke, or rotate credentials.
-- Upload support bundles.
+- Refuses a live Watch process for the configured repository and branch.
+- Computes the complete retained tree without changing its bytes.
+- Resolves the real root identity and requires that exact root in the configured branch history.
+- Uses the latest matching ordered event when the same root occurs more than once.
+- Fetches the complete immutable server directory closure and preserves its real descendant identities.
+- Rechecks configuration and local bytes immediately before one atomic status-and-cursor commit.
 
-Use the diagnostic result to choose the next command. For example, working-tree drift can be investigated with
-`grace maintenance scan` and intentionally accepted into local state with `grace maintenance update-index`.
+Repair never uploads files, creates directory versions, publishes Save or Reference events, or materializes server
+content into the working tree. No exact root, changed bytes, a repository or branch mismatch, cancellation, server
+failure, or SQLite failure leaves no partially initialized status. The default command never invokes this path.
 
 ## V1 Boundaries
 
 The current v1 command does not document or implement:
 
-- Automatic repair or `--repair`.
+- Automatic repair, unmatched-root baselines, or implicit repair from Watch and other writable commands.
 - Full/Aspire/cloud resource probes.
 - Support bundle upload.
 - Browser or device-code authentication flows inside doctor.
 - Token refresh or secure-store mutation inside doctor.
 
 These are explicit deferrals, not hidden current behavior.
+
+The Issue #340 final audit below records the original read-only Doctor slice. Issue #823 supersedes only its repair
+deferral: default diagnostics remain read-only, while `--repair-local-state` is an explicit exact-only maintenance
+gesture.
 
 ## Final Audit
 

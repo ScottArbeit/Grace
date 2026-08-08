@@ -132,6 +132,13 @@ class TestBranchesApi(unittest.TestCase):
         """
         pass
 
+    def test_get_reference_materialization_boundary(self) -> None:
+        """Test case for get_reference_materialization_boundary
+
+        Resolve a Connect materialization boundary.
+        """
+        pass
+
     def test_list_branch_checkpoints(self) -> None:
         """Test case for list_branch_checkpoints
 
@@ -185,6 +192,20 @@ class TestBranchesApi(unittest.TestCase):
         """Test case for rebase_branch
 
         Rebase a branch.
+        """
+        pass
+
+    def test_replay_reference_events(self) -> None:
+        """Test case for replay_reference_events
+
+        Replay cursor-new Reference events.
+        """
+        pass
+
+    def test_resolve_reference_event_boundary(self) -> None:
+        """Test case for resolve_reference_event_boundary
+
+        Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
         """
         pass
 

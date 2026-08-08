@@ -57,6 +57,7 @@ docs/CreateParameters.md
 docs/CreateReferenceParameters.md
 docs/CreateRepositoryParameters.md
 docs/CreateWebhookRuleParameters.md
+docs/CurrentBranchReferenceNotification.md
 docs/DedupeDiscoverySnapshot.md
 docs/DefaultApi.md
 docs/DeleteBranchParameters.md
@@ -116,6 +117,7 @@ docs/GetDownloadUriParameters.md
 docs/GetOrganizationParameters.md
 docs/GetOwnerParameters.md
 docs/GetParameters.md
+docs/GetReferenceMaterializationBoundaryParameters.md
 docs/GetReferenceParameters.md
 docs/GetReferencesByReferenceIdParameters.md
 docs/GetReferencesParameters.md
@@ -168,10 +170,16 @@ docs/ReferenceApiDto.md
 docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
 docs/ReferenceListReturnValue.md
+docs/ReferenceMaterializationBoundaryApiDto.md
+docs/ReferenceMaterializationBoundaryReturnValue.md
 docs/ReferenceParameters.md
+docs/ReferenceReplayApiDto.md
+docs/ReferenceReplayEventApiDto.md
+docs/ReferenceReplayReturnValue.md
 docs/ReferenceReturnValue.md
 docs/ReferenceType.md
 docs/RegisterContentBlockUploadParameters.md
+docs/ReplayReferenceEventsParameters.md
 docs/RepositoriesApi.md
 docs/RepositoryBooleanReturnValue.md
 docs/RepositoryBranchesReturnValue.md
@@ -182,6 +190,7 @@ docs/RepositoryReferencesReturnValue.md
 docs/RepositoryReturnValue.md
 docs/RepositoryStatus.md
 docs/RepositoryVisibility.md
+docs/ResolveReferenceEventBoundaryParameters.md
 docs/SaveDirectoryVersionsParameters.md
 docs/ScopedOutboundUrl.md
 docs/SearchVisibility.md
@@ -314,6 +323,7 @@ grace_generated_openapi_probe/models/create_parameters.py
 grace_generated_openapi_probe/models/create_reference_parameters.py
 grace_generated_openapi_probe/models/create_repository_parameters.py
 grace_generated_openapi_probe/models/create_webhook_rule_parameters.py
+grace_generated_openapi_probe/models/current_branch_reference_notification.py
 grace_generated_openapi_probe/models/dedupe_discovery_snapshot.py
 grace_generated_openapi_probe/models/delete_branch_parameters.py
 grace_generated_openapi_probe/models/delete_organization_parameters.py
@@ -370,6 +380,7 @@ grace_generated_openapi_probe/models/get_download_uri_parameters.py
 grace_generated_openapi_probe/models/get_organization_parameters.py
 grace_generated_openapi_probe/models/get_owner_parameters.py
 grace_generated_openapi_probe/models/get_parameters.py
+grace_generated_openapi_probe/models/get_reference_materialization_boundary_parameters.py
 grace_generated_openapi_probe/models/get_reference_parameters.py
 grace_generated_openapi_probe/models/get_references_by_reference_id_parameters.py
 grace_generated_openapi_probe/models/get_references_parameters.py
@@ -420,10 +431,16 @@ grace_generated_openapi_probe/models/reference_api_dto.py
 grace_generated_openapi_probe/models/reference_default_sentinel.py
 grace_generated_openapi_probe/models/reference_dto.py
 grace_generated_openapi_probe/models/reference_list_return_value.py
+grace_generated_openapi_probe/models/reference_materialization_boundary_api_dto.py
+grace_generated_openapi_probe/models/reference_materialization_boundary_return_value.py
 grace_generated_openapi_probe/models/reference_parameters.py
+grace_generated_openapi_probe/models/reference_replay_api_dto.py
+grace_generated_openapi_probe/models/reference_replay_event_api_dto.py
+grace_generated_openapi_probe/models/reference_replay_return_value.py
 grace_generated_openapi_probe/models/reference_return_value.py
 grace_generated_openapi_probe/models/reference_type.py
 grace_generated_openapi_probe/models/register_content_block_upload_parameters.py
+grace_generated_openapi_probe/models/replay_reference_events_parameters.py
 grace_generated_openapi_probe/models/repository_boolean_return_value.py
 grace_generated_openapi_probe/models/repository_branches_return_value.py
 grace_generated_openapi_probe/models/repository_command_return_value.py
@@ -433,6 +450,7 @@ grace_generated_openapi_probe/models/repository_references_return_value.py
 grace_generated_openapi_probe/models/repository_return_value.py
 grace_generated_openapi_probe/models/repository_status.py
 grace_generated_openapi_probe/models/repository_visibility.py
+grace_generated_openapi_probe/models/resolve_reference_event_boundary_parameters.py
 grace_generated_openapi_probe/models/save_directory_versions_parameters.py
 grace_generated_openapi_probe/models/scoped_outbound_url.py
 grace_generated_openapi_probe/models/search_visibility.py
@@ -555,6 +573,7 @@ test/test_create_parameters.py
 test/test_create_reference_parameters.py
 test/test_create_repository_parameters.py
 test/test_create_webhook_rule_parameters.py
+test/test_current_branch_reference_notification.py
 test/test_dedupe_discovery_snapshot.py
 test/test_default_api.py
 test/test_delete_branch_parameters.py
@@ -614,6 +633,7 @@ test/test_get_download_uri_parameters.py
 test/test_get_organization_parameters.py
 test/test_get_owner_parameters.py
 test/test_get_parameters.py
+test/test_get_reference_materialization_boundary_parameters.py
 test/test_get_reference_parameters.py
 test/test_get_references_by_reference_id_parameters.py
 test/test_get_references_parameters.py
@@ -666,10 +686,16 @@ test/test_reference_api_dto.py
 test/test_reference_default_sentinel.py
 test/test_reference_dto.py
 test/test_reference_list_return_value.py
+test/test_reference_materialization_boundary_api_dto.py
+test/test_reference_materialization_boundary_return_value.py
 test/test_reference_parameters.py
+test/test_reference_replay_api_dto.py
+test/test_reference_replay_event_api_dto.py
+test/test_reference_replay_return_value.py
 test/test_reference_return_value.py
 test/test_reference_type.py
 test/test_register_content_block_upload_parameters.py
+test/test_replay_reference_events_parameters.py
 test/test_repositories_api.py
 test/test_repository_boolean_return_value.py
 test/test_repository_branches_return_value.py
@@ -680,6 +706,7 @@ test/test_repository_references_return_value.py
 test/test_repository_return_value.py
 test/test_repository_status.py
 test/test_repository_visibility.py
+test/test_resolve_reference_event_boundary_parameters.py
 test/test_save_directory_versions_parameters.py
 test/test_scoped_outbound_url.py
 test/test_search_visibility.py

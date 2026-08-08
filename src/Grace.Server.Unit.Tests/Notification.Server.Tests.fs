@@ -1,11 +1,13 @@
 namespace Grace.Server.Tests
 
 open Grace.Server.Notification
+open Grace.Server.Branch
 open Grace.Server.Security
 open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.Reference
 open Microsoft.AspNetCore.SignalR
+open Microsoft.AspNetCore.Http
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -31,7 +33,7 @@ type NotificationServerTests() =
         { Grace.Types.Branch.BranchDto.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; BranchId = branchId }
 
     /// Creates a fake SignalR hub context that records current-branch group sends without a hosted server.
-    let recordingHubContext (observedGroups: ResizeArray<string>) (observedPayloads: ResizeArray<CurrentBranchReferenceNotification>) =
+    let recordingHubContext (observedTargets: ResizeArray<string * string * string array>) (observedPayloads: ResizeArray<CurrentBranchReferenceNotification>) =
         let client =
             { new IGraceClientConnection with
                 member _.RegisterRepository _ = Task.CompletedTask
@@ -58,10 +60,13 @@ type NotificationServerTests() =
                 member _.Clients _ = client
 
                 member _.Group groupName =
-                    observedGroups.Add groupName
+                    observedTargets.Add("Group", groupName, Array.empty)
                     client
 
-                member _.GroupExcept(_, _) = client
+                member _.GroupExcept(groupName, excludedConnectionIds) =
+                    observedTargets.Add("GroupExcept", groupName, excludedConnectionIds |> Seq.toArray)
+                    client
+
                 member _.Groups _ = client
                 member _.User _ = client
                 member _.Users _ = client
@@ -365,7 +370,7 @@ type NotificationServerTests() =
     [<Test>]
     member _.ServerSideCurrentBranchBroadcastTargetsCurrentBranchGroup() =
         task {
-            let observedGroups = ResizeArray<string>()
+            let observedTargets = ResizeArray<string * string * string array>()
             let observedPayloads = ResizeArray<CurrentBranchReferenceNotification>()
             let repositoryId = Guid.Parse("44444444-4444-4444-4444-444444444444")
             let branchId = Guid.Parse("55555555-5555-5555-5555-555555555555")
@@ -378,18 +383,246 @@ type NotificationServerTests() =
                     ReferenceType = ReferenceType.Save
                 }
 
-            let hubContext = recordingHubContext observedGroups observedPayloads
+            let hubContext = recordingHubContext observedTargets observedPayloads
 
             do! notifyCurrentBranchReferenceClients hubContext payload
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(observedGroups, Has.Count.EqualTo(1))
-                    Assert.That(observedGroups[0], Is.EqualTo(currentBranchGroupKey repositoryId branchId))
+                    Assert.That(observedTargets, Has.Count.EqualTo(1))
+                    let selector, groupName, excludedConnectionIds = observedTargets[0]
+                    Assert.That(selector, Is.EqualTo("Group"))
+                    Assert.That(groupName, Is.EqualTo(currentBranchGroupKey repositoryId branchId))
+                    Assert.That(excludedConnectionIds, Is.Empty)
                     Assert.That(observedPayloads, Has.Count.EqualTo(1))
                     Assert.That(observedPayloads[0], Is.EqualTo(payload)))
             )
         }
+
+    /// Proves a live publication excludes only the exact connected Watch subscription bound before publication.
+    [<Test>]
+    member _.CurrentBranchBroadcastExcludesOnlyExactPublishingWatchConnection() =
+        task {
+            let sourceProcessId = Guid.NewGuid()
+            let peerProcessId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let referenceId = Guid.NewGuid()
+            let sourceConnectionId = $"source-{Guid.NewGuid():N}"
+            let peerConnectionId = $"peer-same-machine-{Guid.NewGuid():N}"
+
+            registerWatchSourceSubscription sourceConnectionId sourceProcessId repositoryId branchId
+            registerWatchSourceSubscription peerConnectionId peerProcessId repositoryId branchId
+
+            prepareWatchPublicationSource sourceProcessId repositoryId branchId referenceId
+            |> ignore
+
+            let observedTargets = ResizeArray<string * string * string array>()
+            let observedPayloads = ResizeArray<CurrentBranchReferenceNotification>()
+            let payload = { CurrentBranchReferenceNotification.Default with RepositoryId = repositoryId; BranchId = branchId; ReferenceId = referenceId }
+
+            do! notifyCurrentBranchReferenceClients (recordingHubContext observedTargets observedPayloads) payload
+
+            let selector, groupName, excludedConnectionIds = observedTargets[0]
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(selector, Is.EqualTo("GroupExcept"))
+                    Assert.That(groupName, Is.EqualTo(currentBranchGroupKey repositoryId branchId))
+                    Assert.That(excludedConnectionIds, Has.Length.EqualTo(1))
+                    Assert.That(excludedConnectionIds[0], Is.EqualTo(sourceConnectionId))
+                    Assert.That(excludedConnectionIds, Does.Not.Contain(peerConnectionId))
+                    Assert.That(observedPayloads, Has.Count.EqualTo(1))
+                    Assert.That(observedPayloads[0], Is.EqualTo(payload)))
+            )
+        }
+
+    /// Proves absent, malformed, cross-branch, and expired source bindings use the ordinary group delivery path.
+    [<Test>]
+    member _.CurrentBranchBroadcastFallsThroughWhenSourceBindingIsNotExactAndLive() =
+        task {
+            let sourceProcessId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let publishedRepositoryId = Guid.NewGuid()
+            let subscribedBranchId = Guid.NewGuid()
+            let publishedBranchId = Guid.NewGuid()
+            let connectionId = $"source-{Guid.NewGuid():N}"
+            registerWatchSourceSubscription connectionId sourceProcessId repositoryId subscribedBranchId
+
+            let cases =
+                [|
+                    "absent", Guid.Empty, repositoryId, subscribedBranchId, Guid.NewGuid()
+                    "malformed-equivalent", Guid.NewGuid(), repositoryId, subscribedBranchId, Guid.NewGuid()
+                    "cross-branch", sourceProcessId, repositoryId, publishedBranchId, Guid.NewGuid()
+                    "cross-repository", sourceProcessId, publishedRepositoryId, subscribedBranchId, Guid.NewGuid()
+                |]
+
+            for caseName, processId, caseRepositoryId, caseBranchId, referenceId in cases do
+                prepareWatchPublicationSource processId caseRepositoryId caseBranchId referenceId
+                |> ignore
+
+                let observedTargets = ResizeArray<string * string * string array>()
+
+                let payload =
+                    { CurrentBranchReferenceNotification.Default with RepositoryId = caseRepositoryId; BranchId = caseBranchId; ReferenceId = referenceId }
+
+                do! notifyCurrentBranchReferenceClients (recordingHubContext observedTargets (ResizeArray())) payload
+
+                let selector, _, excludedConnectionIds = observedTargets[0]
+                Assert.That(selector, Is.EqualTo("Group"), caseName)
+                Assert.That(excludedConnectionIds, Is.Empty, caseName)
+        }
+
+    /// Proves a same-connection branch refresh invalidates a publication bound to the previous subscription tuple.
+    [<Test>]
+    member _.CurrentBranchBroadcastFallsThroughAfterSubscriptionRefresh() =
+        task {
+            let sourceProcessId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let previousBranchId = Guid.NewGuid()
+            let currentBranchId = Guid.NewGuid()
+            let referenceId = Guid.NewGuid()
+            let connectionId = $"refresh-{Guid.NewGuid():N}"
+            registerWatchSourceSubscription connectionId sourceProcessId repositoryId previousBranchId
+
+            prepareWatchPublicationSource sourceProcessId repositoryId previousBranchId referenceId
+            |> ignore
+
+            registerWatchSourceSubscription connectionId sourceProcessId repositoryId currentBranchId
+
+            let observedTargets = ResizeArray<string * string * string array>()
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with RepositoryId = repositoryId; BranchId = previousBranchId; ReferenceId = referenceId }
+
+            do! notifyCurrentBranchReferenceClients (recordingHubContext observedTargets (ResizeArray())) payload
+
+            let selector, _, excludedConnectionIds = observedTargets[0]
+            Assert.That(selector, Is.EqualTo("Group"))
+            Assert.That(excludedConnectionIds, Does.Not.Contain(connectionId))
+        }
+
+    /// Proves disconnect, reconnect, subscription refresh, and process-ID reuse cannot suppress the replacement connection.
+    [<Test>]
+    member _.CurrentBranchBroadcastFallsThroughAfterSourceConnectionIdentityChanges() =
+        task {
+            let sourceProcessId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let referenceId = Guid.NewGuid()
+            let originalConnectionId = $"original-{Guid.NewGuid():N}"
+            let replacementConnectionId = $"replacement-{Guid.NewGuid():N}"
+
+            registerWatchSourceSubscription originalConnectionId sourceProcessId repositoryId branchId
+
+            prepareWatchPublicationSource sourceProcessId repositoryId branchId referenceId
+            |> ignore
+
+            unregisterWatchSourceSubscription originalConnectionId
+            registerWatchSourceSubscription replacementConnectionId sourceProcessId repositoryId branchId
+
+            let observedTargets = ResizeArray<string * string * string array>()
+            let payload = { CurrentBranchReferenceNotification.Default with RepositoryId = repositoryId; BranchId = branchId; ReferenceId = referenceId }
+            do! notifyCurrentBranchReferenceClients (recordingHubContext observedTargets (ResizeArray())) payload
+
+            let selector, _, excludedConnectionIds = observedTargets[0]
+            Assert.That(selector, Is.EqualTo("Group"))
+            Assert.That(excludedConnectionIds, Does.Not.Contain(replacementConnectionId))
+        }
+
+    /// Proves one transient publication binding is consumed so repeated live delivery falls back to the client ledger.
+    [<Test>]
+    member _.CurrentBranchBroadcastConsumesSourceBindingAfterFirstPublication() =
+        task {
+            let sourceProcessId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let referenceId = Guid.NewGuid()
+            let connectionId = $"source-{Guid.NewGuid():N}"
+            registerWatchSourceSubscription connectionId sourceProcessId repositoryId branchId
+
+            prepareWatchPublicationSource sourceProcessId repositoryId branchId referenceId
+            |> ignore
+
+            let observedTargets = ResizeArray<string * string * string array>()
+            let payload = { CurrentBranchReferenceNotification.Default with RepositoryId = repositoryId; BranchId = branchId; ReferenceId = referenceId }
+            let hubContext = recordingHubContext observedTargets (ResizeArray())
+
+            do! notifyCurrentBranchReferenceClients hubContext payload
+            do! notifyCurrentBranchReferenceClients hubContext payload
+
+            let selectors =
+                observedTargets
+                |> Seq.map (fun (selector, _, _) -> selector)
+                |> Seq.toArray
+
+            Assert.That(selectors, Has.Length.EqualTo(2))
+            Assert.That(selectors[0], Is.EqualTo("GroupExcept"))
+            Assert.That(selectors[1], Is.EqualTo("Group"))
+        }
+
+    /// Proves malformed or absent HTTP delivery metadata is ignored while a canonical process ID remains usable.
+    [<Test>]
+    member _.WatchProcessHeaderParsingFailsSafe() =
+        let processId = Guid.NewGuid()
+        let validContext = DefaultHttpContext()
+
+        validContext.Request.Headers[
+            Grace.Shared.Constants.WatchProcessIdHeaderKey
+        ] <- processId.ToString("N")
+
+        let malformedContext = DefaultHttpContext()
+
+        malformedContext.Request.Headers[
+            Grace.Shared.Constants.WatchProcessIdHeaderKey
+        ] <- "not-a-process-id"
+
+        let absentContext = DefaultHttpContext()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(tryGetWatchProcessId validContext, Is.EqualTo(Some processId))
+                Assert.That(tryGetWatchProcessId malformedContext, Is.EqualTo(None))
+                Assert.That(tryGetWatchProcessId absentContext, Is.EqualTo(None)))
+        )
+
+    /// Proves failed mutations and expiry both remove suppression without advancing any replay or client cursor state.
+    [<Test>]
+    member _.WatchPublicationBindingsAreRemovableAndExpiring() =
+        let sourceProcessId = Guid.NewGuid()
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+        let connectionId = $"source-{Guid.NewGuid():N}"
+        let failedReferenceId = Guid.NewGuid()
+        let expiredReferenceId = Guid.NewGuid()
+        let replacedByMissingReferenceId = Guid.NewGuid()
+        let now = DateTimeOffset.Parse("2026-08-07T08:00:00Z")
+        registerWatchSourceSubscription connectionId sourceProcessId repositoryId branchId
+
+        let failedBinding = prepareWatchPublicationSourceAt now sourceProcessId repositoryId branchId failedReferenceId
+
+        failedBinding
+        |> Option.iter removeWatchPublicationSource
+
+        prepareWatchPublicationSourceAt now sourceProcessId repositoryId branchId expiredReferenceId
+        |> ignore
+
+        prepareWatchPublicationSourceAt now sourceProcessId repositoryId branchId replacedByMissingReferenceId
+        |> ignore
+
+        prepareWatchPublicationSourceAt now Guid.Empty repositoryId branchId replacedByMissingReferenceId
+        |> ignore
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(tryTakeWatchPublicationSourceConnectionAt now repositoryId branchId failedReferenceId, Is.EqualTo(None))
+                Assert.That(tryTakeWatchPublicationSourceConnectionAt now repositoryId branchId replacedByMissingReferenceId, Is.EqualTo(None))
+
+                Assert.That(
+                    tryTakeWatchPublicationSourceConnectionAt (now + TimeSpan.FromMinutes(3.0)) repositoryId branchId expiredReferenceId,
+                    Is.EqualTo(None)
+                ))
+        )
 
     /// Verifies that commit current-branch broadcasts are ordered after zip generation and derived diff work.
     [<Test>]

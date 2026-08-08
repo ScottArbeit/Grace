@@ -171,6 +171,7 @@ module Notification =
             let items = this.Context.Items
             let connectionId = this.Context.ConnectionId
             let cleared = clearCurrentBranchGroupMembershipState items
+            Branch.unregisterWatchSourceSubscription connectionId
 
             if cleared then
                 log.LogInformation(
@@ -210,8 +211,8 @@ module Notification =
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{parentBranchId}")
             }
 
-        /// Adds the current SignalR connection to the current-branch group used for same-branch Reference notifications.
-        member this.RegisterCurrentBranch(repositoryId: RepositoryId, branchId: BranchId) =
+        /// Authorizes and replaces the current-branch subscription before optionally binding its delivery-only process identity.
+        member private this.RegisterCurrentBranchCore(repositoryId: RepositoryId, branchId: BranchId, sourceProcessId: Guid option) =
             task {
                 log.LogInformation(
                     "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} registering for current BranchId: {BranchId} in RepositoryId: {RepositoryId}.",
@@ -247,7 +248,29 @@ module Notification =
                     raise (HubException("Current-branch SignalR registration requires branch read permission."))
 
                 do! replaceCurrentBranchGroupMembership this.Groups this.Context.ConnectionId this.Context.Items repositoryId branchId CancellationToken.None
+
+                match sourceProcessId with
+                | Some processId -> Branch.registerWatchSourceSubscription this.Context.ConnectionId processId repositoryId branchId
+                | None -> Branch.unregisterWatchSourceSubscription this.Context.ConnectionId
             }
+
+        /// Adds a source-unaware SignalR client to the current-branch group while preserving legacy delivery behavior.
+        member this.RegisterCurrentBranch(repositoryId: RepositoryId, branchId: BranchId) = this.RegisterCurrentBranchCore(repositoryId, branchId, None)
+
+        /// Adds a Watch connection to the current-branch group and binds a well-formed opaque process identity for live delivery optimization.
+        member this.RegisterCurrentBranchSource(repositoryId: RepositoryId, branchId: BranchId, sourceProcessId: string) =
+            let mutable processId = Guid.Empty
+
+            let parsedProcessId =
+                if
+                    Guid.TryParseExact(sourceProcessId, "N", &processId)
+                    && processId <> Guid.Empty
+                then
+                    Some processId
+                else
+                    None
+
+            this.RegisterCurrentBranchCore(repositoryId, branchId, parsedProcessId)
 
         /// Broadcasts repository-scoped notifications to clients registered for the repository group.
         member this.NotifyRepository((repositoryId: RepositoryId), (referenceId: ReferenceId)) =
@@ -373,11 +396,14 @@ module Notification =
         =
         task {
             if not <| isNull hubContext then
-                do!
-                    hubContext
-                        .Clients
-                        .Group(currentBranchGroupKey payload.RepositoryId payload.BranchId)
-                        .NotifyCurrentBranchReference(payload)
+                let groupKey = currentBranchGroupKey payload.RepositoryId payload.BranchId
+
+                let clients =
+                    match Branch.tryTakeWatchPublicationSourceConnection payload.RepositoryId payload.BranchId payload.ReferenceId with
+                    | Some connectionId -> hubContext.Clients.GroupExcept(groupKey, [| connectionId |])
+                    | None -> hubContext.Clients.Group(groupKey)
+
+                do! clients.NotifyCurrentBranchReference(payload)
         }
 
     /// Implements route automation event for the server request pipeline.

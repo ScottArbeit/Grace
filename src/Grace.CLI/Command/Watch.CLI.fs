@@ -50,6 +50,7 @@ open Microsoft.Extensions.DependencyInjection
 module Watch =
     exception private WatchCommandExit of int
 
+    let private watchProcessId = Guid.NewGuid()
     let mutable private graceWatchRuntimeModeValue = int GraceWatchRuntimeMode.HealthyIncremental
 
     /// Reads the process-local Grace Watch runtime mode used to gate scans and filesystem observations.
@@ -371,53 +372,42 @@ module Watch =
 
     /// Reports whether a candidate path is the Grace internal directory itself or belongs to its descendant namespace.
     let private isPathWithinDirectoryForWatch (directoryPath: string) (candidatePath: string) =
-        let normalizedDirectory =
-            directoryPath
-            |> Path.GetFullPath
-            |> Path.TrimEndingDirectorySeparator
-
-        let normalizedCandidate =
-            candidatePath
-            |> Path.GetFullPath
-            |> Path.TrimEndingDirectorySeparator
-
-        String.Equals(normalizedCandidate, normalizedDirectory, watchPathComparison)
-        || normalizedCandidate.StartsWith(
-            normalizedDirectory
-            + string Path.DirectorySeparatorChar,
-            watchPathComparison
-        )
+        isPathWithinDirectoryWithComparison watchPathComparison directoryPath candidatePath
 
     /// Exposes Watch namespace containment for deterministic path-comparison tests.
     let internal isPathWithinDirectoryForWatchTests directoryPath candidatePath = isPathWithinDirectoryForWatch directoryPath candidatePath
 
+    /// Converts the immutable Watch-lifetime ignore snapshot into the shared repository path-classification contract.
+    let private repositoryPathClassifierInputForWatch (snapshot: WatchIgnoreSnapshot) =
+        {
+            RootDirectory = snapshot.RootDirectory
+            GraceDirectory = snapshot.GraceDirectory
+            GraceStatusFile = snapshot.GraceStatusFile
+            DirectoryIgnoreEntries = snapshot.DirectoryEntries
+            FileIgnoreEntries = snapshot.FileEntries
+            PathComparison = watchPathComparison
+        }
+
+    /// Classifies one Watch path against the immutable lifetime snapshot before ordinary observation side effects.
+    let private classifyRepositoryPathForWatch pathKind fullPath =
+        let snapshot = currentWatchIgnoreSnapshot ()
+        classifyRepositoryPath (repositoryPathClassifierInputForWatch snapshot) pathKind fullPath
+
     /// Checks a file path against the copied Watch-lifetime ignore snapshot.
     let private shouldIgnoreFileForWatch fullPath =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        let fileInfo = FileInfo(fullPath)
+        let pathKind =
+            if Directory.Exists(fullPath) then
+                RepositoryPathKind.DirectoryPath
+            else
+                RepositoryPathKind.FilePath
 
-        isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
-        || fullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
-        || fullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
-        || fullPath.EndsWith(".gracetmp", watchPathComparison)
-        || Directory.Exists(fullPath)
-        || (not (isNull fileInfo.Directory)
-            && snapshot.DirectoryEntries
-               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine))
-        || snapshot.DirectoryEntries
-           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
-        || snapshot.FileEntries
-           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile fullPath graceIgnoreLine)
+        classifyRepositoryPathForWatch pathKind fullPath
+        <> Eligible
 
     /// Checks a directory path against the copied Watch-lifetime ignore snapshot.
     let private shouldIgnoreDirectoryForWatch directoryPath =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        let directoryInfo = DirectoryInfo(directoryPath)
-
-        isPathWithinDirectoryForWatch snapshot.GraceDirectory directoryInfo.FullName
-        || snapshot.DirectoryEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+        classifyRepositoryPathForWatch RepositoryPathKind.DirectoryPath directoryPath
+        <> Eligible
 
     /// Checks whether a directory remains eligible under the copied Watch-lifetime ignore snapshot.
     let private shouldNotIgnoreDirectoryForWatch directoryPath = not <| shouldIgnoreDirectoryForWatch directoryPath
@@ -441,7 +431,7 @@ module Watch =
                 FileIgnoreEntries = snapshot.FileEntries
             }
 
-        scanWorkingTreeForDifferencesReadOnly scanInput previousGraceStatus
+        scanWorkingTreeForDifferencesReadOnlyWithComparison watchPathComparison scanInput previousGraceStatus
 
     /// Scans the working tree with the copied Watch-lifetime ignore inputs instead of live configuration values.
     let private scanForDifferencesWithWatchIgnoreSnapshot (previousGraceStatus: GraceStatus) =
@@ -931,6 +921,14 @@ module Watch =
         | DeletedPathKindUnknown
         | DeletedPathStatusUnavailable
 
+    /// Maps tracked or uncertain removals to reconciliation while unknown paths retain configured-ignore admission.
+    let private repositoryPathKindForDeletedPath pathKind =
+        match pathKind with
+        | DeletedFile
+        | DeletedDirectory
+        | DeletedPathStatusUnavailable -> RepositoryPathKind.RemovalReconciliationPath
+        | DeletedPathKindUnknown -> RepositoryPathKind.UnknownPath
+
     /// Coordinates repository relative path behavior for this CLI command path.
     let private repositoryRelativePath (fullPath: string) =
         let rootDirectory =
@@ -1387,23 +1385,6 @@ module Watch =
         | :? IOException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
         | :? UnauthorizedAccessException as ex -> AmbiguousMarkerBoundary $"could not read active update marker boundary: {ex.Message}"
 
-    /// Evaluates is grace status artifact against parsed options and command state.
-    let private isGraceStatusArtifact (fullPath: string) =
-        let statusFile = Current().GraceStatusFile
-
-        fullPath.Equals(statusFile, watchPathComparison)
-        || fullPath.Equals(statusFile + "-wal", watchPathComparison)
-        || fullPath.Equals(statusFile + "-shm", watchPathComparison)
-        || fullPath.Equals(statusFile + "-journal", watchPathComparison)
-
-    /// Identifies Grace-owned paths using only the Watch-lifetime namespace snapshot, without consulting final filesystem state.
-    let private isGraceInternalRawObservationPath fullPath =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        isPathWithinDirectoryForWatch snapshot.GraceDirectory fullPath
-
-    /// Rejects Grace-owned paths before raw candidate scope capture.
-    let private tryClassifyRawLocalObservation fallbackKind fullPath = if isGraceInternalRawObservationPath fullPath then None else Some fallbackKind
-
     /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
     let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
         let normalizedRelativePath = normalizeRelativePath relativePath
@@ -1458,7 +1439,7 @@ module Watch =
     let private transitionCatchUpRequestLock = obj ()
     let mutable private requestCurrentBranchReferenceCatchUpAfterTransitionCompletion = ignore
 
-    /// Queues the current target branch's BranchDto catch-up only after its SignalR subscriptions are current.
+    /// Requests current-branch cursor replay only after transition SignalR subscriptions are current.
     let private requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh () =
         let request = lock transitionCatchUpRequestLock (fun () -> requestCurrentBranchReferenceCatchUpAfterTransitionCompletion)
         request ()
@@ -1823,6 +1804,26 @@ module Watch =
             trackedDeletedPathKind status relativePath
         with
         | _ -> DeletedPathStatusUnavailable
+
+    /// Classifies one raw callback path from current filesystem shape or trusted tracked delete evidence.
+    let private classifyRawLocalObservation (fallbackKind: WatchObservationKind) (fullPath: string) =
+        match fallbackKind with
+        | Deleted ->
+            match classifyRepositoryPathForWatch RepositoryPathKind.RemovalReconciliationPath fullPath with
+            | RepositoryPathClassification.Eligible ->
+                let pathKind =
+                    match repositoryRelativePath fullPath with
+                    | Some relativePath ->
+                        relativePath
+                        |> readTrackedDeletedPathKind
+                        |> repositoryPathKindForDeletedPath
+                    | None -> RepositoryPathKind.UnknownPath
+
+                classifyRepositoryPathForWatch pathKind fullPath
+            | classification -> classification
+        | _ when Directory.Exists(fullPath) -> classifyRepositoryPathForWatch RepositoryPathKind.DirectoryPath fullPath
+        | _ when File.Exists(fullPath) -> classifyRepositoryPathForWatch RepositoryPathKind.FilePath fullPath
+        | _ -> classifyRepositoryPathForWatch RepositoryPathKind.UnknownPath fullPath
 
     /// Reports whether a marker completion instant is recent enough to suppress delayed Watch callbacks.
     let private isRecentGraceUpdateMarkerCompletion completedUtc =
@@ -2464,48 +2465,10 @@ module Watch =
 
         { Applicable = applicable; Resolved = resolved }
 
-    /// Coordinates should ignore deleted path behavior for this CLI command path.
+    /// Checks a deleted path against the shared classifier while preserving status-unavailable recovery behavior.
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
-        let snapshot = currentWatchIgnoreSnapshot ()
-        let normalizedFullPath = Path.GetFullPath(fullPath)
-        let graceDirectory = Path.TrimEndingDirectorySeparator(snapshot.GraceDirectory)
-        let fileInfo = FileInfo(fullPath)
-        let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
-
-        let isInGraceDirectory = isPathWithinDirectoryForWatch graceDirectory normalizedFullPath
-
-        let isGraceStatusArtifact =
-            normalizedFullPath.Equals(snapshot.GraceStatusFile, watchPathComparison)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-wal", watchPathComparison)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-shm", watchPathComparison)
-            || normalizedFullPath.Equals(snapshot.GraceStatusFile + "-journal", watchPathComparison)
-
-        if isInGraceDirectory || isGraceStatusArtifact then
-            true
-        elif pathKind = DeletedPathStatusUnavailable then
-            false
-        else
-            /// Coordinates directory ignore matches behavior for this CLI command path.
-            let directoryIgnoreMatches graceIgnoreLine =
-                if isNull fileInfo.Directory then
-                    false
-                else
-                    checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
-
-            (pathKind <> DeletedDirectory
-             && normalizedFullPath.EndsWith(".gracetmp", watchPathComparison))
-            || (pathKind = DeletedPathKindUnknown
-                && snapshot.DirectoryEntries
-                   |> Array.exists directoryIgnoreMatches)
-            || (pathKind = DeletedPathKindUnknown
-                && snapshot.DirectoryEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
-            || (pathKind <> DeletedDirectory
-                && snapshot.DirectoryEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
-            || (pathKind = DeletedPathKindUnknown
-                && snapshot.FileEntries
-                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
+        classifyRepositoryPathForWatch (repositoryPathKindForDeletedPath pathKind) fullPath
+        <> Eligible
 
     /// Coordinates enqueue status update trigger behavior for this CLI command path.
     let private enqueueStatusUpdateTrigger fullPath =
@@ -3387,34 +3350,77 @@ module Watch =
 
             Ok summary.HasPendingRows
         with
-        | ex ->
-            logToAnsiConsole
-                Colors.Error
-                $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
+        | ex -> Error ex.Message
 
-            Error ex.Message
+    /// Names each active producer that can prevent Watch from advertising a clean local boundary.
+    type internal PendingWatchWorkReason =
+        | ResyncRequired
+        | LocalObservationConfidenceLost
+        | GraceStatusRefreshPending
+        | LocalObservationCandidatesPending
+        | FileUploadsPending
+        | FileRecoveryPending
+        | DirectoryInspectionsPending
+        | StatusTriggersPending
+        | StatusDifferencesPending
+        | DurableJournalPending
+        | DurableJournalUnreadable
+        | RemoteMaterializationApplying
 
-    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
-    let private hasPendingDurableWatchJournalEvidence () =
-        match inspectDurableWatchJournalPendingEvidence () with
-        | Ok hasPendingRows -> hasPendingRows
-        | Error _ -> true
+        /// Describes the concrete producer in diagnostics without changing the public Watch IPC contract.
+        member this.Description =
+            match this with
+            | ResyncRequired -> "Watch resync is pending"
+            | LocalObservationConfidenceLost -> "local observation confidence is lost"
+            | GraceStatusRefreshPending -> "Grace Status refresh is pending"
+            | LocalObservationCandidatesPending -> "local observation candidates are pending"
+            | FileUploadsPending -> "file uploads are pending"
+            | FileRecoveryPending -> "file recovery evidence is pending"
+            | DirectoryInspectionsPending -> "directory inspections are pending"
+            | StatusTriggersPending -> "status triggers are pending"
+            | StatusDifferencesPending -> "status differences are pending"
+            | DurableJournalPending -> "durable Watch journal observations are pending"
+            | DurableJournalUnreadable -> "durable Watch journal is unreadable"
+            | RemoteMaterializationApplying -> "remote materialization is applying"
 
-    /// Describes pending Watch work without merging process-local queues and durable journal evidence.
+        /// Reports whether this reason is ordinary local work rather than durable or coordinator-owned evidence.
+        member this.IsProcessableLocalWork =
+            match this with
+            | DurableJournalPending
+            | DurableJournalUnreadable
+            | RemoteMaterializationApplying -> false
+            | _ -> true
+
+    /// Describes pending Watch work without merging distinct local, durable, and coordinator-owned causes.
     type private PendingWatchWorkEvidence =
         {
-            HasProcessablePendingWork: bool
-            HasManualPendingStatusEvidence: bool
-            HasDurableWatchJournalEvidence: bool
-            HasLocalObservationConfidenceLoss: bool
+            Reasons: PendingWatchWorkReason array
         }
 
         /// Reports whether Watch work, confidence loss, or durable journal evidence must keep IPC dirty.
-        member this.HasPendingWork =
-            this.HasProcessablePendingWork
-            || this.HasManualPendingStatusEvidence
-            || this.HasDurableWatchJournalEvidence
-            || this.HasLocalObservationConfidenceLoss
+        member this.HasPendingWork = this.Reasons.Length > 0
+
+        /// Reports whether process-local work can advance during the current timer pass.
+        member this.HasProcessablePendingWork =
+            this.Reasons
+            |> Array.exists (fun reason -> reason.IsProcessableLocalWork)
+
+        /// Reports whether the coordinator-owned remote apply latch contributes to this snapshot.
+        member this.HasManualPendingStatusEvidence =
+            this.Reasons
+            |> Array.contains RemoteMaterializationApplying
+
+        /// Reports whether durable journal rows or an unreadable journal contribute to this snapshot.
+        member this.HasDurableWatchJournalEvidence =
+            this.Reasons
+            |> Array.exists (fun reason ->
+                reason = DurableJournalPending
+                || reason = DurableJournalUnreadable)
+
+        /// Reports whether raw local observation confidence has been lost.
+        member this.HasLocalObservationConfidenceLoss =
+            this.Reasons
+            |> Array.contains LocalObservationConfidenceLost
 
         /// Reports whether durable journal evidence is the only reason IPC must be dirty.
         member this.HasDurableOnlyPendingWork =
@@ -3422,6 +3428,56 @@ module Watch =
             && not this.HasProcessablePendingWork
             && not this.HasManualPendingStatusEvidence
             && not this.HasLocalObservationConfidenceLoss
+
+    let private pendingWatchReasonDiagnosticLock = obj ()
+    let mutable private lastReportedPendingWatchReasons: PendingWatchWorkReason array option = None
+
+    let mutable private pendingWatchReasonDiagnostic =
+        fun (description: string) ->
+            let color =
+                if description.Contains("unreadable", StringComparison.Ordinal) then
+                    Colors.Error
+                else
+                    Colors.Important
+
+            logToAnsiConsole color $"Grace Watch pending reason transition: {description}."
+
+    /// Emits one diagnostic only when the concrete pending-reason set changes.
+    let private reportPendingWatchReasonTransition (evidence: PendingWatchWorkEvidence) =
+        let descriptionToReport =
+            lock pendingWatchReasonDiagnosticLock (fun () ->
+                match lastReportedPendingWatchReasons, evidence.Reasons with
+                | Some previous, current when previous = current -> None
+                | None, current when current.Length = 0 ->
+                    lastReportedPendingWatchReasons <- Some Array.empty
+                    None
+                | _ ->
+                    lastReportedPendingWatchReasons <- Some(Array.copy evidence.Reasons)
+
+                    evidence.Reasons
+                    |> Array.map (fun reason -> reason.Description)
+                    |> String.concat "; "
+                    |> function
+                        | "" -> Some "no pending Watch reason"
+                        | description -> Some description)
+
+        descriptionToReport
+        |> Option.iter pendingWatchReasonDiagnostic
+
+    /// Captures the concrete process-local producers without treating the manual remote-apply latch as local work.
+    let private readProcessLocalPendingWatchReasons () =
+        [|
+            if isGraceWatchResyncPending () then ResyncRequired
+            if hasLocalObservationConfidenceLoss () then LocalObservationConfidenceLost
+            if graceStatusHasChanged then GraceStatusRefreshPending
+            if hasPendingLocalObservationCandidates () then
+                LocalObservationCandidatesPending
+            if not filesToProcess.IsEmpty then FileUploadsPending
+            if not fileRecoveryEvidence.IsEmpty then FileRecoveryPending
+            if not directoriesToProcess.IsEmpty then DirectoryInspectionsPending
+            if not statusUpdateTriggers.IsEmpty then StatusTriggersPending
+            if hasPendingStatusDifferences () then StatusDifferencesPending
+        |]
 
     /// Distinguishes exact IPC verification from the pending-work state that snapshot advertises.
     type private PendingWatchWorkPublicationVerification =
@@ -3441,50 +3497,71 @@ module Watch =
         /// Recovery could not prove a clean result and must retain fail-closed pending state.
         | UnverifiedRecoveryPublication
 
-    /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
-    let private hasProcessablePendingWatchWorkExceptManual () =
-        isGraceWatchResyncPending ()
-        || hasLocalObservationConfidenceLoss ()
-        || graceStatusHasChanged
-        || hasPendingLocalObservationCandidates ()
-        || not (
-            filesToProcess.IsEmpty
-            && fileRecoveryEvidence.IsEmpty
-            && directoriesToProcess.IsEmpty
-            && statusUpdateTriggers.IsEmpty
-            && not (hasPendingStatusDifferences ())
-        )
+    /// Reads process-local and durable pending-work facts once for a single status publication decision.
+    let private readPendingWatchWorkEvidence () =
+        let durableReason =
+            match inspectDurableWatchJournalPendingEvidence () with
+            | Ok true -> Some DurableJournalPending
+            | Ok false -> None
+            | Error _ -> Some DurableJournalUnreadable
 
-    /// Evaluates pending Watch work without counting the startup catch-up marker against its own clean publication.
+        let reasons =
+            [|
+                yield! readProcessLocalPendingWatchReasons ()
+                match durableReason with
+                | Some reason -> yield reason
+                | None -> ()
+                if hasManualPendingWatchWorkStatusFlag () then
+                    yield RemoteMaterializationApplying
+            |]
+
+        let evidence = { Reasons = reasons }
+        reportPendingWatchReasonTransition evidence
+        evidence
+
+    /// Reports whether Watch has queued process-local work other than the remote materialization latch.
+    let private hasProcessablePendingWatchWorkExceptManual () =
+        readProcessLocalPendingWatchReasons ()
+        |> Array.exists (fun reason -> reason.IsProcessableLocalWork)
+
+    /// Evaluates pending Watch work without counting the coordinator-owned remote materialization latch.
     let private hasPendingWatchWorkExceptManual () =
-        hasProcessablePendingWatchWorkExceptManual ()
-        || hasPendingDurableWatchJournalEvidence ()
+        let evidence = readPendingWatchWorkEvidence ()
+
+        evidence.Reasons
+        |> Array.exists (fun reason -> reason <> RemoteMaterializationApplying)
 
     /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
     let private hasProcessablePendingWatchWork () = hasProcessablePendingWatchWorkExceptManual ()
 
-    /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
-    let private hasPendingWatchWork () =
-        hasManualPendingWatchWorkStatusFlag ()
-        || hasProcessablePendingWatchWork ()
-        || hasPendingDurableWatchJournalEvidence ()
-
-    /// Reads process-local and durable pending-work facts once for a single status publication decision.
-    let private readPendingWatchWorkEvidence () =
-        let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
-
-        {
-            HasProcessablePendingWork = hasProcessablePendingWork
-            HasManualPendingStatusEvidence = hasManualPendingWatchWorkStatusFlag ()
-            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
-            HasLocalObservationConfidenceLoss = hasLocalObservationConfidenceLoss ()
-        }
+    /// Evaluates all pending Watch reasons from one coherent publication snapshot.
+    let private hasPendingWatchWork () = (readPendingWatchWorkEvidence ()).HasPendingWork
 
     /// Exposes pending Watch work checks to tests without running the foreground timer loop.
     let internal pendingWatchWorkEvidenceForWatchTests () =
         let evidence = readPendingWatchWorkEvidence ()
 
         evidence.HasProcessablePendingWork, evidence.HasPendingWork
+
+    /// Lists the concrete pending reasons in stable diagnostic order for focused Watch tests.
+    let internal pendingWatchWorkReasonNamesForWatchTests () =
+        (readPendingWatchWorkEvidence ()).Reasons
+        |> Array.map (fun reason -> reason.Description)
+
+    /// Captures pending-reason transition diagnostics without redirecting process-wide console output.
+    let internal setPendingWatchReasonDiagnosticForWatchTests diagnostic = pendingWatchReasonDiagnostic <- diagnostic
+
+    /// Restores production pending-reason diagnostics after a focused Watch test.
+    let internal resetPendingWatchReasonDiagnosticForWatchTests () =
+        pendingWatchReasonDiagnostic <-
+            fun (description: string) ->
+                let color =
+                    if description.Contains("unreadable", StringComparison.Ordinal) then
+                        Colors.Error
+                    else
+                        Colors.Important
+
+                logToAnsiConsole color $"Grace Watch pending reason transition: {description}."
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -3636,6 +3713,9 @@ module Watch =
     /// Reports the cached pending-work result so recovery tests can prove failed dirty reassertion discards clean evidence.
     let internal lastPublishedHasPendingWatchWorkForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork)
 
+    /// Drops the in-memory publication cache so tests can prove persisted semantic equality prevents a rewrite.
+    let internal forgetPendingWatchWorkPublicationForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- None)
+
     /// Returns the exact verified status scope retained for callback admission in focused Watch tests.
     let internal lastPublishedWatchObservationScopeForWatchTests () = lock watchStatusPublishLock (fun () -> lastPublishedWatchObservationScope)
 
@@ -3656,6 +3736,9 @@ module Watch =
         else
             Blake3Hash String.Empty
 
+    /// Supplies one process-stable non-incremental status payload so unchanged recovery reasons do not change observable IPC timestamps.
+    let private nonIncrementalPendingWorkPublicationStatus = GraceStatus.Default
+
     /// Verifies the on-disk Watch IPC snapshot has the exact pending-work and content identity expected by a publication.
     let private statusMatchesExpectedPendingWorkPublication
         (expectedStatus: GraceStatus)
@@ -3663,11 +3746,20 @@ module Watch =
         hasPendingWork
         (status: GraceWatchStatus)
         =
-        status.HasPendingWatchWork = hasPendingWork
+        let current = Current()
+
+        status.RepositoryId = current.RepositoryId
+        && status.RepositoryName = current.RepositoryName
+        && status.BranchId = current.BranchId
+        && status.BranchName = current.BranchName
+        && String.Equals(status.RootDirectory, current.RootDirectory, watchPathComparison)
+        && status.HasPendingWatchWork = hasPendingWork
         && status.IsWorkingTreeClean = not hasPendingWork
         && status.RootDirectoryId = expectedStatus.RootDirectoryId
         && status.RootDirectorySha256Hash = expectedStatus.RootDirectorySha256Hash
         && status.RootDirectoryBlake3Hash = expectedRootDirectoryBlake3Hash expectedStatus
+        && status.LastFileUploadInstant = expectedStatus.LastSuccessfulFileUpload
+        && status.LastDirectoryVersionInstant = expectedStatus.LastSuccessfulDirectoryVersionUpload
         && not (isNull status.DirectoryIds)
         && status.DirectoryIds.SetEquals(expectedDirectoryIds)
 
@@ -3696,6 +3788,18 @@ module Watch =
     let private statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt (status: GraceWatchStatus) =
         status.UpdatedAt >= publicationStartedAt
         && statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork status
+
+    /// Compares the observable Watch IPC contract while deliberately ignoring only its heartbeat timestamp.
+    let private inspectionMatchesExpectedPendingWorkContract
+        expectedStatus
+        expectedDirectoryIds
+        expectedMode
+        hasPendingWork
+        (inspection: GraceWatchStatusInspection)
+        =
+        inspection.EffectiveMode = Some expectedMode
+        && (inspection.Status
+            |> Option.exists (statusMatchesExpectedPendingWorkPublication expectedStatus expectedDirectoryIds hasPendingWork))
 
     /// Advances pending-work and observation-scope caches together only after the exact IPC snapshot proves it reached disk.
     let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds expectedObservationScope hasPendingWork publicationStartedAt =
@@ -3744,7 +3848,7 @@ module Watch =
 
                 let statusForVerification, directoryIdsForVerification =
                     if pendingEvidence.HasDurableOnlyPendingWork then
-                        GraceStatus.Default, HashSet<DirectoryVersionId>()
+                        nonIncrementalPendingWorkPublicationStatus, HashSet<DirectoryVersionId>()
                     else
                         expectedStatus, expectedDirectoryIds
 
@@ -3755,23 +3859,39 @@ module Watch =
                         None
 
                 try
-                    if pendingEvidence.HasDurableOnlyPendingWork then
-                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let existingDurableOnlyContractMatches =
+                        pendingEvidence.HasDurableOnlyPendingWork
+                        && (try
+                                let expectedMode =
+                                    match currentGraceWatchRuntimeMode () with
+                                    | GraceWatchRuntimeMode.Suspended -> GraceWatchRuntimeMode.Suspended
+                                    | _ -> GraceWatchRuntimeMode.Resynchronizing
 
-                        match currentGraceWatchRuntimeMode () with
-                        | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
-                        | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds)
-                        |> fun writeTask -> writeTask.GetAwaiter().GetResult()
+                                inspectGraceWatchStatus().GetAwaiter().GetResult()
+                                |> inspectionMatchesExpectedPendingWorkContract statusForVerification directoryIdsForVerification expectedMode hasPendingWork
+                            with
+                            | _ -> false)
+
+                    if existingDurableOnlyContractMatches then
+                        transitionWasPublished <- true
+                        lastPublishedHasPendingWatchWork <- Some hasPendingWork
                     else
-                        writeSnapshot().GetAwaiter().GetResult()
+                        if pendingEvidence.HasDurableOnlyPendingWork then
+                            match currentGraceWatchRuntimeMode () with
+                            | GraceWatchRuntimeMode.Suspended ->
+                                updateGraceWatchInterprocessFileForSuspendedMode statusForVerification (Some directoryIdsForVerification)
+                            | _ -> updateGraceWatchInterprocessFile statusForVerification (Some directoryIdsForVerification)
+                            |> fun writeTask -> writeTask.GetAwaiter().GetResult()
+                        else
+                            writeSnapshot().GetAwaiter().GetResult()
 
-                    transitionWasPublished <-
-                        cachePendingWatchWorkPublicationIfVerified
-                            statusForVerification
-                            directoryIdsForVerification
-                            observationScopeForVerification
-                            hasPendingWork
-                            publicationStartedAt
+                        transitionWasPublished <-
+                            cachePendingWatchWorkPublicationIfVerified
+                                statusForVerification
+                                directoryIdsForVerification
+                                observationScopeForVerification
+                                hasPendingWork
+                                publicationStartedAt
 
                     publishedHasPendingWork <- if transitionWasPublished then Some hasPendingWork else None
                 with
@@ -3827,24 +3947,34 @@ module Watch =
             isGraceWatchResyncAttemptCurrent attempt
             && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
 
+        let durableReason =
+            match inspectDurableWatchJournalPendingEvidence () with
+            | Ok true -> Some DurableJournalPending
+            | Ok false -> None
+            | Error _ -> Some DurableJournalUnreadable
+
         {
-            HasProcessablePendingWork =
-                not recoveryStillOwnsPublication
-                || graceStatusHasChanged
-                || hasPendingLocalObservationCandidates ()
-                || not (
-                    filesToProcess.IsEmpty
-                    && directoriesToProcess.IsEmpty
-                    && statusUpdateTriggers.IsEmpty
-                    && not (hasPendingStatusDifferences ())
-                )
-            HasManualPendingStatusEvidence = false
-            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
-            HasLocalObservationConfidenceLoss =
-                hasUnconsumedLocalObservationConfidenceLoss ()
-                || (not recoveryStillOwnsPublication
-                    && Volatile.Read(&localObservationConfidenceLossActive)
-                       <> 0)
+            Reasons =
+                [|
+                    if not recoveryStillOwnsPublication then yield ResyncRequired
+                    if graceStatusHasChanged then yield GraceStatusRefreshPending
+                    if hasPendingLocalObservationCandidates () then
+                        yield LocalObservationCandidatesPending
+                    if not filesToProcess.IsEmpty then yield FileUploadsPending
+                    if not directoriesToProcess.IsEmpty then yield DirectoryInspectionsPending
+                    if not statusUpdateTriggers.IsEmpty then yield StatusTriggersPending
+                    if hasPendingStatusDifferences () then yield StatusDifferencesPending
+
+                    if hasUnconsumedLocalObservationConfidenceLoss ()
+                       || (not recoveryStillOwnsPublication
+                           && Volatile.Read(&localObservationConfidenceLossActive)
+                              <> 0) then
+                        yield LocalObservationConfidenceLost
+
+                    match durableReason with
+                    | Some reason -> yield reason
+                    | None -> ()
+                |]
         }
 
     /// Publishes clean IPC for one recovered resync attempt while retaining its own fail-closed pending anchors.
@@ -3898,18 +4028,14 @@ module Watch =
             let hasPendingWork = pendingEvidence.HasPendingWork
             let mutable transitionWasPublished = false
 
-            if
-                File.Exists(IpcFileName())
-                && lastPublishedHasPendingWatchWork
-                   <> Some hasPendingWork
-            then
+            if File.Exists(IpcFileName()) then
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
 
                 let runtimeMode = currentGraceWatchRuntimeMode ()
 
                 let shouldPublish, statusForPublish, directoryIdsForPublish =
                     if pendingEvidence.HasDurableOnlyPendingWork then
-                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                        true, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
                     elif
                         runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
@@ -3929,7 +4055,7 @@ module Watch =
                                     Colors.Error
                                     $"Grace Watch could not read Grace Status for pending-work dirty status transition; publishing non-incremental status and retrying later: {ex.Message}"
 
-                                true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                                true, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
                             else
                                 lastPublishedHasPendingWatchWork <- None
 
@@ -3937,44 +4063,64 @@ module Watch =
                                     Colors.Error
                                     $"Grace Watch could not read Grace Status for pending-work clean status transition; retrying later: {ex.Message}"
 
-                                false, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                                false, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
                     else
-                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                        true, nonIncrementalPendingWorkPublicationStatus, Some(HashSet<DirectoryVersionId>())
 
                 if shouldPublish then
-                    let publicationStartedAt = getCurrentInstant ()
+                    let expectedDirectoryIds =
+                        directoryIdsForPublish
+                        |> Option.defaultWith (fun () -> statusForPublish.Index.Keys.ToHashSet())
 
-                    try
-                        let writeTask =
-                            if runtimeMode = GraceWatchRuntimeMode.Suspended then
-                                updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
-                            else
-                                updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
+                    let expectedMode =
+                        if runtimeMode = GraceWatchRuntimeMode.Suspended then
+                            GraceWatchRuntimeMode.Suspended
+                        elif hasWatchObservationRootIdentity statusForPublish then
+                            GraceWatchRuntimeMode.HealthyIncremental
+                        else
+                            GraceWatchRuntimeMode.Resynchronizing
 
-                        writeTask.GetAwaiter().GetResult()
-                    with
-                    | ex ->
-                        lastPublishedHasPendingWatchWork <- None
-                        logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
-
-                    transitionWasPublished <-
+                    let existingContractMatches =
                         try
-                            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
-
-                            let expectedDirectoryIds =
-                                directoryIdsForPublish
-                                |> Option.defaultWith (fun () -> statusForPublish.Index.Keys.ToHashSet())
-
-                            inspection.Status
-                            |> Option.exists (statusMatchesVerifiedPublication statusForPublish expectedDirectoryIds hasPendingWork publicationStartedAt)
+                            inspectGraceWatchStatus().GetAwaiter().GetResult()
+                            |> inspectionMatchesExpectedPendingWorkContract statusForPublish expectedDirectoryIds expectedMode hasPendingWork
                         with
                         | _ -> false
 
-                    if transitionWasPublished then
+                    if existingContractMatches then
+                        transitionWasPublished <- true
                         lastPublishedHasPendingWatchWork <- Some hasPendingWork
                     else
-                        lastPublishedHasPendingWatchWork <- None
-                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
+                        let publicationStartedAt = getCurrentInstant ()
+
+                        try
+                            let writeTask =
+                                if runtimeMode = GraceWatchRuntimeMode.Suspended then
+                                    updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
+                                else
+                                    updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
+
+                            writeTask.GetAwaiter().GetResult()
+                        with
+                        | ex ->
+                            lastPublishedHasPendingWatchWork <- None
+                            logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
+
+                        transitionWasPublished <-
+                            try
+                                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                                inspectionMatchesExpectedPendingWorkContract statusForPublish expectedDirectoryIds expectedMode hasPendingWork inspection
+                                && (inspection.Status
+                                    |> Option.exists (fun status -> status.UpdatedAt >= publicationStartedAt))
+                            with
+                            | _ -> false
+
+                        if transitionWasPublished then
+                            lastPublishedHasPendingWatchWork <- Some hasPendingWork
+                        else
+                            lastPublishedHasPendingWatchWork <- None
+                            logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
 
             transitionWasPublished)
 
@@ -4031,9 +4177,10 @@ module Watch =
             setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+        let dirtyStatus = nonIncrementalPendingWorkPublicationStatus
 
         let dirtyPublicationVerified =
-            tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () -> writeSnapshot GraceStatus.Default emptyDirectoryIds)
+            tryPublishWatchIpcWithFreshPendingWorkProbe dirtyStatus emptyDirectoryIds (fun () -> writeSnapshot dirtyStatus emptyDirectoryIds)
             && (try
                     inspectGraceWatchStatus().GetAwaiter().GetResult()
                     |> isGraceWatchResyncRequiredStatusPublished
@@ -4115,7 +4262,7 @@ module Watch =
 
                     let status, directoryIds =
                         if pendingEvidence.HasDurableOnlyPendingWork then
-                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+                            nonIncrementalPendingWorkPublicationStatus, HashSet<DirectoryVersionId>()
                         elif
                             runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                             && not (isGraceWatchResyncPending ())
@@ -4127,7 +4274,7 @@ module Watch =
 
                             status, status.Index.Keys.ToHashSet()
                         else
-                            GraceStatus.Default, HashSet<DirectoryVersionId>()
+                            nonIncrementalPendingWorkPublicationStatus, HashSet<DirectoryVersionId>()
 
                     if tryVerifyCurrentPendingWorkPublication status directoryIds true then
                         lastPublishedHasPendingWatchWork <- Some true
@@ -4326,14 +4473,16 @@ module Watch =
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
         let hasPendingWork = hasPendingWatchWork ()
+        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
 
         try
             lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
 
             let writeTask =
                 match currentGraceWatchRuntimeMode () with
-                | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
-                | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+                | GraceWatchRuntimeMode.Suspended ->
+                    updateGraceWatchInterprocessFileForSuspendedMode nonIncrementalPendingWorkPublicationStatus (Some emptyDirectoryIds)
+                | _ -> updateGraceWatchInterprocessFile nonIncrementalPendingWorkPublicationStatus (Some emptyDirectoryIds)
 
             writeTask.GetAwaiter().GetResult()
 
@@ -4603,11 +4752,12 @@ module Watch =
     /// Publishes a branch-scoped non-incremental transition snapshot when Watch cannot safely resume.
     let private publishNonIncrementalTransitionCompletionStatus context =
         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+        let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+        publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
             match currentGraceWatchRuntimeMode () with
-            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
-            | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds))
+            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode nonIncrementalStatus (Some emptyDirectoryIds)
+            | _ -> updateGraceWatchInterprocessFile nonIncrementalStatus (Some emptyDirectoryIds))
 
         logToAnsiConsole Colors.Important $"Grace Watch published non-incremental IPC for branch transition completion: {context}."
 
@@ -4911,6 +5061,9 @@ module Watch =
         lock watchStatusPublishLock (fun () ->
             lastPublishedHasPendingWatchWork <- None
             setGraceWatchHasPendingWorkForStatus false)
+
+        lock pendingWatchReasonDiagnosticLock (fun () -> lastReportedPendingWatchReasons <- None)
+        resetPendingWatchReasonDiagnosticForWatchTests ()
 
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
@@ -6570,8 +6723,16 @@ module Watch =
             payload
             acceptedStatus
 
+    /// Identifies the exact dirty Watch snapshot published for one coordinator-owned materialization boundary.
+    type private CurrentBranchMaterializationPendingPublication =
+        {
+            ExpectedStatus: GraceStatus
+            ExpectedDirectoryIds: HashSet<DirectoryVersionId>
+            StartedAt: Instant
+        }
+
     /// Publishes and verifies the dirty materialization boundary before target mutation can begin.
-    let private tryPublishCurrentBranchMaterializationPendingStatus (_status: GraceWatchStatus) =
+    let private tryPublishCurrentBranchMaterializationPendingStatus () =
         try
             let expectedStatus =
                 readGraceStatusFileForPendingWorkTransition()
@@ -6579,13 +6740,18 @@ module Watch =
                     .GetResult()
 
             let directoryIds = expectedStatus.Index.Keys.ToHashSet()
+            let publicationStartedAt = getCurrentInstant ()
 
-            tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus directoryIds (fun () ->
-                updateGraceWatchInterprocessFile expectedStatus (Some directoryIds))
+            if
+                tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus directoryIds (fun () ->
+                    updateGraceWatchInterprocessFile expectedStatus (Some directoryIds)) then
+                Some { ExpectedStatus = expectedStatus; ExpectedDirectoryIds = directoryIds; StartedAt = publicationStartedAt }
+            else
+                None
         with
         | ex ->
             logToAnsiConsole Colors.Error $"Grace Watch could not prove materialization-pending IPC/status publication: {ex.Message}"
-            false
+            None
 
     /// Names the coordinator result for one exact same-branch Reference notification.
     type internal CurrentBranchMaterializationCoordinatorOutcomeReason =
@@ -6618,6 +6784,63 @@ module Watch =
         | Clean of GraceWatchStatus
         | Blocked of string
         | Degraded of string
+
+    let private currentBranchWaitTransitionLock = obj ()
+    let mutable private lastReportedCurrentBranchWait: (RepositoryId * BranchId * ReferenceId * string * string) option = None
+
+    let mutable private currentBranchWaitDiagnostic =
+        fun (payload: CurrentBranchReferenceNotification) waitKind reason ->
+            let color = if waitKind = "safe local Watch point" then Colors.Verbose else Colors.Important
+
+            logToAnsiConsole color $"Current-branch reference notification {payload.ReferenceId} is waiting for {waitKind}: {reason}."
+
+    /// Reports a changed event wait reason once while suppressing duplicate replay diagnostics for the same reason.
+    let private reportCurrentBranchWaitTransition (payload: CurrentBranchReferenceNotification) gate =
+        let waitKind, reason =
+            match gate with
+            | Blocked reason -> "safe local Watch point", reason
+            | Degraded reason -> "degraded Watch IPC resync", reason
+            | _ -> invalidArg (nameof gate) "Only waiting materialization gates have transition diagnostics."
+
+        let transition = payload.RepositoryId, payload.BranchId, payload.ReferenceId, waitKind, reason
+
+        let changed =
+            lock currentBranchWaitTransitionLock (fun () ->
+                if lastReportedCurrentBranchWait = Some transition then
+                    false
+                else
+                    lastReportedCurrentBranchWait <- Some transition
+                    true)
+
+        if changed then currentBranchWaitDiagnostic payload waitKind reason
+
+    /// Retires diagnostic state only after the matching remote event reaches a non-waiting outcome.
+    let private retireCurrentBranchWaitTransition (payload: CurrentBranchReferenceNotification) =
+        lock currentBranchWaitTransitionLock (fun () ->
+            match lastReportedCurrentBranchWait with
+            | Some (repositoryId, branchId, referenceId, _, _) when
+                repositoryId = payload.RepositoryId
+                && branchId = payload.BranchId
+                && referenceId = payload.ReferenceId
+                ->
+                lastReportedCurrentBranchWait <- None
+            | _ -> ())
+
+    /// Captures transition-filtered remote wait diagnostics for focused tests.
+    let internal setCurrentBranchWaitDiagnosticForWatchTests diagnostic = currentBranchWaitDiagnostic <- diagnostic
+
+    /// Exercises the production wait-transition filter without starting SignalR or cursor replay.
+    let internal reportCurrentBranchWaitTransitionForWatchTests payload gate = reportCurrentBranchWaitTransition payload gate
+
+    /// Restores production remote wait diagnostics after a focused Watch test.
+    let internal resetCurrentBranchWaitDiagnosticForWatchTests () =
+        currentBranchWaitDiagnostic <-
+            fun payload waitKind reason ->
+                let color = if waitKind = "safe local Watch point" then Colors.Verbose else Colors.Important
+
+                logToAnsiConsole color $"Current-branch reference notification {payload.ReferenceId} is waiting for {waitKind}: {reason}."
+
+        lock currentBranchWaitTransitionLock (fun () -> lastReportedCurrentBranchWait <- None)
 
     /// Coordinates a same-branch Reference once clean IPC and BranchDto latest authority have both been proven.
     type private CurrentBranchMaterializationCoordinatorClients =
@@ -6663,7 +6886,25 @@ module Watch =
         && inspection.OpenedReadOnly
 
     /// Converts current target, local queues, durable DB evidence, and inspected IPC into the private materialization gate.
-    let private currentBranchMaterializationStatusGate ignoreOwnedMaterializationPendingLatch payload (inspection: GraceWatchStatusInspection) =
+    let private currentBranchMaterializationStatusGate
+        ignoreOwnedMaterializationPendingLatch
+        ownedPendingPublication
+        payload
+        (inspection: GraceWatchStatusInspection)
+        =
+        let processLocalReasons = readProcessLocalPendingWatchReasons ()
+
+        let inspectionMatchesOwnedPendingPublication =
+            match ownedPendingPublication, inspection.Status, inspection.EffectiveMode with
+            | Some publication, Some status, Some GraceWatchRuntimeMode.HealthyIncremental when
+                hasManualPendingWatchWorkStatusFlag ()
+                && inspection.IsFresh
+                && inspection.HasCurrentRepositoryIdentity
+                && statusMatchesVerifiedPublication publication.ExpectedStatus publication.ExpectedDirectoryIds true publication.StartedAt status
+                ->
+                true
+            | _ -> false
+
         if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
             NotCurrentBranch
         elif updateInProgress () then
@@ -6671,16 +6912,27 @@ module Watch =
         elif not ignoreOwnedMaterializationPendingLatch
              && hasManualPendingWatchWorkStatusFlag () then
             Blocked "materialization pending status has not reached IPC"
-        elif hasProcessablePendingWatchWork () then
-            Blocked "process-local Watch queues have pending local observations"
-        elif inspection.IsUsable then
+        elif processLocalReasons.Length > 0 then
+            processLocalReasons
+            |> Array.map (fun reason -> reason.Description)
+            |> String.concat "; "
+            |> Blocked
+        elif inspection.IsUsable
+             || inspectionMatchesOwnedPendingPublication then
             if not (hasReadableLocalStateDbAuthority ()) then
                 Degraded "missing local-state DB authority"
             else
                 match inspectDurableWatchJournalPendingEvidence () with
                 | Error _ -> Degraded "unreadable durable Watch journal authority"
                 | Ok true -> Blocked "durable Watch journal has pending local observations"
-                | Ok false -> Clean inspection.Status.Value
+                | Ok false ->
+                    let acceptedStatus =
+                        if inspectionMatchesOwnedPendingPublication then
+                            { inspection.Status.Value with HasPendingWatchWork = false; IsWorkingTreeClean = true }
+                        else
+                            inspection.Status.Value
+
+                    Clean acceptedStatus
         elif inspection.ReadError.IsSome then
             Degraded "unreadable Watch IPC/status authority"
         elif not inspection.Exists then
@@ -6702,7 +6954,7 @@ module Watch =
             | _, Some GraceWatchRuntimeMode.Stopping -> Degraded "Watch IPC/status authority is stopping"
             | _ -> Degraded "ambiguous Watch IPC/status authority"
 
-    /// Runs protocol and latest-eligible BranchDto admission checks before the coordinator consults current Watch evidence.
+    /// Runs protocol admission and current local-root checks without consulting a BranchDto summary.
     let private currentBranchMaterializationDecision
         (clients: CurrentBranchMaterializationCoordinatorClients)
         (current: Grace.Shared.Client.Configuration.GraceConfiguration)
@@ -6712,23 +6964,14 @@ module Watch =
             match currentBranchReferenceProtocolValidationDecision current.RepositoryId current.BranchId payload with
             | Some decision -> return Ok decision
             | None ->
-                match! clients.GetCurrentBranch() with
-                | Error error ->
-                    let errorText = Markup.Escape(error.ToString())
+                let! inspection = clients.InspectLocalStatus()
 
-                    logToAnsiConsole Colors.Error $"Failed to refresh BranchDto for current-branch reference notification {payload.ReferenceId}: {errorText}."
+                let localStatus =
+                    match inspection.Status with
+                    | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
+                    | _ -> None
 
-                    return Error error
-                | Ok branchReturnValue ->
-                    let branchDto = branchReturnValue.ReturnValue
-                    let! inspection = clients.InspectLocalStatus()
-
-                    let localStatus =
-                        match inspection.Status with
-                        | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
-                        | _ -> None
-
-                    return Ok(decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus branchDto payload)
+                return Ok(revalidateAcceptedCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus payload)
         }
 
     /// Rechecks accepted Reference identity and root evidence while the coordinator refreshes the remaining Watch gates separately.
@@ -6790,7 +7033,7 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
                         let! inspection = clients.InspectLocalStatus()
 
-                        match currentBranchMaterializationStatusGate false payload inspection with
+                        match currentBranchMaterializationStatusGate false None payload inspection with
                         | NotCurrentBranch ->
                             terminalOutcome <-
                                 {
@@ -6829,7 +7072,7 @@ module Watch =
                                                         Decision = Some leaseDecision
                                                     }
                                             else
-                                                match currentBranchMaterializationStatusGate false payload leaseInspection with
+                                                match currentBranchMaterializationStatusGate false None payload leaseInspection with
                                                 | NotCurrentBranch ->
                                                     return
                                                         {
@@ -6847,9 +7090,9 @@ module Watch =
                                                             }
                                                     else
                                                         setGraceWatchPendingWorkStatusFlag true
-                                                        let materializationPendingPublished = tryPublishCurrentBranchMaterializationPendingStatus leaseStatus
+                                                        let materializationPendingPublication = tryPublishCurrentBranchMaterializationPendingStatus ()
 
-                                                        if not materializationPendingPublished then
+                                                        if materializationPendingPublication.IsNone then
                                                             setGraceWatchPendingWorkStatusFlag false
                                                             clients.RequestDegradedResync "materialization pending Watch IPC/status publication failed"
 
@@ -6899,7 +7142,13 @@ module Watch =
                                                                             Decision = Some preApplyDecision
                                                                         }
                                                                 else
-                                                                    match currentBranchMaterializationStatusGate true payload preApplyInspection with
+                                                                    match
+                                                                        currentBranchMaterializationStatusGate
+                                                                            true
+                                                                            materializationPendingPublication
+                                                                            payload
+                                                                            preApplyInspection
+                                                                        with
                                                                     | NotCurrentBranch ->
                                                                         setGraceWatchPendingWorkStatusFlag false
                                                                         publishPendingWatchWorkTransitionIfNeeded ()
@@ -6974,9 +7223,7 @@ module Watch =
                                                                             publishPendingWatchWorkTransitionIfNeeded ()
                                                                             return raise ex
                                                 | Blocked reason ->
-                                                    logToAnsiConsole
-                                                        Colors.Verbose
-                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point after lease acquisition: {reason}."
+                                                    reportCurrentBranchWaitTransition payload (Blocked reason)
 
                                                     postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
 
@@ -6987,9 +7234,7 @@ module Watch =
                                                             Decision = Some acceptedDecision
                                                         }
                                                 | Degraded reason ->
-                                                    logToAnsiConsole
-                                                        Colors.Important
-                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync after lease acquisition: {reason}."
+                                                    reportCurrentBranchWaitTransition payload (Degraded reason)
 
                                                     postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
 
@@ -7041,9 +7286,7 @@ module Watch =
                                 terminalOutcome <- cleanOutcome
                                 terminal <- true
                         | Blocked reason as gate ->
-                            logToAnsiConsole
-                                Colors.Verbose
-                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+                            reportCurrentBranchWaitTransition payload gate
 
                             if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
@@ -7080,9 +7323,7 @@ module Watch =
                                 degradedResyncRequestedForReason <- Some reason
 
                             if not terminal then
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+                                reportCurrentBranchWaitTransition payload (Degraded reason)
 
                                 if canRetry () then
                                     do! clients.ReestablishIpc payload reason
@@ -7119,7 +7360,7 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync ->
                         let! inspection = clients.InspectLocalStatus()
 
-                        match currentBranchMaterializationStatusGate false payload inspection with
+                        match currentBranchMaterializationStatusGate false None payload inspection with
                         | NotCurrentBranch ->
                             terminalOutcome <-
                                 {
@@ -7146,9 +7387,7 @@ module Watch =
 
                             terminal <- true
                         | Blocked reason as gate ->
-                            logToAnsiConsole
-                                Colors.Verbose
-                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+                            reportCurrentBranchWaitTransition payload gate
 
                             if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
@@ -7185,9 +7424,7 @@ module Watch =
                                 degradedResyncRequestedForReason <- Some reason
 
                             if not terminal then
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+                                reportCurrentBranchWaitTransition payload (Degraded reason)
 
                                 if canRetry () then
                                     do! clients.ReestablishIpc payload reason
@@ -7222,10 +7459,19 @@ module Watch =
             let! localSelfEchoConsumed = localCurrentBranchReferenceEchoLedger.TryConsume(payload)
 
             if localSelfEchoConsumed then
+                retireCurrentBranchWaitTransition payload
+
                 return
                     { ReferenceId = payload.ReferenceId; Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed; Decision = None }
             else
-                return! WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+                let! outcome = WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
+
+                match outcome.Reason with
+                | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync -> ()
+                | _ -> retireCurrentBranchWaitTransition payload
+
+                return outcome
         }
 
     /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
@@ -7519,11 +7765,6 @@ module Watch =
 
         logToAnsiConsole Colors.Verbose $"Current-branch Watch catch-up requested after {reason}."
 
-    do
-        lock transitionCatchUpRequestLock (fun () ->
-            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
-                fun () -> requestCurrentBranchReferenceCatchUp "branch transition SignalR subscription refresh")
-
     /// Completes a claimed lifecycle request and deliberately leaves later requests pending.
     let private completeCurrentBranchReferenceCatchUp (scheduler: CurrentBranchReferenceCatchUpScheduler) (claim: CurrentBranchReferenceCatchUpClaim) =
         scheduler.Complete(claim) |> ignore
@@ -7583,7 +7824,9 @@ module Watch =
                     | CurrentBranchReferenceCatchUpResult.Processed, Some coordinatorOutcome ->
                         match coordinatorOutcome.Reason, coordinatorOutcome.Decision with
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint, _ ->
-                            retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch work is still pending"
+                            // Cursor replay owns active remote waits and already reports their concrete safe-point reason.
+                            // This legacy BranchDto test seam retains only its bounded scheduling behavior.
+                            scheduler.Retry(claim, nowUtc) |> ignore
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync, _ ->
                             retryCurrentBranchReferenceCatchUp scheduler nowUtc claim "local Watch state requires resync"
                         | CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected, Some decision when
@@ -7638,6 +7881,454 @@ module Watch =
     /// Runs the production lifecycle scheduler against injected clients after a real Watch callback queues fresh evidence.
     let internal runCurrentBranchReferenceCatchUpIfDueForWatchTests getCurrentBranch processReference =
         runCurrentBranchReferenceCatchUpIfDueWithClients currentBranchReferenceCatchUpScheduler getCurrentBranch processReference
+
+    /// Names the terminal result of one cursor-backed replay wake.
+    type internal CurrentBranchReferenceReplayOutcomeReason =
+        /// The exact current repository and branch have no persisted cursor; recovery belongs to issue #804.
+        | MissingBoundary = 0
+        /// The server rejected or failed the replay request without changing the durable cursor.
+        | ReplayFailed = 1
+        /// One eligible event did not reach a terminal acknowledgement, so the response interval remains open.
+        | EventNotAcknowledged = 2
+        /// Every eligible event and the server-declared scanned interval were durably acknowledged.
+        | IntervalAcknowledged = 3
+
+    /// Reports the bounded work completed by one durable cursor replay wake.
+    type internal CurrentBranchReferenceReplayOutcome =
+        {
+            Reason: CurrentBranchReferenceReplayOutcomeReason
+            ReceivedEventCount: int
+            AcknowledgedEventCount: int
+            ScannedThroughAcknowledged: bool
+        }
+
+    /// Provides injectable durable replay, materialization, and cursor-acknowledgement operations.
+    type internal CurrentBranchReferenceReplayClients =
+        {
+            ReadBoundary: unit -> Task<ReferenceMaterializationBoundaryDto option>
+            ResolveMissingBoundary: CancellationToken -> Task<ReferenceMaterializationBoundaryDto option>
+            Replay: ReferenceMaterializationBoundaryDto -> Task<Result<GraceReturnValue<ReferenceReplayDto>, GraceError>>
+            ProcessReference: CurrentBranchReferenceNotification -> Task<CurrentBranchMaterializationCoordinatorOutcome>
+            AcknowledgeCursor: ReferenceMaterializationBoundaryDto
+                -> CurrentBranchReferenceNotification option
+                -> string
+                -> CancellationToken
+                -> Task<ReferenceMaterializationBoundaryDto>
+        }
+
+    /// Reports whether the coordinator outcome permits the matching eligible event cursor to advance.
+    let private currentBranchReplayEventReachedTerminalAcknowledgement (outcome: CurrentBranchMaterializationCoordinatorOutcome) =
+        match outcome.Reason, outcome.Decision with
+        | CurrentBranchMaterializationCoordinatorOutcomeReason.Applied, _
+        | CurrentBranchMaterializationCoordinatorOutcomeReason.LocalSelfEchoConsumed, _ -> true
+        | CurrentBranchMaterializationCoordinatorOutcomeReason.LatestEligibleReferenceRejected, Some decision when
+            decision.Reason = LatestCurrentBranchReferenceDecisionReason.SameRoot
+            ->
+            true
+        | _ -> false
+
+    /// Replays one immutable server interval sequentially and advances only terminally acknowledged opaque cursors.
+    let private replayCurrentBranchReferenceEventsWithClients
+        (replayGate: SemaphoreSlim)
+        (clients: CurrentBranchReferenceReplayClients)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            do! replayGate.WaitAsync(cancellationToken)
+
+            try
+                cancellationToken.ThrowIfCancellationRequested()
+
+                let! initialBoundary =
+                    task {
+                        match! clients.ReadBoundary() with
+                        | Some boundary -> return Some boundary
+                        | None -> return! clients.ResolveMissingBoundary cancellationToken
+                    }
+
+                match initialBoundary with
+                | None ->
+                    return
+                        {
+                            Reason = CurrentBranchReferenceReplayOutcomeReason.MissingBoundary
+                            ReceivedEventCount = 0
+                            AcknowledgedEventCount = 0
+                            ScannedThroughAcknowledged = false
+                        }
+                | Some initialBoundary ->
+                    match! clients.Replay initialBoundary with
+                    | Error _ ->
+                        return
+                            {
+                                Reason = CurrentBranchReferenceReplayOutcomeReason.ReplayFailed
+                                ReceivedEventCount = 0
+                                AcknowledgedEventCount = 0
+                                ScannedThroughAcknowledged = false
+                            }
+                    | Ok returnValue ->
+                        let replay = returnValue.ReturnValue
+
+                        if replay.RepositoryId
+                           <> initialBoundary.RepositoryId
+                           || replay.BranchId <> initialBoundary.BranchId
+                           || String.IsNullOrWhiteSpace replay.ScannedThroughCursor then
+                            return
+                                {
+                                    Reason = CurrentBranchReferenceReplayOutcomeReason.ReplayFailed
+                                    ReceivedEventCount = replay.Events.Length
+                                    AcknowledgedEventCount = 0
+                                    ScannedThroughAcknowledged = false
+                                }
+                        else
+                            let mutable currentBoundary = initialBoundary
+                            let mutable eventIndex = 0
+                            let mutable acknowledgedEventCount = 0
+                            let mutable responseIntervalOpen = true
+
+                            while responseIntervalOpen
+                                  && eventIndex < replay.Events.Length do
+                                cancellationToken.ThrowIfCancellationRequested()
+                                let replayEvent = replay.Events[eventIndex]
+
+                                if String.IsNullOrWhiteSpace replayEvent.EventCursor then
+                                    responseIntervalOpen <- false
+                                else
+                                    let! outcome = clients.ProcessReference replayEvent.Reference
+
+                                    if currentBranchReplayEventReachedTerminalAcknowledgement outcome then
+                                        let! acceptedBoundary =
+                                            clients.AcknowledgeCursor currentBoundary (Some replayEvent.Reference) replayEvent.EventCursor cancellationToken
+
+                                        currentBoundary <- acceptedBoundary
+                                        acknowledgedEventCount <- acknowledgedEventCount + 1
+                                        eventIndex <- eventIndex + 1
+                                    else
+                                        responseIntervalOpen <- false
+
+                            if responseIntervalOpen then
+                                let! _ = clients.AcknowledgeCursor currentBoundary None replay.ScannedThroughCursor cancellationToken
+
+                                return
+                                    {
+                                        Reason = CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged
+                                        ReceivedEventCount = replay.Events.Length
+                                        AcknowledgedEventCount = acknowledgedEventCount
+                                        ScannedThroughAcknowledged = true
+                                    }
+                            else
+                                return
+                                    {
+                                        Reason = CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged
+                                        ReceivedEventCount = replay.Events.Length
+                                        AcknowledgedEventCount = acknowledgedEventCount
+                                        ScannedThroughAcknowledged = false
+                                    }
+            finally
+                replayGate.Release() |> ignore
+        }
+
+    /// Serializes current-branch replay wakes so each interval starts from the latest durable cursor.
+    let private currentBranchReferenceReplayGate = new SemaphoreSlim(1, 1)
+
+    /// Rejects replay acknowledgement unless the current local root exactly matches the event root identity.
+    let internal ensureCurrentBranchReplayReferenceRootAcknowledged (status: GraceWatchStatus) (reference: CurrentBranchReferenceNotification option) =
+        match reference with
+        | Some payload when not (currentBranchReferenceMatchesLocalRoot status payload) ->
+            invalidOp "Watch local root does not acknowledge the replayed Reference."
+        | _ -> ()
+
+    /// Captures every durable and configured identity that must remain stable across the Watch IPC startup claim.
+    type private InitializedWatchLocalState =
+        {
+            Status: GraceStatus
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            RootDirectory: string
+            GraceStatusFile: string
+            LocalStatusRevision: int64
+            Boundary: ReferenceMaterializationBoundaryDto
+        }
+
+    let mutable private afterWatchStartupClaim = fun () -> ()
+    let mutable private beforeWatchCallbackRuntimeSetup = fun () -> ()
+
+    /// Installs a deterministic mutation after IPC claim so tests can prove the second trust boundary fails closed.
+    let internal setAfterWatchStartupClaimForTests probe = afterWatchStartupClaim <- probe
+
+    /// Restores the production Watch startup path after post-claim race tests.
+    let internal resetAfterWatchStartupClaimForTests () = afterWatchStartupClaim <- fun () -> ()
+
+    /// Installs an observer at the first callback/runtime setup boundary for public startup-order tests.
+    let internal setBeforeWatchCallbackRuntimeSetupForTests probe = beforeWatchCallbackRuntimeSetup <- probe
+
+    /// Restores the production callback/runtime setup boundary after public startup-order tests.
+    let internal resetBeforeWatchCallbackRuntimeSetupForTests () = beforeWatchCallbackRuntimeSetup <- fun () -> ()
+
+    /// Reads only a complete status tree whose root and branch boundary agree without mutating local state.
+    let private requireInitializedLocalStateForWatch cachedConfiguration operationalConfiguration =
+        task {
+            requireOperationalConfigurationSnapshotCurrent "Watch" cachedConfiguration operationalConfiguration
+            let inspection = Grace.CLI.LocalStateDb.inspectReadOnly operationalConfiguration.GraceStatusFile
+
+            if not inspection.OpenedReadOnly
+               || inspection.SchemaVersion
+                  <> Some Grace.CLI.LocalStateDb.SchemaVersion
+               || inspection.MissingRequiredTables.Length > 0
+               || inspection.MissingRequiredIndexes.Length > 0
+               || inspection.IntegrityCheckRows <> [| "ok" |]
+               || inspection.ForeignKeyViolations.Length > 0 then
+                invalidOp "Grace Watch requires healthy initialized local state; run materializing grace connect or grace doctor --repair-local-state."
+
+            let! revisionBefore = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly operationalConfiguration.GraceStatusFile
+
+            let! statusResult =
+                Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly
+                    operationalConfiguration.GraceStatusFile
+                    operationalConfiguration.OwnerId
+                    operationalConfiguration.OrganizationId
+                    operationalConfiguration.RepositoryId
+
+            let status =
+                match statusResult with
+                | Ok value -> value
+                | Error error -> invalidOp $"Grace Watch could not read initialized local status: {error}"
+
+            let mutable root = LocalDirectoryVersion.Default
+
+            if status.RootDirectoryId = DirectoryVersionId.Empty
+               || String.IsNullOrWhiteSpace(string status.RootDirectorySha256Hash)
+               || String.IsNullOrWhiteSpace(string status.RootDirectoryBlake3Hash)
+               || isNull status.Index
+               || not (status.Index.TryGetValue(status.RootDirectoryId, &root))
+               || root.RelativePath <> Constants.RootDirectoryPath
+               || root.Sha256Hash <> status.RootDirectorySha256Hash
+               || root.Blake3Hash <> status.RootDirectoryBlake3Hash then
+                invalidOp "Grace Watch requires a complete initialized local status tree; run materializing grace connect or grace doctor --repair-local-state."
+
+            let! boundaryResult =
+                Grace.CLI.LocalStateDb.readRemoteReferenceBoundary
+                    operationalConfiguration.GraceStatusFile
+                    operationalConfiguration.RepositoryId
+                    operationalConfiguration.BranchId
+
+            let boundary =
+                match boundaryResult with
+                | Some boundary when
+                    boundary.DirectoryId = status.RootDirectoryId
+                    && boundary.Sha256Hash = status.RootDirectorySha256Hash
+                    && boundary.Blake3Hash = status.RootDirectoryBlake3Hash
+                    && not (String.IsNullOrWhiteSpace boundary.EventCursor)
+                    ->
+                    boundary
+                | _ ->
+                    invalidOp
+                        "Grace Watch requires a matching initialized remote-event boundary; run materializing grace connect or grace doctor --repair-local-state."
+
+            let! revisionAfter = Grace.CLI.LocalStateDb.readLocalStatusRevisionReadOnly operationalConfiguration.GraceStatusFile
+
+            if revisionAfter <> revisionBefore then
+                invalidOp "Grace Watch local state changed while startup trust was being validated."
+
+            return
+                {
+                    Status = status
+                    OwnerId = operationalConfiguration.OwnerId
+                    OrganizationId = operationalConfiguration.OrganizationId
+                    RepositoryId = operationalConfiguration.RepositoryId
+                    BranchId = operationalConfiguration.BranchId
+                    RootDirectory = operationalConfiguration.RootDirectory
+                    GraceStatusFile = operationalConfiguration.GraceStatusFile
+                    LocalStatusRevision = revisionAfter
+                    Boundary = boundary
+                }
+        }
+
+    /// Rejects any configured or durable identity change across the atomic Watch IPC startup claim.
+    let private requireWatchLocalStateUnchangedAfterClaim expected actual =
+        let pathComparison =
+            if OperatingSystem.IsWindows() then
+                StringComparison.OrdinalIgnoreCase
+            else
+                StringComparison.Ordinal
+
+        let samePath left right = String.Equals(Path.GetFullPath(left), Path.GetFullPath(right), pathComparison)
+
+        if actual.OwnerId <> expected.OwnerId
+           || actual.OrganizationId <> expected.OrganizationId
+           || actual.RepositoryId <> expected.RepositoryId
+           || actual.BranchId <> expected.BranchId
+           || not (samePath actual.RootDirectory expected.RootDirectory)
+           || not (samePath actual.GraceStatusFile expected.GraceStatusFile)
+           || actual.LocalStatusRevision
+              <> expected.LocalStatusRevision
+           || actual.Status.RootDirectoryId
+              <> expected.Status.RootDirectoryId
+           || actual.Status.RootDirectorySha256Hash
+              <> expected.Status.RootDirectorySha256Hash
+           || actual.Status.RootDirectoryBlake3Hash
+              <> expected.Status.RootDirectoryBlake3Hash
+           || actual.Boundary.RepositoryId
+              <> expected.Boundary.RepositoryId
+           || actual.Boundary.BranchId
+              <> expected.Boundary.BranchId
+           || actual.Boundary.DirectoryId
+              <> expected.Boundary.DirectoryId
+           || actual.Boundary.Sha256Hash
+              <> expected.Boundary.Sha256Hash
+           || actual.Boundary.Blake3Hash
+              <> expected.Boundary.Blake3Hash
+           || actual.Boundary.EventCursor
+              <> expected.Boundary.EventCursor then
+            invalidOp "Grace Watch local state changed after the Watch startup claim; startup was aborted before callback or runtime setup."
+
+    /// Persists an opaque cursor only after current branch, safe-state, root, and prior-boundary evidence are reread.
+    let private acknowledgeCurrentBranchReferenceReplayCursor
+        (expectedBoundary: ReferenceMaterializationBoundaryDto)
+        (reference: CurrentBranchReferenceNotification option)
+        eventCursor
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            cancellationToken.ThrowIfCancellationRequested()
+            let current = Current()
+
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Error error -> invalidOp $"Watch could not reread persisted repository identity before cursor acknowledgement: {error}"
+            | Ok persisted when
+                persisted.Configuration.RepositoryId
+                <> current.RepositoryId
+                || persisted.Configuration.BranchId
+                   <> current.BranchId
+                || expectedBoundary.RepositoryId
+                   <> current.RepositoryId
+                || expectedBoundary.BranchId <> current.BranchId
+                ->
+                invalidOp "Watch repository or branch identity changed before cursor acknowledgement."
+            | Ok _ -> ()
+
+            let! inspection = inspectGraceWatchStatus ()
+
+            let gatePayload =
+                match reference with
+                | Some payload -> payload
+                | None -> { CurrentBranchReferenceNotification.Default with RepositoryId = current.RepositoryId; BranchId = current.BranchId }
+
+            match currentBranchMaterializationStatusGate true None gatePayload inspection with
+            | Clean status ->
+                ensureCurrentBranchReplayReferenceRootAcknowledged status reference
+
+                let acceptedBoundary =
+                    { expectedBoundary with
+                        DirectoryId = status.RootDirectoryId
+                        Sha256Hash = status.RootDirectorySha256Hash
+                        Blake3Hash = status.RootDirectoryBlake3Hash
+                        EventCursor = eventCursor
+                    }
+
+                let! durableBoundary =
+                    Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile expectedBoundary.RepositoryId expectedBoundary.BranchId
+
+                if durableBoundary <> Some expectedBoundary then
+                    invalidOp "Watch replay cursor changed before this response interval could acknowledge it."
+
+                cancellationToken.ThrowIfCancellationRequested()
+
+                return! Grace.CLI.LocalStateDb.advanceRemoteReferenceBoundaryCursor current.GraceStatusFile expectedBoundary acceptedBoundary cancellationToken
+            | NotCurrentBranch -> return invalidOp "Watch branch identity changed before cursor acknowledgement."
+            | Blocked reason -> return invalidOp $"Watch local work blocked cursor acknowledgement: {reason}."
+            | Degraded reason -> return invalidOp $"Watch local state blocked cursor acknowledgement: {reason}."
+        }
+
+    /// Invokes the typed replay route from the current durable boundary and processes eligible events one at a time.
+    let private replayCurrentBranchReferenceEvents (cancellationToken: CancellationToken) =
+        task {
+            try
+                let current = Current()
+
+                let clients =
+                    {
+                        ReadBoundary =
+                            fun () -> Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
+                        ResolveMissingBoundary = fun _ -> Task.FromResult(None)
+                        Replay =
+                            fun boundary ->
+                                let parameters =
+                                    ReplayReferenceEventsParameters(
+                                        OwnerId = $"{current.OwnerId}",
+                                        OwnerName = current.OwnerName,
+                                        OrganizationId = $"{current.OrganizationId}",
+                                        OrganizationName = current.OrganizationName,
+                                        RepositoryId = $"{current.RepositoryId}",
+                                        RepositoryName = current.RepositoryName,
+                                        BranchId = $"{current.BranchId}",
+                                        BranchName = current.BranchName,
+                                        CursorRepositoryId = $"{boundary.RepositoryId}",
+                                        CursorBranchId = $"{boundary.BranchId}",
+                                        EventCursor = boundary.EventCursor,
+                                        CorrelationId = generateCorrelationId ()
+                                    )
+
+                                Grace.SDK.Branch.ReplayReferenceEvents parameters
+                        ProcessReference =
+                            fun payload ->
+                                runCurrentBranchMaterializationCoordinator
+                                    {
+                                        GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                                        InspectLocalStatus = inspectGraceWatchStatus
+                                        RequestDegradedResync = requestGraceWatchExplicitResync
+                                        WaitForSafePoint = fun _ _ -> Task.FromResult(())
+                                        ReestablishIpc = fun _ _ -> Task.FromResult(())
+                                        ApplyReference = applyCurrentBranchReferenceMaterialization
+                                        PublishCleanIpcAfterApply = tryPublishCurrentBranchMaterializationCleanStatus
+                                        ReassertDirtyIpcAfterFailedCleanPublication = tryPublishCurrentBranchMaterializationDirtyStatus
+                                        MaxAttempts = Some 1
+                                    }
+                                    payload
+                        AcknowledgeCursor = acknowledgeCurrentBranchReferenceReplayCursor
+                    }
+
+                let! outcome = replayCurrentBranchReferenceEventsWithClients currentBranchReferenceReplayGate clients cancellationToken
+
+                match outcome.Reason with
+                | CurrentBranchReferenceReplayOutcomeReason.MissingBoundary ->
+                    logToAnsiConsole Colors.Verbose "Watch replay kept the current local root unchanged because no safe remote event boundary was established."
+                | CurrentBranchReferenceReplayOutcomeReason.ReplayFailed ->
+                    logToAnsiConsole Colors.Error "Watch could not replay the current branch cursor; the durable cursor remains unchanged."
+                | CurrentBranchReferenceReplayOutcomeReason.EventNotAcknowledged -> ()
+                | CurrentBranchReferenceReplayOutcomeReason.IntervalAcknowledged -> ()
+                | _ -> logToAnsiConsole Colors.Error "Watch replay returned an unsupported local outcome; the durable cursor remains unchanged."
+            with
+            | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> ()
+            | ex -> logToAnsiConsole Colors.Error $"Watch replay stopped without acknowledging the failing event: {Markup.Escape(ex.Message)}."
+        }
+
+    do
+        lock transitionCatchUpRequestLock (fun () ->
+            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
+                fun () ->
+                    replayCurrentBranchReferenceEvents CancellationToken.None
+                    |> ignore)
+
+    /// Installs a deterministic cursor-replay wake used by marker and transition tests.
+    let internal setCurrentBranchReferenceReplayRequestForWatchTests request =
+        lock transitionCatchUpRequestLock (fun () -> requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <- request)
+
+    /// Restores the production cursor-replay wake after focused tests replace it.
+    let internal resetCurrentBranchReferenceReplayRequestForWatchTests () =
+        lock transitionCatchUpRequestLock (fun () ->
+            requestCurrentBranchReferenceCatchUpAfterTransitionCompletion <-
+                fun () ->
+                    replayCurrentBranchReferenceEvents CancellationToken.None
+                    |> ignore)
+
+    /// Exposes sequential cursor replay to deterministic Watch tests without a server or filesystem watcher.
+    let internal replayCurrentBranchReferenceEventsWithClientsForWatchTests replayGate clients cancellationToken =
+        replayCurrentBranchReferenceEventsWithClients replayGate clients cancellationToken
+
+    /// Runs the composed production missing-boundary, SDK replay, materialization, and cursor-acknowledgement path for hosted acceptance tests.
+    let internal replayCurrentBranchReferenceEventsForHostedTests cancellationToken = replayCurrentBranchReferenceEvents cancellationToken
 
     /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
     let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
@@ -7817,21 +8508,21 @@ module Watch =
             (fun () -> $"{signalRConnection.State}")
             (fun () -> $"{signalRConnection.ConnectionId}")
             Branch.GetParentBranch
-            (fun repositoryId branchId cancellationToken -> signalRConnection.InvokeAsync("RegisterCurrentBranch", repositoryId, branchId, cancellationToken))
+            (fun repositoryId branchId cancellationToken ->
+                signalRConnection.InvokeAsync("RegisterCurrentBranchSource", repositoryId, branchId, watchProcessId.ToString("N"), cancellationToken))
             (fun branchId parentBranchId cancellationToken ->
                 signalRConnection.InvokeAsync("RegisterParentBranch", branchId, parentBranchId, cancellationToken))
             cancellationToken
 
-    /// Admits one raw callback through the shared Grace-internal namespace guard before scheduling or direct test processing.
+    /// Admits one raw callback only after the shared classifier selects its complete side-effect boundary.
     let private admitRawLocalObservation fallbackKind fullPath seenAt =
-        if isGraceStatusArtifact fullPath then
-            recordLocalStatusRevisionCheckObservation ()
-        else
-            match tryClassifyRawLocalObservation fallbackKind fullPath with
-            | None -> ()
-            | Some kind when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate kind fullPath seenAt
-            | Some kind when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately kind fullPath
-            | Some _ -> ()
+        match classifyRawLocalObservation fallbackKind fullPath with
+        | LocalStateArtifact -> recordLocalStatusRevisionCheckObservation ()
+        | GraceInternal
+        | Ignored -> ()
+        | Eligible when isLocalObservationCandidateSchedulingActive () -> acceptLocalObservationCandidate fallbackKind fullPath seenAt
+        | Eligible when useImmediateLocalObservationProcessingForWatchTests () -> processLocalObservationImmediately fallbackKind fullPath
+        | Eligible -> ()
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
@@ -7984,7 +8675,8 @@ module Watch =
                     match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
                     | ObservedCurrentMarker when isRecentGraceUpdateMarkerCompletion completedUtc ->
                         recordGraceUpdateMarkerCompletedUtc completedUtc
-                        requestCurrentBranchReferenceCatchUp "current-branch reference materialization marker deletion"
+                        requestCurrentBranchCatchUpAfterTransitionSubscriptionRefresh ()
+
                         logToAnsiConsole Colors.Important $"Reference materialization update has finished."
                     | _ ->
                         let reason = $"reference-materialization marker deletion did not provide current observed completion evidence for {args.FullPath}."
@@ -8370,10 +9062,11 @@ module Watch =
                         updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds))
                 else
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
                     let verified =
-                        tryPublishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                            updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                        tryPublishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient nonIncrementalStatus (Some emptyDirectoryIds))
 
                     logToAnsiConsole
                         Colors.Important
@@ -8864,22 +9557,41 @@ module Watch =
                                                 logToAnsiConsole
                                                     (if dirtyPublicationVerified then Colors.Important else Colors.Error)
                                                     $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed provisional clean publication; dirty resync IPC was {dirtyPublicationOutcome} before return."
-                                        | recoveryPublication ->
+                                        | VerifiedDirtyRecoveryPublication ->
+                                            let dirtyResyncIpcAlreadyVerified =
+                                                try
+                                                    inspectGraceWatchStatus().GetAwaiter().GetResult()
+                                                    |> isGraceWatchResyncRequiredStatusPublished
+                                                with
+                                                | _ -> false
+
+                                            if dirtyResyncIpcAlreadyVerified then
+                                                if isGraceWatchResyncAttemptCurrent resyncAttempt then
+                                                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                                logToAnsiConsole
+                                                    Colors.Important
+                                                    $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was verified dirty, not a verified clean recovery; dirty resync IPC was already verified before return."
+                                            else
+                                                let dirtyPublicationVerified =
+                                                    reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
+                                                        updateGraceWatchInterprocessFileClient status (Some directoryIds))
+
+                                                let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
+
+                                                logToAnsiConsole
+                                                    (if dirtyPublicationVerified then Colors.Important else Colors.Error)
+                                                    $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was verified dirty, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                        | UnverifiedRecoveryPublication ->
                                             let dirtyPublicationVerified =
                                                 reassertDirtyResyncIpcAfterProvisionalCleanRecovery resyncAttempt (fun status directoryIds ->
                                                     updateGraceWatchInterprocessFileClient status (Some directoryIds))
-
-                                            let recoveryPublicationOutcome =
-                                                match recoveryPublication with
-                                                | VerifiedDirtyRecoveryPublication -> "verified dirty"
-                                                | UnverifiedRecoveryPublication -> "unproven"
-                                                | VerifiedCleanRecoveryPublication -> "unexpected verified clean"
 
                                             let dirtyPublicationOutcome = if dirtyPublicationVerified then "verified" else "unproven"
 
                                             logToAnsiConsole
                                                 (if dirtyPublicationVerified then Colors.Important else Colors.Error)
-                                                $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was {recoveryPublicationOutcome}, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
+                                                $"Grace Watch retained resync attempt {resyncAttempt} because recovery IPC publication was unproven, not a verified clean recovery; dirty resync IPC was {dirtyPublicationOutcome} before return."
                                     else
                                         let clearedResyncAttempt = tryClearGraceWatchResyncAttemptAndMarkerCompletionConfidenceLoss resyncAttempt
 
@@ -9236,9 +9948,10 @@ module Watch =
                             updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
                     else
                         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                        let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-                        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                            updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                        publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient nonIncrementalStatus (Some emptyDirectoryIds))
 
                         logToAnsiConsole
                             Colors.Important
@@ -9271,14 +9984,16 @@ module Watch =
                         updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds))
                 elif runtimeMode = GraceWatchRuntimeMode.Suspended then
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                        updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds))
+                    publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileForSuspendedMode nonIncrementalStatus (Some emptyDirectoryIds))
                 else
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+                    let nonIncrementalStatus = nonIncrementalPendingWorkPublicationStatus
 
-                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
-                        updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                    publishWatchIpcWithFreshPendingWorkProbe nonIncrementalStatus emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileClient nonIncrementalStatus (Some emptyDirectoryIds))
 
                     logToAnsiConsole
                         Colors.Important
@@ -9610,7 +10325,7 @@ module Watch =
             processChangedFilesClient
             catchUpCurrentBranchReference
 
-    /// Preserves pending-work recovery evidence across GraceStatus refresh processing before queuing a lifecycle catch-up generation.
+    /// Preserves pending-work recovery evidence across local processing before invoking one cursor replay wake.
     let private processWatchTimerLocalRecoveryWithCatchUp
         refreshGraceStatusIfChanged
         processChangedFilesClient
@@ -9629,7 +10344,7 @@ module Watch =
 
             if (localWorkWasPending && not (hasPendingWork ()))
                || (resyncWasPending && not (isResyncPending ())) then
-                requestCatchUp "local Watch recovery"
+                do! requestCatchUp "local Watch recovery"
         }
 
     /// Exposes timer recovery sequencing so Watch tests can prove a refresh cannot erase its blocked-to-safe wake-up.
@@ -9668,6 +10383,11 @@ module Watch =
                         member _.Dispose() = localCurrentBranchReferenceEchoLedger.Clear()
                     }
 
+                use currentBranchWaitDiagnosticLifetime =
+                    { new IDisposable with
+                        member _.Dispose() = resetCurrentBranchWaitDiagnosticForWatchTests ()
+                    }
+
                 try
                     if isCheckRequested parseResult then
                         let! watchStatusInspection = inspectGraceWatchStatus ()
@@ -9675,11 +10395,30 @@ module Watch =
                         let watchCheckStatus = toWatchCheckStatusDto trustInspection
                         raise (WatchCommandExit(renderWatchCheckStatus parseResult watchCheckStatus))
 
-                    let! claimedGraceWatchStatus = tryClaimGraceWatchInterprocessFile ()
+                    let cachedOperationalConfiguration = Current()
 
-                    if not claimedGraceWatchStatus then
+                    let operationalConfiguration = captureOperationalConfigurationSnapshot "Watch" cachedOperationalConfiguration
+
+                    let! initializedStateBeforeClaim = requireInitializedLocalStateForWatch cachedOperationalConfiguration operationalConfiguration
+
+                    let! graceWatchClaim = claimGraceWatchInterprocessFile ()
+
+                    if not graceWatchClaim.Claimed then
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
+
+                    afterWatchStartupClaim ()
+                    let! initializedStateAfterClaim = requireInitializedLocalStateForWatch cachedOperationalConfiguration operationalConfiguration
+                    requireWatchLocalStateUnchangedAfterClaim initializedStateBeforeClaim initializedStateAfterClaim
+                    beforeWatchCallbackRuntimeSetup ()
+                    let initializedStatus = initializedStateAfterClaim.Status
+
+                    ClientIdentity.configureWatchProcessId watchProcessId
+
+                    use watchProcessIdentityLifetime =
+                        { new IDisposable with
+                            member _.Dispose() = ClientIdentity.clearWatchProcessId ()
+                        }
 
                     setGraceWatchRuntimeMode GraceWatchRuntimeMode.StartingUp
 
@@ -9694,7 +10433,7 @@ module Watch =
                     setLocalObservationCandidateSchedulingActive true
 
                     // Create the FileSystemWatcher, but don't enable it yet.
-                    use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
+                    use rootDirectoryFileSystemWatcher = createFileSystemWatcher operationalConfiguration.RootDirectory
 
                     use created =
                         Observable
@@ -9764,14 +10503,13 @@ module Watch =
                             .Select(fun e -> e.EventArgs)
                             .Subscribe(OnGraceUpdateInProgressDeleted)
 
-                    // Load the Grace Index file.
-                    let! status = readGraceStatusFile ()
-                    graceStatus <- status
+                    // Use only the read-only validated status captured before callback infrastructure was created.
+                    graceStatus <- initializedStatus
                     updateGraceStatusDirectoryIds graceStatus
 
                     do!
                         initializeLocalStatusRevisionBeforeArtifactCallbacks
-                            (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                            (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision operationalConfiguration.GraceStatusFile)
                             (fun () ->
                                 task {
                                     // Create the inter-process communication file.
@@ -9788,7 +10526,7 @@ module Watch =
                     logToAnsiConsole Colors.Verbose $"The change processor timer will tick every {timerTimeSpan.TotalSeconds:F1} seconds."
 
                     // Open a SignalR connection to the server.
-                    let signalRUrl = Uri($"{Current().ServerUri}/notifications")
+                    let signalRUrl = Uri($"{operationalConfiguration.ServerUri}/notifications")
                     logToConsole $"signalRUrl: {signalRUrl}."
 
                     match! getSignalRAccessToken () with
@@ -9836,7 +10574,7 @@ module Watch =
                     use notifyCurrentBranchReference =
                         signalRConnection.On<CurrentBranchReferenceNotification>(
                             "NotifyCurrentBranchReference",
-                            fun payload -> (handleCurrentBranchReferenceNotification payload) :> Task
+                            fun _payload -> (replayCurrentBranchReferenceEvents cancellationToken) :> Task
                         )
 
                     use notifyOnSave =
@@ -9888,22 +10626,18 @@ module Watch =
                                     (fun () ->
                                         refreshSignalRSubscriptionsForActiveConnection (fun () ->
                                             registerCurrentSignalRParentBranch signalRConnection cancellationToken))
-                                    (fun () ->
-                                        task {
-                                            requestCurrentBranchReferenceCatchUp "SignalR subscription recovery"
-                                            do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
-                                        })
+                                    (fun () -> replayCurrentBranchReferenceEvents cancellationToken)
 
                             ()
                         })
 
                     do! signalRConnection.StartAsync(cancellationToken)
                     // Repository-wide notifications are keyed only by RepositoryId, so same-process branch switches do not change this group.
-                    do! signalRConnection.InvokeAsync("RegisterRepository", Current().RepositoryId, cancellationToken)
+                    do! signalRConnection.InvokeAsync("RegisterRepository", operationalConfiguration.RepositoryId, cancellationToken)
 
                     logToAnsiConsole
                         Colors.Highlighted
-                        $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in repository {Current().RepositoryName} ({Current().RepositoryId}); connectionId: {signalRConnection.ConnectionId}."
+                        $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in repository {operationalConfiguration.RepositoryName} ({operationalConfiguration.RepositoryId}); connectionId: {signalRConnection.ConnectionId}."
 
                     match! registerCurrentSignalRParentBranch signalRConnection cancellationToken with
                     | Ok _ -> ()
@@ -9955,11 +10689,7 @@ module Watch =
                             readGraceStatusFile
                             updateGraceWatchInterprocessFile
                             processChangedFiles
-                            (fun () ->
-                                task {
-                                    requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
-                                    do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
-                                })
+                            (fun () -> replayCurrentBranchReferenceEvents cancellationToken)
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -9977,7 +10707,7 @@ module Watch =
                                     task {
                                         do!
                                             processLocalStatusRevisionCheck
-                                                (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision (Current().GraceStatusFile))
+                                                (fun () -> Grace.CLI.LocalStateDb.readLocalStatusRevision operationalConfiguration.GraceStatusFile)
                                                 recordGraceStatusRefreshObservation
                                                 requestGraceWatchExplicitResync
 
@@ -9994,16 +10724,11 @@ module Watch =
                                         readGraceStatusFile
                                         updateGraceWatchInterprocessFile
                                         processChangedFiles
-                                        (fun () ->
-                                            task {
-                                                requestCurrentBranchReferenceCatchUp "safe startup local reconciliation"
-                                                do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
-                                            }))
+                                        (fun () -> replayCurrentBranchReferenceEvents cancellationToken))
                                 hasPendingWatchWork
                                 isGraceWatchResyncPending
-                                requestCurrentBranchReferenceCatchUp
+                                (fun _ -> replayCurrentBranchReferenceEvents cancellationToken)
 
-                        do! runCurrentBranchReferenceCatchUpIfDue cancellationToken
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 

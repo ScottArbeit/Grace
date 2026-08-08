@@ -19,6 +19,7 @@ Method | HTTP request | Description
 [**get_branch**](BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 [**get_branch_reference**](BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 [**get_parent_branch**](BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+[**get_reference_materialization_boundary**](BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 [**list_branch_checkpoints**](BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 [**list_branch_commits**](BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 [**list_branch_promotions**](BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -27,6 +28,8 @@ Method | HTTP request | Description
 [**list_branch_tags**](BranchesApi.md#list_branch_tags) | **POST** /branch/getTags | List branch tags.
 [**promote_branch**](BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 [**rebase_branch**](BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
+[**replay_reference_events**](BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+[**resolve_reference_event_boundary**](BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 [**save_branch**](BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 [**tag_branch**](BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 
@@ -1246,6 +1249,87 @@ Name | Type | Description  | Notes
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
+# **get_reference_materialization_boundary**
+> ReferenceMaterializationBoundaryReturnValue get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+
+Resolve a Connect materialization boundary.
+
+Resolves one branch root and the opaque server-ordered Reference event cursor represented by that root.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.get_reference_materialization_boundary_parameters import GetReferenceMaterializationBoundaryParameters
+from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    get_reference_materialization_boundary_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false} # GetReferenceMaterializationBoundaryParameters | 
+
+    try:
+        # Resolve a Connect materialization boundary.
+        api_response = api_instance.get_reference_materialization_boundary(get_reference_materialization_boundary_parameters)
+        print("The response of BranchesApi->get_reference_materialization_boundary:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->get_reference_materialization_boundary: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **get_reference_materialization_boundary_parameters** | [**GetReferenceMaterializationBoundaryParameters**](GetReferenceMaterializationBoundaryParameters.md)|  | 
+
+### Return type
+
+[**ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
 # **list_branch_checkpoints**
 > ReferenceListReturnValue list_branch_checkpoints(get_references_parameters)
 
@@ -1874,6 +1958,168 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**BranchCommandReturnValue**](BranchCommandReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **replay_reference_events**
+> ReferenceReplayReturnValue replay_reference_events(replay_reference_events_parameters)
+
+Replay cursor-new Reference events.
+
+Returns eligible Reference events after an opaque branch-scoped cursor and the exact scanned interval closure.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.reference_replay_return_value import ReferenceReplayReturnValue
+from grace_generated_openapi_probe.models.replay_reference_events_parameters import ReplayReferenceEventsParameters
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    replay_reference_events_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"CursorRepositoryId":"46a7e2f4-58ad-43e8-883e-33c564b4a98b","CursorBranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","EventCursor":"branch-event-v1:42"} # ReplayReferenceEventsParameters | 
+
+    try:
+        # Replay cursor-new Reference events.
+        api_response = api_instance.replay_reference_events(replay_reference_events_parameters)
+        print("The response of BranchesApi->replay_reference_events:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->replay_reference_events: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **replay_reference_events_parameters** | [**ReplayReferenceEventsParameters**](ReplayReferenceEventsParameters.md)|  | 
+
+### Return type
+
+[**ReferenceReplayReturnValue**](ReferenceReplayReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Bad Request |  -  |
+**500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **resolve_reference_event_boundary**
+> ReferenceMaterializationBoundaryReturnValue resolve_reference_event_boundary(resolve_reference_event_boundary_parameters)
+
+Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+
+Returns an exact cursor only when the full local root tuple matches a Save, Commit, or Checkpoint for the same repository and branch. Created and Rebased branch bases, every other Reference kind, and unmatched roots return the same immutable-snapshot tail baseline without materializing history, even when the tuple matches.
+
+### Example
+
+* Bearer (JWT) Authentication (bearerAuth):
+
+```python
+import grace_generated_openapi_probe
+from grace_generated_openapi_probe.models.reference_materialization_boundary_return_value import ReferenceMaterializationBoundaryReturnValue
+from grace_generated_openapi_probe.models.resolve_reference_event_boundary_parameters import ResolveReferenceEventBoundaryParameters
+from grace_generated_openapi_probe.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:5000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = grace_generated_openapi_probe.Configuration(
+    host = "http://localhost:5000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (JWT): bearerAuth
+configuration = grace_generated_openapi_probe.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = grace_generated_openapi_probe.BranchesApi(api_client)
+    resolve_reference_event_boundary_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"DirectoryVersionId":"1686fe2c-954c-4f7d-b630-8db88ffc5982","Sha256Hash":"805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243","Blake3Hash":"9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d"} # ResolveReferenceEventBoundaryParameters | 
+
+    try:
+        # Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
+        api_response = api_instance.resolve_reference_event_boundary(resolve_reference_event_boundary_parameters)
+        print("The response of BranchesApi->resolve_reference_event_boundary:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BranchesApi->resolve_reference_event_boundary: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **resolve_reference_event_boundary_parameters** | [**ResolveReferenceEventBoundaryParameters**](ResolveReferenceEventBoundaryParameters.md)|  | 
+
+### Return type
+
+[**ReferenceMaterializationBoundaryReturnValue**](ReferenceMaterializationBoundaryReturnValue.md)
 
 ### Authorization
 

@@ -66,6 +66,7 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**get_branch**](docs/BranchesApi.md#get_branch) | **POST** /branch/get | Get a branch.
 *BranchesApi* | [**get_branch_reference**](docs/BranchesApi.md#get_branch_reference) | **POST** /branch/getReference | Get a branch reference.
 *BranchesApi* | [**get_parent_branch**](docs/BranchesApi.md#get_parent_branch) | **POST** /branch/getParentBranch | Get the parent branch.
+*BranchesApi* | [**get_reference_materialization_boundary**](docs/BranchesApi.md#get_reference_materialization_boundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 *BranchesApi* | [**list_branch_checkpoints**](docs/BranchesApi.md#list_branch_checkpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 *BranchesApi* | [**list_branch_commits**](docs/BranchesApi.md#list_branch_commits) | **POST** /branch/getCommits | List branch commits.
 *BranchesApi* | [**list_branch_promotions**](docs/BranchesApi.md#list_branch_promotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -74,6 +75,8 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**list_branch_tags**](docs/BranchesApi.md#list_branch_tags) | **POST** /branch/getTags | List branch tags.
 *BranchesApi* | [**promote_branch**](docs/BranchesApi.md#promote_branch) | **POST** /branch/promote | Promote the current branch content.
 *BranchesApi* | [**rebase_branch**](docs/BranchesApi.md#rebase_branch) | **POST** /branch/rebase | Rebase a branch.
+*BranchesApi* | [**replay_reference_events**](docs/BranchesApi.md#replay_reference_events) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+*BranchesApi* | [**resolve_reference_event_boundary**](docs/BranchesApi.md#resolve_reference_event_boundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
@@ -202,6 +205,7 @@ Class | Method | HTTP request | Description
  - [CreateReferenceParameters](docs/CreateReferenceParameters.md)
  - [CreateRepositoryParameters](docs/CreateRepositoryParameters.md)
  - [CreateWebhookRuleParameters](docs/CreateWebhookRuleParameters.md)
+ - [CurrentBranchReferenceNotification](docs/CurrentBranchReferenceNotification.md)
  - [DedupeDiscoverySnapshot](docs/DedupeDiscoverySnapshot.md)
  - [DeleteBranchParameters](docs/DeleteBranchParameters.md)
  - [DeleteOrganizationParameters](docs/DeleteOrganizationParameters.md)
@@ -258,6 +262,7 @@ Class | Method | HTTP request | Description
  - [GetOrganizationParameters](docs/GetOrganizationParameters.md)
  - [GetOwnerParameters](docs/GetOwnerParameters.md)
  - [GetParameters](docs/GetParameters.md)
+ - [GetReferenceMaterializationBoundaryParameters](docs/GetReferenceMaterializationBoundaryParameters.md)
  - [GetReferenceParameters](docs/GetReferenceParameters.md)
  - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
  - [GetReferencesParameters](docs/GetReferencesParameters.md)
@@ -308,10 +313,16 @@ Class | Method | HTTP request | Description
  - [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
  - [ReferenceDto](docs/ReferenceDto.md)
  - [ReferenceListReturnValue](docs/ReferenceListReturnValue.md)
+ - [ReferenceMaterializationBoundaryApiDto](docs/ReferenceMaterializationBoundaryApiDto.md)
+ - [ReferenceMaterializationBoundaryReturnValue](docs/ReferenceMaterializationBoundaryReturnValue.md)
  - [ReferenceParameters](docs/ReferenceParameters.md)
+ - [ReferenceReplayApiDto](docs/ReferenceReplayApiDto.md)
+ - [ReferenceReplayEventApiDto](docs/ReferenceReplayEventApiDto.md)
+ - [ReferenceReplayReturnValue](docs/ReferenceReplayReturnValue.md)
  - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
  - [ReferenceType](docs/ReferenceType.md)
  - [RegisterContentBlockUploadParameters](docs/RegisterContentBlockUploadParameters.md)
+ - [ReplayReferenceEventsParameters](docs/ReplayReferenceEventsParameters.md)
  - [RepositoryBooleanReturnValue](docs/RepositoryBooleanReturnValue.md)
  - [RepositoryBranchesReturnValue](docs/RepositoryBranchesReturnValue.md)
  - [RepositoryCommandReturnValue](docs/RepositoryCommandReturnValue.md)
@@ -321,6 +332,7 @@ Class | Method | HTTP request | Description
  - [RepositoryReturnValue](docs/RepositoryReturnValue.md)
  - [RepositoryStatus](docs/RepositoryStatus.md)
  - [RepositoryVisibility](docs/RepositoryVisibility.md)
+ - [ResolveReferenceEventBoundaryParameters](docs/ResolveReferenceEventBoundaryParameters.md)
  - [SaveDirectoryVersionsParameters](docs/SaveDirectoryVersionsParameters.md)
  - [ScopedOutboundUrl](docs/ScopedOutboundUrl.md)
  - [SearchVisibility](docs/SearchVisibility.md)

@@ -5,11 +5,14 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Automation
 open Grace.Types.Common
+open Grace.Types.Reference
 open Microsoft.AspNetCore.Http.Connections.Client
 open Microsoft.AspNetCore.SignalR.Client
 open Microsoft.Extensions.DependencyInjection
 open NUnit.Framework
 open System
+open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Net.Http
 open System.Threading
 open System.Threading.Tasks
@@ -29,6 +32,36 @@ module private NotificationHubTestHelpers =
             .AddJsonProtocol(fun options -> options.PayloadSerializerOptions <- Constants.JsonSerializerOptions)
             .WithAutomaticReconnect()
             .Build()
+
+    /// Creates an authenticated HTTP caller with optional Watch-origin delivery metadata.
+    let createSaveClient (watchProcessId: Guid option) =
+        let client = new HttpClient(BaseAddress = Uri graceServerBaseAddress)
+        client.DefaultRequestHeaders.Add("x-grace-user-id", testUserId)
+
+        watchProcessId
+        |> Option.iter (fun processId -> client.DefaultRequestHeaders.Add(Constants.WatchProcessIdHeaderKey, processId.ToString("N")))
+
+        client
+
+    /// Posts one same-root Save through the authenticated production route and returns after the durable command succeeds.
+    let saveReferenceAsync (client: HttpClient) repositoryId (branch: Grace.Types.Branch.BranchDto) referenceId message =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- string branch.BranchId
+            parameters.ReferenceId <- referenceId
+            parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+            parameters.Sha256Hash <- string branch.BasedOn.Sha256Hash
+            parameters.Blake3Hash <- string branch.BasedOn.Blake3Hash
+            parameters.Message <- message
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            use! response = client.PostAsync("/branch/save", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.IsSuccessStatusCode, Is.True, body)
+        }
 
     /// Defines start agent session behavior for the surrounding tests used by the server integration notification Hub scenario.
     let startAgentSessionAsync repositoryId agentId workItemId operationId =
@@ -150,6 +183,129 @@ module private NotificationHubTestHelpers =
 /// Covers notification hub scenarios.
 [<NonParallelizable>]
 type NotificationHubTests() =
+
+    /// Verifies Watch-originated Save delivery excludes only its exact source while preserving peers, branch isolation, and reconnect fallback.
+    [<Test>]
+    member _.WatchSaveExcludesExactSourceAndReconnectFallsBackToOrdinaryGroupDelivery() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let! defaultBranch = BranchServerTestHelpers.getBranchAsync repositoryId repositoryDefaultBranchIds[0]
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId defaultBranch $"signalr-source-{Guid.NewGuid():N}"
+            let! otherBranch = BranchServerTestHelpers.createBranchAsync repositoryId defaultBranch $"signalr-isolation-{Guid.NewGuid():N}"
+            let sourceProcessId = Guid.NewGuid()
+            let peerProcessId = Guid.NewGuid()
+            let otherProcessId = Guid.NewGuid()
+            let targetReferenceId = Guid.NewGuid()
+            let fallbackReferenceId = Guid.NewGuid()
+            let otherBranchReferenceId = Guid.NewGuid()
+            let sourceCounts = ConcurrentDictionary<Guid, int>()
+            let peerCounts = ConcurrentDictionary<Guid, int>()
+            let otherCounts = ConcurrentDictionary<Guid, int>()
+            let sourceFallback = TaskCompletionSource<CurrentBranchReferenceNotification>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let peerTarget = TaskCompletionSource<CurrentBranchReferenceNotification>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let peerFallback = TaskCompletionSource<CurrentBranchReferenceNotification>(TaskCreationOptions.RunContinuationsAsynchronously)
+            let otherBranchMarker = TaskCompletionSource<CurrentBranchReferenceNotification>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            /// Records one connection's exact Reference deliveries and completes only the expected deterministic markers.
+            let observe
+                (counts: ConcurrentDictionary<Guid, int>)
+                (target: TaskCompletionSource<CurrentBranchReferenceNotification> option)
+                (fallback: TaskCompletionSource<CurrentBranchReferenceNotification> option)
+                (otherMarker: TaskCompletionSource<CurrentBranchReferenceNotification> option)
+                (payload: CurrentBranchReferenceNotification)
+                =
+                counts.AddOrUpdate(payload.ReferenceId, 1, (fun _ count -> count + 1))
+                |> ignore
+
+                if payload.ReferenceId = targetReferenceId then
+                    target
+                    |> Option.iter (fun completion -> completion.TrySetResult(payload) |> ignore)
+                elif payload.ReferenceId = fallbackReferenceId then
+                    fallback
+                    |> Option.iter (fun completion -> completion.TrySetResult(payload) |> ignore)
+                elif payload.ReferenceId = otherBranchReferenceId then
+                    otherMarker
+                    |> Option.iter (fun completion -> completion.TrySetResult(payload) |> ignore)
+
+            use sourceConnection = NotificationHubTestHelpers.createConnection true
+            use peerConnection = NotificationHubTestHelpers.createConnection true
+            use otherConnection = NotificationHubTestHelpers.createConnection true
+
+            use sourceSubscription =
+                sourceConnection.On<CurrentBranchReferenceNotification>(
+                    "NotifyCurrentBranchReference",
+                    Action<CurrentBranchReferenceNotification>(observe sourceCounts None (Some sourceFallback) None)
+                )
+
+            use peerSubscription =
+                peerConnection.On<CurrentBranchReferenceNotification>(
+                    "NotifyCurrentBranchReference",
+                    Action<CurrentBranchReferenceNotification>(observe peerCounts (Some peerTarget) (Some peerFallback) None)
+                )
+
+            use otherSubscription =
+                otherConnection.On<CurrentBranchReferenceNotification>(
+                    "NotifyCurrentBranchReference",
+                    Action<CurrentBranchReferenceNotification>(observe otherCounts None None (Some otherBranchMarker))
+                )
+
+            do! sourceConnection.StartAsync()
+            do! peerConnection.StartAsync()
+            do! otherConnection.StartAsync()
+
+            use cts = new CancellationTokenSource(TimeSpan.FromSeconds(45.0))
+            let repositoryGuid = Guid.Parse repositoryId
+
+            do! sourceConnection.InvokeAsync("RegisterCurrentBranchSource", repositoryGuid, branch.BranchId, sourceProcessId.ToString("N"), cts.Token)
+
+            do! peerConnection.InvokeAsync("RegisterCurrentBranchSource", repositoryGuid, branch.BranchId, peerProcessId.ToString("N"), cts.Token)
+
+            do! otherConnection.InvokeAsync("RegisterCurrentBranchSource", repositoryGuid, otherBranch.BranchId, otherProcessId.ToString("N"), cts.Token)
+
+            use sourceClient = NotificationHubTestHelpers.createSaveClient (Some sourceProcessId)
+            do! NotificationHubTestHelpers.saveReferenceAsync sourceClient repositoryId branch targetReferenceId "hosted source exclusion proof"
+
+            let! _ = peerTarget.Task.WaitAsync(cts.Token)
+
+            // These completed hub invocations are per-connection ordering barriers for the preceding server fan-out.
+            do! sourceConnection.InvokeAsync("RegisterCurrentBranch", repositoryGuid, branch.BranchId, cts.Token)
+
+            do! peerConnection.InvokeAsync("RegisterCurrentBranchSource", repositoryGuid, branch.BranchId, peerProcessId.ToString("N"), cts.Token)
+
+            do! otherConnection.InvokeAsync("RegisterCurrentBranch", repositoryGuid, otherBranch.BranchId, cts.Token)
+
+            Assert.That(sourceCounts.GetValueOrDefault(targetReferenceId), Is.Zero, "the exact source connection must not receive its own Save")
+            Assert.That(peerCounts.GetValueOrDefault(targetReferenceId), Is.EqualTo(1), "a distinct same-branch Watch process must receive the Save once")
+            Assert.That(otherCounts.GetValueOrDefault(targetReferenceId), Is.Zero, "another branch must not receive the Save")
+
+            do! sourceConnection.StopAsync(cts.Token)
+            do! sourceConnection.StartAsync(cts.Token)
+            do! sourceConnection.InvokeAsync("RegisterCurrentBranch", repositoryGuid, branch.BranchId, cts.Token)
+
+            use ordinaryClient = NotificationHubTestHelpers.createSaveClient None
+            do! NotificationHubTestHelpers.saveReferenceAsync ordinaryClient repositoryId branch fallbackReferenceId "hosted reconnect fallback proof"
+            let! _ = sourceFallback.Task.WaitAsync(cts.Token)
+            let! _ = peerFallback.Task.WaitAsync(cts.Token)
+
+            do! NotificationHubTestHelpers.saveReferenceAsync ordinaryClient repositoryId otherBranch otherBranchReferenceId "hosted branch isolation marker"
+
+            let! _ = otherBranchMarker.Task.WaitAsync(cts.Token)
+
+            // Confirm each non-target connection has processed all frames queued before the branch-isolation marker.
+            do! sourceConnection.InvokeAsync("RegisterCurrentBranch", repositoryGuid, branch.BranchId, cts.Token)
+            do! peerConnection.InvokeAsync("RegisterCurrentBranch", repositoryGuid, branch.BranchId, cts.Token)
+            do! otherConnection.InvokeAsync("RegisterCurrentBranch", repositoryGuid, otherBranch.BranchId, cts.Token)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(sourceCounts.GetValueOrDefault(fallbackReferenceId), Is.EqualTo(1))
+                    Assert.That(peerCounts.GetValueOrDefault(fallbackReferenceId), Is.EqualTo(1))
+                    Assert.That(otherCounts.GetValueOrDefault(fallbackReferenceId), Is.Zero)
+                    Assert.That(sourceCounts.GetValueOrDefault(otherBranchReferenceId), Is.Zero)
+                    Assert.That(peerCounts.GetValueOrDefault(otherBranchReferenceId), Is.Zero)
+                    Assert.That(otherCounts.GetValueOrDefault(otherBranchReferenceId), Is.EqualTo(1)))
+            )
+        }
 
     /// Verifies the authenticated client receives repository automation event scenario.
     [<Test>]

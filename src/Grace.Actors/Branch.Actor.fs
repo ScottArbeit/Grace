@@ -43,6 +43,12 @@ module Branch =
         | MatchingRetry
         | ConflictingReference
 
+    /// Reports whether one Branch event write succeeded or restored the activation from durable state after failure.
+    type internal BranchEventPersistenceOutcome =
+        | Persisted
+        | FailedRecovered of writeError: exn
+        | FailedUnrecoverable of writeError: exn * reloadError: exn
+
     /// Compares a Reference Create command with durable state under its caller-owned identity.
     let internal classifyReferenceOperation command existingReference =
         match command, existingReference with
@@ -111,8 +117,8 @@ module Branch =
             && durablePermissions.SetEquals(initialPermissions)
         | _ -> false
 
-    /// Reports whether a Branch event owns durable state and publication rather than only updating the in-memory projection.
-    let internal shouldPersistAndPublishBranchEvent branchEventType =
+    /// Reports whether a Branch event is published from the Branch actor rather than by its Reference actor.
+    let internal shouldPublishBranchEvent branchEventType =
         match branchEventType with
         | Assigned _
         | Promoted _
@@ -123,6 +129,38 @@ module Branch =
         | ExternalCreated _
         | Rebased _ -> false
         | _ -> true
+
+    /// Reports whether a Branch event belongs in the durable stream consumed by ordered Watch replay.
+    let internal shouldPersistBranchEvent branchEventType =
+        match branchEventType with
+        | Committed _
+        | Checkpointed _
+        | Saved _ -> true
+        | _ -> shouldPublishBranchEvent branchEventType
+
+    /// Appends one Branch event and reloads durable state when the write outcome is not acknowledged.
+    let internal persistBranchEventWithDurableRecovery (state: IPersistentState<List<BranchEvent>>) branchEvent =
+        task {
+            state.State.Add branchEvent
+
+            try
+                do! state.WriteStateAsync()
+                return Persisted
+            with
+            | writeError ->
+                try
+                    do! state.ReadStateAsync()
+                    return FailedRecovered writeError
+                with
+                | reloadError -> return FailedUnrecoverable(writeError, reloadError)
+        }
+
+    /// Requires deactivation when durable reload cannot replace an activation-only Branch mutation.
+    let internal branchPersistenceRequiresDeactivation outcome =
+        match outcome with
+        | FailedUnrecoverable _ -> true
+        | Persisted
+        | FailedRecovered _ -> false
 
     /// Extracts the durable Reference projection carried by one Branch Reference transition.
     let internal tryGetReferenceFromBranchEvent branchEventType =
@@ -135,6 +173,17 @@ module Branch =
         | Tagged (referenceDto, _, _, _, _)
         | ExternalCreated (referenceDto, _, _, _, _) -> Some referenceDto
         | _ -> None
+
+    /// Detects whether an exact Reference retry must append its missing Watch replay transition.
+    let internal shouldRepairMatchingRetryBranchEvent disposition branchEventType (existingEvents: seq<BranchEvent>) =
+        match disposition, tryGetReferenceFromBranchEvent branchEventType with
+        | MatchingRetry, Some referenceDto when shouldPersistBranchEvent branchEventType ->
+            existingEvents
+            |> Seq.exists (fun branchEvent ->
+                tryGetReferenceFromBranchEvent branchEvent.Event
+                |> Option.exists (fun existingReference -> existingReference.ReferenceId = referenceDto.ReferenceId))
+            |> not
+        | _ -> false
 
     /// Reconciles one successfully republished durable Reference into missing or older Branch projection slots.
     let internal reconcileReferenceProjection (branchDto: BranchDto) (referenceDto: ReferenceDto) =
@@ -448,7 +497,7 @@ module Branch =
                     branchDto <- branchDto |> BranchDto.UpdateDto branchEvent
                     branchEvent.Metadata.Properties[ nameof RepositoryId ] <- $"{branchDto.RepositoryId}"
 
-                    // Reference creation events update only this activation's projection; the Reference actor owns their durable event and publication.
+                    // Reference actors own publication; eligible Watch transitions also persist here to give each branch one durable replay order.
                     match branchEvent.Event with
                     | Assigned (referenceDto, _, _, _, _)
                     | Promoted (referenceDto, _, _, _, _)
@@ -460,10 +509,21 @@ module Branch =
                     | Rebased referenceId -> applyReferenceIdMetadata branchEvent.Metadata.Properties referenceId
                     | _ -> ()
 
-                    if shouldPersistAndPublishBranchEvent branchEvent.Event then
-                        state.State.Add branchEvent
-                        do! state.WriteStateAsync()
+                    if shouldPersistBranchEvent branchEvent.Event then
+                        match! persistBranchEventWithDurableRecovery state branchEvent with
+                        | Persisted -> ()
+                        | FailedRecovered writeError ->
+                            branchDto <-
+                                state.State
+                                |> Seq.fold (fun durableBranch branchEvent -> durableBranch |> BranchDto.UpdateDto branchEvent) BranchDto.Default
 
+                            raise writeError
+                        | FailedUnrecoverable (writeError, reloadError) as outcome ->
+                            if branchPersistenceRequiresDeactivation outcome then this.DeactivateOnIdle()
+
+                            raise (AggregateException("Branch persistence failed and durable state could not be reloaded.", writeError, reloadError))
+
+                    if shouldPublishBranchEvent branchEvent.Event then
                         let graceEvent = GraceEvent.BranchEvent branchEvent
                         do! publishGraceEvent graceEvent branchEvent.Metadata
 
@@ -1205,12 +1265,15 @@ module Branch =
                                     return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                                 | _ -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, Some MatchingRetry ->
-                                match tryGetReferenceFromBranchEvent event with
-                                | Some referenceDto ->
-                                    let recoveredBranchDto, _ = reconcileReferenceProjection branchDto referenceDto
-                                    branchDto <- recoveredBranchDto
-                                    return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
-                                | None -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                                if shouldRepairMatchingRetryBranchEvent MatchingRetry event state.State then
+                                    return! this.ApplyEvent { Event = event; Metadata = metadata }
+                                else
+                                    match tryGetReferenceFromBranchEvent event with
+                                    | Some referenceDto ->
+                                        let recoveredBranchDto, _ = reconcileReferenceProjection branchDto referenceDto
+                                        branchDto <- recoveredBranchDto
+                                        return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
+                                    | None -> return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, Some disposition when not (shouldApplyReferenceEvent disposition) ->
                                 return Ok(createBranchCommandReturnValue branchDto { Event = event; Metadata = metadata })
                             | Ok event, _ -> return! this.ApplyEvent { Event = event; Metadata = metadata }

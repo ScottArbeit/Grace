@@ -56,6 +56,7 @@ docs/CreateParameters.md
 docs/CreateReferenceParameters.md
 docs/CreateRepositoryParameters.md
 docs/CreateWebhookRuleParameters.md
+docs/CurrentBranchReferenceNotification.md
 docs/DedupeDiscoverySnapshot.md
 docs/DefaultApi.md
 docs/DeleteBranchParameters.md
@@ -115,6 +116,7 @@ docs/GetDownloadUriParameters.md
 docs/GetOrganizationParameters.md
 docs/GetOwnerParameters.md
 docs/GetParameters.md
+docs/GetReferenceMaterializationBoundaryParameters.md
 docs/GetReferenceParameters.md
 docs/GetReferencesByReferenceIdParameters.md
 docs/GetReferencesParameters.md
@@ -167,10 +169,16 @@ docs/ReferenceApiDto.md
 docs/ReferenceDefaultSentinel.md
 docs/ReferenceDto.md
 docs/ReferenceListReturnValue.md
+docs/ReferenceMaterializationBoundaryApiDto.md
+docs/ReferenceMaterializationBoundaryReturnValue.md
 docs/ReferenceParameters.md
+docs/ReferenceReplayApiDto.md
+docs/ReferenceReplayEventApiDto.md
+docs/ReferenceReplayReturnValue.md
 docs/ReferenceReturnValue.md
 docs/ReferenceType.md
 docs/RegisterContentBlockUploadParameters.md
+docs/ReplayReferenceEventsParameters.md
 docs/RepositoriesApi.md
 docs/RepositoryBooleanReturnValue.md
 docs/RepositoryBranchesReturnValue.md
@@ -181,6 +189,7 @@ docs/RepositoryReferencesReturnValue.md
 docs/RepositoryReturnValue.md
 docs/RepositoryStatus.md
 docs/RepositoryVisibility.md
+docs/ResolveReferenceEventBoundaryParameters.md
 docs/SaveDirectoryVersionsParameters.md
 docs/ScopedOutboundUrl.md
 docs/SearchVisibility.md
@@ -309,6 +318,7 @@ src/models/create_parameters.rs
 src/models/create_reference_parameters.rs
 src/models/create_repository_parameters.rs
 src/models/create_webhook_rule_parameters.rs
+src/models/current_branch_reference_notification.rs
 src/models/dedupe_discovery_snapshot.rs
 src/models/delete_branch_parameters.rs
 src/models/delete_organization_parameters.rs
@@ -365,6 +375,7 @@ src/models/get_download_uri_parameters.rs
 src/models/get_organization_parameters.rs
 src/models/get_owner_parameters.rs
 src/models/get_parameters.rs
+src/models/get_reference_materialization_boundary_parameters.rs
 src/models/get_reference_parameters.rs
 src/models/get_references_by_reference_id_parameters.rs
 src/models/get_references_parameters.rs
@@ -416,10 +427,16 @@ src/models/reference_api_dto.rs
 src/models/reference_default_sentinel.rs
 src/models/reference_dto.rs
 src/models/reference_list_return_value.rs
+src/models/reference_materialization_boundary_api_dto.rs
+src/models/reference_materialization_boundary_return_value.rs
 src/models/reference_parameters.rs
+src/models/reference_replay_api_dto.rs
+src/models/reference_replay_event_api_dto.rs
+src/models/reference_replay_return_value.rs
 src/models/reference_return_value.rs
 src/models/reference_type.rs
 src/models/register_content_block_upload_parameters.rs
+src/models/replay_reference_events_parameters.rs
 src/models/repository_boolean_return_value.rs
 src/models/repository_branches_return_value.rs
 src/models/repository_command_return_value.rs
@@ -429,6 +446,7 @@ src/models/repository_references_return_value.rs
 src/models/repository_return_value.rs
 src/models/repository_status.rs
 src/models/repository_visibility.rs
+src/models/resolve_reference_event_boundary_parameters.rs
 src/models/save_directory_versions_parameters.rs
 src/models/scoped_outbound_url.rs
 src/models/search_visibility.rs

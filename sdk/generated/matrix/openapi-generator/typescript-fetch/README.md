@@ -82,6 +82,7 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**getBranch**](docs/BranchesApi.md#getbranch) | **POST** /branch/get | Get a branch.
 *BranchesApi* | [**getBranchReference**](docs/BranchesApi.md#getbranchreference) | **POST** /branch/getReference | Get a branch reference.
 *BranchesApi* | [**getParentBranch**](docs/BranchesApi.md#getparentbranch) | **POST** /branch/getParentBranch | Get the parent branch.
+*BranchesApi* | [**getReferenceMaterializationBoundary**](docs/BranchesApi.md#getreferencematerializationboundary) | **POST** /branch/getReferenceMaterializationBoundary | Resolve a Connect materialization boundary.
 *BranchesApi* | [**listBranchCheckpoints**](docs/BranchesApi.md#listbranchcheckpoints) | **POST** /branch/getCheckpoints | List branch checkpoints.
 *BranchesApi* | [**listBranchCommits**](docs/BranchesApi.md#listbranchcommits) | **POST** /branch/getCommits | List branch commits.
 *BranchesApi* | [**listBranchPromotions**](docs/BranchesApi.md#listbranchpromotions) | **POST** /branch/getPromotions | List branch promotions.
@@ -90,6 +91,8 @@ All URIs are relative to *http://localhost:5000*
 *BranchesApi* | [**listBranchTags**](docs/BranchesApi.md#listbranchtags) | **POST** /branch/getTags | List branch tags.
 *BranchesApi* | [**promoteBranch**](docs/BranchesApi.md#promotebranch) | **POST** /branch/promote | Promote the current branch content.
 *BranchesApi* | [**rebaseBranch**](docs/BranchesApi.md#rebasebranch) | **POST** /branch/rebase | Rebase a branch.
+*BranchesApi* | [**replayReferenceEvents**](docs/BranchesApi.md#replayreferenceevents) | **POST** /branch/replayReferenceEvents | Replay cursor-new Reference events.
+*BranchesApi* | [**resolveReferenceEventBoundary**](docs/BranchesApi.md#resolvereferenceeventboundary) | **POST** /branch/resolveReferenceEventBoundary | Resolve a Save, Commit, or Checkpoint Watch boundary or establish a baseline.
 *BranchesApi* | [**saveBranch**](docs/BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tagBranch**](docs/BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content.
 *DefaultApi* | [**claimReuseRanges**](docs/DefaultApi.md#claimreuseranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
@@ -218,6 +221,7 @@ All URIs are relative to *http://localhost:5000*
 - [CreateReferenceParameters](docs/CreateReferenceParameters.md)
 - [CreateRepositoryParameters](docs/CreateRepositoryParameters.md)
 - [CreateWebhookRuleParameters](docs/CreateWebhookRuleParameters.md)
+- [CurrentBranchReferenceNotification](docs/CurrentBranchReferenceNotification.md)
 - [DedupeDiscoverySnapshot](docs/DedupeDiscoverySnapshot.md)
 - [DeleteBranchParameters](docs/DeleteBranchParameters.md)
 - [DeleteOrganizationParameters](docs/DeleteOrganizationParameters.md)
@@ -274,6 +278,7 @@ All URIs are relative to *http://localhost:5000*
 - [GetOrganizationParameters](docs/GetOrganizationParameters.md)
 - [GetOwnerParameters](docs/GetOwnerParameters.md)
 - [GetParameters](docs/GetParameters.md)
+- [GetReferenceMaterializationBoundaryParameters](docs/GetReferenceMaterializationBoundaryParameters.md)
 - [GetReferenceParameters](docs/GetReferenceParameters.md)
 - [GetReferencesByReferenceIdParameters](docs/GetReferencesByReferenceIdParameters.md)
 - [GetReferencesParameters](docs/GetReferencesParameters.md)
@@ -324,10 +329,16 @@ All URIs are relative to *http://localhost:5000*
 - [ReferenceDefaultSentinel](docs/ReferenceDefaultSentinel.md)
 - [ReferenceDto](docs/ReferenceDto.md)
 - [ReferenceListReturnValue](docs/ReferenceListReturnValue.md)
+- [ReferenceMaterializationBoundaryApiDto](docs/ReferenceMaterializationBoundaryApiDto.md)
+- [ReferenceMaterializationBoundaryReturnValue](docs/ReferenceMaterializationBoundaryReturnValue.md)
 - [ReferenceParameters](docs/ReferenceParameters.md)
+- [ReferenceReplayApiDto](docs/ReferenceReplayApiDto.md)
+- [ReferenceReplayEventApiDto](docs/ReferenceReplayEventApiDto.md)
+- [ReferenceReplayReturnValue](docs/ReferenceReplayReturnValue.md)
 - [ReferenceReturnValue](docs/ReferenceReturnValue.md)
 - [ReferenceType](docs/ReferenceType.md)
 - [RegisterContentBlockUploadParameters](docs/RegisterContentBlockUploadParameters.md)
+- [ReplayReferenceEventsParameters](docs/ReplayReferenceEventsParameters.md)
 - [RepositoryBooleanReturnValue](docs/RepositoryBooleanReturnValue.md)
 - [RepositoryBranchesReturnValue](docs/RepositoryBranchesReturnValue.md)
 - [RepositoryCommandReturnValue](docs/RepositoryCommandReturnValue.md)
@@ -337,6 +348,7 @@ All URIs are relative to *http://localhost:5000*
 - [RepositoryReturnValue](docs/RepositoryReturnValue.md)
 - [RepositoryStatus](docs/RepositoryStatus.md)
 - [RepositoryVisibility](docs/RepositoryVisibility.md)
+- [ResolveReferenceEventBoundaryParameters](docs/ResolveReferenceEventBoundaryParameters.md)
 - [SaveDirectoryVersionsParameters](docs/SaveDirectoryVersionsParameters.md)
 - [ScopedOutboundUrl](docs/ScopedOutboundUrl.md)
 - [SearchVisibility](docs/SearchVisibility.md)

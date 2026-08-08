@@ -125,6 +125,9 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/branch/getCommits" Authenticated
             endpoint "POST" "/branch/getDiffsForReferenceType" Authenticated
             endpoint "POST" "/branch/getEvents" Authenticated
+            endpoint "POST" "/branch/getReferenceMaterializationBoundary" (Authorized(BranchRead, Branch))
+            endpoint "POST" "/branch/resolveReferenceEventBoundary" (Authorized(BranchRead, Branch))
+            endpoint "POST" "/branch/replayReferenceEvents" (Authorized(BranchRead, Branch))
             endpoint "POST" "/branch/getExternals" Authenticated
             endpoint "POST" "/branch/getParentBranch" Authenticated
             endpoint "POST" "/branch/getPromotions" Authenticated
