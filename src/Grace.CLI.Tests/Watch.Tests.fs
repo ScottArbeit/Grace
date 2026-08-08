@@ -15711,10 +15711,10 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal [| newPath |])
 
-    /// Verifies that watch exits with auth guidance when no token is configured.
+    /// Verifies that Watch refuses a missing local database before authentication or runtime callback setup.
     [<Test>]
-    let ``watch exits with auth guidance when no token is configured`` () =
-        withTempRepo (fun _ ->
+    let ``watch fails closed when local state is missing`` () =
+        withTempRepo (fun root ->
             clearWatchAuthEnv (fun () ->
                 /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, output = runWithCapturedOutput [| "watch" |]
@@ -15725,10 +15725,10 @@ module WatchTests =
                     )
 
                 output
-                |> should contain "Unable to acquire an access token for SignalR"
+                |> should contain "requires healthy initialized local"
 
-                output
-                |> should contain "Authentication is not configured."))
+                File.Exists(Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName))
+                |> should equal false))
 
     /// Verifies that watch exits nonzero when live watcher status already exists.
     [<Test>]

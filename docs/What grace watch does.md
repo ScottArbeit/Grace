@@ -40,12 +40,13 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   wake Watch; startup, reconnect, and each wake replay server-ordered Commit, Checkpoint, and Save events after the
   opaque cursor stored for the current repository and branch. Watch advances that cursor only after successful
   materialization or verified same-root acknowledgement.
-- If `.grace/grace-local.db` is reset and the current branch cursor is missing, Watch does not choose the branch's
-  latest Reference or overwrite the working directory. Grace Server recovers an exact cursor only when the repository,
-  branch, root ID, SHA-256, and BLAKE3 tuple belongs to a Save, Commit, or Checkpoint event for that same repository and
-  branch. Watch then replays only later events. Branch bases (Created or Rebased), every other Reference kind, and
-  unmatched roots use the same immutable server-history snapshot's tail as a conservative baseline, even when a root
-  tuple matches. This baseline preserves every local file and follows only future events.
+- Watch starts only when the local SQLite database contains a complete status tree and a matching ordered remote-event
+  boundary for the configured repository and branch. Missing, schema-only, corrupt, incompatible, or mismatched state
+  fails before callback admission, working-tree scan, upload, Save, cursor mutation, or materialization.
+- Watch never reconstructs missing local state, invents descendant identities, or establishes an unmatched server-tail
+  baseline. If a materialized working tree still exactly matches a root in configured branch history, stop Watch and
+  run `grace doctor --repair-local-state`. The explicit repair preserves local bytes, fetches the server's immutable
+  recursive directory closure, and atomically records its real identities with the latest matching event boundary.
 - `grace connect --retrieve-default-branch false` does not establish a materialized local root. Watch treats a missing
   or incomplete root as non-incremental state and never selects a historical Reference to fill it implicitly.
 - When it starts, it scans the working directory and all (not-ignored) subdirectories and files for changes since the last time the local Grace Status file was updated.

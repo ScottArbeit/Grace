@@ -8037,238 +8037,53 @@ module Watch =
             invalidOp "Watch local root does not acknowledge the replayed Reference."
         | _ -> ()
 
-    /// Reports whether durable local status still carries the exact materialized root advertised by clean Watch IPC.
-    let private graceStatusMatchesWatchRoot (graceStatus: GraceStatus) (status: GraceWatchStatus) =
-        let mutable root = LocalDirectoryVersion.Default
-
-        graceStatus.RootDirectoryId = status.RootDirectoryId
-        && graceStatus.RootDirectorySha256Hash = status.RootDirectorySha256Hash
-        && graceStatus.RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
-        && not (isNull graceStatus.Index)
-        && graceStatus.Index.TryGetValue(graceStatus.RootDirectoryId, &root)
-        && root.RelativePath = Constants.RootDirectoryPath
-        && root.Sha256Hash = status.RootDirectorySha256Hash
-        && root.Blake3Hash = status.RootDirectoryBlake3Hash
-
-    /// Rebuilds the complete retained working-tree snapshot and rejects reset evidence that no longer matches its clean IPC root.
-    let private reconstructResetRecoveryStatus (status: GraceWatchStatus) =
+    /// Reads only a complete status tree whose root and branch boundary agree before Watch creates callback infrastructure.
+    let private requireInitializedLocalStateForWatch () =
         task {
-            let! reconstructed = createNewGraceStatusFileForRoot status.RootDirectoryId GraceStatus.Default Grace.CLI.Services.parseResult
-
-            if not (graceStatusMatchesWatchRoot reconstructed status) then
-                invalidOp "Watch retained working tree did not match the clean IPC root during startup recovery."
-
-            return reconstructed
-        }
-
-    /// Establishes a missing reset boundary from the atomically retained clean IPC root before startup may scan or mutate files.
-    let private establishMissingCurrentBranchReferenceBoundaryBeforeStartupScan
-        (retainedStatus: GraceWatchStatus option)
-        (currentStatus: GraceStatus)
-        (cancellationToken: CancellationToken)
-        =
-        task {
-            cancellationToken.ThrowIfCancellationRequested()
             let current = Current()
+            let inspection = Grace.CLI.LocalStateDb.inspectReadOnly current.GraceStatusFile
+
+            if not inspection.OpenedReadOnly
+               || inspection.SchemaVersion
+                  <> Some Grace.CLI.LocalStateDb.SchemaVersion
+               || inspection.MissingRequiredTables.Length > 0
+               || inspection.MissingRequiredIndexes.Length > 0
+               || inspection.IntegrityCheckRows <> [| "ok" |]
+               || inspection.ForeignKeyViolations.Length > 0 then
+                invalidOp "Grace Watch requires healthy initialized local state; run materializing grace connect or grace doctor --repair-local-state."
+
+            let! statusResult =
+                Grace.CLI.LocalStateDb.readStatusSnapshotReadOnly current.GraceStatusFile current.OwnerId current.OrganizationId current.RepositoryId
+
+            let status =
+                match statusResult with
+                | Ok value -> value
+                | Error error -> invalidOp $"Grace Watch could not read initialized local status: {error}"
+
+            let mutable root = LocalDirectoryVersion.Default
+
+            if status.RootDirectoryId = DirectoryVersionId.Empty
+               || String.IsNullOrWhiteSpace(string status.RootDirectorySha256Hash)
+               || String.IsNullOrWhiteSpace(string status.RootDirectoryBlake3Hash)
+               || isNull status.Index
+               || not (status.Index.TryGetValue(status.RootDirectoryId, &root))
+               || root.RelativePath <> Constants.RootDirectoryPath
+               || root.Sha256Hash <> status.RootDirectorySha256Hash
+               || root.Blake3Hash <> status.RootDirectoryBlake3Hash then
+                invalidOp "Grace Watch requires a complete initialized local status tree; run materializing grace connect or grace doctor --repair-local-state."
 
             match! Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId with
-            | Some _ -> return currentStatus
-            | None ->
-                let resetDatabaseNeedsReconstruction =
-                    currentStatus.RootDirectoryId = DirectoryVersionId.Empty
-                    && String.IsNullOrWhiteSpace(string currentStatus.RootDirectorySha256Hash)
-                    && (isNull currentStatus.Index
-                        || currentStatus.Index.IsEmpty)
-
-                let! reconstructedResetStatus =
-                    match retainedStatus with
-                    | Some retainedRoot when resetDatabaseNeedsReconstruction ->
-                        task {
-                            let! reconstructed = reconstructResetRecoveryStatus retainedRoot
-                            return Some reconstructed
-                        }
-                    | _ -> Task.FromResult(None)
-
-                cancellationToken.ThrowIfCancellationRequested()
-
-                let rootDirectoryId, rootSha256Hash, rootBlake3Hash, statusToPersist =
-                    match retainedStatus with
-                    | Some retainedRoot when graceStatusMatchesWatchRoot currentStatus retainedRoot ->
-                        retainedRoot.RootDirectoryId, retainedRoot.RootDirectorySha256Hash, retainedRoot.RootDirectoryBlake3Hash, currentStatus
-                    | Some retainedRoot when resetDatabaseNeedsReconstruction ->
-                        match reconstructedResetStatus with
-                        | Some reconstructed ->
-                            retainedRoot.RootDirectoryId, retainedRoot.RootDirectorySha256Hash, retainedRoot.RootDirectoryBlake3Hash, reconstructed
-                        | None -> invalidOp "Watch did not reconstruct the reset working-tree status."
-                    | Some _ -> invalidOp "Watch durable status did not match the retained IPC root before startup recovery."
-                    | None ->
-                        let mutable durableRoot = LocalDirectoryVersion.Default
-
-                        if
-                            not (isNull currentStatus.Index)
-                            && currentStatus.Index.TryGetValue(currentStatus.RootDirectoryId, &durableRoot)
-                            && durableRoot.RelativePath = Constants.RootDirectoryPath
-                            && durableRoot.Sha256Hash = currentStatus.RootDirectorySha256Hash
-                            && durableRoot.Blake3Hash = currentStatus.RootDirectoryBlake3Hash
-                            && currentStatus.RootDirectoryId
-                               <> DirectoryVersionId.Empty
-                            && not (String.IsNullOrWhiteSpace(string currentStatus.RootDirectorySha256Hash))
-                            && not (String.IsNullOrWhiteSpace(string currentStatus.RootDirectoryBlake3Hash))
-                        then
-                            currentStatus.RootDirectoryId, currentStatus.RootDirectorySha256Hash, currentStatus.RootDirectoryBlake3Hash, currentStatus
-                        else
-                            invalidOp "Watch cannot establish a missing remote Reference boundary without a complete durable or retained root."
-
-                let requirePersistedCurrentBranch () =
-                    match tryInspectCurrentDirectoryConfiguration () with
-                    | Ok persisted when
-                        persisted.Configuration.RepositoryId = current.RepositoryId
-                        && persisted.Configuration.BranchId = current.BranchId
-                        ->
-                        ()
-                    | Ok _ -> invalidOp "Watch repository or branch identity changed during startup boundary recovery."
-                    | Error error -> invalidOp $"Watch could not read persisted repository identity during startup boundary recovery: {error}"
-
-                requirePersistedCurrentBranch ()
-
-                let parameters =
-                    ResolveReferenceEventBoundaryParameters(
-                        OwnerId = $"{current.OwnerId}",
-                        OwnerName = current.OwnerName,
-                        OrganizationId = $"{current.OrganizationId}",
-                        OrganizationName = current.OrganizationName,
-                        RepositoryId = $"{current.RepositoryId}",
-                        RepositoryName = current.RepositoryName,
-                        BranchId = $"{current.BranchId}",
-                        BranchName = current.BranchName,
-                        DirectoryVersionId = rootDirectoryId,
-                        Sha256Hash = rootSha256Hash,
-                        Blake3Hash = rootBlake3Hash,
-                        CorrelationId = generateCorrelationId ()
-                    )
-
-                let! resolved = Grace.SDK.Branch.ResolveReferenceEventBoundary parameters
-
-                let boundary =
-                    match resolved with
-                    | Ok returnValue -> returnValue.ReturnValue
-                    | Error error -> invalidOp $"Grace Server could not establish the startup remote Reference boundary: {error.Error}"
-
-                if boundary.RepositoryId <> current.RepositoryId
-                   || boundary.BranchId <> current.BranchId
-                   || boundary.DirectoryId <> rootDirectoryId
-                   || boundary.Sha256Hash <> rootSha256Hash
-                   || boundary.Blake3Hash <> rootBlake3Hash
-                   || String.IsNullOrWhiteSpace boundary.EventCursor then
-                    invalidOp "Grace Server returned an incomplete or mismatched startup remote Reference boundary."
-
-                cancellationToken.ThrowIfCancellationRequested()
-                requirePersistedCurrentBranch ()
-
-                let! _ =
-                    Grace.CLI.LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary current.GraceStatusFile statusToPersist boundary cancellationToken
-
-                return statusToPersist
-        }
-
-    /// Runs the production pre-scan reset recovery path for hosted process-level acceptance tests.
-    let internal establishMissingCurrentBranchReferenceBoundaryBeforeStartupScanForHostedTests retainedStatus currentStatus cancellationToken =
-        establishMissingCurrentBranchReferenceBoundaryBeforeStartupScan retainedStatus currentStatus cancellationToken
-
-    /// Resolves and atomically records an absent cursor only while branch, clean status, and exact local root stay stable.
-    let private resolveMissingCurrentBranchReferenceBoundary (cancellationToken: CancellationToken) =
-        task {
-            cancellationToken.ThrowIfCancellationRequested()
-            let current = Current()
-
-            let requirePersistedCurrentBranch () =
-                match tryInspectCurrentDirectoryConfiguration () with
-                | Ok persisted when
-                    persisted.Configuration.RepositoryId = current.RepositoryId
-                    && persisted.Configuration.BranchId = current.BranchId
-                    ->
-                    ()
-                | Ok _ -> invalidOp "Watch repository or branch identity changed during missing-cursor recovery."
-                | Error error -> invalidOp $"Watch could not read persisted repository identity during missing-cursor recovery: {error}"
-
-            let inspectCleanLocalRoot () =
-                task {
-                    let! inspection = inspectGraceWatchStatus ()
-
-                    let gatePayload = { CurrentBranchReferenceNotification.Default with RepositoryId = current.RepositoryId; BranchId = current.BranchId }
-
-                    match currentBranchMaterializationStatusGate true None gatePayload inspection with
-                    | Clean status -> return status
-                    | NotCurrentBranch -> return invalidOp "Watch branch identity changed during missing-cursor recovery."
-                    | Blocked reason -> return invalidOp $"Watch local work blocked missing-cursor recovery: {reason}."
-                    | Degraded reason -> return invalidOp $"Watch local state blocked missing-cursor recovery: {reason}."
-                }
-
-            requirePersistedCurrentBranch ()
-            let! capturedWatchStatus = inspectCleanLocalRoot ()
-            let! capturedGraceStatus = readGraceStatusFile ()
-
-            if not (graceStatusMatchesWatchRoot capturedGraceStatus capturedWatchStatus) then
-                invalidOp "Watch durable status did not match clean IPC during missing-cursor recovery."
-
-            match! Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId with
-            | Some boundary -> return Some boundary
-            | None ->
-                let parameters =
-                    ResolveReferenceEventBoundaryParameters(
-                        OwnerId = $"{current.OwnerId}",
-                        OwnerName = current.OwnerName,
-                        OrganizationId = $"{current.OrganizationId}",
-                        OrganizationName = current.OrganizationName,
-                        RepositoryId = $"{current.RepositoryId}",
-                        RepositoryName = current.RepositoryName,
-                        BranchId = $"{current.BranchId}",
-                        BranchName = current.BranchName,
-                        DirectoryVersionId = capturedWatchStatus.RootDirectoryId,
-                        Sha256Hash = capturedWatchStatus.RootDirectorySha256Hash,
-                        Blake3Hash = capturedWatchStatus.RootDirectoryBlake3Hash,
-                        CorrelationId = generateCorrelationId ()
-                    )
-
-                match! Grace.SDK.Branch.ResolveReferenceEventBoundary parameters with
-                | Error _ -> return None
-                | Ok returnValue ->
-                    let boundary = returnValue.ReturnValue
-
-                    if boundary.RepositoryId <> current.RepositoryId
-                       || boundary.BranchId <> current.BranchId
-                       || boundary.DirectoryId
-                          <> capturedWatchStatus.RootDirectoryId
-                       || boundary.Sha256Hash
-                          <> capturedWatchStatus.RootDirectorySha256Hash
-                       || boundary.Blake3Hash
-                          <> capturedWatchStatus.RootDirectoryBlake3Hash
-                       || String.IsNullOrWhiteSpace boundary.EventCursor then
-                        invalidOp "Grace Server returned an incomplete or mismatched missing-cursor boundary."
-
-                    cancellationToken.ThrowIfCancellationRequested()
-                    requirePersistedCurrentBranch ()
-                    let! finalWatchStatus = inspectCleanLocalRoot ()
-                    let! finalGraceStatus = readGraceStatusFile ()
-
-                    if
-                        finalWatchStatus.RootDirectoryId
-                        <> capturedWatchStatus.RootDirectoryId
-                        || finalWatchStatus.RootDirectorySha256Hash
-                           <> capturedWatchStatus.RootDirectorySha256Hash
-                        || finalWatchStatus.RootDirectoryBlake3Hash
-                           <> capturedWatchStatus.RootDirectoryBlake3Hash
-                        || not (graceStatusMatchesWatchRoot finalGraceStatus finalWatchStatus)
-                    then
-                        invalidOp "Watch local root changed before missing-cursor recovery could commit."
-
-                    match! Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId with
-                    | Some _ -> return invalidOp "Watch remote Reference boundary changed during missing-cursor recovery."
-                    | None ->
-                        let! stored =
-                            Grace.CLI.LocalStateDb.establishRemoteReferenceBoundaryIfAbsent current.GraceStatusFile finalGraceStatus boundary cancellationToken
-
-                        return Some stored
+            | Some boundary when
+                boundary.DirectoryId = status.RootDirectoryId
+                && boundary.Sha256Hash = status.RootDirectorySha256Hash
+                && boundary.Blake3Hash = status.RootDirectoryBlake3Hash
+                && not (String.IsNullOrWhiteSpace boundary.EventCursor)
+                ->
+                return status
+            | _ ->
+                return
+                    invalidOp
+                        "Grace Watch requires a matching initialized remote-event boundary; run materializing grace connect or grace doctor --repair-local-state."
         }
 
     /// Persists an opaque cursor only after current branch, safe-state, root, and prior-boundary evidence are reread.
@@ -8339,7 +8154,7 @@ module Watch =
                     {
                         ReadBoundary =
                             fun () -> Grace.CLI.LocalStateDb.readRemoteReferenceBoundary current.GraceStatusFile current.RepositoryId current.BranchId
-                        ResolveMissingBoundary = resolveMissingCurrentBranchReferenceBoundary
+                        ResolveMissingBoundary = fun _ -> Task.FromResult(None)
                         Replay =
                             fun boundary ->
                                 let parameters =
@@ -10489,6 +10304,8 @@ module Watch =
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
 
+                    let! initializedStatus = requireInitializedLocalStateForWatch ()
+
                     ClientIdentity.configureWatchProcessId watchProcessId
 
                     use watchProcessIdentityLifetime =
@@ -10579,13 +10396,8 @@ module Watch =
                             .Select(fun e -> e.EventArgs)
                             .Subscribe(OnGraceUpdateInProgressDeleted)
 
-                    // Load the Grace Index file.
-                    let! status = readGraceStatusFile ()
-
-                    let! startupBoundaryStatus =
-                        establishMissingCurrentBranchReferenceBoundaryBeforeStartupScan graceWatchClaim.RetainedStatus status cancellationToken
-
-                    graceStatus <- startupBoundaryStatus
+                    // Use only the read-only validated status captured before callback infrastructure was created.
+                    graceStatus <- initializedStatus
                     updateGraceStatusDirectoryIds graceStatus
 
                     do!

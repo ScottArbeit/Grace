@@ -2371,7 +2371,7 @@ module Services =
         task {
 
             let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
-            let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+            let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
 
             let directoryVersion =
                 let mutable changedDirectoryVersion = LocalDirectoryVersion.Default
@@ -2439,7 +2439,7 @@ module Services =
         =
 
         let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
-        let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+        let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
 
         let directoryVersion =
             newGraceStatus

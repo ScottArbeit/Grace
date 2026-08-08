@@ -508,7 +508,23 @@ module DoctorCliTests =
             standardOut |> should contain "--check"
             standardOut |> should contain "--strict"
 
+            standardOut
+            |> should contain "--repair-local-state"
+
             Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
+    /// Verifies that explicit repair without repository configuration fails without creating local state.
+    [<Test>]
+    let ``doctor repair without configuration is non destructive`` () =
+        withTempDir (fun root ->
+            let exitCode, _, _ =
+                runWithCapturedStdoutAndStderr [| "doctor"
+                                                  "--repair-local-state" |]
+
+            exitCode |> should not' (equal 0)
+
+            Directory.Exists(Path.Combine(root, Constants.GraceConfigDirectory))
             |> should equal false)
 
     /// Verifies that doctor list checks emits clean json envelope without config.
@@ -3626,6 +3642,18 @@ notes.txt # inline comment
                 [
                     [| "doctor"; "--schema" |], "schema"
                     [| "doctor"; "--examples" |], "examples"
+                    [|
+                        "doctor"
+                        "--repair-local-state"
+                        "--schema"
+                    |],
+                    "schema"
+                    [|
+                        "doctor"
+                        "--repair-local-state"
+                        "--examples"
+                    |],
+                    "examples"
                 ] do
                 /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args

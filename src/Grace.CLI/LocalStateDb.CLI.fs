@@ -1692,6 +1692,7 @@ module LocalStateDb =
 
                                         logTrace "status_meta ensuring default row"
                                         insertStatusMetaIfMissing connection
+                                        insertLocalStatusRevisionIfMissing connection
                                 })
 
                         initializedDbs[normalizedPath] <- true
@@ -3076,6 +3077,35 @@ module LocalStateDb =
         (cancellationToken: CancellationToken)
         =
         replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken ignore
+
+    /// Refuses exact local-state repair when another SQLite connection currently owns the write claim.
+    let ensureNoActiveWriterForLocalStateRepair (dbPath: string) =
+        if File.Exists(dbPath) then
+            sqliteInitialized.Value |> ignore
+            let builder = SqliteConnectionStringBuilder()
+            builder.DataSource <- dbPath
+            builder.Mode <- SqliteOpenMode.ReadWrite
+            builder.Pooling <- false
+            builder.DefaultTimeout <- 1
+
+            use connection = new SqliteConnection(builder.ToString())
+
+            try
+                connection.Open()
+                executePragma connection "PRAGMA busy_timeout = 1;"
+                executeNonQuery connection "BEGIN IMMEDIATE;"
+                executeNonQuery connection "ROLLBACK;"
+            with
+            | :? SqliteException as ex when ex.SqliteErrorCode = 5 || ex.SqliteErrorCode = 6 ->
+                invalidOp "Grace Doctor refused local-state repair because another SQLite writer is active."
+            | :? SqliteException as ex when ex.SqliteErrorCode = 26 ->
+                // Corrupt databases remain eligible for explicit exact repair; initialization quarantines them later.
+                ()
+
+    /// Forces explicit exact repair to revalidate the current database file even when this process initialized an earlier file at the same path.
+    let invalidateInitializationCacheForLocalStateRepair (dbPath: string) =
+        initializedDbs.TryRemove(Path.GetFullPath(dbPath))
+        |> ignore
 
     /// Persists a matching status and boundary while exposing the final pre-commit seam for deterministic rollback proof.
     let internal replaceStatusSnapshotWithRemoteReferenceBoundaryWithBeforeCommit
