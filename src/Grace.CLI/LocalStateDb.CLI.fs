@@ -203,6 +203,26 @@ module LocalStateDb =
 
             raise ex
 
+    /// Opens Doctor's final repair transaction without pooling or ordinary writer retry delays.
+    let private openLocalStateRepairConnection (dbPath: string) =
+        sqliteInitialized.Value |> ignore
+        let builder = SqliteConnectionStringBuilder()
+        builder.DataSource <- dbPath
+        builder.Mode <- SqliteOpenMode.ReadWriteCreate
+        builder.Pooling <- false
+        builder.DefaultTimeout <- 1
+        let connection = new SqliteConnection(builder.ToString())
+
+        try
+            connection.Open()
+            applyConnectionPragmas connection
+            executePragma connection "PRAGMA busy_timeout = 1;"
+            connection
+        with
+        | ex ->
+            connection.Dispose()
+            raise ex
+
     let private schemaStatements =
         [|
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
@@ -2893,12 +2913,47 @@ module LocalStateDb =
                 parameters.AddWithValue("$last_dir", graceStatus.LastSuccessfulDirectoryVersionUpload.ToUnixTimeTicks())
                 |> ignore)
 
+    /// Captures the durable local-state generation that explicit Doctor repair must not overwrite.
+    type LocalStateRepairBaseline =
+        | MissingLocalStateDatabase
+        | ExistingLocalStateDatabase of revision: int64
+        | UnreadableLocalStateDatabase of length: int64 * lastWriteTimeUtc: DateTime
+
+    /// Reads the local-state generation without initializing, quarantining, or otherwise changing the database.
+    let captureLocalStateRepairBaseline (dbPath: string) =
+        task {
+            let normalizedPath = Path.GetFullPath(dbPath)
+
+            if not (File.Exists(normalizedPath)) then
+                return MissingLocalStateDatabase
+            else
+                try
+                    sqliteInitialized.Value |> ignore
+                    let builder = SqliteConnectionStringBuilder()
+                    builder.DataSource <- normalizedPath
+                    builder.Mode <- SqliteOpenMode.ReadOnly
+                    builder.Pooling <- false
+                    builder.DefaultTimeout <- 1
+                    use connection = new SqliteConnection(builder.ToString())
+                    connection.Open()
+                    executePragma connection "PRAGMA busy_timeout = 1;"
+                    return ExistingLocalStateDatabase(readLocalStatusRevisionInternal connection)
+                with
+                | :? SqliteException as ex when ex.SqliteErrorCode = 5 || ex.SqliteErrorCode = 6 ->
+                    return invalidOp "Grace Doctor refused local-state repair because another SQLite writer is active."
+                | _ ->
+                    let file = FileInfo(normalizedPath)
+                    return UnreadableLocalStateDatabase(file.Length, file.LastWriteTimeUtc)
+        }
+
     /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
     let private replaceStatusSnapshotWithRevisionCore
         (dbPath: string)
         (graceStatus: GraceStatus)
         (boundary: ReferenceMaterializationBoundaryDto option)
         (cancellationToken: CancellationToken)
+        (repairBaseline: LocalStateRepairBaseline option)
+        (beforeWriteClaim: unit -> unit)
         (beforeCommit: unit -> unit)
         =
         task {
@@ -2918,155 +2973,199 @@ module LocalStateDb =
             | _ -> ()
 
             cancellationToken.ThrowIfCancellationRequested()
-            do! ensureDbInitialized dbPath
+
+            match repairBaseline with
+            | Some MissingLocalStateDatabase when File.Exists(dbPath) -> invalidOp "Local state was created after Grace Doctor captured its repair baseline."
+            | Some (ExistingLocalStateDatabase _) when not (File.Exists(dbPath)) ->
+                invalidOp "Local state was removed after Grace Doctor captured its repair baseline."
+            | Some (UnreadableLocalStateDatabase (expectedLength, expectedLastWriteTimeUtc)) ->
+                let current = FileInfo(dbPath)
+
+                if not current.Exists
+                   || current.Length <> expectedLength
+                   || current.LastWriteTimeUtc
+                      <> expectedLastWriteTimeUtc then
+                    invalidOp "Unreadable local state changed after Grace Doctor captured its repair baseline."
+            | _ -> ()
+
+            match repairBaseline with
+            | Some (ExistingLocalStateDatabase _) -> ()
+            | _ -> do! ensureDbInitialized dbPath
+
             cancellationToken.ThrowIfCancellationRequested()
 
-            return!
-                executeWithRevisionRetry (fun () ->
-                    task {
-                        let connection = openConnection dbPath
+            let replaceOnce () =
+                task {
+                    let connection =
+                        match repairBaseline with
+                        | Some _ -> openLocalStateRepairConnection dbPath
+                        | None -> openConnection dbPath
+
+                    try
+                        cancellationToken.ThrowIfCancellationRequested()
+
+                        beforeWriteClaim ()
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
 
                         try
+                            match repairBaseline with
+                            | Some baseline ->
+                                let expectedRevision =
+                                    match baseline with
+                                    | ExistingLocalStateDatabase revision -> revision
+                                    | MissingLocalStateDatabase
+                                    | UnreadableLocalStateDatabase _ -> 0L
+
+                                if readLocalStatusRevisionInternal connection
+                                   <> expectedRevision then
+                                    invalidOp "Local status changed after Grace Doctor captured its repair baseline."
+                            | None -> ()
+
+                            executeNonQuery connection "DELETE FROM status_directories;"
+                            executeNonQuery connection "DELETE FROM status_files;"
+                            setStatusMeta connection graceStatus
+
+                            use directoryCommand = connection.CreateCommand()
+
+                            directoryCommand.CommandText <-
+                                "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($relative_path, $parent_path, $directory_version_id, $sha256_hash, $blake3_hash, $size_bytes, $created_at, $last_write);"
+
+                            directoryCommand.Parameters.Add("$relative_path", SqliteType.Text)
+                            |> ignore
+
+                            directoryCommand.Parameters.Add("$parent_path", SqliteType.Text)
+                            |> ignore
+
+                            directoryCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
+                            |> ignore
+
+                            directoryCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                            |> ignore
+
+                            directoryCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
+                            |> ignore
+
+                            directoryCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
+                            |> ignore
+
+                            directoryCommand.Parameters.Add("$created_at", SqliteType.Integer)
+                            |> ignore
+
+                            directoryCommand.Parameters.Add("$last_write", SqliteType.Integer)
+                            |> ignore
+
+                            use fileCommand = connection.CreateCommand()
+
+                            fileCommand.CommandText <-
+                                "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $blake3_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
+
+                            fileCommand.Parameters.Add("$relative_path", SqliteType.Text)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$directory_path", SqliteType.Text)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$is_binary", SqliteType.Integer)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$created_at", SqliteType.Integer)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$uploaded", SqliteType.Integer)
+                            |> ignore
+
+                            fileCommand.Parameters.Add("$last_write", SqliteType.Integer)
+                            |> ignore
+
+                            graceStatus.Index.Values
+                            |> Seq.iter (fun directory ->
+                                let parentPath =
+                                    match getParentPath directory.RelativePath with
+                                    | Some path -> path
+                                    | None -> String.Empty
+
+                                directoryCommand.Parameters["$relative_path"].Value <- directory.RelativePath
+                                directoryCommand.Parameters["$parent_path"].Value <- parentPath
+                                directoryCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
+                                directoryCommand.Parameters["$sha256_hash"].Value <- directory.Sha256Hash
+                                directoryCommand.Parameters["$blake3_hash"].Value <- directory.Blake3Hash
+                                directoryCommand.Parameters["$size_bytes"].Value <- directory.Size
+                                directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
+                                directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
+                                directoryCommand.ExecuteNonQuery() |> ignore
+
+                                directory.Files
+                                |> Seq.iter (fun file ->
+                                    fileCommand.Parameters["$relative_path"].Value <- file.RelativePath
+                                    fileCommand.Parameters["$directory_path"].Value <- directory.RelativePath
+                                    fileCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
+                                    fileCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
+                                    fileCommand.Parameters["$blake3_hash"].Value <- file.Blake3Hash
+                                    fileCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
+                                    fileCommand.Parameters["$size_bytes"].Value <- file.Size
+                                    fileCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
+                                    fileCommand.Parameters["$uploaded"].Value <- if file.UploadedToObjectStorage then 1 else 0
+                                    fileCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
+                                    fileCommand.ExecuteNonQuery() |> ignore))
+
+                            match boundary with
+                            | Some boundary ->
+                                executeNonQueryWithParams
+                                    connection
+                                    "INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ($repository_id, $branch_id, $root_id, $root_sha256_hash, $root_blake3_hash, $event_cursor);"
+                                    (fun parameters ->
+                                        parameters.AddWithValue("$repository_id", boundary.RepositoryId.ToString())
+                                        |> ignore
+
+                                        parameters.AddWithValue("$branch_id", boundary.BranchId.ToString())
+                                        |> ignore
+
+                                        parameters.AddWithValue("$root_id", boundary.DirectoryId.ToString())
+                                        |> ignore
+
+                                        parameters.AddWithValue("$root_sha256_hash", boundary.Sha256Hash)
+                                        |> ignore
+
+                                        parameters.AddWithValue("$root_blake3_hash", boundary.Blake3Hash)
+                                        |> ignore
+
+                                        parameters.AddWithValue("$event_cursor", boundary.EventCursor)
+                                        |> ignore)
+                            | None -> ()
+
+                            beforeCommit ()
                             cancellationToken.ThrowIfCancellationRequested()
-                            executeNonQuery connection "BEGIN IMMEDIATE;"
+                            let committedRevision = incrementLocalStatusRevision connection
+                            executeNonQuery connection "COMMIT;"
+                            return committedRevision
+                        with
+                        | ex ->
+                            executeNonQuery connection "ROLLBACK;"
+                            return raise ex
+                    finally
+                        connection.Dispose()
+                }
 
-                            try
-                                executeNonQuery connection "DELETE FROM status_directories;"
-                                executeNonQuery connection "DELETE FROM status_files;"
-                                setStatusMeta connection graceStatus
-
-                                use directoryCommand = connection.CreateCommand()
-
-                                directoryCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($relative_path, $parent_path, $directory_version_id, $sha256_hash, $blake3_hash, $size_bytes, $created_at, $last_write);"
-
-                                directoryCommand.Parameters.Add("$relative_path", SqliteType.Text)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$parent_path", SqliteType.Text)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$created_at", SqliteType.Integer)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$last_write", SqliteType.Integer)
-                                |> ignore
-
-                                use fileCommand = connection.CreateCommand()
-
-                                fileCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $blake3_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
-
-                                fileCommand.Parameters.Add("$relative_path", SqliteType.Text)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$directory_path", SqliteType.Text)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$is_binary", SqliteType.Integer)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$created_at", SqliteType.Integer)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$uploaded", SqliteType.Integer)
-                                |> ignore
-
-                                fileCommand.Parameters.Add("$last_write", SqliteType.Integer)
-                                |> ignore
-
-                                graceStatus.Index.Values
-                                |> Seq.iter (fun directory ->
-                                    let parentPath =
-                                        match getParentPath directory.RelativePath with
-                                        | Some path -> path
-                                        | None -> String.Empty
-
-                                    directoryCommand.Parameters["$relative_path"].Value <- directory.RelativePath
-                                    directoryCommand.Parameters["$parent_path"].Value <- parentPath
-                                    directoryCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
-                                    directoryCommand.Parameters["$sha256_hash"].Value <- directory.Sha256Hash
-                                    directoryCommand.Parameters["$blake3_hash"].Value <- directory.Blake3Hash
-                                    directoryCommand.Parameters["$size_bytes"].Value <- directory.Size
-                                    directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
-                                    directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
-                                    directoryCommand.ExecuteNonQuery() |> ignore
-
-                                    directory.Files
-                                    |> Seq.iter (fun file ->
-                                        fileCommand.Parameters["$relative_path"].Value <- file.RelativePath
-                                        fileCommand.Parameters["$directory_path"].Value <- directory.RelativePath
-                                        fileCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
-                                        fileCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
-                                        fileCommand.Parameters["$blake3_hash"].Value <- file.Blake3Hash
-                                        fileCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
-                                        fileCommand.Parameters["$size_bytes"].Value <- file.Size
-                                        fileCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
-                                        fileCommand.Parameters["$uploaded"].Value <- if file.UploadedToObjectStorage then 1 else 0
-                                        fileCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
-                                        fileCommand.ExecuteNonQuery() |> ignore))
-
-                                match boundary with
-                                | Some boundary ->
-                                    executeNonQueryWithParams
-                                        connection
-                                        "INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ($repository_id, $branch_id, $root_id, $root_sha256_hash, $root_blake3_hash, $event_cursor);"
-                                        (fun parameters ->
-                                            parameters.AddWithValue("$repository_id", boundary.RepositoryId.ToString())
-                                            |> ignore
-
-                                            parameters.AddWithValue("$branch_id", boundary.BranchId.ToString())
-                                            |> ignore
-
-                                            parameters.AddWithValue("$root_id", boundary.DirectoryId.ToString())
-                                            |> ignore
-
-                                            parameters.AddWithValue("$root_sha256_hash", boundary.Sha256Hash)
-                                            |> ignore
-
-                                            parameters.AddWithValue("$root_blake3_hash", boundary.Blake3Hash)
-                                            |> ignore
-
-                                            parameters.AddWithValue("$event_cursor", boundary.EventCursor)
-                                            |> ignore)
-                                | None -> ()
-
-                                beforeCommit ()
-                                cancellationToken.ThrowIfCancellationRequested()
-                                let committedRevision = incrementLocalStatusRevision connection
-                                executeNonQuery connection "COMMIT;"
-                                return committedRevision
-                            with
-                            | ex ->
-                                executeNonQuery connection "ROLLBACK;"
-                                return raise ex
-                        finally
-                            connection.Dispose()
-                    })
+            match repairBaseline with
+            | Some _ ->
+                try
+                    return! replaceOnce ()
+                with
+                | :? SqliteException as ex when isBusyOrLocked ex ->
+                    return invalidOp "Grace Doctor refused local-state repair because another SQLite writer is active."
+            | None -> return! executeWithRevisionRetry replaceOnce
         }
 
     /// Replaces status and its matching branch-scoped remote Reference boundary in one SQLite transaction.
@@ -3076,7 +3175,7 @@ module LocalStateDb =
         (boundary: ReferenceMaterializationBoundaryDto)
         (cancellationToken: CancellationToken)
         =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken ignore
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken None ignore ignore
 
     /// Refuses exact local-state repair when another SQLite connection currently owns the write claim.
     let ensureNoActiveWriterForLocalStateRepair (dbPath: string) =
@@ -3115,11 +3214,32 @@ module LocalStateDb =
         (cancellationToken: CancellationToken)
         (beforeCommit: unit -> unit)
         =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken beforeCommit
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken None ignore beforeCommit
+
+    /// Replaces exact repair status only if no writer changed or owns the captured local-state generation.
+    let replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepair
+        (dbPath: string)
+        (baseline: LocalStateRepairBaseline)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken (Some baseline) ignore ignore
+
+    /// Exposes the final repair write-claim seam so deterministic tests can race a real SQLite writer.
+    let internal replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepairWithBeforeWriteClaim
+        (dbPath: string)
+        (baseline: LocalStateRepairBaseline)
+        (graceStatus: GraceStatus)
+        (boundary: ReferenceMaterializationBoundaryDto)
+        (cancellationToken: CancellationToken)
+        (beforeWriteClaim: unit -> unit)
+        =
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken (Some baseline) beforeWriteClaim ignore
 
     /// Replaces status without changing any branch-scoped remote Reference boundary.
     let replaceStatusSnapshotWithRevision (dbPath: string) (graceStatus: GraceStatus) =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus None CancellationToken.None ignore
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus None CancellationToken.None None ignore ignore
 
     /// Reads the boundary for one repository and branch without falling back to global metadata.
     let readRemoteReferenceBoundary (dbPath: string) repositoryId branchId =
@@ -3778,6 +3898,7 @@ module LocalStateDb =
     type private StatusFileRow =
         {
             RelativePath: string
+            DirectoryPath: string
             DirectoryVersionId: DirectoryVersionId
             Sha256Hash: Sha256Hash
             Blake3Hash: Blake3Hash
@@ -3845,24 +3966,26 @@ module LocalStateDb =
                 use fileCommand = connection.CreateCommand()
 
                 fileCommand.CommandText <-
-                    "SELECT relative_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
+                    "SELECT relative_path, directory_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
 
                 use fileReader = fileCommand.ExecuteReader()
 
                 while fileReader.Read() do
                     let relativePath = fileReader.GetString(0)
-                    let directoryVersionId = Guid.Parse(fileReader.GetString(1))
-                    let sha256Hash = fileReader.GetString(2)
-                    let blake3Hash = fileReader.GetString(3)
-                    let isBinary = fileReader.GetInt64(4) = 1L
-                    let sizeBytes = fileReader.GetInt64(5)
-                    let createdAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(6))
-                    let uploaded = fileReader.GetInt64(7) = 1L
-                    let lastWriteTimeUtc = DateTime(fileReader.GetInt64(8), DateTimeKind.Utc)
+                    let directoryPath = fileReader.GetString(1)
+                    let directoryVersionId = Guid.Parse(fileReader.GetString(2))
+                    let sha256Hash = fileReader.GetString(3)
+                    let blake3Hash = fileReader.GetString(4)
+                    let isBinary = fileReader.GetInt64(5) = 1L
+                    let sizeBytes = fileReader.GetInt64(6)
+                    let createdAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(7))
+                    let uploaded = fileReader.GetInt64(8) = 1L
+                    let lastWriteTimeUtc = DateTime(fileReader.GetInt64(9), DateTimeKind.Utc)
 
                     files.Add(
                         {
                             RelativePath = relativePath
+                            DirectoryPath = directoryPath
                             DirectoryVersionId = directoryVersionId
                             Sha256Hash = sha256Hash
                             Blake3Hash = blake3Hash
@@ -4048,7 +4171,7 @@ module LocalStateDb =
                                 use fileCommand = connection.CreateCommand()
 
                                 fileCommand.CommandText <-
-                                    "SELECT relative_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
+                                    "SELECT relative_path, directory_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
 
                                 use fileReader = fileCommand.ExecuteReader()
 
@@ -4056,16 +4179,66 @@ module LocalStateDb =
                                     files.Add(
                                         {
                                             RelativePath = fileReader.GetString(0)
-                                            DirectoryVersionId = Guid.Parse(fileReader.GetString(1))
-                                            Sha256Hash = fileReader.GetString(2)
-                                            Blake3Hash = fileReader.GetString(3)
-                                            IsBinary = fileReader.GetInt64(4) = 1L
-                                            SizeBytes = fileReader.GetInt64(5)
-                                            CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(6))
-                                            UploadedToObjectStorage = fileReader.GetInt64(7) = 1L
-                                            LastWriteTimeUtc = DateTime(fileReader.GetInt64(8), DateTimeKind.Utc)
+                                            DirectoryPath = fileReader.GetString(1)
+                                            DirectoryVersionId = Guid.Parse(fileReader.GetString(2))
+                                            Sha256Hash = fileReader.GetString(3)
+                                            Blake3Hash = fileReader.GetString(4)
+                                            IsBinary = fileReader.GetInt64(5) = 1L
+                                            SizeBytes = fileReader.GetInt64(6)
+                                            CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(7))
+                                            UploadedToObjectStorage = fileReader.GetInt64(8) = 1L
+                                            LastWriteTimeUtc = DateTime(fileReader.GetInt64(9), DateTimeKind.Utc)
                                         }
                                     )
+
+                                let directoryPaths =
+                                    HashSet<string>(
+                                        directories
+                                        |> Seq.map (fun directory -> directory.RelativePath),
+                                        StringComparer.Ordinal
+                                    )
+
+                                let directoryIds = HashSet<DirectoryVersionId>()
+
+                                let malformedStructureRows =
+                                    seq {
+                                        let roots =
+                                            directories
+                                            |> Seq.filter (fun directory -> directory.RelativePath = Grace.Shared.Constants.RootDirectoryPath)
+                                            |> Seq.toArray
+
+                                        if roots.Length <> 1
+                                           || roots[0].ParentPath <> String.Empty then
+                                            yield "root"
+
+                                        for directory in directories do
+                                            if not (directoryIds.Add(directory.DirectoryVersionId)) then
+                                                yield $"duplicate-directory-id:{directory.DirectoryVersionId}"
+
+                                            if directory.RelativePath
+                                               <> Grace.Shared.Constants.RootDirectoryPath then
+                                                match getParentPath directory.RelativePath with
+                                                | Some expectedParent when
+                                                    expectedParent = directory.ParentPath
+                                                    && directoryPaths.Contains(expectedParent)
+                                                    ->
+                                                    ()
+                                                | _ -> yield $"directory:{directory.RelativePath}"
+
+                                        for file in files do
+                                            match getParentPath file.RelativePath with
+                                            | Some expectedParent when
+                                                expectedParent = file.DirectoryPath
+                                                && not (directoryPaths.Contains(file.RelativePath))
+                                                && directories
+                                                   |> Seq.exists (fun directory ->
+                                                       directory.DirectoryVersionId = file.DirectoryVersionId
+                                                       && directory.RelativePath = file.DirectoryPath)
+                                                ->
+                                                ()
+                                            | _ -> yield $"file:{file.RelativePath}"
+                                    }
+                                    |> Seq.toArray
 
                                 let emptyBlake3Rows =
                                     seq {
@@ -4081,7 +4254,13 @@ module LocalStateDb =
                                     }
                                     |> Seq.toArray
 
-                                if emptyBlake3Rows.Length > 0 then
+                                if malformedStructureRows.Length > 0 then
+                                    let rows = String.concat ", " malformedStructureRows
+
+                                    return
+                                        Error
+                                            $"Local state database contains a malformed or disconnected status tree: {rows}. Run materializing grace connect or grace doctor --repair-local-state."
+                                elif emptyBlake3Rows.Length > 0 then
                                     let rows = String.concat ", " emptyBlake3Rows
 
                                     return
@@ -4169,4 +4348,100 @@ module LocalStateDb =
                                             }
                     with
                     | ex -> return Error ex.Message
+        }
+
+    /// Verifies that a status snapshot is one complete rooted graph whose hashes cover every descendant.
+    let validateCompleteStatusTree (status: GraceStatus) =
+        try
+            if isNull status.Index then
+                Error "The status index is missing."
+            else
+                let visiting = HashSet<DirectoryVersionId>()
+                let visited = HashSet<DirectoryVersionId>()
+
+                let rec validateDirectory expectedParentPath directoryId =
+                    if visiting.Contains(directoryId) then
+                        invalidOp $"The status tree contains a directory cycle at {directoryId}."
+
+                    let mutable directory = LocalDirectoryVersion.Default
+
+                    if not (status.Index.TryGetValue(directoryId, &directory)) then
+                        invalidOp $"The status tree references missing directory {directoryId}."
+
+                    match expectedParentPath with
+                    | None when
+                        directory.RelativePath
+                        <> Grace.Shared.Constants.RootDirectoryPath
+                        ->
+                        invalidOp "The claimed status root does not use the repository root path."
+                    | Some parentPath when
+                        getParentPath directory.RelativePath
+                        <> Some parentPath
+                        ->
+                        invalidOp $"Directory {directory.RelativePath} is not a direct child of {parentPath}."
+                    | _ -> ()
+
+                    visiting.Add(directoryId) |> ignore
+
+                    let childDirectories =
+                        directory.Directories
+                        |> Seq.map (fun childId ->
+                            validateDirectory (Some directory.RelativePath) childId
+                            status.Index[childId])
+                        |> Seq.toArray
+
+                    let entries =
+                        seq {
+                            yield!
+                                childDirectories
+                                |> Seq.map (fun child ->
+                                    Grace.Shared.Services.DirectoryVersionPreimageEntry.Directory
+                                        child.RelativePath
+                                        child.Size
+                                        child.Blake3Hash
+                                        child.Sha256Hash)
+
+                            yield!
+                                directory.Files
+                                |> Seq.map (fun file ->
+                                    if getParentPath file.RelativePath
+                                       <> Some directory.RelativePath then
+                                        invalidOp $"File {file.RelativePath} is not a direct child of {directory.RelativePath}."
+
+                                    Grace.Shared.Services.DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash)
+                        }
+                        |> Seq.toArray
+
+                    let expectedSha256 = Grace.Shared.Services.computeSha256ForDirectoryEntries directory.RelativePath entries
+                    let expectedBlake3 = Grace.Shared.Services.computeBlake3ForDirectory directory.RelativePath entries
+
+                    if directory.Sha256Hash <> expectedSha256
+                       || directory.Blake3Hash <> expectedBlake3 then
+                        invalidOp $"Directory {directory.RelativePath} does not match its complete child graph."
+
+                    visiting.Remove(directoryId) |> ignore
+                    visited.Add(directoryId) |> ignore
+
+                validateDirectory None status.RootDirectoryId
+                let mutable root = LocalDirectoryVersion.Default
+
+                if visited.Count <> status.Index.Count
+                   || not (status.Index.TryGetValue(status.RootDirectoryId, &root))
+                   || root.Sha256Hash <> status.RootDirectorySha256Hash
+                   || root.Blake3Hash <> status.RootDirectoryBlake3Hash then
+                    Error "The status tree is disconnected or does not match its claimed root identity."
+                else
+                    Ok()
+        with
+        | ex -> Error ex.Message
+
+    /// Reads local status without mutation and accepts it only when its full rooted graph is internally complete.
+    let readCompleteStatusSnapshotReadOnly dbPath ownerId organizationId repositoryId =
+        task {
+            match! readStatusSnapshotReadOnly dbPath ownerId organizationId repositoryId with
+            | Error error -> return Error error
+            | Ok status ->
+                match validateCompleteStatusTree status with
+                | Ok () -> return Ok status
+                | Error error -> return Error $"Local state database contains an incomplete status tree: {error}"
         }

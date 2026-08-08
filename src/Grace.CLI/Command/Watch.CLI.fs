@@ -8053,7 +8053,7 @@ module Watch =
                 invalidOp "Grace Watch requires healthy initialized local state; run materializing grace connect or grace doctor --repair-local-state."
 
             let! statusResult =
-                Grace.CLI.LocalStateDb.readStatusSnapshotReadOnly current.GraceStatusFile current.OwnerId current.OrganizationId current.RepositoryId
+                Grace.CLI.LocalStateDb.readCompleteStatusSnapshotReadOnly current.GraceStatusFile current.OwnerId current.OrganizationId current.RepositoryId
 
             let status =
                 match statusResult with

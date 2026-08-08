@@ -1434,6 +1434,42 @@ module Doctor =
     /// Restores production repair validation after deterministic stale-state tests.
     let internal resetBeforeRepairFinalValidationForTests () = beforeRepairFinalValidation <- fun () -> ()
 
+    /// Identifies every effective server, working-tree, and local-state input used by exact repair.
+    type private LocalStateRepairConfigurationIdentity =
+        {
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            ServerUri: string
+            ConfigurationPath: string
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+        }
+
+    /// Canonicalizes an effective repair URI so equivalent trailing separators do not look like server changes.
+    let private canonicalRepairServerUri (value: string) =
+        match Uri.TryCreate(value, UriKind.Absolute) with
+        | true, uri when
+            uri.Scheme = Uri.UriSchemeHttp
+            || uri.Scheme = Uri.UriSchemeHttps
+            ->
+            uri.AbsoluteUri.TrimEnd('/')
+        | _ -> invalidOp $"Grace Doctor requires an absolute HTTP or HTTPS server URI for local-state repair: {value}"
+
+    /// Captures the effective persisted inputs that select repair's server, working tree, and SQLite database.
+    let private localStateRepairConfigurationIdentity (inspection: Grace.Shared.Client.Configuration.GraceConfigurationInspection) =
+        let configuration = inspection.Configuration
+
+        {
+            RepositoryId = configuration.RepositoryId
+            BranchId = configuration.BranchId
+            ServerUri = canonicalRepairServerUri configuration.ServerUri
+            ConfigurationPath = Path.GetFullPath(inspection.Path)
+            RootDirectory = Path.GetFullPath(configuration.RootDirectory)
+            GraceDirectory = Path.GetFullPath(configuration.GraceDirectory)
+            GraceStatusFile = Path.GetFullPath(configuration.GraceStatusFile)
+        }
+
     /// Performs exact-only local-state reconstruction while revalidating configuration and bytes before the atomic commit.
     let private repairLocalState (parseResult: ParseResult) (cancellationToken: CancellationToken) =
         task {
@@ -1445,18 +1481,39 @@ module Doctor =
                && watchInspection.HasCurrentRepositoryIdentity then
                 invalidOp "Grace Doctor refused local-state repair because Grace Watch is active for this repository and branch."
 
+            let capturedConfigurationIdentity =
+                match tryInspectCurrentDirectoryConfiguration () with
+                | Ok inspection -> localStateRepairConfigurationIdentity inspection
+                | Error error -> invalidOp $"Grace Doctor could not read the configured repository identity: {error}"
+
+            let pathComparison =
+                if OperatingSystem.IsWindows() then
+                    StringComparison.OrdinalIgnoreCase
+                else
+                    StringComparison.Ordinal
+
             let requireCurrentConfiguration () =
                 match tryInspectCurrentDirectoryConfiguration () with
-                | Ok persisted when
-                    persisted.Configuration.RepositoryId = current.RepositoryId
-                    && persisted.Configuration.BranchId = current.BranchId
-                    ->
-                    ()
-                | Ok _ -> invalidOp "Repository or branch configuration changed during local-state repair."
+                | Ok persisted ->
+                    let candidate = localStateRepairConfigurationIdentity persisted
+
+                    if
+                        candidate.RepositoryId
+                        <> capturedConfigurationIdentity.RepositoryId
+                        || candidate.BranchId
+                           <> capturedConfigurationIdentity.BranchId
+                        || not (String.Equals(candidate.ServerUri, capturedConfigurationIdentity.ServerUri, StringComparison.Ordinal))
+                        || not (String.Equals(candidate.ConfigurationPath, capturedConfigurationIdentity.ConfigurationPath, pathComparison))
+                        || not (String.Equals(candidate.RootDirectory, capturedConfigurationIdentity.RootDirectory, pathComparison))
+                        || not (String.Equals(candidate.GraceDirectory, capturedConfigurationIdentity.GraceDirectory, pathComparison))
+                        || not (String.Equals(candidate.GraceStatusFile, capturedConfigurationIdentity.GraceStatusFile, pathComparison))
+                    then
+                        invalidOp "Server, working-tree, or local-state configuration changed during local-state repair."
                 | Error error -> invalidOp $"Grace Doctor could not read the configured repository identity: {error}"
 
             requireCurrentConfiguration ()
             LocalStateDb.ensureNoActiveWriterForLocalStateRepair current.GraceStatusFile
+            let! repairBaseline = LocalStateDb.captureLocalStateRepairBaseline current.GraceStatusFile
             let! retained = Grace.CLI.Services.createNewGraceStatusFile GraceStatus.Default parseResult
 
             if
@@ -1592,9 +1649,17 @@ module Doctor =
                && finalWatchInspection.HasCurrentRepositoryIdentity then
                 invalidOp "Grace Watch started before local-state repair could commit."
 
-            LocalStateDb.ensureNoActiveWriterForLocalStateRepair current.GraceStatusFile
-            LocalStateDb.invalidateInitializationCacheForLocalStateRepair current.GraceStatusFile
-            let! _ = LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundary current.GraceStatusFile exactStatus boundary cancellationToken
+            match repairBaseline with
+            | LocalStateDb.UnreadableLocalStateDatabase _ -> LocalStateDb.invalidateInitializationCacheForLocalStateRepair current.GraceStatusFile
+            | _ -> ()
+
+            let! _ =
+                LocalStateDb.replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepair
+                    current.GraceStatusFile
+                    repairBaseline
+                    exactStatus
+                    boundary
+                    cancellationToken
 
             return
                 repairReport

@@ -2382,6 +2382,51 @@ type BranchServer() =
                         File.WriteAllText(configPath, originalConfig)
                         resetConfiguration ()
 
+                        let changedServerUri = "http://127.0.0.1:59999"
+
+                        Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () ->
+                            File.WriteAllText(configPath, originalConfig.Replace(configuration.ServerUri, changedServerUri)))
+
+                        let changedServerExitCode =
+                            Grace.CLI.GraceCommand.main [| "doctor"
+                                                           "--repair-local-state"
+                                                           "--output"
+                                                           "Json" |]
+
+                        Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                        Assert.That(changedServerExitCode, Is.EqualTo(-1))
+                        Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                        File.WriteAllText(configPath, originalConfig)
+                        resetConfiguration ()
+
+                        let originalWorkingDirectory = Environment.CurrentDirectory
+                        let alternateRoot = Path.Combine(Path.GetTempPath(), $"grace-doctor-config-race-{Guid.NewGuid():N}")
+                        let alternateGraceDirectory = Path.Combine(alternateRoot, Constants.GraceConfigDirectory)
+
+                        Directory.CreateDirectory(alternateGraceDirectory)
+                        |> ignore
+
+                        File.WriteAllText(Path.Combine(alternateGraceDirectory, Constants.GraceConfigFileName), originalConfig)
+
+                        try
+                            Grace.CLI.Command.Doctor.setBeforeRepairFinalValidationForTests (fun () -> Environment.CurrentDirectory <- alternateRoot)
+
+                            let changedRootAndStatusPathExitCode =
+                                Grace.CLI.GraceCommand.main [| "doctor"
+                                                               "--repair-local-state"
+                                                               "--output"
+                                                               "Json" |]
+
+                            Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                            Assert.That(changedRootAndStatusPathExitCode, Is.EqualTo(-1))
+                            Assert.That(File.Exists(configuration.GraceStatusFile), Is.False)
+                            Assert.That(File.Exists(Path.Combine(alternateGraceDirectory, Constants.GraceLocalStateDbFileName)), Is.False)
+                        finally
+                            Environment.CurrentDirectory <- originalWorkingDirectory
+                            Grace.CLI.Command.Doctor.resetBeforeRepairFinalValidationForTests ()
+                            resetConfiguration ()
+                            Directory.Delete(alternateRoot, true)
+
                         do! Grace.CLI.LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
 
                         do
