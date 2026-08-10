@@ -3,9 +3,16 @@ namespace Grace.CLI.Tests
 open FsCheck.NUnit
 open FsUnit
 open Grace.CLI
+open Grace.Shared.Client.Configuration
+open Grace.Shared.Utilities
 open System
 open System.Collections.Generic
 open System.IO
+open System.Net
+open System.Net.Sockets
+open System.Text
+open System.Text.Json
+open System.Threading.Tasks
 open NUnit.Framework
 
 /// Groups work item command coverage for the CLI test project.
@@ -33,6 +40,93 @@ module WorkItemCommandTests =
         args
         |> Array.append [| "--output"; "Silent" |]
         |> withIds
+
+    /// Runs a CLI action against an isolated local configuration and removes it after the assertion finishes.
+    let private withTemporaryGraceConfiguration (serverUri: string) (action: string -> unit) =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-description-tests-{Guid.NewGuid():N}")
+        let graceDirectory = Path.Combine(root, ".grace")
+        let originalDirectory = Environment.CurrentDirectory
+
+        Directory.CreateDirectory(graceDirectory)
+        |> ignore
+
+        let configuration = GraceConfiguration()
+        configuration.OwnerId <- ownerId
+        configuration.OrganizationId <- organizationId
+        configuration.RepositoryId <- repositoryId
+        configuration.ServerUri <- serverUri
+        File.WriteAllText(Path.Combine(graceDirectory, "graceconfig.json"), serialize configuration)
+
+        try
+            Environment.CurrentDirectory <- root
+            resetConfiguration ()
+            action root
+        finally
+            Environment.CurrentDirectory <- originalDirectory
+            resetConfiguration ()
+
+            if Directory.Exists(root) then Directory.Delete(root, true)
+
+    /// Captures one SetDescription SDK request with a deterministic loopback response.
+    let private captureDescriptionSetRequest (action: string -> unit) =
+        use reservation = new TcpListener(IPAddress.Loopback, 0)
+        reservation.Start()
+        let port = (reservation.LocalEndpoint :?> IPEndPoint).Port
+        reservation.Stop()
+
+        use listener = new HttpListener()
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/")
+        listener.Start()
+
+        let requestTask =
+            Task.Run (fun () ->
+                let context = listener.GetContext()
+                use reader = new StreamReader(context.Request.InputStream)
+                let requestBody = reader.ReadToEnd()
+                let method = context.Request.HttpMethod
+                let path = context.Request.RawUrl
+
+                let responseBody =
+                    "{\"ReturnValue\":\"ok\",\"EventTime\":\"2026-08-10T00:00:00Z\",\"CorrelationId\":\"description-source-test\",\"Properties\":{}}"
+
+                let responseBytes = Encoding.UTF8.GetBytes(responseBody)
+                context.Response.StatusCode <- 200
+                context.Response.ContentType <- "application/json"
+                context.Response.ContentLength64 <- int64 responseBytes.Length
+                context.Response.OutputStream.Write(responseBytes, 0, responseBytes.Length)
+                context.Response.Close()
+                method, path, requestBody)
+
+        action $"http://127.0.0.1:{port}"
+        requestTask.GetAwaiter().GetResult()
+
+    /// Verifies that one successful source reaches the existing SetDescription SDK route with its exact text payload.
+    let private assertDescriptionSetDispatch (sourceArgs: string array) (expectedText: string) =
+        let method, path, requestBody =
+            captureDescriptionSetRequest (fun serverUri ->
+                withTemporaryGraceConfiguration serverUri (fun _ ->
+                    let parseResult =
+                        GraceCommand.rootCommand.Parse(
+                            withIdsAndSilent [| "workitem"
+                                                "description"
+                                                "set"
+                                                "42"
+                                                yield! sourceArgs |]
+                        )
+
+                    parseResult.Errors.Count |> should equal 0
+                    parseResult.Invoke() |> should equal 0))
+
+        method |> should equal "POST"
+        path |> should equal "/work/description/set"
+
+        use request = JsonDocument.Parse(requestBody)
+
+        request
+            .RootElement
+            .GetProperty("Text")
+            .GetString()
+        |> should equal expectedText
 
     /// Verifies that workitem show rejects invalid work item identifier.
     [<Test>]
@@ -285,6 +379,29 @@ module WorkItemCommandTests =
             parseResult.Errors.Count |> should equal 0
             parseResult.Invoke() |> should equal 0
             input.ReadToEnd() |> should equal expectedInput
+        finally
+            Console.SetIn(originalIn)
+
+    /// Verifies that inline, file, and standard-input sources each dispatch their exact multiline Unicode text once.
+    [<Test>]
+    let workitemDescriptionSetDispatchesEachSourceWithUnchangedText () =
+        let expectedText = "# Heading\r\n\r\nRésumé 🙂\n"
+        assertDescriptionSetDispatch [| "--text"; expectedText |] expectedText
+
+        let filePath = Path.Combine(Path.GetTempPath(), $"description-payload-{Guid.NewGuid():N}.md")
+        File.WriteAllText(filePath, expectedText)
+
+        try
+            assertDescriptionSetDispatch [| "--file"; filePath |] expectedText
+        finally
+            if File.Exists(filePath) then File.Delete(filePath)
+
+        let originalIn = Console.In
+        use input = new StringReader(expectedText)
+
+        try
+            Console.SetIn(input)
+            assertDescriptionSetDispatch [| "--stdin" |] expectedText
         finally
             Console.SetIn(originalIn)
 
