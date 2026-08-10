@@ -15,46 +15,47 @@
 
 import unittest
 
-from grace_generated_openapi_probe.api.work_items_api import WorkItemsApi
+from grace_generated_openapi_probe.models.clear_work_item_description_parameters import ClearWorkItemDescriptionParameters
 
+class TestClearWorkItemDescriptionParameters(unittest.TestCase):
+    """ClearWorkItemDescriptionParameters unit test stubs"""
 
-class TestWorkItemsApi(unittest.TestCase):
-    """WorkItemsApi unit test stubs"""
-
-    def setUp(self) -> None:
-        self.api = WorkItemsApi()
-
-    def tearDown(self) -> None:
+    def setUp(self):
         pass
 
-    def test_clear_work_item_description(self) -> None:
-        """Test case for clear_work_item_description
+    def tearDown(self):
+        pass
 
-        Clear a work-item description.
+    def make_instance(self, include_optional) -> ClearWorkItemDescriptionParameters:
+        """Test ClearWorkItemDescriptionParameters
+            include_optional is a boolean, when False only required
+            params are included, when True both required and
+            optional params are included """
+        # uncomment below to create an instance of `ClearWorkItemDescriptionParameters`
         """
-        pass
-
-    def test_delete_work_item_attachment(self) -> None:
-        """Test case for delete_work_item_attachment
-
-        Logically delete one owned work-item attachment.
+        model = ClearWorkItemDescriptionParameters()
+        if include_optional:
+            return ClearWorkItemDescriptionParameters(
+                correlation_id = '',
+                principal = '',
+                owner_id = '',
+                owner_name = '',
+                organization_id = '',
+                organization_name = '',
+                repository_id = '',
+                repository_name = '',
+                work_item_id = ''
+            )
+        else:
+            return ClearWorkItemDescriptionParameters(
+                work_item_id = '',
+        )
         """
-        pass
 
-    def test_set_work_item_description(self) -> None:
-        """Test case for set_work_item_description
-
-        Replace a work-item description.
-        """
-        pass
-
-    def test_undelete_work_item_attachment(self) -> None:
-        """Test case for undelete_work_item_attachment
-
-        Recover one logically deleted work-item attachment.
-        """
-        pass
-
+    def testClearWorkItemDescriptionParameters(self):
+        """Test ClearWorkItemDescriptionParameters"""
+        # inst_req_only = self.make_instance(include_optional=False)
+        # inst_req_and_optional = self.make_instance(include_optional=True)
 
 if __name__ == '__main__':
     unittest.main()

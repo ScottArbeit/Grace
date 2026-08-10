@@ -34,6 +34,7 @@ export * from './BranchReturnValue';
 export * from './ChangeType';
 export * from './ClaimReuseRangesParameters';
 export * from './ClaimedReuseRange';
+export * from './ClearWorkItemDescriptionParameters';
 export * from './CommonParameters';
 export * from './ConfirmContentBlockUploadParameters';
 export * from './ConfirmedBlockUpload';

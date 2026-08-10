@@ -14,6 +14,11 @@
 
 import * as runtime from '../runtime';
 import {
+    type ClearWorkItemDescriptionParameters,
+    ClearWorkItemDescriptionParametersFromJSON,
+    ClearWorkItemDescriptionParametersToJSON,
+} from '../models/ClearWorkItemDescriptionParameters';
+import {
     type DeleteWorkItemAttachmentParameters,
     DeleteWorkItemAttachmentParametersFromJSON,
     DeleteWorkItemAttachmentParametersToJSON,
@@ -44,6 +49,10 @@ import {
     UndeleteWorkItemAttachmentParametersToJSON,
 } from '../models/UndeleteWorkItemAttachmentParameters';
 
+export interface ClearWorkItemDescriptionRequest {
+    clearWorkItemDescriptionParameters: ClearWorkItemDescriptionParameters;
+}
+
 export interface DeleteWorkItemAttachmentRequest {
     deleteWorkItemAttachmentParameters: DeleteWorkItemAttachmentParameters;
 }
@@ -60,6 +69,63 @@ export interface UndeleteWorkItemAttachmentRequest {
  * 
  */
 export class WorkItemsApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for clearWorkItemDescription without sending the request
+     */
+    async clearWorkItemDescriptionRequestOpts(requestParameters: ClearWorkItemDescriptionRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['clearWorkItemDescriptionParameters'] == null) {
+            throw new runtime.RequiredError(
+                'clearWorkItemDescriptionParameters',
+                'Required parameter "clearWorkItemDescriptionParameters" was null or undefined when calling clearWorkItemDescription().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/work/description/clear`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: ClearWorkItemDescriptionParametersToJSON(requestParameters['clearWorkItemDescriptionParameters']),
+        };
+    }
+
+    /**
+     * Appends a new immutable empty description without deleting or exposing prior description history.
+     * Clear a work-item description.
+     */
+    async clearWorkItemDescriptionRaw(requestParameters: ClearWorkItemDescriptionRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<InlineObject9>> {
+        const requestOptions = await this.clearWorkItemDescriptionRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => InlineObject9FromJSON(jsonValue));
+    }
+
+    /**
+     * Appends a new immutable empty description without deleting or exposing prior description history.
+     * Clear a work-item description.
+     */
+    async clearWorkItemDescription(requestParameters: ClearWorkItemDescriptionRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<InlineObject9> {
+        const response = await this.clearWorkItemDescriptionRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
 
     /**
      * Creates request options for deleteWorkItemAttachment without sending the request

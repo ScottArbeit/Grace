@@ -66,6 +66,8 @@ pub mod claim_reuse_ranges_parameters;
 pub use self::claim_reuse_ranges_parameters::ClaimReuseRangesParameters;
 pub mod claimed_reuse_range;
 pub use self::claimed_reuse_range::ClaimedReuseRange;
+pub mod clear_work_item_description_parameters;
+pub use self::clear_work_item_description_parameters::ClearWorkItemDescriptionParameters;
 pub mod common_parameters;
 pub use self::common_parameters::CommonParameters;
 pub mod confirm_content_block_upload_parameters;

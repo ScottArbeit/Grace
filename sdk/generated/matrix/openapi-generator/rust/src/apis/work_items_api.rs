@@ -15,6 +15,15 @@ use crate::{apis::ResponseContent, models};
 use super::{Error, configuration, ContentType};
 
 
+/// struct for typed errors of method [`clear_work_item_description`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClearWorkItemDescriptionError {
+    Status400(models::GraceError),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`delete_work_item_attachment`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -42,6 +51,47 @@ pub enum UndeleteWorkItemAttachmentError {
     UnknownValue(serde_json::Value),
 }
 
+
+/// Appends a new immutable empty description without deleting or exposing prior description history.
+pub async fn clear_work_item_description(configuration: &configuration::Configuration, clear_work_item_description_parameters: models::ClearWorkItemDescriptionParameters) -> Result<models::InlineObject9, Error<ClearWorkItemDescriptionError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_clear_work_item_description_parameters = clear_work_item_description_parameters;
+
+    let uri_str = format!("{}/work/description/clear", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_clear_work_item_description_parameters);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::InlineObject9`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::InlineObject9`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<ClearWorkItemDescriptionError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
 
 /// Retains the blob, artifact state, and owning link until the stored repository-retention deadline.
 pub async fn delete_work_item_attachment(configuration: &configuration::Configuration, delete_work_item_attachment_parameters: models::DeleteWorkItemAttachmentParameters) -> Result<models::InlineObject8, Error<DeleteWorkItemAttachmentError>> {

@@ -38,6 +38,7 @@ docs/BranchesApi.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
+docs/ClearWorkItemDescriptionParameters.md
 docs/CommonParameters.md
 docs/ConfirmContentBlockUploadParameters.md
 docs/ConfirmedBlockUpload.md
@@ -300,6 +301,7 @@ src/models/BranchReturnValue.ts
 src/models/ChangeType.ts
 src/models/ClaimReuseRangesParameters.ts
 src/models/ClaimedReuseRange.ts
+src/models/ClearWorkItemDescriptionParameters.ts
 src/models/CommonParameters.ts
 src/models/ConfirmContentBlockUploadParameters.ts
 src/models/ConfirmedBlockUpload.ts
