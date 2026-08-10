@@ -243,11 +243,7 @@ Use these examples as patterns, not fixed text.
 
 ## Review request after stabilization
 
-When the stabilization pass is complete, resume the normal Grace PR review loop. Start one fresh review subagent for
-the pushed head with `model: gpt-5.6-terra`, `reasoning_effort: high`, and `fork_turns: none`. Give it the complete PR
-context, require it to read `dev-process/CODE_REVIEW.md`, and ask it to review the full diff against the stabilization
-ledger rather than limiting its review to the latest patch. Run that review concurrently with the required PR checks,
-then wait for both results on the same head.
+When the stabilization pass is complete, resume the normal Grace PR review loop. Start one fresh review subagent for the pushed head. Give it the complete PR context, require it to read `dev-process/CODE_REVIEW.md`, and ask it to review the full diff against the stabilization ledger rather than limiting its review to the latest patch. Run that review concurrently with the required PR checks, then wait for both results on the same head.
 
 ## Orchestrator responsibilities
 
