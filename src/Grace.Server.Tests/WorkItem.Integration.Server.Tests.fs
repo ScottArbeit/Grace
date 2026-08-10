@@ -156,20 +156,39 @@ module private WorkItemIntegrationHelpers =
             return repositoryId
         }
 
-    /// Builds a deterministic work item with ID response for integration setup fixture for the server integration work Item Integration assertions.
-    let createWorkItemWithIdResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
+    /// Creates a work item with caller-selected free text and correlation data for replay and empty-description integration proof.
+    let createWorkItemWithDescriptionResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemId: string)
+        (title: string)
+        (description: string)
+        (correlationId: string)
+        =
         task {
-            let workItemId = Guid.NewGuid().ToString()
             let parameters = Parameters.WorkItem.CreateWorkItemParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.WorkItemId <- workItemId
             parameters.Title <- title
-            parameters.Description <- "integration test work item"
-            parameters.CorrelationId <- generateCorrelationId ()
+            parameters.Description <- description
+            parameters.CorrelationId <- correlationId
 
-            let! response = client.PostAsync("/work/create", createJsonContent parameters)
+            use request = new HttpRequestMessage(HttpMethod.Post, "/work/create")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+            return! client.SendAsync(request)
+        }
+
+    /// Builds a deterministic work item with ID response for integration setup fixture for the server integration work Item Integration assertions.
+    let createWorkItemWithIdResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
+        task {
+            let workItemId = Guid.NewGuid().ToString()
+
+            let! response =
+                createWorkItemWithDescriptionResponseAsync client repositoryId workItemId title "integration test work item" (generateCorrelationId ())
+
             return workItemId, response
         }
 
@@ -201,8 +220,14 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/update", createJsonContent parameters)
         }
 
-    /// Sets one work-item description through the public route for hosted integration scenarios.
-    let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
+    /// Sets one work-item description through the public route with caller-selected correlation data for replay proof.
+    let setWorkItemDescriptionWithCorrelationResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemIdentifier: string)
+        (text: string)
+        (correlationId: string)
+        =
         task {
             let parameters = Parameters.WorkItem.SetWorkItemDescriptionParameters()
             parameters.OwnerId <- ownerId
@@ -210,9 +235,16 @@ module private WorkItemIntegrationHelpers =
             parameters.RepositoryId <- repositoryId
             parameters.WorkItemId <- workItemIdentifier
             parameters.Text <- text
-            parameters.CorrelationId <- generateCorrelationId ()
-            return! client.PostAsync("/work/description/set", createJsonContent parameters)
+            parameters.CorrelationId <- correlationId
+            use request = new HttpRequestMessage(HttpMethod.Post, "/work/description/set")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+            return! client.SendAsync(request)
         }
+
+    /// Sets one work-item description through the public route for hosted integration scenarios.
+    let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
+        setWorkItemDescriptionWithCorrelationResponseAsync client repositoryId workItemIdentifier text (generateCorrelationId ())
 
     /// Gets work item response from the running test server.
     let getWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
@@ -726,6 +758,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
         task {
             let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-set"
             let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description set"
+            let! created = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
 
             let! firstResponse = WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryId workItemId "# First description"
 
@@ -740,8 +773,134 @@ type WorkItemNumberAndLinksIntegrationTests() =
 
             let! byNumber = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId (byGuid.WorkItemNumber.ToString())
 
+            Assert.That(created.Description, Is.EqualTo("integration test work item"))
             Assert.That(byGuid.Description, Is.EqualTo("# First description"))
             Assert.That(byNumber.Description, Is.EqualTo("# Final description"))
+        }
+
+    /// Verifies an empty create returns no hydrated text and bypasses the immutable description reference path.
+    [<Test>]
+    member _.CreateWithoutDescriptionReturnsEmptyText() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-empty"
+            let workItemId = Guid.NewGuid().ToString()
+
+            let! createResponse =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "empty description"
+                    String.Empty
+                    "corr-empty-description"
+
+            createResponse.EnsureSuccessStatusCode() |> ignore
+
+            let! workItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            Assert.That(workItem.Description, Is.EqualTo(String.Empty))
+        }
+
+    /// Verifies a work-item GUID cannot reveal or change a description through a different repository request.
+    [<Test>]
+    member _.DescriptionGuidRejectsCrossRepositoryReadAndWrite() =
+        task {
+            let! repositoryA = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-repository-a"
+            let! repositoryB = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-repository-b"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryA "repository-bound description"
+
+            let! crossRepositorySet = WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryB workItemId "must not be written"
+
+            let! crossRepositoryGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync Client repositoryB workItemId
+            let! original = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryA workItemId
+
+            Assert.That(crossRepositorySet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(crossRepositoryGet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(original.Description, Is.EqualTo("integration test work item"))
+        }
+
+    /// Verifies create and set retries converge only for the current matching event and immutable description reference.
+    [<Test>]
+    member _.DescriptionRetriesRejectConflictingAndSupersededCorrelations() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-retry"
+            let workItemId = Guid.NewGuid().ToString()
+            let createCorrelationId = "corr-create-description-retry"
+
+            let! createResponse =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "retry create"
+                    "created description"
+                    createCorrelationId
+
+            let! exactCreateRetry =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "retry create"
+                    "created description"
+                    createCorrelationId
+
+            let! conflictingCreateRetry =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "retry create"
+                    "conflicting created description"
+                    createCorrelationId
+
+            let setCorrelationId = "corr-set-description-retry"
+
+            let! setResponse =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "first set description"
+                    setCorrelationId
+
+            let! exactSetRetry =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "first set description"
+                    setCorrelationId
+
+            let! laterAppend =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "later set description"
+                    "corr-set-description-later"
+
+            let! supersededSetRetry =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "first set description"
+                    setCorrelationId
+
+            let! current = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            createResponse.EnsureSuccessStatusCode() |> ignore
+
+            exactCreateRetry.EnsureSuccessStatusCode()
+            |> ignore
+
+            setResponse.EnsureSuccessStatusCode() |> ignore
+            exactSetRetry.EnsureSuccessStatusCode() |> ignore
+            laterAppend.EnsureSuccessStatusCode() |> ignore
+            Assert.That(conflictingCreateRetry.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(supersededSetRetry.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(current.Description, Is.EqualTo("later set description"))
         }
 
     /// Verifies the create then fetch by guid and number returns same work item scenario.

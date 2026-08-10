@@ -8,6 +8,7 @@ open Grace.Types.Artifact
 open Grace.Shared.Parameters.WorkItem
 open Grace.Shared.Validation.Errors
 open Grace.Types.Common
+open Grace.Types.TextContent
 open Grace.Types.WorkItem
 open NUnit.Framework
 open NodaTime
@@ -574,3 +575,91 @@ type WorkItemServerUnitTests() =
 
         Assert.That(duplicate, Is.True)
         Assert.That(different, Is.False)
+
+    /// Verifies a GUID-backed work item cannot be used through a different repository context.
+    [<Test>]
+    member _.DescriptionRepositoryBindingRejectsAnotherRepository() =
+        let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
+        let otherRepositoryId = Guid.Parse("6d742a8e-5fd6-4d89-8c1d-7ea3005570ef")
+
+        let state =
+            {
+                WorkItem = { WorkItemDto.Default with WorkItemId = Guid.Parse("9fc0ee05-67a9-4f90-9169-5c2a1d723434"); RepositoryId = repositoryId }
+                Description = None
+            }
+
+        Assert.That(WorkItem.isWorkItemBoundToRepository repositoryId state, Is.True)
+        Assert.That(WorkItem.isWorkItemBoundToRepository otherRepositoryId state, Is.False)
+
+    /// Verifies retries require one matching persisted event and the still-current immutable description reference.
+    [<Test>]
+    member _.DescriptionReplayRejectsDifferentCommandsContentAndSupersededAppends() =
+        let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
+        let workItemId = Guid.Parse("6d742a8e-5fd6-4d89-8c1d-7ea3005570ef")
+        let correlationId = "corr-description-replay"
+        let expected = TextContentStorage.createDescription repositoryId workItemId correlationId "first"
+        let later = TextContentStorage.createDescription repositoryId workItemId "corr-description-later" "later"
+
+        let state description = { WorkItem = { WorkItemDto.Default with WorkItemId = workItemId; RepositoryId = repositoryId }; Description = Some description }
+
+        let event eventType = { Event = eventType; Metadata = { metadata (Instant.FromUtc(2025, 1, 1, 0, 0)) with CorrelationId = correlationId } }
+
+        let events workItemEvent = ResizeArray<WorkItemEvent>([ workItemEvent ]) :> IReadOnlyList<WorkItemEvent>
+
+        let exact =
+            WorkItem.classifyDescriptionReplay
+                WorkItem.SetDescription
+                workItemId
+                repositoryId
+                (Some expected)
+                (state expected)
+                (events (event (DescriptionSet expected)))
+                correlationId
+
+        let differentCommand =
+            WorkItem.classifyDescriptionReplay
+                WorkItem.SetDescription
+                workItemId
+                repositoryId
+                (Some expected)
+                (state expected)
+                (events (event (TitleSet "other command")))
+                correlationId
+
+        let differentText =
+            WorkItem.classifyDescriptionReplay
+                WorkItem.SetDescription
+                workItemId
+                repositoryId
+                (Some expected)
+                (state expected)
+                (events (event (DescriptionSet later)))
+                correlationId
+
+        let superseded =
+            WorkItem.classifyDescriptionReplay
+                WorkItem.SetDescription
+                workItemId
+                repositoryId
+                (Some expected)
+                (state later)
+                (events (event (DescriptionSet expected)))
+                correlationId
+
+        Assert.That(exact, Is.EqualTo(WorkItem.ExactDescriptionReplay))
+        Assert.That(differentCommand, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
+        Assert.That(differentText, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
+        Assert.That(superseded, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
+
+    /// Verifies an ambiguous actor-write fault retains its retry object while known pre-append rejection permits cleanup.
+    [<Test>]
+    member _.DescriptionAppendFailureClassificationRetainsAmbiguousRetryEvidence() =
+        let correlationId = "corr-description-fault"
+
+        let ambiguous = GraceError.Create (WorkItemError.getErrorMessage WorkItemError.FailedWhileApplyingEvent) correlationId
+
+        let definite = GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists) correlationId
+
+        Assert.That(WorkItem.classifyDescriptionAppendFailure ambiguous, Is.EqualTo(WorkItem.AmbiguousAppendOutcome))
+
+        Assert.That(WorkItem.classifyDescriptionAppendFailure definite, Is.EqualTo(WorkItem.ProvenPreAppendRejection))

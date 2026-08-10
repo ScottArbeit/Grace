@@ -70,6 +70,16 @@ module TextContentStorage =
     let createIds repositoryId workItemId correlationId =
         deterministicId repositoryId workItemId correlationId "description", deterministicId repositoryId workItemId correlationId "text-content"
 
+    /// Builds the immutable description reference that one create or set operation must persist before it can be replayed.
+    let createDescription repositoryId workItemId correlationId (text: string) =
+        let descriptionId, textContentId = createIds repositoryId workItemId correlationId
+        let bytes = strictUtf8.GetBytes(text)
+
+        {
+            DescriptionId = descriptionId
+            TextContent = Some { TextContentId = textContentId; Blake3Hash = ContentAddress.computeBlake3Hex bytes; Utf8ByteLength = int64 bytes.LongLength }
+        }
+
     /// Compresses unchanged UTF-8 bytes into the immutable object representation.
     let private gzip (bytes: byte array) =
         use output = new MemoryStream()
@@ -158,14 +168,11 @@ module TextContentStorage =
                 return Error(GraceError.Create "Text content storage is only implemented for Azure Blob Storage." correlationId)
             | Ok () ->
                 try
-                    let descriptionId, textContentId = createIds repositoryId workItemId correlationId
-                    let bytes = strictUtf8.GetBytes(text)
-
-                    let reference =
-                        { TextContentId = textContentId; Blake3Hash = ContentAddress.computeBlake3Hex bytes; Utf8ByteLength = int64 bytes.LongLength }
+                    let description = createDescription repositoryId workItemId correlationId text
+                    let reference = description.TextContent.Value
 
                     let! containerClient = getContainerClient repositoryDto correlationId
-                    let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+                    let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey reference.TextContentId)
                     let compressed = compressText text
                     use content = new MemoryStream(compressed)
                     let conditions = BlobRequestConditions(IfNoneMatch = Azure.ETag.All)
@@ -173,12 +180,11 @@ module TextContentStorage =
 
                     try
                         let! _ = blobClient.UploadAsync(content, options)
-                        return Ok({ DescriptionId = descriptionId; TextContent = Some reference }, true)
+                        return Ok(description, true)
                     with
                     | :? RequestFailedException as ex when ex.Status = 409 || ex.Status = 412 ->
                         match! read repositoryDto reference correlationId with
-                        | Ok existing when String.Equals(existing, text, StringComparison.Ordinal) ->
-                            return Ok({ DescriptionId = descriptionId; TextContent = Some reference }, false)
+                        | Ok existing when String.Equals(existing, text, StringComparison.Ordinal) -> return Ok(description, false)
                         | Ok _ -> return Error(GraceError.Create "Text-content retry identity already contains different content." correlationId)
                         | Error error -> return Error error
                 with
