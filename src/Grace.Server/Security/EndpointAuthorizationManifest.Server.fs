@@ -308,6 +308,7 @@ module EndpointAuthorizationManifest =
                 "/work/create"
                 (AnyOf [ Authorized(RepositoryAdmin, Repository)
                          Authorized(RepositoryWrite, Repository) ])
+            endpoint "POST" "/work/description/set" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/add-summary" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/work/get" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/work/link/artifact" (Authorized(RepositoryWrite, Repository))

@@ -165,6 +165,7 @@ All URIs are relative to *http://localhost:5000*
 *WebhooksApi* | [**testWebhookRule**](docs/WebhooksApi.md#testwebhookrule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**updateWebhookRule**](docs/WebhooksApi.md#updatewebhookrule) | **POST** /webhook/rule/update | Update a webhook rule.
 *WorkItemsApi* | [**deleteWorkItemAttachment**](docs/WorkItemsApi.md#deleteworkitemattachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**setWorkItemDescription**](docs/WorkItemsApi.md#setworkitemdescription) | **POST** /work/description/set | Replace a work-item description.
 *WorkItemsApi* | [**undeleteWorkItemAttachment**](docs/WorkItemsApi.md#undeleteworkitemattachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 
 
@@ -368,6 +369,7 @@ All URIs are relative to *http://localhost:5000*
 - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
 - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
 - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
+- [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
 - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
 - [StartUploadSession](docs/StartUploadSession.md)
 - [StorageParameters](docs/StorageParameters.md)

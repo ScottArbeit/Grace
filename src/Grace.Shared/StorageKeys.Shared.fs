@@ -17,6 +17,12 @@ module StorageKeys =
     [<Literal>]
     let private ContentBlockMetadataPrefix = "content-block-metadata"
 
+    [<Literal>]
+    let private TextContentPrefix = "text-content"
+
+    /// Builds the repository-scoped immutable object key for one text-content identity.
+    let textContentObjectKey (textContentId: TextContentId) = $"{TextContentPrefix}/{textContentId:N}"
+
     /// Builds the storage object key for whole-file content using the current hash-addressed layout.
     let private wholeFileContentObjectFileName (fileVersion: FileVersion) =
         if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then

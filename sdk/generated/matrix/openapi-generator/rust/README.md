@@ -149,6 +149,7 @@ Class | Method | HTTP request | Description
 *WebhooksApi* | [**test_webhook_rule**](docs/WebhooksApi.md#test_webhook_rule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**update_webhook_rule**](docs/WebhooksApi.md#update_webhook_rule) | **POST** /webhook/rule/update | Update a webhook rule.
 *WorkItemsApi* | [**delete_work_item_attachment**](docs/WorkItemsApi.md#delete_work_item_attachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**set_work_item_description**](docs/WorkItemsApi.md#set_work_item_description) | **POST** /work/description/set | Replace a work-item description.
 *WorkItemsApi* | [**undelete_work_item_attachment**](docs/WorkItemsApi.md#undelete_work_item_attachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 
 
@@ -352,6 +353,7 @@ Class | Method | HTTP request | Description
  - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
  - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
  - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
+ - [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
  - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
  - [StartUploadSession](docs/StartUploadSession.md)
  - [StorageParameters](docs/StorageParameters.md)

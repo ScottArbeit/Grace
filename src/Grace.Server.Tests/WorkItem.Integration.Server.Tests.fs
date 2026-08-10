@@ -10,16 +10,19 @@ open Grace.Shared.Validation.Errors
 open Grace.Types.Artifact
 open Grace.Types.PersonalAccessToken
 open Grace.Types.Common
+open Grace.Types.Events
 open Grace.Types.Reminder
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.IO
 open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
 open System.Text
+open System.Text.Json
 open System.Threading.Tasks
 
 /// Groups shared helpers for work item integration helpers.
@@ -52,6 +55,48 @@ module private WorkItemIntegrationHelpers =
                 count <- count + (response.Resource |> Seq.sum)
 
             return count > 0
+        }
+
+    /// Reads the exact WorkItem event stream directly from the hosted Cosmos container for durable no-effect assertions.
+    let getWorkItemEventsAsync (repositoryId: string) (workItemId: Guid) =
+        task {
+            let hostState = getSharedHostState ()
+            use client = AspireTestHost.createCosmosClient hostState
+            let container = client.GetContainer(hostState.CosmosDatabaseName, hostState.CosmosContainerName)
+
+            let query =
+                QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey AND CONTAINS(c.id, @workItemId, true)")
+                    .WithParameter("@grainType", "WorkItem")
+                    .WithParameter("@partitionKey", Guid.Parse repositoryId)
+                    .WithParameter("@workItemId", workItemId.ToString("N"))
+
+            use iterator = container.GetItemQueryIterator<Dictionary<string, obj>>(query)
+            let events = ResizeArray<WorkItemEvent>()
+
+            while iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync()
+
+                for document in page do
+                    match document.TryGetValue "State" with
+                    | true, (:? JsonElement as state) ->
+                        let persisted = JsonSerializer.Deserialize<List<WorkItemEvent>>(state.GetRawText(), Constants.JsonSerializerOptions)
+
+                        if not (isNull persisted) then events.AddRange(persisted)
+                    | _ -> ()
+
+            return events.ToArray()
+        }
+
+    /// Checks the exact deterministic TextContent object through the hosted repository storage connection.
+    let textContentObjectExistsAsync (repositoryId: string) (textContentId: TextContentId) =
+        task {
+            let hostState = getSharedHostState ()
+            let! connectionString = AspireTestHost.getAzureStorageConnectionStringAsync hostState
+            let serviceClient = BlobServiceClient(connectionString)
+            let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
+            let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+            let! exists = blobClient.ExistsAsync()
+            return exists.Value
         }
 
     /// Reads one reminder through the hosted server so its terminal actor state is observed independently of Artifact cleanup.
@@ -145,31 +190,49 @@ module private WorkItemIntegrationHelpers =
             else
                 ()
 
-            let storageConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
-
-            if not (String.IsNullOrWhiteSpace(storageConnectionString)) then
-                let serviceClient = BlobServiceClient(storageConnectionString)
-                let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
-                let! _ = containerClient.CreateIfNotExistsAsync()
-                ()
+            let hostState = getSharedHostState ()
+            let! connectionString = AspireTestHost.getAzureStorageConnectionStringAsync hostState
+            let serviceClient = BlobServiceClient(connectionString)
+            let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
+            let! _ = containerClient.CreateIfNotExistsAsync()
+            ()
 
             return repositoryId
         }
 
-    /// Builds a deterministic work item with ID response for integration setup fixture for the server integration work Item Integration assertions.
-    let createWorkItemWithIdResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
+    /// Creates a work item with caller-selected free text and correlation data for replay and empty-description integration proof.
+    let createWorkItemWithDescriptionResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemId: string)
+        (title: string)
+        (description: string)
+        (correlationId: string)
+        =
         task {
-            let workItemId = Guid.NewGuid().ToString()
             let parameters = Parameters.WorkItem.CreateWorkItemParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.WorkItemId <- workItemId
             parameters.Title <- title
-            parameters.Description <- "integration test work item"
-            parameters.CorrelationId <- generateCorrelationId ()
+            parameters.Description <- description
+            parameters.CorrelationId <- correlationId
 
-            let! response = client.PostAsync("/work/create", createJsonContent parameters)
+            use request = new HttpRequestMessage(HttpMethod.Post, "/work/create")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+            return! client.SendAsync(request)
+        }
+
+    /// Builds a deterministic work item with ID response for integration setup fixture for the server integration work Item Integration assertions.
+    let createWorkItemWithIdResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
+        task {
+            let workItemId = Guid.NewGuid().ToString()
+
+            let! response =
+                createWorkItemWithDescriptionResponseAsync client repositoryId workItemId title "integration test work item" (generateCorrelationId ())
+
             return workItemId, response
         }
 
@@ -200,6 +263,32 @@ module private WorkItemIntegrationHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
             return! client.PostAsync("/work/update", createJsonContent parameters)
         }
+
+    /// Sets one work-item description through the public route with caller-selected correlation data for replay proof.
+    let setWorkItemDescriptionWithCorrelationResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemIdentifier: string)
+        (text: string)
+        (correlationId: string)
+        =
+        task {
+            let parameters = Parameters.WorkItem.SetWorkItemDescriptionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.Text <- text
+            parameters.CorrelationId <- correlationId
+            use request = new HttpRequestMessage(HttpMethod.Post, "/work/description/set")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+            return! client.SendAsync(request)
+        }
+
+    /// Sets one work-item description through the public route for hosted integration scenarios.
+    let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
+        setWorkItemDescriptionWithCorrelationResponseAsync client repositoryId workItemIdentifier text (generateCorrelationId ())
 
     /// Gets work item response from the running test server.
     let getWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
@@ -706,6 +795,197 @@ module private WorkItemIntegrationHelpers =
 /// Covers work item number and links scenarios.
 [<NonParallelizable>]
 type WorkItemNumberAndLinksIntegrationTests() =
+
+    /// Verifies that immutable description writes hydrate the final accepted append for GUID and numeric reads.
+    [<Test>]
+    member _.DescriptionSetHydratesTheLastAcceptedAppend() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-set"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description set"
+            let! created = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            let! firstResponse = WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryId workItemId "# First description"
+
+            firstResponse.EnsureSuccessStatusCode() |> ignore
+
+            let! byGuid = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            let! secondResponse =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryId (byGuid.WorkItemNumber.ToString()) "# Final description"
+
+            secondResponse.EnsureSuccessStatusCode() |> ignore
+
+            let! byNumber = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId (byGuid.WorkItemNumber.ToString())
+
+            Assert.That(created.Description, Is.EqualTo("integration test work item"))
+            Assert.That(byGuid.Description, Is.EqualTo("# First description"))
+            Assert.That(byNumber.Description, Is.EqualTo("# Final description"))
+        }
+
+    /// Verifies an empty create returns no hydrated text and bypasses the immutable description reference path.
+    [<Test>]
+    member _.CreateWithoutDescriptionReturnsEmptyText() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-empty"
+            let workItemId = Guid.NewGuid().ToString()
+            let correlationId = "corr-empty-description"
+
+            let! createResponse =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "empty description"
+                    String.Empty
+                    correlationId
+
+            createResponse.EnsureSuccessStatusCode() |> ignore
+
+            let! workItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let! events = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+
+            let expectedTextContent =
+                Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryId) (Guid.Parse workItemId) correlationId String.Empty
+                |> fun description -> description.TextContent.Value
+
+            let! textObjectExists = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId expectedTextContent.TextContentId
+
+            Assert.That(workItem.Description, Is.EqualTo(String.Empty))
+            Assert.That(events, Has.Length.EqualTo(1))
+
+            match events[0].Event with
+            | Created (_, _, _, _, _, _, None) -> ()
+            | _ -> Assert.Fail("An empty create must persist only a Created event without a Description reference.")
+
+            Assert.That(textObjectExists, Is.False)
+        }
+
+    /// Verifies a work-item GUID cannot reveal or change a description through a different repository request.
+    [<Test>]
+    member _.DescriptionGuidRejectsCrossRepositoryReadAndWrite() =
+        task {
+            let! repositoryA = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-repository-a"
+            let! repositoryB = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-repository-b"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryA "repository-bound description"
+            let workItemGuid = Guid.Parse workItemId
+            let crossRepositoryText = "must not be written"
+            let crossRepositoryCorrelationId = "corr-cross-repository-description"
+            let! eventsBefore = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryA workItemGuid
+
+            let! crossRepositorySet =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryB
+                    workItemId
+                    crossRepositoryText
+                    crossRepositoryCorrelationId
+
+            let! crossRepositoryGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync Client repositoryB workItemId
+            let! original = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryA workItemId
+            let! eventsAfter = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryA workItemGuid
+
+            let requestRepositoryTextContent =
+                Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryB) workItemGuid crossRepositoryCorrelationId crossRepositoryText
+                |> fun description -> description.TextContent.Value
+
+            let! requestRepositoryTextObjectExists =
+                WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryB requestRepositoryTextContent.TextContentId
+
+            Assert.That(crossRepositorySet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(crossRepositoryGet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! setError = deserializeContent<GraceError> crossRepositorySet
+            let! getError = deserializeContent<GraceError> crossRepositoryGet
+
+            Assert.That(setError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
+            Assert.That(getError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
+            Assert.That(original.Description, Is.EqualTo("integration test work item"))
+            Assert.That(eventsAfter, Is.EqualTo<WorkItemEvent>(eventsBefore))
+            Assert.That(requestRepositoryTextObjectExists, Is.False)
+        }
+
+    /// Verifies create and set retries converge only for the current matching event and immutable description reference.
+    [<Test>]
+    member _.DescriptionRetriesRejectConflictingAndSupersededCorrelations() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-retry"
+            let workItemId = Guid.NewGuid().ToString()
+            let createCorrelationId = "corr-create-description-retry"
+
+            let! createResponse =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "retry create"
+                    "created description"
+                    createCorrelationId
+
+            let! exactCreateRetry =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "retry create"
+                    "created description"
+                    createCorrelationId
+
+            let! conflictingCreateRetry =
+                WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "retry create"
+                    "conflicting created description"
+                    createCorrelationId
+
+            let setCorrelationId = "corr-set-description-retry"
+
+            let! setResponse =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "first set description"
+                    setCorrelationId
+
+            let! exactSetRetry =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "first set description"
+                    setCorrelationId
+
+            let! laterAppend =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "later set description"
+                    "corr-set-description-later"
+
+            let! supersededSetRetry =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "first set description"
+                    setCorrelationId
+
+            let! current = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            createResponse.EnsureSuccessStatusCode() |> ignore
+
+            exactCreateRetry.EnsureSuccessStatusCode()
+            |> ignore
+
+            setResponse.EnsureSuccessStatusCode() |> ignore
+            exactSetRetry.EnsureSuccessStatusCode() |> ignore
+            laterAppend.EnsureSuccessStatusCode() |> ignore
+            Assert.That(conflictingCreateRetry.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(supersededSetRetry.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(current.Description, Is.EqualTo("later set description"))
+        }
 
     /// Verifies the create then fetch by guid and number returns same work item scenario.
     [<Test>]

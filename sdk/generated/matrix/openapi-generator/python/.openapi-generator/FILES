@@ -210,6 +210,7 @@ docs/SetRepositoryNameParameters.md
 docs/SetRepositoryStatusParameters.md
 docs/SetRepositoryVisibilityParameters.md
 docs/SetSaveDaysParameters.md
+docs/SetWorkItemDescriptionParameters.md
 docs/StartManifestUploadSessionParameters.md
 docs/StartUploadSession.md
 docs/StorageParameters.md
@@ -470,6 +471,7 @@ grace_generated_openapi_probe/models/set_repository_name_parameters.py
 grace_generated_openapi_probe/models/set_repository_status_parameters.py
 grace_generated_openapi_probe/models/set_repository_visibility_parameters.py
 grace_generated_openapi_probe/models/set_save_days_parameters.py
+grace_generated_openapi_probe/models/set_work_item_description_parameters.py
 grace_generated_openapi_probe/models/start_manifest_upload_session_parameters.py
 grace_generated_openapi_probe/models/start_upload_session.py
 grace_generated_openapi_probe/models/storage_parameters.py
@@ -726,6 +728,7 @@ test/test_set_repository_name_parameters.py
 test/test_set_repository_status_parameters.py
 test/test_set_repository_visibility_parameters.py
 test/test_set_save_days_parameters.py
+test/test_set_work_item_description_parameters.py
 test/test_start_manifest_upload_session_parameters.py
 test/test_start_upload_session.py
 test/test_storage_parameters.py

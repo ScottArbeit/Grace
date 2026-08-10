@@ -78,6 +78,30 @@ module WorkItemCommandParsingTests =
                        "Alias command" |]
         )
 
+    /// Verifies that work-item description set parses every supported noun alias and identifier form.
+    [<TestCase("workitem", "42")>]
+    [<TestCase("work", "50c93cc6-34f0-43cf-a431-c6e9b89b1178")>]
+    [<TestCase("work-item", "43")>]
+    [<TestCase("wi", "2cf69ef6-31a7-48af-9f26-28fae596ee6f")>]
+    let ``workitem description set parses supported aliases`` (commandAlias: string, workItemIdentifier: string) =
+        assertParsesWithoutErrors (
+            withIds [| commandAlias
+                       "description"
+                       "set"
+                       workItemIdentifier
+                       "--text"
+                       "A durable work-item description." |]
+        )
+
+    /// Verifies that work-item description set leaves missing text to its action so introspection remains inert.
+    [<Test>]
+    let ``workitem description set parses missing text for action validation`` () =
+        withIds [| "workitem"
+                   "description"
+                   "set"
+                   "42" |]
+        |> assertParsesWithoutErrors
+
     /// Verifies that every supported status value routes through set-status for both work item identifier shapes.
     [<TestCase("42", "--status", "Active")>]
     [<TestCase("43", "--status", "Backlog")>]

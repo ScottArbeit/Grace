@@ -68,6 +68,43 @@ module WorkItemCommandTests =
 
         parseResult.Invoke() |> should equal -1
 
+    /// Verifies that description set rejects an invalid work-item identifier through its bound action before a server call.
+    [<Test>]
+    let ``workitem description set rejects invalid work item identifier through its bound action`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "description"
+                                    "set"
+                                    "not-a-work-item"
+                                    "--text"
+                                    "Description" |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        parseResult.CommandResult.Command.Name
+        |> should equal "set"
+
+        parseResult.CommandResult.Command.Action.GetType()
+        |> should equal typeof<Grace.CLI.Command.WorkItemCommand.SetDescription>
+
+        parseResult.Invoke() |> should equal -1
+
+    /// Verifies that description set rejects missing text through action validation without blocking introspection.
+    [<Test>]
+    let ``workitem description set rejects missing text through its bound action`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "description"
+                                    "set"
+                                    "42" |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+        parseResult.Invoke() |> should equal -1
+
     /// Verifies that workitem link ref rejects invalid reference id.
     [<Test>]
     let ``workitem link ref rejects invalid reference id`` () =

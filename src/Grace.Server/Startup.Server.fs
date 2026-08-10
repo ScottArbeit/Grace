@@ -1534,6 +1534,9 @@ module Application =
                                route "/update" (composeHandlers requireRepositoryWrite WorkItem.Update)
                                |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
 
+                               route "/description/set" (composeHandlers requireRepositoryWrite WorkItem.SetDescription)
+                               |> addMetadata typeof<WorkItem.SetWorkItemDescriptionParameters>
+
                                route "/add-summary" (composeHandlers requireRepositoryWrite WorkItem.AddSummary)
                                |> addMetadata typeof<WorkItem.AddSummaryParameters>
 
@@ -1939,6 +1942,10 @@ module Application =
                 invalidOp "Grace configuration not found in memory cache."
 
             let configuration = configurationObj :?> IConfigurationRoot
+
+            match TextContentStorage.getMaximumCharacters () with
+            | Ok _ -> ()
+            | Error error -> invalidOp error
 
             let azureMonitorConnectionString =
                 let connectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ApplicationInsightsConnectionString

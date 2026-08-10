@@ -366,6 +366,10 @@ module Constants =
         [<Literal>]
         let GraceReminderBatchSize = "grace__reminder__batch__size"
 
+        /// Limits Unicode scalar values accepted for one immutable work-item text object.
+        [<Literal>]
+        let GraceTextContentMaxCharacters = "grace__text_content__max_characters"
+
         /// The environment variable that contains the name of the Orleans cluster to use.
         [<Literal>]
         let OrleansClusterId = "grace__orleans__clusterid"
