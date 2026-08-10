@@ -2019,6 +2019,14 @@ module AspireTestHost =
     /// Creates a permissive local Cosmos client for integration assertions against the Aspire emulator.
     let createCosmosClient (state: TestHostState) = new CosmosClient(state.CosmosConnectionString, createLocalCosmosClientOptions ())
 
+    /// Resolves the live Azure Storage connection configured for a running Aspire test host.
+    let getAzureStorageConnectionStringAsync (state: TestHostState) =
+        task {
+            let! env = getEnvironmentVariablesAsync state.App graceServerResourceName
+
+            return requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureStorageConnectionString env
+        }
+
     /// Returns current Grace.Server resource logs for focused Aspire failure diagnostics.
     let getGraceServerLogsAsync (state: TestHostState) = getResourceLogsAsync state.App graceServerResourceName
 

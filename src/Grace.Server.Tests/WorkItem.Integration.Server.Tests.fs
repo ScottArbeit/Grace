@@ -90,16 +90,13 @@ module private WorkItemIntegrationHelpers =
     /// Checks the exact deterministic TextContent object through the hosted repository storage connection.
     let textContentObjectExistsAsync (repositoryId: string) (textContentId: TextContentId) =
         task {
-            let connectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
-
-            if String.IsNullOrWhiteSpace(connectionString) then
-                return invalidOp "The hosted Azure Storage connection is unavailable for deterministic TextContent absence proof."
-            else
-                let serviceClient = BlobServiceClient(connectionString)
-                let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
-                let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
-                let! exists = blobClient.ExistsAsync()
-                return exists.Value
+            let hostState = getSharedHostState ()
+            let! connectionString = AspireTestHost.getAzureStorageConnectionStringAsync hostState
+            let serviceClient = BlobServiceClient(connectionString)
+            let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
+            let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+            let! exists = blobClient.ExistsAsync()
+            return exists.Value
         }
 
     /// Reads one reminder through the hosted server so its terminal actor state is observed independently of Artifact cleanup.
@@ -193,13 +190,12 @@ module private WorkItemIntegrationHelpers =
             else
                 ()
 
-            let storageConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
-
-            if not (String.IsNullOrWhiteSpace(storageConnectionString)) then
-                let serviceClient = BlobServiceClient(storageConnectionString)
-                let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
-                let! _ = containerClient.CreateIfNotExistsAsync()
-                ()
+            let hostState = getSharedHostState ()
+            let! connectionString = AspireTestHost.getAzureStorageConnectionStringAsync hostState
+            let serviceClient = BlobServiceClient(connectionString)
+            let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
+            let! _ = containerClient.CreateIfNotExistsAsync()
+            ()
 
             return repositoryId
         }
@@ -903,7 +899,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(setError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
             Assert.That(getError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
             Assert.That(original.Description, Is.EqualTo("integration test work item"))
-            Assert.That(eventsAfter, Is.EqualTo(eventsBefore))
+            Assert.That(eventsAfter, Is.EqualTo<WorkItemEvent>(eventsBefore))
             Assert.That(requestRepositoryTextObjectExists, Is.False)
         }
 
