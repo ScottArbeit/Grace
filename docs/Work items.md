@@ -59,6 +59,24 @@ PowerShell:
 ./grace workitem set-status 42 -s Done
 ```
 
+bash / zsh:
+
+```bash
+./grace workitem create \
+  --title "Introduce baseline drift alerts" \
+  --description "Add baseline drift detection and update review UI"
+
+./grace workitem create \
+  --work-item-id f88b46e2-5c36-4b52-9e36-716f7d7a9a8b \
+  --title "Introduce baseline drift alerts"
+
+./grace workitem show f88b46e2-5c36-4b52-9e36-716f7d7a9a8b
+./grace workitem show 42
+
+./grace workitem set-status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --status InReview
+./grace workitem set-status 42 -s Done
+```
+
 ### Set and clear the current description
 
 `description set` replaces the current Markdown with non-empty inline text. `description clear` appends an explicit
@@ -77,24 +95,6 @@ bash / zsh:
 ```bash
 ./grace workitem description set 42 --text "Describe the next delivery slice."
 ./grace workitem description clear 42
-```
-
-bash / zsh:
-
-```bash
-./grace workitem create \
-  --title "Introduce baseline drift alerts" \
-  --description "Add baseline drift detection and update review UI"
-
-./grace workitem create \
-  --work-item-id f88b46e2-5c36-4b52-9e36-716f7d7a9a8b \
-  --title "Introduce baseline drift alerts"
-
-./grace workitem show f88b46e2-5c36-4b52-9e36-716f7d7a9a8b
-./grace workitem show 42
-
-./grace workitem set-status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --status InReview
-./grace workitem set-status 42 -s Done
 ```
 
 ### Link references and promotion sets

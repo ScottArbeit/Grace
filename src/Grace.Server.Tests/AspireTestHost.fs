@@ -81,7 +81,30 @@ module AspireTestHost =
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
     let mutable private sharedDescriptionClearPreAppendTestGate: (int * TcpListener) option = None
+    let mutable private sharedDescriptionClearPreAppendTestGatePort: int option = None
     let mutable private sharedBootstrapUserId: string option = None
+
+    /// Stops the active test-only description-clear listener before a subsequent test creates a fresh listener for the same run port.
+    let private stopDescriptionClearPreAppendTestGate () =
+        match sharedDescriptionClearPreAppendTestGate with
+        | Some (_, listener) ->
+            sharedDescriptionClearPreAppendTestGate <- None
+            listener.Stop()
+        | None -> ()
+
+    /// Clears all test-only description-clear listener state when its host run can no longer use the injected port.
+    let private resetDescriptionClearPreAppendTestGate () =
+        stopDescriptionClearPreAppendTestGate ()
+        sharedDescriptionClearPreAppendTestGatePort <- None
+
+    /// Starts the loopback listener used only by a hosted description-clear overlap test.
+    let private startDescriptionClearPreAppendTestGate (port: int) =
+        let listener = new TcpListener(IPAddress.Loopback, port)
+        listener.Start(2)
+        let boundPort = (listener.LocalEndpoint :?> IPEndPoint).Port
+        sharedDescriptionClearPreAppendTestGatePort <- Some boundPort
+        sharedDescriptionClearPreAppendTestGate <- Some(boundPort, listener)
+        boundPort, listener
 
     /// Gets service bus sql resource name from the running test server.
     let private getServiceBusSqlResourceName () =
@@ -1156,6 +1179,7 @@ module AspireTestHost =
         let mutable appToCleanup: DistributedApplication option = None
 
         task {
+            resetDescriptionClearPreAppendTestGate ()
             logProgress "Aspire setup starting."
 
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
@@ -1182,12 +1206,7 @@ module AspireTestHost =
             logProgress "Docker cleanup complete."
             logProgress "building Aspire AppHost."
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
-            let descriptionClearPreAppendTestGateListener = new TcpListener(IPAddress.Loopback, 0)
-            descriptionClearPreAppendTestGateListener.Start(2)
-
-            let descriptionClearPreAppendTestGatePort =
-                (descriptionClearPreAppendTestGateListener.LocalEndpoint :?> IPEndPoint)
-                    .Port
+            let descriptionClearPreAppendTestGatePort, _ = startDescriptionClearPreAppendTestGate 0
 
             let graceServerResource: ProjectResource =
                 builder.Resources
@@ -1515,7 +1534,6 @@ module AspireTestHost =
                 Console.WriteLine("Skipping Service Bus functional readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
 
             logProgress "containers and service readiness checks complete."
-            sharedDescriptionClearPreAppendTestGate <- Some(descriptionClearPreAppendTestGatePort, descriptionClearPreAppendTestGateListener)
 
             return state
         }
@@ -1525,6 +1543,8 @@ module AspireTestHost =
                     return! startupTask
                 with
                 | startupFailure ->
+                    resetDescriptionClearPreAppendTestGate ()
+
                     match appToCleanup with
                     | None -> return raise startupFailure
                     | Some app ->
@@ -1564,7 +1584,16 @@ module AspireTestHost =
     /// Gets the ephemeral loopback listener injected into the currently running Grace.Server test resource.
     let getDescriptionClearPreAppendTestGate () =
         sharedDescriptionClearPreAppendTestGate
-        |> Option.defaultWith (fun () -> failwith "The Grace.Server test gate is unavailable before the Aspire host starts.")
+        |> Option.defaultWith (fun () ->
+            match sharedDescriptionClearPreAppendTestGatePort with
+            | Some port -> startDescriptionClearPreAppendTestGate port
+            | None -> failwith "The Grace.Server test gate is unavailable before the Aspire host starts.")
+
+    /// Stops a completed description-clear test gate without allowing a stale test to clear a newer listener.
+    let releaseDescriptionClearPreAppendTestGate (listener: TcpListener) =
+        match sharedDescriptionClearPreAppendTestGate with
+        | Some (_, activeListener) when Object.ReferenceEquals(activeListener, listener) -> stopDescriptionClearPreAppendTestGate ()
+        | _ -> listener.Stop()
 
     /// Starts a fresh host owned only by an explicitly selected measurement fixture.
     let startIsolatedAsync (bootstrapUserId: string) =
@@ -1582,11 +1611,18 @@ module AspireTestHost =
 
     /// Disposes a fixture-owned host and removes its local containers while preserving every cleanup failure.
     let stopIsolatedAsync (state: TestHostState) =
-        FixtureLifecycle.cleanupAsync (fun () -> task { do! state.App.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
+        task {
+            try
+                return! FixtureLifecycle.cleanupAsync (fun () -> task { do! state.App.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
+            finally
+                resetDescriptionClearPreAppendTestGate ()
+        }
 
     /// Defines stop behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let stopAsync (app: DistributedApplication option) =
         task {
+            resetDescriptionClearPreAppendTestGate ()
+
             match app with
             | None -> ()
             | Some appHost ->

@@ -554,29 +554,72 @@ module WorkItem =
             match tryGetDescriptionClearPreAppendTestGatePort context with
             | None -> return None
             | Some port ->
+                let client = new TcpClient(AddressFamily.InterNetwork)
+                let mutable gate: DescriptionClearPreAppendTestGate option = None
+                let mutable stream: NetworkStream option = None
+                let mutable reader: StreamReader option = None
+                let mutable writer: StreamWriter option = None
+
                 try
-                    use gateTimeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
-                    let client = new TcpClient(AddressFamily.InterNetwork)
-                    do! client.ConnectAsync("127.0.0.1", port, gateTimeout.Token)
+                    try
+                        use gateTimeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+                        do! client.ConnectAsync("127.0.0.1", port, gateTimeout.Token)
 
-                    let stream = client.GetStream()
-                    let reader = new StreamReader(stream, Encoding.UTF8, false, 1024, true)
-                    let writer = new StreamWriter(stream, Encoding.UTF8, 1024, true)
-                    do! writer.WriteLineAsync("fresh-description-operation")
-                    do! writer.FlushAsync()
-                    let! release = reader.ReadLineAsync(gateTimeout.Token).AsTask()
+                        let connectedStream = client.GetStream()
+                        stream <- Some connectedStream
+                        let connectedReader = new StreamReader(connectedStream, Encoding.UTF8, false, 1024, true)
+                        reader <- Some connectedReader
+                        let connectedWriter = new StreamWriter(connectedStream, Encoding.UTF8, 1024, true)
+                        writer <- Some connectedWriter
 
-                    if String.Equals(release, "release", StringComparison.Ordinal) then
-                        return Some { Client = client; Reader = reader; Writer = writer }
-                    else
-                        writer.Dispose()
-                        reader.Dispose()
+                        do! connectedWriter.WriteLineAsync("fresh-description-operation".AsMemory(), gateTimeout.Token)
+
+                        do! connectedWriter.FlushAsync(gateTimeout.Token)
+
+                        let! release =
+                            connectedReader
+                                .ReadLineAsync(gateTimeout.Token)
+                                .AsTask()
+
+                        if String.Equals(release, "release", StringComparison.Ordinal) then
+                            let acquiredGate = { Client = client; Reader = connectedReader; Writer = connectedWriter }
+                            gate <- Some acquiredGate
+                            return Some acquiredGate
+                        else
+                            return None
+                    with
+                    | :? TimeoutException -> return None
+                    | :? SocketException -> return None
+                    | :? OperationCanceledException -> return None
+                finally
+                    match gate with
+                    | Some _ -> ()
+                    | None ->
+                        writer
+                        |> Option.iter (fun activeWriter -> activeWriter.Dispose())
+
+                        reader
+                        |> Option.iter (fun activeReader -> activeReader.Dispose())
+
+                        stream
+                        |> Option.iter (fun activeStream -> activeStream.Dispose())
+
                         client.Dispose()
-                        return None
-                with
-                | :? TimeoutException -> return None
-                | :? SocketException -> return None
-                | :? OperationCanceledException -> return None
+        }
+
+    /// Writes one bounded diagnostic outcome to a selected test-only description-clear gate.
+    let private writeDescriptionClearPreAppendTestGateOutcome (gate: DescriptionClearPreAppendTestGate) (outcome: string) =
+        task {
+            use gateTimeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+
+            try
+                do! gate.Writer.WriteLineAsync(outcome.AsMemory(), gateTimeout.Token)
+
+                do! gate.Writer.FlushAsync(gateTimeout.Token)
+            with
+            | :? TimeoutException -> ()
+            | :? SocketException -> ()
+            | :? OperationCanceledException -> ()
         }
 
     /// Records that a gated request entered duplicate-result reclassification before returning its HTTP result.
@@ -584,9 +627,7 @@ module WorkItem =
         task {
             match testGate with
             | None -> ()
-            | Some gate ->
-                do! gate.Writer.WriteLineAsync("duplicate-result-reclassified")
-                do! gate.Writer.FlushAsync()
+            | Some gate -> do! writeDescriptionClearPreAppendTestGateOutcome gate "duplicate-result-reclassified"
         }
 
     /// Records that a gated request appended its description-clear event without a duplicate result.
@@ -594,9 +635,7 @@ module WorkItem =
         task {
             match testGate with
             | None -> ()
-            | Some gate ->
-                do! gate.Writer.WriteLineAsync("append-succeeded")
-                do! gate.Writer.FlushAsync()
+            | Some gate -> do! writeDescriptionClearPreAppendTestGateOutcome gate "append-succeeded"
         }
 
     /// Releases the loopback resources held by one test-hosted clear request.

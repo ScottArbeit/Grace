@@ -31,6 +31,7 @@ open System.Threading.Tasks
 module private WorkItemIntegrationHelpers =
     /// Coordinates two server requests at the test-only post-precheck clear gate.
     type DescriptionClearPreAppendGate private (listener: TcpListener) =
+        let protocolTimeout = TimeSpan.FromSeconds(20.0)
         let clients = ResizeArray<TcpClient>()
         let readers = ResizeArray<StreamReader>()
         let writers = ResizeArray<StreamWriter>()
@@ -38,7 +39,7 @@ module private WorkItemIntegrationHelpers =
         /// Waits until both server requests have classified their clear operation as fresh.
         member _.WaitForFreshOperationsAsync() =
             task {
-                use timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+                use timeout = new CancellationTokenSource(protocolTimeout)
 
                 let! firstClient = listener.AcceptTcpClientAsync(timeout.Token)
                 clients.Add firstClient
@@ -55,7 +56,7 @@ module private WorkItemIntegrationHelpers =
                 let reads: Task<string> array =
                     readers
                     |> Seq.toArray
-                    |> Seq.map (fun reader -> reader.ReadLineAsync())
+                    |> Seq.map (fun reader -> reader.ReadLineAsync(timeout.Token).AsTask())
                     |> Seq.toArray
 
                 return! Task.WhenAll reads
@@ -64,12 +65,15 @@ module private WorkItemIntegrationHelpers =
         /// Releases both server requests from the post-precheck clear gate.
         member _.ReleaseAsync() =
             task {
+                use timeout = new CancellationTokenSource(protocolTimeout)
+
                 let releases: Task<unit> array =
                     writers
                     |> Seq.map (fun writer ->
                         task {
-                            do! writer.WriteLineAsync("release")
-                            do! writer.FlushAsync()
+                            do! writer.WriteLineAsync("release".AsMemory(), timeout.Token)
+
+                            do! writer.FlushAsync(timeout.Token)
                         })
                     |> Seq.toArray
 
@@ -80,10 +84,12 @@ module private WorkItemIntegrationHelpers =
         /// Reads the route result observed by each request after the test gate releases it.
         member _.ReadOutcomesAsync() =
             task {
+                use timeout = new CancellationTokenSource(protocolTimeout)
+
                 let reads: Task<string> array =
                     readers
                     |> Seq.toArray
-                    |> Array.map (fun reader -> reader.ReadLineAsync())
+                    |> Array.map (fun reader -> reader.ReadLineAsync(timeout.Token).AsTask())
 
                 return! Task.WhenAll reads
             }
@@ -99,7 +105,7 @@ module private WorkItemIntegrationHelpers =
                 clients
                 |> Seq.iter (fun client -> client.Dispose())
 
-                listener.Stop()
+                AspireTestHost.releaseDescriptionClearPreAppendTestGate listener
 
         /// Creates a two-request loopback gate for the externally hosted Grace.Server test process.
         static member Create(listener: TcpListener) = new DescriptionClearPreAppendGate(listener)
@@ -1083,7 +1089,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             let failedResponses =
                 responses
                 |> Array.mapi (fun index response ->
-                    if response.IsSuccessStatusCode then
+                    if response.StatusCode = HttpStatusCode.OK then
                         None
                     else
                         Some $"request {index} returned {response.StatusCode}: {responseBodies[index]}")
@@ -1107,6 +1113,15 @@ type WorkItemNumberAndLinksIntegrationTests() =
 
             Assert.That(workItem.Description, Is.EqualTo(String.Empty))
             Assert.That(clearDescriptions, Has.Length.EqualTo(1))
+
+            (gate :> IDisposable).Dispose()
+
+            let recreatedGatePort, recreatedGateListener = AspireTestHost.getDescriptionClearPreAppendTestGate ()
+
+            Assert.That(recreatedGatePort, Is.EqualTo(gatePort))
+            Assert.That(Object.ReferenceEquals(recreatedGateListener, gateListener), Is.False)
+
+            AspireTestHost.releaseDescriptionClearPreAppendTestGate recreatedGateListener
         }
 
     /// Verifies an empty create returns no hydrated text and bypasses the immutable description reference path.
