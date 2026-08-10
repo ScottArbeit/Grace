@@ -589,6 +589,44 @@ module WorkItemCommand =
                 return result |> renderOutput parseResult
             }
 
+    /// Routes explicit description clearing through the dedicated SDK operation.
+    let private clearDescriptionHandler (parseResult: ParseResult) =
+        task {
+            try
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
+
+                match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+                | Error error -> return Error error
+                | Ok workItem ->
+                    let parameters =
+                        Parameters.WorkItem.ClearWorkItemDescriptionParameters(
+                            WorkItemId = workItem,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    return! WorkItem.ClearDescription(parameters)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Executes the dedicated description clear command through the normal CLI output contract.
+    type ClearDescription() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs explicit description clearing after System.CommandLine binds the work-item identifier.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let! result = clearDescriptionHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
     /// Routes the link reference command from parsed options through validation, the SDK call, and result rendering.
     let private linkReferenceHandler (parseResult: ParseResult) =
         task {
@@ -1346,6 +1384,14 @@ module WorkItemCommand =
         setDescriptionCommand.Arguments.Add(Arguments.workItemIdentifier)
         setDescriptionCommand.Action <- new SetDescription()
         descriptionCommand.Subcommands.Add(setDescriptionCommand)
+
+        let clearDescriptionCommand =
+            new Command("clear", Description = "Clear the current description while retaining prior immutable content.")
+            |> addCommonOptions
+
+        clearDescriptionCommand.Arguments.Add(Arguments.workItemIdentifier)
+        clearDescriptionCommand.Action <- new ClearDescription()
+        descriptionCommand.Subcommands.Add(clearDescriptionCommand)
         workCommand.Subcommands.Add(descriptionCommand)
 
         let linkCommand = new Command("link", Description = "Link related entities to a work item.")

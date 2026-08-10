@@ -20,6 +20,8 @@ All work item routes are `POST` endpoints under `/work`.
 - `/work/create`
 - `/work/get`
 - `/work/update`
+- `/work/description/set`
+- `/work/description/clear`
 - `/work/add-summary`
 - `/work/link/reference`
 - `/work/link/promotion-set`
@@ -73,6 +75,26 @@ bash / zsh:
 
 ./grace workitem set-status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --status InReview
 ./grace workitem set-status 42 -s Done
+```
+
+### Set and clear the current description
+
+`description set` replaces the current Markdown with non-empty inline text. `description clear` appends an explicit
+empty description. Both accept a work-item GUID or positive number. Clear retains prior immutable description content,
+does not expose a public history, and a later set becomes current in actor append order.
+
+PowerShell:
+
+```powershell
+./grace workitem description set 42 --text "Describe the next delivery slice."
+./grace workitem description clear 42
+```
+
+bash / zsh:
+
+```bash
+./grace workitem description set 42 --text "Describe the next delivery slice."
+./grace workitem description clear 42
 ```
 
 ### Link references and promotion sets
@@ -214,10 +236,18 @@ let createParameters =
 
 let! created = WorkItem.Create(createParameters)
 
+let clearDescriptionParameters =
+    ClearWorkItemDescriptionParameters(
+        WorkItemId = "42",
+        CorrelationId = "corr-0002"
+    )
+
+let! cleared = WorkItem.ClearDescription(clearDescriptionParameters)
+
 let linksParameters =
     GetWorkItemLinksParameters(
         WorkItemId = "42",
-        CorrelationId = "corr-0002"
+        CorrelationId = "corr-0003"
     )
 
 let! links = WorkItem.GetLinks(linksParameters)
@@ -227,7 +257,7 @@ let deleteParameters =
         WorkItemId = "42",
         ArtifactId = "11111111-2222-3333-4444-555555555555",
         DeleteReason = "Superseded by the approved summary",
-        CorrelationId = "corr-0003"
+        CorrelationId = "corr-0004"
     )
 
 let! deletion = WorkItem.DeleteAttachment(deleteParameters)

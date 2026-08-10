@@ -1502,6 +1502,66 @@ function Get-RequiredJsonProperty {
     return $property.Value
 }
 
+function Test-GeneratedSdkMetadataFreshness {
+    param(
+        [string] $RepoRoot,
+        [string] $ProjectionRelativePath,
+        [string] $ProjectionSha256
+    )
+
+    $failureCountBefore = $script:Failures.Count
+    $reportPath = Join-Path $RepoRoot 'sdk/generated/generator-report.json'
+    if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+        Add-Failure "Missing SDK generator report: $reportPath"
+    }
+    else {
+        $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+        $reportProjection = [string] (Get-RequiredJsonProperty $report 'sourceProjection' 'SDK generator report')
+        $reportProjectionSha256 = [string] (Get-RequiredJsonProperty $report 'sourceProjectionSha256' 'SDK generator report')
+
+        if ($reportProjection -ne $ProjectionRelativePath) {
+            Add-Failure "SDK generator report sourceProjection is stale. Expected $ProjectionRelativePath, actual $reportProjection."
+        }
+
+        if ($reportProjectionSha256.ToLowerInvariant() -ne $ProjectionSha256) {
+            Add-Failure "SDK generator report sourceProjectionSha256 is stale for $ProjectionRelativePath. Expected $ProjectionSha256, actual $reportProjectionSha256."
+        }
+    }
+
+    $facadeMetadataFiles = @(
+        @{ Path = 'sdk/typescript/grace/src/internal/generated/grace-raw-client-metadata.ts'; SourceHashCount = 2 },
+        @{ Path = 'sdk/python/grace-sdk/src/grace_sdk/_generated/grace_raw_client_metadata.py'; SourceHashCount = 2 },
+        @{ Path = 'sdk/python/grace-sdk/src/grace_sdk/_generated/__init__.py'; SourceHashCount = 1 },
+        @{ Path = 'sdk/rust/grace-sdk/src/generated.rs'; SourceHashCount = 2 },
+        @{ Path = 'sdk/dotnet/Grace.Sdk.Harness/Internal/Generated/GraceRawClientMetadata.cs'; SourceHashCount = 2 }
+    )
+
+    foreach ($metadataFile in $facadeMetadataFiles) {
+        $metadataPath = Join-Path $RepoRoot $metadataFile.Path
+        if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+            Add-Failure "Missing generated SDK facade metadata: $($metadataFile.Path)"
+            continue
+        }
+
+        $sourceHashClaims = @([regex]::Matches((Get-Content -LiteralPath $metadataPath -Raw), '(?i)\b[0-9a-f]{64}\b') |
+            ForEach-Object { $_.Value.ToLowerInvariant() })
+        if ($sourceHashClaims.Count -ne $metadataFile.SourceHashCount) {
+            Add-Failure "Generated SDK facade metadata has an unexpected source-hash claim count for $($metadataFile.Path). Expected $($metadataFile.SourceHashCount), actual $($sourceHashClaims.Count)."
+            continue
+        }
+
+        foreach ($sourceHashClaim in $sourceHashClaims) {
+            if ($sourceHashClaim -ne $ProjectionSha256) {
+                Add-Failure "Generated SDK facade metadata is stale for $($metadataFile.Path). Expected $ProjectionSha256, actual $sourceHashClaim."
+            }
+        }
+    }
+
+    if ($script:Failures.Count -eq $failureCountBefore) {
+        Add-Pass 'SDK generator report and every generated facade metadata source-hash claim match the current OpenAPI projection.'
+    }
+}
+
 function Test-GeneratedClientMatrixProof {
     param([string] $RepoRoot)
 
@@ -1529,6 +1589,8 @@ function Test-GeneratedClientMatrixProof {
         if ($actualProjectionHash -ne $recordedProjectionHash.ToLowerInvariant()) {
             Add-Failure "Generator matrix evidence is stale for $projectionRelativePath. Expected $recordedProjectionHash, actual $actualProjectionHash."
         }
+
+        Test-GeneratedSdkMetadataFreshness $RepoRoot ([string] $projectionRelativePath) $actualProjectionHash
     }
 
     $acceptedTier = [string] (Get-RequiredJsonProperty $evidence 'acceptedTier' 'Generator matrix evidence')

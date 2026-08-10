@@ -58,6 +58,9 @@ SetWorkItemDescriptionParameters:
           description: The complete replacement description as UTF-8 text.
       required:
         - Text
+ClearWorkItemDescriptionParameters:
+  allOf:
+    - $ref: '#/WorkItemParameters'
 ArtifactDeletionResult:
   type: object
   properties:

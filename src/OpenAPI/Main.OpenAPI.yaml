@@ -101,6 +101,8 @@ paths:
     $ref: './WorkItem.Paths.OpenAPI.yaml#/~1work~1attachments~1undelete'
   /work/description/set:
     $ref: './WorkItem.Paths.OpenAPI.yaml#/~1work~1description~1set'
+  /work/description/clear:
+    $ref: './WorkItem.Paths.OpenAPI.yaml#/~1work~1description~1clear'
   /branch/create:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1create'
   /branch/assign:

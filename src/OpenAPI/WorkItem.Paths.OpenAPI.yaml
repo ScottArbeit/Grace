@@ -59,3 +59,23 @@
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
         $ref: './Responses.OpenAPI.yaml#/500'
+'/work/description/clear':
+  post:
+    tags:
+      - Work items
+    summary: Clear a work-item description.
+    description: Appends a new immutable empty description without deleting or exposing prior description history.
+    operationId: ClearWorkItemDescription
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './WorkItem.Components.OpenAPI.yaml#/ClearWorkItemDescriptionParameters'
+    responses:
+      '200':
+        $ref: './WorkItem.Components.OpenAPI.yaml#/StringResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'

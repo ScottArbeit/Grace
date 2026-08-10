@@ -1537,6 +1537,9 @@ module Application =
                                route "/description/set" (composeHandlers requireRepositoryWrite WorkItem.SetDescription)
                                |> addMetadata typeof<WorkItem.SetWorkItemDescriptionParameters>
 
+                               route "/description/clear" (composeHandlers requireRepositoryWrite WorkItem.ClearDescription)
+                               |> addMetadata typeof<WorkItem.ClearWorkItemDescriptionParameters>
+
                                route "/add-summary" (composeHandlers requireRepositoryWrite WorkItem.AddSummary)
                                |> addMetadata typeof<WorkItem.AddSummaryParameters>
 

@@ -72,6 +72,7 @@ __all__ = [
     "ChangeType",
     "ClaimReuseRangesParameters",
     "ClaimedReuseRange",
+    "ClearWorkItemDescriptionParameters",
     "CommonParameters",
     "ConfirmContentBlockUploadParameters",
     "ConfirmedBlockUpload",
@@ -339,6 +340,7 @@ from grace_generated_openapi_probe.models.branch_return_value import BranchRetur
 from grace_generated_openapi_probe.models.change_type import ChangeType as ChangeType
 from grace_generated_openapi_probe.models.claim_reuse_ranges_parameters import ClaimReuseRangesParameters as ClaimReuseRangesParameters
 from grace_generated_openapi_probe.models.claimed_reuse_range import ClaimedReuseRange as ClaimedReuseRange
+from grace_generated_openapi_probe.models.clear_work_item_description_parameters import ClearWorkItemDescriptionParameters as ClearWorkItemDescriptionParameters
 from grace_generated_openapi_probe.models.common_parameters import CommonParameters as CommonParameters
 from grace_generated_openapi_probe.models.confirm_content_block_upload_parameters import ConfirmContentBlockUploadParameters as ConfirmContentBlockUploadParameters
 from grace_generated_openapi_probe.models.confirmed_block_upload import ConfirmedBlockUpload as ConfirmedBlockUpload

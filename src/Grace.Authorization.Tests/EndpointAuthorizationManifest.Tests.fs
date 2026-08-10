@@ -447,6 +447,8 @@ type EndpointAuthorizationManifestTests() =
     member _.SelectedWorkItemRoutesUseExpectedPolicies() =
         [
             "POST", "/work/add-summary"
+            "POST", "/work/description/clear"
+            "POST", "/work/description/set"
             "POST", "/work/link/artifact"
             "POST", "/work/link/promotion-set"
             "POST", "/work/link/reference"

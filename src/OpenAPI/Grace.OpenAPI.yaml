@@ -598,6 +598,26 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /work/description/clear:
+    post:
+      tags:
+        - Work items
+      summary: Clear a work-item description.
+      description: Appends a new immutable empty description without deleting or exposing prior description history.
+      operationId: ClearWorkItemDescription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClearWorkItemDescriptionParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/StringResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /branch/create:
     post:
       tags:
@@ -5558,6 +5578,9 @@ components:
               description: Work-item GUID or positive repository-scoped number.
           required:
             - WorkItemId
+    ClearWorkItemDescriptionParameters:
+      allOf:
+        - $ref: '#/components/schemas/WorkItemParameters'
     BranchCommandReturnValue:
       description: Grace response envelope returned by branch command endpoints.
       type: object

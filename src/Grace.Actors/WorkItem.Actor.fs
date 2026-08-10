@@ -161,6 +161,7 @@ module WorkItem =
                                     return Created(workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description)
                                 | SetTitle title -> return TitleSet title
                                 | SetDescription description -> return DescriptionSet description
+                                | ClearDescription description -> return DescriptionCleared description
                                 | SetStatus status -> return StatusSet status
                                 | AddParticipant userId -> return ParticipantAdded userId
                                 | RemoveParticipant userId -> return ParticipantRemoved userId

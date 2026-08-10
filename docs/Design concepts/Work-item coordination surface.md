@@ -67,7 +67,7 @@ must not silently change their product behavior.
 
 | Section | Decisions required before planning | User-visible outcome | Tracking shape |
 | ------- | ---------------------------------- | -------------------- | -------------- |
-| A. Work-item body mutation | DEC-005, DEC-011, DEC-006, DEC-007 | Replace the issue-like Markdown body through immutable repository-scoped content, with explicit clearing and append-order last-write-wins. | Plan-ready; #825 coordinates delivery and #826 is the inline create/set/show tracer. |
+| A. Work-item body mutation | DEC-005, DEC-011, DEC-006, DEC-007 | Replace the issue-like Markdown body through immutable repository-scoped content, with explicit clearing and append-order last-write-wins. | Plan-ready; #825 coordinates delivery, #826 is the inline create/set/show tracer, and #827 adds explicit clear with retained prior content. |
 | B. Immutable comments | Accepted DEC-003 and DEC-004, plus DEC-008 and DEC-012 | Add, list, and explicitly correct chronological comments without replies, resolution, or direct editing. | Start after Section A establishes reusable immutable-content and append-order patterns; split only if the selected lifecycle adds another state machine. |
 | C. Progress inspection | DEC-010 | Inspect a truthful read-only projection of meaningful work-item and collaboration activity. | One projection-focused section after update and comment events are stable. |
 | D. Repository list and search | DEC-009 | Find work items within a repository using only stable, visible fields selected for V1. | One bounded discovery section; defer organization aggregation and comment-content search. |
@@ -315,15 +315,17 @@ epic review and validation gates.
 
 ## Candidate value-bearing tracer
 
-The #826 tracer is one inline whole-body replacement through the nearest stable public boundary:
+The #826 tracer is one inline whole-body replacement through the nearest stable public boundary. #827 extends that
+same boundary with explicit clear while retaining prior immutable content:
 
 1. Create or resolve a work item and set its Markdown body with inline `--text`.
 1. Observe one successful durable transition and a hydrated public description with no storage facts.
 1. Set two different descriptions and observe that the last accepted actor append is current.
 1. Retry one operation identity and prove the immutable object is verified rather than silently reused for different
    content.
-1. Keep help, schema, examples, and parse failures inert. Explicit clear and the remaining accepted long-input forms are
-   separate Section A delivery obligations; clear retains earlier immutable objects.
+1. Keep help, schema, examples, and parse failures inert. Clear appends an empty immutable Description without a blob,
+   retains earlier objects, and does not expose history. The remaining accepted long-input forms are separate Section A
+   delivery obligations.
 
 This tracer crosses shared contracts, actor persistence, server validation, SDK, CLI, public output, tests, and docs. It
 does not require comments, activity aggregation, or search, so evidence from it can refine those later decisions.
