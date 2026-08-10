@@ -8,6 +8,7 @@ open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.TextContent
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
@@ -201,6 +202,28 @@ type AutomationEventingTests() =
         Assert.That(envelope.IsSome, Is.True)
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.AgentSummaryAdded))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    /// Verifies description-bearing WorkItem events never enter automation or SignalR envelopes with storage implementation data.
+    [<Test>]
+    member _.WorkItemDescriptionEventsAreSuppressedFromAutomationEnvelopes() =
+        let repositoryId = Guid.NewGuid()
+        let textContent: TextContent = { TextContentId = Guid.NewGuid(); Blake3Hash = Blake3Hash(String.replicate 64 "a"); Utf8ByteLength = 42L }
+
+        let description: Grace.Types.TextContent.Description = { DescriptionId = Guid.NewGuid(); TextContent = Some textContent }
+        let clearedDescription: Grace.Types.TextContent.Description = { DescriptionId = Guid.NewGuid(); TextContent = Microsoft.FSharp.Core.Option.None }
+
+        let events =
+            [
+                WorkItemEventType.Created(Guid.NewGuid(), 1L, Guid.NewGuid(), Guid.NewGuid(), repositoryId, "title", Some description)
+                WorkItemEventType.DescriptionSet description
+                WorkItemEventType.DescriptionCleared clearedDescription
+            ]
+
+        events
+        |> List.iter (fun eventType ->
+            let workItemEvent: WorkItemEvent = { Event = eventType; Metadata = metadata "corr-work-item-description" repositoryId }
+            let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.WorkItemEvent workItemEvent)
+            Assert.That(envelope.IsNone, Is.True, "Description events must not expose immutable storage facts through automation or SignalR."))
 
     /// Verifies that agent Session Envelope Retains Correlation And Identity Metadata.
     [<Test>]

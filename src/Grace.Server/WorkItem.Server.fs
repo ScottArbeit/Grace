@@ -761,7 +761,16 @@ module WorkItem =
     let internal conflictingDescriptionCorrelationError correlationId =
         GraceError.Create "The correlation ID cannot be reused for a different or superseded work-item description operation." correlationId
 
-    /// Classifies only actor validation failures that prove no description event was appended before the rejection.
+    /// Verifies an exact replay object's immutable bytes, recreating only a missing deterministic object before replay success.
+    let private ensureExactDescriptionStorage repositoryDto repositoryId workItemId correlationId text expectedDescription =
+        task {
+            match! TextContentStorage.write repositoryDto repositoryId workItemId correlationId text with
+            | Ok (actualDescription, _) when actualDescription = expectedDescription -> return Ok()
+            | Ok _ -> return Error(GraceError.Create "Text-content replay identity did not reproduce the expected immutable description." correlationId)
+            | Error error -> return Error error
+        }
+
+    /// Classifies actor validation failures that prove a create request did not append its event before rejection.
     let internal classifyDescriptionAppendFailure (graceError: GraceError) =
         if
             isDuplicateCorrelationIdError graceError
@@ -772,7 +781,7 @@ module WorkItem =
         else
             AmbiguousAppendOutcome
 
-    /// Deletes an object created by this attempt only when the actor rejection is proven to precede event append.
+    /// Removes a create-only immutable object after a proven rejection before any WorkItem can reference that object identity.
     let private cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId =
         task {
             match description.TextContent, wasCreated with
@@ -1396,9 +1405,23 @@ module WorkItem =
                                     correlationId
                                 with
                             | ExactDescriptionReplay ->
-                                return!
-                                    context
-                                    |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                                match!
+                                    ensureExactDescriptionStorage
+                                        repositoryDto
+                                        graceIds.RepositoryId
+                                        workItemId
+                                        correlationId
+                                        parameters.Text
+                                        expectedDescription
+                                    with
+                                | Ok () ->
+                                    return!
+                                        context
+                                        |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                | Error error -> return! context |> result400BadRequest error
                             | ConflictingDescriptionCorrelation ->
                                 return!
                                     context
@@ -1425,9 +1448,20 @@ module WorkItem =
                                             correlationId
                                         with
                                     | ExactDescriptionReplay ->
-                                        return!
-                                            context
-                                            |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                        match!
+                                            ensureExactDescriptionStorage
+                                                repositoryDto
+                                                graceIds.RepositoryId
+                                                workItemId
+                                                correlationId
+                                                parameters.Text
+                                                expectedDescription
+                                            with
+                                        | Ok () ->
+                                            return!
+                                                context
+                                                |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                        | Error error -> return! context |> result400BadRequest error
                                     | ConflictingDescriptionCorrelation ->
                                         return!
                                             context
@@ -1441,10 +1475,7 @@ module WorkItem =
                                             let! stateBeforeAppendResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
 
                                             match stateBeforeAppendResult with
-                                            | Error error ->
-                                                do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
-
-                                                return! context |> result400BadRequest error
+                                            | Error error -> return! context |> result400BadRequest error
                                             | Ok stateBeforeAppend ->
                                                 let! eventsBeforeAppend = actorProxy.GetEvents correlationId
 
@@ -1463,8 +1494,6 @@ module WorkItem =
                                                         context
                                                         |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
                                                 | ConflictingDescriptionCorrelation ->
-                                                    do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
-
                                                     return!
                                                         context
                                                         |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
@@ -1477,10 +1506,44 @@ module WorkItem =
                                                             context
                                                             |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
                                                     | Error error ->
-                                                        if classifyDescriptionAppendFailure error = ProvenPreAppendRejection then
-                                                            do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
+                                                        let! stateAfterAppendResult =
+                                                            getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
 
-                                                        return! context |> result400BadRequest error
+                                                        match stateAfterAppendResult with
+                                                        | Error _ -> return! context |> result400BadRequest error
+                                                        | Ok stateAfterAppend ->
+                                                            let! eventsAfterAppend = actorProxy.GetEvents correlationId
+
+                                                            match
+                                                                classifyDescriptionReplay
+                                                                    SetDescription
+                                                                    workItemId
+                                                                    graceIds.RepositoryId
+                                                                    (Some expectedDescription)
+                                                                    stateAfterAppend
+                                                                    eventsAfterAppend
+                                                                    correlationId
+                                                                with
+                                                            | ExactDescriptionReplay ->
+                                                                match!
+                                                                    ensureExactDescriptionStorage
+                                                                        repositoryDto
+                                                                        graceIds.RepositoryId
+                                                                        workItemId
+                                                                        correlationId
+                                                                        parameters.Text
+                                                                        expectedDescription
+                                                                    with
+                                                                | Ok () ->
+                                                                    return!
+                                                                        context
+                                                                        |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                                                | Error storageError -> return! context |> result400BadRequest storageError
+                                                            | ConflictingDescriptionCorrelation ->
+                                                                return!
+                                                                    context
+                                                                    |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                                            | FreshDescriptionOperation -> return! context |> result400BadRequest error
             }
 
     /// Appends an immutable empty description without reading, writing, or deleting text-content objects.

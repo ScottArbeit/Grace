@@ -181,6 +181,27 @@ module private WorkItemIntegrationHelpers =
             return exists.Value
         }
 
+    /// Removes one deterministic TextContent object so an exact replay must recreate its immutable storage before succeeding.
+    let deleteTextContentObjectAsync (repositoryId: string) (textContentId: TextContentId) =
+        task {
+            let hostState = getSharedHostState ()
+            let! containerClient = AspireTestHost.getAzureStorageContainerClientAsync hostState (repositoryId.ToLowerInvariant())
+            let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+            let! _ = blobClient.DeleteIfExistsAsync()
+            return ()
+        }
+
+    /// Corrupts one deterministic TextContent object so exact replay cannot report success without verified immutable bytes.
+    let overwriteTextContentObjectAsync (repositoryId: string) (textContentId: TextContentId) =
+        task {
+            let hostState = getSharedHostState ()
+            let! containerClient = AspireTestHost.getAzureStorageContainerClientAsync hostState (repositoryId.ToLowerInvariant())
+            let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+            use corrupt = new MemoryStream([| 0uy; 1uy; 2uy |])
+            let! _ = blobClient.UploadAsync(corrupt, overwrite = true)
+            return ()
+        }
+
     /// Reads one reminder through the hosted server so its terminal actor state is observed independently of Artifact cleanup.
     let getReminderAsync (client: HttpClient) (repositoryId: string) (reminderId: Guid) =
         task {
@@ -1293,6 +1314,37 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(conflictingCreateRetry.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             Assert.That(supersededSetRetry.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             Assert.That(current.Description, Is.EqualTo("later set description"))
+        }
+
+    /// Verifies exact description replay recreates only a missing deterministic object and rejects corruption without appending another event.
+    [<Test>]
+    member _.ExactDescriptionReplayRecreatesMissingStorageAndRejectsCorruption() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-replay-storage"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description replay storage"
+            let correlationId = "corr-description-replay-storage"
+            let text = "immutable replay text"
+            let workItemGuid = Guid.Parse workItemId
+            let _, textContentId = Grace.Server.TextContentStorage.createIds (Guid.Parse repositoryId) workItemGuid correlationId
+
+            let! firstSet = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlationId
+            firstSet.EnsureSuccessStatusCode() |> ignore
+            let! eventsBeforeReplay = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            do! WorkItemIntegrationHelpers.deleteTextContentObjectAsync repositoryId textContentId
+            let! missingReplay = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlationId
+            missingReplay.EnsureSuccessStatusCode() |> ignore
+            let! recreated = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId textContentId
+            let! hydratedAfterRecreate = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            do! WorkItemIntegrationHelpers.overwriteTextContentObjectAsync repositoryId textContentId
+            let! corruptReplay = WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlationId
+            let! eventsAfterCorruptReplay = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            Assert.That(recreated, Is.True)
+            Assert.That(hydratedAfterRecreate.Description, Is.EqualTo(text))
+            Assert.That(corruptReplay.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(eventsAfterCorruptReplay, Is.EqualTo<WorkItemEvent>(eventsBeforeReplay))
         }
 
     /// Verifies the create then fetch by guid and number returns same work item scenario.

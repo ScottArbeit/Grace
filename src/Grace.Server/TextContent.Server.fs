@@ -59,9 +59,9 @@ module TextContentStorage =
         | Error error -> Error error
         | Ok maximum -> validateTextForMaximum maximum text
 
-    /// Derives a stable opaque identifier from repository, work item, operation, and purpose without using content hashes.
+    /// Derives a stable opaque identifier from the exact actor replay identity and purpose without using content hashes.
     let private deterministicId (repositoryId: RepositoryId) (workItemId: WorkItemId) (correlationId: CorrelationId) (purpose: string) =
-        let seed = $"{repositoryId:N}|{workItemId:N}|{correlationId.Trim().ToLowerInvariant()}|{purpose}"
+        let seed = $"{repositoryId:N}|{workItemId:N}|{correlationId}|{purpose}"
         let bytes = Encoding.UTF8.GetBytes(seed)
         let hash = System.Security.Cryptography.SHA256.HashData(bytes)
         Guid(hash[0..15])

@@ -30,6 +30,41 @@ module WorkItem =
         events
         |> Seq.exists (fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
 
+    /// Describes whether a WorkItem event candidate became durable before the actor can update its projection or publish it.
+    type internal WorkItemEventPersistenceOutcome =
+        | Persisted
+        | FailedRecovered of exn
+        | FailedUnrecoverable of writeError: exn * reloadError: exn
+
+    /// Persists a copied event stream so failed writes cannot leave an activation-only WorkItem event for later commands to publish.
+    let internal persistWorkItemEventWithDurableRecovery (state: IPersistentState<List<WorkItemEvent>>) workItemEvent =
+        task {
+            let originalEvents = state.State
+            let candidateEvents = List<WorkItemEvent>(originalEvents)
+            candidateEvents.Add(workItemEvent)
+            state.State <- candidateEvents
+
+            try
+                do! state.WriteStateAsync()
+                return Persisted
+            with
+            | writeError ->
+                try
+                    do! state.ReadStateAsync()
+                    return FailedRecovered writeError
+                with
+                | reloadError ->
+                    state.State <- originalEvents
+                    return FailedUnrecoverable(writeError, reloadError)
+        }
+
+    /// Indicates that a WorkItem actor must deactivate rather than continue from state that could not be reloaded after a write failure.
+    let internal workItemPersistenceRequiresDeactivation outcome =
+        match outcome with
+        | FailedUnrecoverable _ -> true
+        | Persisted
+        | FailedRecovered _ -> false
+
 
     /// Implements the Orleans grain for work item actor.
     type WorkItemActor([<PersistentState(StateName.WorkItem, Constants.GraceActorStorage)>] state: IPersistentState<List<WorkItemEvent>>) =
@@ -63,23 +98,27 @@ module WorkItem =
                 let correlationId = workItemEvent.Metadata.CorrelationId
 
                 try
-                    state.State.Add(workItemEvent)
-                    do! state.WriteStateAsync()
+                    match! persistWorkItemEventWithDurableRecovery state workItemEvent with
+                    | Persisted ->
+                        workItemState <-
+                            workItemState
+                            |> WorkItemState.UpdateState workItemEvent
 
-                    workItemState <-
-                        workItemState
-                        |> WorkItemState.UpdateState workItemEvent
+                        let graceEvent = GraceEvent.WorkItemEvent workItemEvent
+                        do! publishGraceEvent graceEvent workItemEvent.Metadata
 
-                    let graceEvent = GraceEvent.WorkItemEvent workItemEvent
-                    do! publishGraceEvent graceEvent workItemEvent.Metadata
+                        let returnValue =
+                            (GraceReturnValue.Create "Work item command succeeded." correlationId)
+                                .enhance(nameof RepositoryId, workItemState.WorkItem.RepositoryId)
+                                .enhance(nameof WorkItemId, workItemState.WorkItem.WorkItemId)
+                                .enhance (nameof WorkItemEventType, getDiscriminatedUnionFullName workItemEvent.Event)
 
-                    let returnValue =
-                        (GraceReturnValue.Create "Work item command succeeded." correlationId)
-                            .enhance(nameof RepositoryId, workItemState.WorkItem.RepositoryId)
-                            .enhance(nameof WorkItemId, workItemState.WorkItem.WorkItemId)
-                            .enhance (nameof WorkItemEventType, getDiscriminatedUnionFullName workItemEvent.Event)
+                        return Ok returnValue
+                    | FailedRecovered writeError -> return raise writeError
+                    | FailedUnrecoverable (writeError, reloadError) as outcome ->
+                        if workItemPersistenceRequiresDeactivation outcome then this.DeactivateOnIdle()
 
-                    return Ok returnValue
+                        return raise (AggregateException("WorkItem event persistence failed and durable state could not be reloaded.", writeError, reloadError))
                 with
                 | ex ->
                     log.LogError(

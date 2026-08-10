@@ -2,6 +2,7 @@ namespace Grace.Server.Tests
 
 open FsCheck
 open FsCheck.NUnit
+open Grace.Actors.WorkItem
 open Grace.Server
 open Grace.Shared.Validation.Utilities
 open Grace.Types.Artifact
@@ -15,6 +16,46 @@ open NodaTime
 open System
 open System.Collections.Generic
 open System.Text
+open System.Threading.Tasks
+open Orleans.Runtime
+
+/// Simulates WorkItem persistence with a definite first-write failure and durable-state reload.
+type private ScriptedWorkItemEventState(initialDurableEvents: seq<WorkItemEvent>, failedWrites: int) =
+    let mutable durableEvents = List<WorkItemEvent>(initialDurableEvents)
+    let mutable activationEvents = List<WorkItemEvent>(durableEvents)
+    let mutable remainingFailedWrites = failedWrites
+    let mutable writeCount = 0
+
+    member _.WriteCount = writeCount
+
+    member _.CreateReactivatedState() = ScriptedWorkItemEventState(durableEvents, 0)
+
+    interface IPersistentState<List<WorkItemEvent>> with
+        member _.State
+            with get () = activationEvents
+            and set value = activationEvents <- value
+
+        member _.Etag = null
+        member _.RecordExists = durableEvents.Count > 0
+
+        member _.ReadStateAsync() =
+            activationEvents <- List<WorkItemEvent>(durableEvents)
+            Task.CompletedTask
+
+        member _.WriteStateAsync() =
+            writeCount <- writeCount + 1
+
+            if remainingFailedWrites > 0 then
+                remainingFailedWrites <- remainingFailedWrites - 1
+                Task.FromException(InvalidOperationException("simulated WorkItem persistence failure"))
+            else
+                durableEvents <- List<WorkItemEvent>(activationEvents)
+                Task.CompletedTask
+
+        member _.ClearStateAsync() =
+            durableEvents.Clear()
+            activationEvents.Clear()
+            Task.CompletedTask
 
 /// Covers work Item Server Unit behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
@@ -698,15 +739,31 @@ type WorkItemServerUnitTests() =
         Assert.That(setReuse, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
         Assert.That(superseded, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
 
-    /// Verifies an ambiguous actor-write fault retains its retry object while known pre-append rejection permits cleanup.
+    /// Verifies a definite persistence failure cannot leave a ghost WorkItem event for a later retry to publish or persist.
     [<Test>]
-    member _.DescriptionAppendFailureClassificationRetainsAmbiguousRetryEvidence() =
-        let correlationId = "corr-description-fault"
+    member _.FailedWorkItemPersistenceDoesNotLeakAGhostEventAndRetryPersistsExactlyOnce() =
+        task {
+            let event = { Event = TitleSet "persist once"; Metadata = metadata (Instant.FromUtc(2026, 8, 10, 0, 0)) }
+            let scriptedState = ScriptedWorkItemEventState(Seq.empty, 1)
+            let state = scriptedState :> IPersistentState<List<WorkItemEvent>>
 
-        let ambiguous = GraceError.Create (WorkItemError.getErrorMessage WorkItemError.FailedWhileApplyingEvent) correlationId
+            match! persistWorkItemEventWithDurableRecovery state event with
+            | FailedRecovered error -> Assert.That(error.Message, Is.EqualTo("simulated WorkItem persistence failure"))
+            | outcome -> Assert.Fail($"Expected a recovered failed write, but got {outcome}.")
 
-        let definite = GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists) correlationId
+            Assert.That(state.State, Is.Empty, "A failed event must not remain visible to this activation.")
 
-        Assert.That(WorkItem.classifyDescriptionAppendFailure ambiguous, Is.EqualTo(WorkItem.AmbiguousAppendOutcome))
+            let reactivatedAfterFailure = scriptedState.CreateReactivatedState() :> IPersistentState<List<WorkItemEvent>>
+            Assert.That(reactivatedAfterFailure.State, Is.Empty, "A failed event must not become durable for a later activation.")
 
-        Assert.That(WorkItem.classifyDescriptionAppendFailure definite, Is.EqualTo(WorkItem.ProvenPreAppendRejection))
+            match! persistWorkItemEventWithDurableRecovery state event with
+            | Persisted -> ()
+            | outcome -> Assert.Fail($"The retry must persist exactly once, but got {outcome}.")
+
+            Assert.That(scriptedState.WriteCount, Is.EqualTo(2))
+            Assert.That(state.State, Has.Count.EqualTo(1))
+
+            let reactivatedAfterRetry = scriptedState.CreateReactivatedState() :> IPersistentState<List<WorkItemEvent>>
+            Assert.That(reactivatedAfterRetry.State, Has.Count.EqualTo(1))
+            Assert.That(reactivatedAfterRetry.State[0], Is.EqualTo(event))
+        }

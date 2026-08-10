@@ -105,16 +105,22 @@ type TextContentServerTests() =
         | Ok value -> Assert.Fail($"Expected length mismatch to fail, but got '{value}'.")
         | Error error -> Assert.That(error, Does.Contain("length"))
 
-    /// Verifies that retry identity is stable for the same normalized correlation and separates each text purpose.
+    /// Verifies retry identity uses exact actor correlation text, including case and whitespace, while separating purposes.
     [<Test>]
     member _.TextContentRetryIdentityIsStableAndPurposeSeparated() =
         let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
         let workItemId = Guid.Parse("6d742a8e-5fd6-4d89-81cd-7ea3005570ef")
         let firstDescriptionId, firstContentId = TextContentStorage.createIds repositoryId workItemId "corr-description"
-        let replayDescriptionId, replayContentId = TextContentStorage.createIds repositoryId workItemId " CoRR-DeScRiPtIoN "
+        let replayDescriptionId, replayContentId = TextContentStorage.createIds repositoryId workItemId "corr-description"
+        let caseDistinctDescriptionId, caseDistinctContentId = TextContentStorage.createIds repositoryId workItemId "Corr-Description"
+        let whitespaceDistinctDescriptionId, whitespaceDistinctContentId = TextContentStorage.createIds repositoryId workItemId " corr-description "
 
         Assert.That(replayDescriptionId, Is.EqualTo(firstDescriptionId))
         Assert.That(replayContentId, Is.EqualTo(firstContentId))
+        Assert.That(caseDistinctDescriptionId, Is.Not.EqualTo(firstDescriptionId))
+        Assert.That(caseDistinctContentId, Is.Not.EqualTo(firstContentId))
+        Assert.That(whitespaceDistinctDescriptionId, Is.Not.EqualTo(firstDescriptionId))
+        Assert.That(whitespaceDistinctContentId, Is.Not.EqualTo(firstContentId))
         Assert.That(firstDescriptionId, Is.Not.EqualTo(firstContentId))
 
         let nextDescriptionId, nextContentId = TextContentStorage.createIds repositoryId workItemId "corr-description-next"
