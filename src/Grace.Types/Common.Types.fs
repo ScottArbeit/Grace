@@ -109,6 +109,12 @@ module Common =
     /// The Id of an artifact.
     type ArtifactId = Guid
 
+    /// The opaque identity of one immutable repository-scoped text object.
+    type TextContentId = Guid
+
+    /// The identity of one immutable work-item description event payload.
+    type DescriptionId = Guid
+
     /// The text of the reference, generally submitted as the -m parameter in `grace save/checkpoint/commit/etc.`.
     type ReferenceText = string
 

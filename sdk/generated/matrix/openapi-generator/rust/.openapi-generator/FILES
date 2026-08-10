@@ -209,6 +209,7 @@ docs/SetRepositoryNameParameters.md
 docs/SetRepositoryStatusParameters.md
 docs/SetRepositoryVisibilityParameters.md
 docs/SetSaveDaysParameters.md
+docs/SetWorkItemDescriptionParameters.md
 docs/StartManifestUploadSessionParameters.md
 docs/StartUploadSession.md
 docs/StorageParameters.md
@@ -466,6 +467,7 @@ src/models/set_repository_name_parameters.rs
 src/models/set_repository_status_parameters.rs
 src/models/set_repository_visibility_parameters.rs
 src/models/set_save_days_parameters.rs
+src/models/set_work_item_description_parameters.rs
 src/models/start_manifest_upload_session_parameters.rs
 src/models/start_upload_session.rs
 src/models/storage_parameters.rs

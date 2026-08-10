@@ -41,7 +41,7 @@ module WorkItem =
 
         let mutable currentCommand = String.Empty
 
-        let mutable workItemDto = WorkItemDto.Default
+        let mutable workItemState = WorkItemState.Default
 
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
@@ -51,9 +51,9 @@ module WorkItem =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            workItemDto <-
+            workItemState <-
                 state.State
-                |> Seq.fold (fun dto ev -> WorkItemDto.UpdateDto ev dto) workItemDto
+                |> Seq.fold (fun currentState ev -> WorkItemState.UpdateState ev currentState) workItemState
 
             Task.CompletedTask
 
@@ -66,15 +66,17 @@ module WorkItem =
                     state.State.Add(workItemEvent)
                     do! state.WriteStateAsync()
 
-                    workItemDto <- workItemDto |> WorkItemDto.UpdateDto workItemEvent
+                    workItemState <-
+                        workItemState
+                        |> WorkItemState.UpdateState workItemEvent
 
                     let graceEvent = GraceEvent.WorkItemEvent workItemEvent
                     do! publishGraceEvent graceEvent workItemEvent.Metadata
 
                     let returnValue =
                         (GraceReturnValue.Create "Work item command succeeded." correlationId)
-                            .enhance(nameof RepositoryId, workItemDto.RepositoryId)
-                            .enhance(nameof WorkItemId, workItemDto.WorkItemId)
+                            .enhance(nameof RepositoryId, workItemState.WorkItem.RepositoryId)
+                            .enhance(nameof WorkItemId, workItemState.WorkItem.WorkItemId)
                             .enhance (nameof WorkItemEventType, getDiscriminatedUnionFullName workItemEvent.Event)
 
                     return Ok returnValue
@@ -87,19 +89,19 @@ module WorkItem =
                         getMachineName,
                         correlationId,
                         getDiscriminatedUnionCaseName workItemEvent.Event,
-                        workItemDto.WorkItemId
+                        workItemState.WorkItem.WorkItemId
                     )
 
                     let graceError =
                         (GraceError.CreateWithException ex (WorkItemError.getErrorMessage WorkItemError.FailedWhileApplyingEvent) correlationId)
-                            .enhance (nameof WorkItemId, workItemDto.WorkItemId)
+                            .enhance (nameof WorkItemId, workItemState.WorkItem.WorkItemId)
 
                     return Error graceError
             }
 
         interface IHasRepositoryId with
             /// Returns the repository id recorded in this WorkItem actor state.
-            member this.GetRepositoryId correlationId = workItemDto.RepositoryId |> returnTask
+            member this.GetRepositoryId correlationId = workItemState.WorkItem.RepositoryId |> returnTask
 
         interface IWorkItemActor with
             /// Reports whether this WorkItem actor has persisted state.
@@ -107,13 +109,18 @@ module WorkItem =
                 this.correlationId <- correlationId
 
                 not
-                <| workItemDto.WorkItemId.Equals(WorkItemDto.Default.WorkItemId)
+                <| workItemState.WorkItem.WorkItemId.Equals(WorkItemDto.Default.WorkItemId)
                 |> returnTask
 
             /// Returns the current WorkItem actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
-                workItemDto |> returnTask
+                workItemState.WorkItem |> returnTask
+
+            /// Returns the actor-only description reference for server hydration without exposing storage facts publicly.
+            member this.GetState correlationId =
+                this.correlationId <- correlationId
+                workItemState |> returnTask
 
             /// Returns the persisted WorkItem event stream for replay or audit.
             member this.GetEvents correlationId =
@@ -132,12 +139,13 @@ module WorkItem =
                         else
                             match command with
                             | Create _ ->
-                                if workItemDto.WorkItemId <> WorkItemId.Empty then
+                                if workItemState.WorkItem.WorkItemId
+                                   <> WorkItemId.Empty then
                                     return Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists) metadata.CorrelationId)
                                 else
                                     return Ok command
                             | _ ->
-                                if workItemDto.WorkItemId = WorkItemId.Empty then
+                                if workItemState.WorkItem.WorkItemId = WorkItemId.Empty then
                                     return Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist) metadata.CorrelationId)
                                 else
                                     return Ok command

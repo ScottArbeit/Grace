@@ -394,6 +394,8 @@ pub mod set_repository_visibility_parameters;
 pub use self::set_repository_visibility_parameters::SetRepositoryVisibilityParameters;
 pub mod set_save_days_parameters;
 pub use self::set_save_days_parameters::SetSaveDaysParameters;
+pub mod set_work_item_description_parameters;
+pub use self::set_work_item_description_parameters::SetWorkItemDescriptionParameters;
 pub mod start_manifest_upload_session_parameters;
 pub use self::start_manifest_upload_session_parameters::StartManifestUploadSessionParameters;
 pub mod start_upload_session;

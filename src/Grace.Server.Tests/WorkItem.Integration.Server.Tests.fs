@@ -201,6 +201,19 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/update", createJsonContent parameters)
         }
 
+    /// Sets one work-item description through the public route for hosted integration scenarios.
+    let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
+        task {
+            let parameters = Parameters.WorkItem.SetWorkItemDescriptionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.Text <- text
+            parameters.CorrelationId <- generateCorrelationId ()
+            return! client.PostAsync("/work/description/set", createJsonContent parameters)
+        }
+
     /// Gets work item response from the running test server.
     let getWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
@@ -706,6 +719,30 @@ module private WorkItemIntegrationHelpers =
 /// Covers work item number and links scenarios.
 [<NonParallelizable>]
 type WorkItemNumberAndLinksIntegrationTests() =
+
+    /// Verifies that immutable description writes hydrate the final accepted append for GUID and numeric reads.
+    [<Test>]
+    member _.DescriptionSetHydratesTheLastAcceptedAppend() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-set"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description set"
+
+            let! firstResponse = WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryId workItemId "# First description"
+
+            firstResponse.EnsureSuccessStatusCode() |> ignore
+
+            let! byGuid = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            let! secondResponse =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryId (byGuid.WorkItemNumber.ToString()) "# Final description"
+
+            secondResponse.EnsureSuccessStatusCode() |> ignore
+
+            let! byNumber = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId (byGuid.WorkItemNumber.ToString())
+
+            Assert.That(byGuid.Description, Is.EqualTo("# First description"))
+            Assert.That(byNumber.Description, Is.EqualTo("# Final description"))
+        }
 
     /// Verifies the create then fetch by guid and number returns same work item scenario.
     [<Test>]

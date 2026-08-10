@@ -710,6 +710,9 @@ module Interfaces =
         /// Returns the current state of the work item.
         abstract member Get: correlationId: CorrelationId -> Task<WorkItemDto>
 
+        /// Returns the actor-only state required to hydrate immutable description text at the server boundary.
+        abstract member GetState: correlationId: CorrelationId -> Task<WorkItemState>
+
         /// Returns the list of events handled by this work item.
         abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<WorkItemEvent>>
 

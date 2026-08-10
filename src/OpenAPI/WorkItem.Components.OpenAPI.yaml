@@ -47,6 +47,17 @@ UndeleteWorkItemAttachmentParameters:
           format: uuid
       required:
         - ArtifactId
+SetWorkItemDescriptionParameters:
+  allOf:
+    - $ref: '#/WorkItemParameters'
+    - type: object
+      properties:
+        Text:
+          type: string
+          minLength: 1
+          description: The complete replacement description as UTF-8 text.
+      required:
+        - Text
 ArtifactDeletionResult:
   type: object
   properties:

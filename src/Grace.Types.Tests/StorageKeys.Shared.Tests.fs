@@ -1,13 +1,22 @@
 namespace Grace.Types.Tests
 
-open Grace.Shared
 open Grace.Types.Common
+open Grace.Shared
 open NUnit.Framework
 open System
 
 /// Contains tests covering storage keys shared behavior.
 [<Parallelizable(ParallelScope.All)>]
 type StorageKeysSharedTests() =
+    /// Verifies that immutable text content objects use an opaque repository-independent key shape.
+    [<Test>]
+    member _.TextContentObjectKeyUsesOpaqueIdentifier() =
+        let textContentId = Guid.Parse("7d535f96-e634-4313-b5ff-d9293ee9db57")
+
+        let key = StorageKeys.textContentObjectKey textContentId
+
+        Assert.That(key, Is.EqualTo("text-content/7d535f96e6344313b5ffd9293ee9db57"))
+
     /// Verifies that whole file content object key matches existing blob key shape.
     [<Test>]
     member _.WholeFileContentObjectKeyMatchesExistingBlobKeyShape() =

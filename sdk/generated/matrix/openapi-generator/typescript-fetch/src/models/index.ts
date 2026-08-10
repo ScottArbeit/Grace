@@ -198,6 +198,7 @@ export * from './SetRepositoryNameParameters';
 export * from './SetRepositoryStatusParameters';
 export * from './SetRepositoryVisibilityParameters';
 export * from './SetSaveDaysParameters';
+export * from './SetWorkItemDescriptionParameters';
 export * from './StartManifestUploadSessionParameters';
 export * from './StartUploadSession';
 export * from './StorageParameters';

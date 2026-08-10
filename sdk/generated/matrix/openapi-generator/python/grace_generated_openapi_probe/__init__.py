@@ -236,6 +236,7 @@ __all__ = [
     "SetRepositoryStatusParameters",
     "SetRepositoryVisibilityParameters",
     "SetSaveDaysParameters",
+    "SetWorkItemDescriptionParameters",
     "StartManifestUploadSessionParameters",
     "StartUploadSession",
     "StorageParameters",
@@ -502,6 +503,7 @@ from grace_generated_openapi_probe.models.set_repository_name_parameters import 
 from grace_generated_openapi_probe.models.set_repository_status_parameters import SetRepositoryStatusParameters as SetRepositoryStatusParameters
 from grace_generated_openapi_probe.models.set_repository_visibility_parameters import SetRepositoryVisibilityParameters as SetRepositoryVisibilityParameters
 from grace_generated_openapi_probe.models.set_save_days_parameters import SetSaveDaysParameters as SetSaveDaysParameters
+from grace_generated_openapi_probe.models.set_work_item_description_parameters import SetWorkItemDescriptionParameters as SetWorkItemDescriptionParameters
 from grace_generated_openapi_probe.models.start_manifest_upload_session_parameters import StartManifestUploadSessionParameters as StartManifestUploadSessionParameters
 from grace_generated_openapi_probe.models.start_upload_session import StartUploadSession as StartUploadSession
 from grace_generated_openapi_probe.models.storage_parameters import StorageParameters as StorageParameters

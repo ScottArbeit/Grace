@@ -73,7 +73,6 @@ type WorkItemServerUnitTests() =
             UpdateWorkItemParameters(
                 WorkItemId = Guid.NewGuid().ToString(),
                 Title = "Title",
-                Description = "Description",
                 Status = WorkItemStatus.Active.ToString(),
                 Constraints = "Constraints",
                 Notes = "Notes",
@@ -86,7 +85,6 @@ type WorkItemServerUnitTests() =
         let expected: WorkItemCommand list =
             [
                 WorkItemCommand.SetTitle "Title"
-                WorkItemCommand.SetDescription "Description"
                 WorkItemCommand.SetStatus WorkItemStatus.Active
                 WorkItemCommand.SetConstraints "Constraints"
                 WorkItemCommand.SetNotes "Notes"

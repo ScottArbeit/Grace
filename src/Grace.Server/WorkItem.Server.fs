@@ -17,6 +17,7 @@ open Grace.Shared.Validation.Utilities
 open Grace.Types.Artifact
 open Grace.Types.WorkItem
 open Grace.Types.Common
+open Grace.Types.TextContent
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
@@ -319,11 +320,6 @@ module WorkItem =
         [
             if not <| String.IsNullOrEmpty(parameters.Title) then
                 WorkItemCommand.SetTitle parameters.Title
-            if
-                not
-                <| String.IsNullOrEmpty(parameters.Description)
-            then
-                WorkItemCommand.SetDescription parameters.Description
             if not <| String.IsNullOrEmpty(parameters.Status) then
                 let status =
                     discriminatedUnionFromString<WorkItemStatus> parameters.Status
@@ -870,57 +866,80 @@ module WorkItem =
                     let workItemId = Guid.Parse(parameters.WorkItemId)
                     let metadata = createMetadata context
                     let parameterDictionary = getParametersAsDictionary parameters
+                    let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                    let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                    let! createResult =
-                        withWorkItemNumberLock graceIds.RepositoryId correlationId (fun () ->
+                    let! descriptionResult =
+                        if String.IsNullOrWhiteSpace(parameters.Description) then
+                            Task.FromResult(Ok None)
+                        else
                             task {
-                                let workItemNumberCounterActorProxy = WorkItemNumberCounter.CreateActorProxy graceIds.RepositoryId correlationId
-                                let! workItemNumber = workItemNumberCounterActorProxy.AllocateNext correlationId
-                                let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                                match! TextContentStorage.write repositoryDto graceIds.RepositoryId workItemId correlationId parameters.Description with
+                                | Ok (description, wasCreated) -> return Ok(Some(description, wasCreated))
+                                | Error error -> return Error error
+                            }
 
-                                let command =
-                                    WorkItemCommand.Create(
-                                        workItemId,
-                                        workItemNumber,
-                                        Guid.Parse(parameters.OwnerId),
-                                        Guid.Parse(parameters.OrganizationId),
-                                        Guid.Parse(parameters.RepositoryId),
-                                        parameters.Title,
-                                        parameters.Description
-                                    )
+                    match descriptionResult with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok description ->
+                        let! createResult =
+                            withWorkItemNumberLock graceIds.RepositoryId correlationId (fun () ->
+                                task {
+                                    let workItemNumberCounterActorProxy = WorkItemNumberCounter.CreateActorProxy graceIds.RepositoryId correlationId
+                                    let! workItemNumber = workItemNumberCounterActorProxy.AllocateNext correlationId
+                                    let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
 
-                                match! actorProxy.Handle command metadata with
-                                | Ok graceReturnValue ->
-                                    do! cacheWorkItemNumber graceIds.RepositoryId workItemNumber workItemId correlationId
-                                    return Ok graceReturnValue
-                                | Error graceError -> return Error graceError
-                            })
+                                    let command =
+                                        WorkItemCommand.Create(
+                                            workItemId,
+                                            workItemNumber,
+                                            Guid.Parse(parameters.OwnerId),
+                                            Guid.Parse(parameters.OrganizationId),
+                                            Guid.Parse(parameters.RepositoryId),
+                                            parameters.Title,
+                                            description |> Option.map fst
+                                        )
 
-                    match createResult with
-                    | Ok graceReturnValue ->
-                        graceReturnValue
-                            .enhance(parameterDictionary)
-                            .enhance(nameof OwnerId, graceIds.OwnerId)
-                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof WorkItemId, workItemId)
-                            .enhance("Command", nameof Create)
-                            .enhance ("Path", context.Request.Path.Value)
-                        |> ignore
+                                    match! actorProxy.Handle command metadata with
+                                    | Ok graceReturnValue ->
+                                        do! cacheWorkItemNumber graceIds.RepositoryId workItemNumber workItemId correlationId
+                                        return Ok graceReturnValue
+                                    | Error graceError ->
+                                        match description with
+                                        | Some (storedDescription, true) ->
+                                            match storedDescription.TextContent with
+                                            | Some reference ->
+                                                let! _ = TextContentStorage.deleteIfNewlyCreated repositoryDto reference correlationId
+                                                return Error graceError
+                                            | None -> return Error graceError
+                                        | _ -> return Error graceError
+                                })
 
-                        return! context |> result200Ok graceReturnValue
-                    | Error graceError ->
-                        graceError
-                            .enhance(parameterDictionary)
-                            .enhance(nameof OwnerId, graceIds.OwnerId)
-                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof WorkItemId, workItemId)
-                            .enhance("Command", nameof Create)
-                            .enhance ("Path", context.Request.Path.Value)
-                        |> ignore
+                        match createResult with
+                        | Ok graceReturnValue ->
+                            graceReturnValue
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof WorkItemId, workItemId)
+                                .enhance("Command", nameof Create)
+                                .enhance ("Path", context.Request.Path.Value)
+                            |> ignore
 
-                        return! context |> result400BadRequest graceError
+                            return! context |> result200Ok graceReturnValue
+                        | Error graceError ->
+                            graceError
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof WorkItemId, workItemId)
+                                .enhance("Command", nameof Create)
+                                .enhance ("Path", context.Request.Path.Value)
+                            |> ignore
+
+                            return! context |> result400BadRequest graceError
                 else
                     let! error = validations |> getFirstError
                     let errorMessage = WorkItemError.getErrorMessage error
@@ -935,22 +954,85 @@ module WorkItem =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-
-                /// Implements validations for the server request pipeline.
-                let validations (parameters: GetWorkItemParameters) =
-                    [|
-                        validateWorkItemIdentifier parameters.WorkItemId
-                    |]
-
-                /// Implements query for the server request pipeline.
-                let query (context: HttpContext) _ (actorProxy: IWorkItemActor) = actorProxy.Get(getCorrelationId context)
-
+                let correlationId = getCorrelationId context
                 let! parameters = context |> parse<GetWorkItemParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
-                context.Items[ "Command" ] <- "Get"
-                return! processQuery context parameters validations query
+
+                match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                | Error error -> return! context |> result400BadRequest error
+                | Ok workItemId ->
+                    let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                    let! state = actorProxy.GetState correlationId
+                    let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                    let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                    let! hydratedDescription =
+                        match state.Description with
+                        | None -> Task.FromResult(Ok String.Empty)
+                        | Some description ->
+                            match description.TextContent with
+                            | None -> Task.FromResult(Ok String.Empty)
+                            | Some reference -> TextContentStorage.read repositoryDto reference correlationId
+
+                    match hydratedDescription with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok description ->
+                        let hydrated = { state.WorkItem with Description = description }
+
+                        return!
+                            context
+                            |> result200Ok (GraceReturnValue.Create hydrated correlationId)
+            }
+
+    /// Sets the current work-item description after first writing its immutable text object.
+    let SetDescription: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+                let! parameters = context |> parse<SetWorkItemDescriptionParameters>
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                let! workItemValidation = validateWorkItemIdentifier parameters.WorkItemId
+
+                match workItemValidation, TextContentStorage.validateText parameters.Text with
+                | Error validationError, _ ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (WorkItemError.getErrorMessage validationError) correlationId)
+                | _, Error validationError ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create validationError correlationId)
+                | Ok (), Ok () ->
+                    match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok workItemId ->
+                        let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                        let! repositoryDto = repositoryActorProxy.Get correlationId
+                        let! writeResult = TextContentStorage.write repositoryDto graceIds.RepositoryId workItemId correlationId parameters.Text
+
+                        match writeResult with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok (description, wasCreated) ->
+                            let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                            let metadata = createMetadata context
+
+                            match! handleWorkItemCommandAllowReplay actorProxy (WorkItemCommand.SetDescription description) metadata with
+                            | Ok () ->
+                                return!
+                                    context
+                                    |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                            | Error error ->
+                                match description.TextContent, wasCreated with
+                                | Some reference, true ->
+                                    let! _ = TextContentStorage.deleteIfNewlyCreated repositoryDto reference correlationId
+                                    return! context |> result400BadRequest error
+                                | _ -> return! context |> result400BadRequest error
             }
 
     /// Implements fetch linked reviewer attachments for the server request pipeline.

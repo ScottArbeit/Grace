@@ -91,6 +91,15 @@ module WorkItemCommand =
         let text =
             new Option<string>("--text", [| "-t" |], Required = false, Description = "Attach inline text content directly.", Arity = ArgumentArity.ExactlyOne)
 
+        let descriptionText =
+            new Option<string>(
+                "--text",
+                [| "-t" |],
+                Required = false,
+                Description = "Markdown text for the current work-item description.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
         let stdin = new Option<bool>("--stdin", Required = false, Description = "Read attachment content from standard input.", Arity = ArgumentArity.ZeroOrOne)
 
         let attachmentType =
@@ -536,6 +545,47 @@ module WorkItemCommand =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = setStatusHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    /// Routes description replacement from parsed Markdown through the dedicated SDK operation.
+    let private setDescriptionHandler (parseResult: ParseResult) =
+        task {
+            try
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
+                let text = parseResult.GetValue(Options.descriptionText)
+
+                match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+                | Error error -> return Error error
+                | Ok _ when String.IsNullOrWhiteSpace(text) -> return Error(GraceError.Create "Description text is required." (getCorrelationId parseResult))
+                | Ok workItem ->
+                    let parameters =
+                        Parameters.WorkItem.SetWorkItemDescriptionParameters(
+                            WorkItemId = workItem,
+                            Text = text,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    return! WorkItem.SetDescription(parameters)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Executes the dedicated description set command through the normal CLI output contract.
+    type SetDescription() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs description replacement after System.CommandLine binds the work-item identifier and Markdown text.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let! result = setDescriptionHandler parseResult
                 return result |> renderOutput parseResult
             }
 
@@ -1285,6 +1335,18 @@ module WorkItemCommand =
         setStatusCommand.Arguments.Add(Arguments.workItemIdentifier)
         setStatusCommand.Action <- new SetStatus()
         workCommand.Subcommands.Add(setStatusCommand)
+
+        let descriptionCommand = new Command("description", Description = "Manage the current immutable work-item description.")
+
+        let setDescriptionCommand =
+            new Command("set", Description = "Set the current Markdown description for a work item by ID or number.")
+            |> addOption Options.descriptionText
+            |> addCommonOptions
+
+        setDescriptionCommand.Arguments.Add(Arguments.workItemIdentifier)
+        setDescriptionCommand.Action <- new SetDescription()
+        descriptionCommand.Subcommands.Add(setDescriptionCommand)
+        workCommand.Subcommands.Add(descriptionCommand)
 
         let linkCommand = new Command("link", Description = "Link related entities to a work item.")
 

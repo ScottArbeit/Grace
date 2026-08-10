@@ -578,6 +578,26 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /work/description/set:
+    post:
+      tags:
+        - Work items
+      summary: Replace a work-item description.
+      description: Stores a new immutable UTF-8 description and makes it the current description in append order.
+      operationId: SetWorkItemDescription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetWorkItemDescriptionParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/StringResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /branch/create:
     post:
       tags:
@@ -3681,6 +3701,17 @@ components:
               format: uuid
           required:
             - ArtifactId
+    SetWorkItemDescriptionParameters:
+      allOf:
+        - $ref: '#/components/schemas/WorkItemParameters'
+        - type: object
+          properties:
+            Text:
+              type: string
+              minLength: 1
+              description: The complete replacement description as UTF-8 text.
+          required:
+            - Text
     ArtifactDeletionResult:
       type: object
       properties:

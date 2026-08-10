@@ -34,6 +34,11 @@ import {
     InlineObject9ToJSON,
 } from '../models/InlineObject9';
 import {
+    type SetWorkItemDescriptionParameters,
+    SetWorkItemDescriptionParametersFromJSON,
+    SetWorkItemDescriptionParametersToJSON,
+} from '../models/SetWorkItemDescriptionParameters';
+import {
     type UndeleteWorkItemAttachmentParameters,
     UndeleteWorkItemAttachmentParametersFromJSON,
     UndeleteWorkItemAttachmentParametersToJSON,
@@ -41,6 +46,10 @@ import {
 
 export interface DeleteWorkItemAttachmentRequest {
     deleteWorkItemAttachmentParameters: DeleteWorkItemAttachmentParameters;
+}
+
+export interface SetWorkItemDescriptionRequest {
+    setWorkItemDescriptionParameters: SetWorkItemDescriptionParameters;
 }
 
 export interface UndeleteWorkItemAttachmentRequest {
@@ -106,6 +115,63 @@ export class WorkItemsApi extends runtime.BaseAPI {
      */
     async deleteWorkItemAttachment(requestParameters: DeleteWorkItemAttachmentRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<InlineObject8> {
         const response = await this.deleteWorkItemAttachmentRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for setWorkItemDescription without sending the request
+     */
+    async setWorkItemDescriptionRequestOpts(requestParameters: SetWorkItemDescriptionRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['setWorkItemDescriptionParameters'] == null) {
+            throw new runtime.RequiredError(
+                'setWorkItemDescriptionParameters',
+                'Required parameter "setWorkItemDescriptionParameters" was null or undefined when calling setWorkItemDescription().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/work/description/set`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: SetWorkItemDescriptionParametersToJSON(requestParameters['setWorkItemDescriptionParameters']),
+        };
+    }
+
+    /**
+     * Stores a new immutable UTF-8 description and makes it the current description in append order.
+     * Replace a work-item description.
+     */
+    async setWorkItemDescriptionRaw(requestParameters: SetWorkItemDescriptionRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<InlineObject9>> {
+        const requestOptions = await this.setWorkItemDescriptionRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => InlineObject9FromJSON(jsonValue));
+    }
+
+    /**
+     * Stores a new immutable UTF-8 description and makes it the current description in append order.
+     * Replace a work-item description.
+     */
+    async setWorkItemDescription(requestParameters: SetWorkItemDescriptionRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<InlineObject9> {
+        const response = await this.setWorkItemDescriptionRaw(requestParameters, initOverrides);
         return await response.value();
     }
 
