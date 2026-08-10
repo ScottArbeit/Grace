@@ -92,6 +92,7 @@ module private WorkItemIntegrationHelpers =
         task {
             let hostState = getSharedHostState ()
             let! connectionString = AspireTestHost.getAzureStorageConnectionStringAsync hostState
+
             let serviceClient = BlobServiceClient(connectionString)
             let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
             let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
@@ -289,6 +290,25 @@ module private WorkItemIntegrationHelpers =
     /// Sets one work-item description through the public route for hosted integration scenarios.
     let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
         setWorkItemDescriptionWithCorrelationResponseAsync client repositoryId workItemIdentifier text (generateCorrelationId ())
+
+    /// Clears one work-item description through the public route with caller-selected correlation data for replay proof.
+    let clearWorkItemDescriptionWithCorrelationResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (correlationId: string) =
+        task {
+            let parameters = Parameters.WorkItem.ClearWorkItemDescriptionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.CorrelationId <- correlationId
+            use request = new HttpRequestMessage(HttpMethod.Post, "/work/description/clear")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+            return! client.SendAsync(request)
+        }
+
+    /// Clears one work-item description through the public route for hosted integration scenarios.
+    let clearWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
+        clearWorkItemDescriptionWithCorrelationResponseAsync client repositoryId workItemIdentifier (generateCorrelationId ())
 
     /// Gets work item response from the running test server.
     let getWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
@@ -822,6 +842,102 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(byNumber.Description, Is.EqualTo("# Final description"))
         }
 
+    /// Verifies clear appends empty descriptions without Blob effects, retains prior content, and permits a later set.
+    [<Test>]
+    member _.DescriptionClearRetainsPriorContentAndUsesAppendOrder() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-clear"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description clear"
+            let workItemGuid = Guid.Parse workItemId
+            let setCorrelationId = "corr-description-clear-set"
+            let clearCorrelationId = "corr-description-clear-first"
+            let secondClearCorrelationId = "corr-description-clear-second"
+            let originalText = "retained description"
+
+            let! setResponse =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId originalText setCorrelationId
+
+            setResponse.EnsureSuccessStatusCode() |> ignore
+
+            let! beforeClear = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            let! firstClear = WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId clearCorrelationId
+
+            let! conflictingClear =
+                WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId setCorrelationId
+
+            let! exactClearRetry =
+                WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId clearCorrelationId
+
+            let! afterFirstClear = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            let! secondClear =
+                WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryId
+                    (afterFirstClear.WorkItemNumber.ToString())
+                    secondClearCorrelationId
+
+            let! afterClear = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let! eventsAfterClear = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            let! finalSet = WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryId workItemId "set after clear"
+
+            let! afterSet = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId (afterClear.WorkItemNumber.ToString())
+            let! eventsAfterSet = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            let! supersededClearRetry =
+                WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId clearCorrelationId
+
+            let _, expectedClearTextContentId = Grace.Server.TextContentStorage.createIds (Guid.Parse repositoryId) workItemGuid clearCorrelationId
+
+            firstClear.EnsureSuccessStatusCode() |> ignore
+
+            exactClearRetry.EnsureSuccessStatusCode()
+            |> ignore
+
+            secondClear.EnsureSuccessStatusCode() |> ignore
+            finalSet.EnsureSuccessStatusCode() |> ignore
+            Assert.That(conflictingClear.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(supersededClearRetry.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(beforeClear.Description, Is.EqualTo(originalText))
+            Assert.That(afterClear.Description, Is.EqualTo(String.Empty))
+
+            let clearDescriptions =
+                eventsAfterClear
+                |> Array.choose (fun workItemEvent ->
+                    match workItemEvent.Event with
+                    | DescriptionCleared description -> Some description
+                    | _ -> None)
+
+            Assert.That(clearDescriptions, Has.Length.EqualTo(2))
+            Assert.That(clearDescriptions[0].DescriptionId, Is.Not.EqualTo(clearDescriptions[1].DescriptionId))
+
+            let persistedSetDescription =
+                eventsAfterClear
+                |> Array.pick (fun workItemEvent ->
+                    match workItemEvent.Event with
+                    | DescriptionSet description -> Some description
+                    | _ -> None)
+
+            let persistedTextContent =
+                match persistedSetDescription.TextContent with
+                | Some textContent -> textContent
+                | None -> failwith "The persisted DescriptionSet event must retain its text-content reference."
+
+            let expectedSetDescriptionId, expectedSetTextContentId =
+                Grace.Server.TextContentStorage.createIds (Guid.Parse repositoryId) workItemGuid setCorrelationId
+
+            Assert.That(persistedSetDescription.DescriptionId, Is.EqualTo(expectedSetDescriptionId))
+            Assert.That(persistedTextContent.TextContentId, Is.EqualTo(expectedSetTextContentId))
+
+            let! clearObjectExists = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId expectedClearTextContentId
+
+            Assert.That(clearObjectExists, Is.False)
+            Assert.That(eventsAfterSet.Length, Is.EqualTo(eventsAfterClear.Length + 1))
+            Assert.That(afterSet.Description, Is.EqualTo("set after clear"))
+        }
+
     /// Verifies an empty create returns no hydrated text and bypasses the immutable description reference path.
     [<Test>]
     member _.CreateWithoutDescriptionReturnsEmptyText() =
@@ -880,6 +996,9 @@ type WorkItemNumberAndLinksIntegrationTests() =
                     crossRepositoryText
                     crossRepositoryCorrelationId
 
+            let! crossRepositoryClear =
+                WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryB workItemId "corr-cross-repository-clear"
+
             let! crossRepositoryGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync Client repositoryB workItemId
             let! original = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryA workItemId
             let! eventsAfter = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryA workItemGuid
@@ -892,11 +1011,14 @@ type WorkItemNumberAndLinksIntegrationTests() =
                 WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryB requestRepositoryTextContent.TextContentId
 
             Assert.That(crossRepositorySet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(crossRepositoryClear.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             Assert.That(crossRepositoryGet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! setError = deserializeContent<GraceError> crossRepositorySet
+            let! clearError = deserializeContent<GraceError> crossRepositoryClear
             let! getError = deserializeContent<GraceError> crossRepositoryGet
 
             Assert.That(setError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
+            Assert.That(clearError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
             Assert.That(getError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
             Assert.That(original.Description, Is.EqualTo("integration test work item"))
             Assert.That(eventsAfter, Is.EqualTo<WorkItemEvent>(eventsBefore))

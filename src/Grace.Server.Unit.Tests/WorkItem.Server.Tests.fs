@@ -651,6 +651,53 @@ type WorkItemServerUnitTests() =
         Assert.That(differentText, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
         Assert.That(superseded, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
 
+    /// Verifies a clear retry must prove the matching empty event and remain the current description.
+    [<Test>]
+    member _.ClearDescriptionReplayRejectsSetReuseAndSupersededClear() =
+        let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
+        let workItemId = Guid.Parse("6d742a8e-5fd6-4d89-8c1d-7ea3005570ef")
+        let correlationId = "corr-clear-description-replay"
+        let descriptionId, _ = TextContentStorage.createIds repositoryId workItemId correlationId
+        let expected = { DescriptionId = descriptionId; TextContent = None }
+        let later = TextContentStorage.createDescription repositoryId workItemId "corr-description-later" "later"
+        let state description = { WorkItem = { WorkItemDto.Default with WorkItemId = workItemId; RepositoryId = repositoryId }; Description = Some description }
+        let event eventType = { Event = eventType; Metadata = { metadata (Instant.FromUtc(2025, 1, 1, 0, 0)) with CorrelationId = correlationId } }
+        let events workItemEvent = ResizeArray<WorkItemEvent>([ workItemEvent ]) :> IReadOnlyList<WorkItemEvent>
+
+        let exact =
+            WorkItem.classifyDescriptionReplay
+                WorkItem.DescriptionOperation.ClearDescription
+                workItemId
+                repositoryId
+                (Some expected)
+                (state expected)
+                (events (event (DescriptionCleared expected)))
+                correlationId
+
+        let setReuse =
+            WorkItem.classifyDescriptionReplay
+                WorkItem.DescriptionOperation.ClearDescription
+                workItemId
+                repositoryId
+                (Some expected)
+                (state expected)
+                (events (event (DescriptionSet later)))
+                correlationId
+
+        let superseded =
+            WorkItem.classifyDescriptionReplay
+                WorkItem.DescriptionOperation.ClearDescription
+                workItemId
+                repositoryId
+                (Some expected)
+                (state later)
+                (events (event (DescriptionCleared expected)))
+                correlationId
+
+        Assert.That(exact, Is.EqualTo(WorkItem.ExactDescriptionReplay))
+        Assert.That(setReuse, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
+        Assert.That(superseded, Is.EqualTo(WorkItem.ConflictingDescriptionCorrelation))
+
     /// Verifies an ambiguous actor-write fault retains its retry object while known pre-append rejection permits cleanup.
     [<Test>]
     member _.DescriptionAppendFailureClassificationRetainsAmbiguousRetryEvidence() =

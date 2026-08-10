@@ -23,6 +23,10 @@ type WorkItem() =
     static member public SetDescription(parameters: SetWorkItemDescriptionParameters) =
         postServer<SetWorkItemDescriptionParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/description/set")
 
+    /// Clears the current work-item description by appending an immutable empty description reference.
+    static member public ClearDescription(parameters: ClearWorkItemDescriptionParameters) =
+        postServer<ClearWorkItemDescriptionParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/description/clear")
+
     /// Links a reference to a work item.
     static member public LinkReference(parameters: LinkReferenceParameters) =
         postServer<LinkReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/link/reference")

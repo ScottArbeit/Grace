@@ -587,6 +587,7 @@ module WorkItem =
     type internal DescriptionOperation =
         | CreateDescription
         | SetDescription
+        | ClearDescription
 
     /// Classifies whether persisted work-item evidence proves, rejects, or has not yet seen a description operation.
     type internal DescriptionReplay =
@@ -612,6 +613,7 @@ module WorkItem =
             && eventRepositoryId = repositoryId
             && eventDescription = description
         | SetDescription, DescriptionSet eventDescription -> Some eventDescription = description
+        | ClearDescription, DescriptionCleared eventDescription -> Some eventDescription = description
         | _ -> false
 
     /// Uses the persisted event stream and current state to distinguish an exact retry from correlation reuse or a new operation.
@@ -1359,6 +1361,95 @@ module WorkItem =
                                                             do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
 
                                                         return! context |> result400BadRequest error
+            }
+
+    /// Appends an immutable empty description without reading, writing, or deleting text-content objects.
+    let ClearDescription: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                let! parameters =
+                    context
+                    |> parse<ClearWorkItemDescriptionParameters>
+
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                match! validateWorkItemIdentifier parameters.WorkItemId with
+                | Error validationError ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (WorkItemError.getErrorMessage validationError) correlationId)
+                | Ok () ->
+                    match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok workItemId ->
+                        let descriptionId, _ = TextContentStorage.createIds graceIds.RepositoryId workItemId correlationId
+                        let expectedDescription = { DescriptionId = descriptionId; TextContent = None }
+                        let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                        let! initialStateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                        match initialStateResult with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok initialState ->
+                            let! initialEvents = actorProxy.GetEvents correlationId
+
+                            match
+                                classifyDescriptionReplay
+                                    ClearDescription
+                                    workItemId
+                                    graceIds.RepositoryId
+                                    (Some expectedDescription)
+                                    initialState
+                                    initialEvents
+                                    correlationId
+                                with
+                            | ExactDescriptionReplay ->
+                                return!
+                                    context
+                                    |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                            | ConflictingDescriptionCorrelation ->
+                                return!
+                                    context
+                                    |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                            | FreshDescriptionOperation ->
+                                let! stateBeforeAppendResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                                match stateBeforeAppendResult with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok stateBeforeAppend ->
+                                    let! eventsBeforeAppend = actorProxy.GetEvents correlationId
+
+                                    match
+                                        classifyDescriptionReplay
+                                            ClearDescription
+                                            workItemId
+                                            graceIds.RepositoryId
+                                            (Some expectedDescription)
+                                            stateBeforeAppend
+                                            eventsBeforeAppend
+                                            correlationId
+                                        with
+                                    | ExactDescriptionReplay ->
+                                        return!
+                                            context
+                                            |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                    | ConflictingDescriptionCorrelation ->
+                                        return!
+                                            context
+                                            |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                    | FreshDescriptionOperation ->
+                                        let metadata = createMetadata context
+
+                                        match! actorProxy.Handle (WorkItemCommand.ClearDescription expectedDescription) metadata with
+                                        | Ok _ ->
+                                            return!
+                                                context
+                                                |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                        | Error error -> return! context |> result400BadRequest error
             }
 
     /// Implements fetch linked reviewer attachments for the server request pipeline.

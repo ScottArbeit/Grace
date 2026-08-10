@@ -37,6 +37,7 @@ module WorkItem =
             description: Description option
         | SetTitle of title: string
         | SetDescription of description: Description
+        | ClearDescription of description: Description
         | SetStatus of status: WorkItemStatus
         | AddParticipant of userId: UserId
         | RemoveParticipant of userId: UserId
@@ -79,6 +80,7 @@ module WorkItem =
             description: Description option
         | TitleSet of title: string
         | DescriptionSet of description: Description
+        | DescriptionCleared of description: Description
         | StatusSet of status: WorkItemStatus
         | ParticipantAdded of userId: UserId
         | ParticipantRemoved of userId: UserId
@@ -199,7 +201,8 @@ module WorkItem =
                         CreatedAt = workItemEvent.Metadata.Timestamp
                     }
                 | TitleSet title -> { currentWorkItemDto with Title = title }
-                | DescriptionSet _description -> { currentWorkItemDto with Description = String.Empty }
+                | DescriptionSet _description
+                | DescriptionCleared _description -> { currentWorkItemDto with Description = String.Empty }
                 | StatusSet status -> { currentWorkItemDto with Status = status }
                 | ParticipantAdded userId ->
                     { currentWorkItemDto with
@@ -359,6 +362,7 @@ module WorkItem =
                 match workItemEvent.Event with
                 | Created (_, _, _, _, _, _, description) -> description
                 | DescriptionSet nextDescription -> Some nextDescription
+                | DescriptionCleared nextDescription -> Some nextDescription
                 | _ -> currentState.Description
 
             { WorkItem = WorkItemDto.UpdateDto workItemEvent currentState.WorkItem; Description = description }

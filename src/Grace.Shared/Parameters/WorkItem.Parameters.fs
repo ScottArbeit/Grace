@@ -42,6 +42,10 @@ module WorkItem =
         inherit WorkItemParameters()
         member val public Text = String.Empty with get, set
 
+    /// Parameters for /work/description/clear.
+    type ClearWorkItemDescriptionParameters() =
+        inherit WorkItemParameters()
+
     /// Parameters for /work/{id}/link/reference.
     type LinkReferenceParameters() =
         inherit WorkItemParameters()

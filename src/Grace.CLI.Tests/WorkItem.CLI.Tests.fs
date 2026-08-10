@@ -91,6 +91,24 @@ module WorkItemCommandTests =
 
         parseResult.Invoke() |> should equal -1
 
+    /// Verifies that description clear rejects an invalid work-item identifier through its bound action before a server call.
+    [<Test>]
+    let ``workitem description clear rejects invalid work item identifier through its bound action`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "description"
+                                    "clear"
+                                    "not-a-work-item" |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        parseResult.CommandResult.Command.Action.GetType()
+        |> should equal typeof<Grace.CLI.Command.WorkItemCommand.ClearDescription>
+
+        parseResult.Invoke() |> should equal -1
+
     /// Verifies that description set rejects missing text through action validation without blocking introspection.
     [<Test>]
     let ``workitem description set rejects missing text through its bound action`` () =

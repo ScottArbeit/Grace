@@ -89,3 +89,19 @@ type WorkItemTypesTests() =
             |> WorkItemState.UpdateState secondEvent
 
         Assert.That(state.Description, Is.EqualTo(Some second))
+
+    /// Verifies clear retains a distinct empty description reference until a later set becomes current.
+    [<Test>]
+    member _.DescriptionClearProjectsEmptyReferenceAndLaterSetWins() =
+        let cleared = { DescriptionId = Guid.NewGuid(); TextContent = None }
+        let replacement = { DescriptionId = Guid.NewGuid(); TextContent = None }
+        let clearEvent = { Event = WorkItemEventType.DescriptionCleared cleared; Metadata = metadata (Instant.FromUtc(2025, 3, 3, 0, 0)) }
+        let setEvent = { Event = WorkItemEventType.DescriptionSet replacement; Metadata = metadata (Instant.FromUtc(2025, 3, 4, 0, 0)) }
+
+        let afterClear = WorkItemState.UpdateState clearEvent WorkItemState.Default
+
+        let afterSet = WorkItemState.UpdateState setEvent afterClear
+
+        Assert.That(afterClear.Description, Is.EqualTo(Some cleared))
+        Assert.That(afterClear.WorkItem.Description, Is.EqualTo(String.Empty))
+        Assert.That(afterSet.Description, Is.EqualTo(Some replacement))
