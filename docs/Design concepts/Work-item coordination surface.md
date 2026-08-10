@@ -1,10 +1,10 @@
 # Work-Item Coordination Surface Design Map
 
-- **Status:** Exploratory; Section A is Plan-ready and in delivery
+- **Status:** Exploratory; Section A is delivered and awaiting its final epic integration gate
 - **Quality contract:** Product V1
 - **Canonical source:** `docs/Design concepts/Work-item coordination surface.md`
 - **Evidence current through:** 2026-08-10, `epic/825-blob-backed-work-item-descriptions` at
-  `bb2313aab5f8ed7be32a006ab2dd38911e027c50`
+  `78ff968f569eacbd2ebc9ad1d487d7f312426689`
 
 ## Destination
 
@@ -25,6 +25,8 @@ stage's exit condition is satisfied.
 > **Current stage: Stage 4 — notes vocabulary (DEC-008).** DEC-007 is accepted: supported description writes append in
 > accepted actor order and the last appended description is current. There is no public revision, persisted revision,
 > or compare-before-write requirement. DEC-006 keeps clear explicit and leaves earlier immutable objects retained.
+> DEC-013 defers retained TextContent usage accounting to #829 under Operations epic #554; Section A publishes no usage
+> fact and makes no accounting claim.
 
 ```mermaid
 flowchart TD
@@ -67,7 +69,7 @@ must not silently change their product behavior.
 
 | Section | Decisions required before planning | User-visible outcome | Tracking shape |
 | ------- | ---------------------------------- | -------------------- | -------------- |
-| A. Work-item body mutation | DEC-005, DEC-011, DEC-006, DEC-007 | Replace the issue-like Markdown body through immutable repository-scoped content, with explicit clearing and append-order last-write-wins. | Plan-ready; #825 coordinates delivery, #826 is the inline create/set/show tracer, and #827 adds explicit clear with retained prior content. |
+| A. Work-item body mutation | DEC-005, DEC-011, DEC-006, DEC-007, DEC-013 | Replace the issue-like Markdown body through immutable repository-scoped content, with explicit clearing and append-order last-write-wins. | Delivered through #826, #827, and #828; #825 owns the final integration gate. Retained TextContent usage accounting is deferred to #829 under #554. |
 | B. Immutable comments | Accepted DEC-003 and DEC-004, plus DEC-008 and DEC-012 | Add, list, and explicitly correct chronological comments without replies, resolution, or direct editing. | Start after Section A establishes reusable immutable-content and append-order patterns; split only if the selected lifecycle adds another state machine. |
 | C. Progress inspection | DEC-010 | Inspect a truthful read-only projection of meaningful work-item and collaboration activity. | One projection-focused section after update and comment events are stable. |
 | D. Repository list and search | DEC-009 | Find work items within a repository using only stable, visible fields selected for V1. | One bounded discovery section; defer organization aggregation and comment-content search. |
@@ -107,7 +109,8 @@ Grace's Product V1 profile applies.
   retains its immutable object so the stable operation retry can converge.
 - Public contract: CLI, HTTP API, SDK, OpenAPI, generated clients, machine-readable output, docs, and tests must agree.
 - Deliberately absent unless reopened: high availability, disaster recovery automation, broad GitHub feature parity,
-  cross-provider portability work, and compatibility aliases for replaced commands.
+  cross-provider portability work, retained TextContent usage accounting, and compatibility aliases for replaced
+  commands.
 - Complexity stop: return to the owner if V1 gains threaded discussion resolution, comment edit history, a second new
   durable state machine, or organization-wide indexing before the core body-and-comment path is proven.
 
@@ -124,6 +127,8 @@ Grace's Product V1 profile applies.
 | `src/Grace.Types/WorkItem.Types.fs` | Contains inline `Notes`, `ReviewNotesIds`, and a links projection with `ReviewNotesArtifactIds`. | Confirms the current notes vocabulary collision. | Current source. |
 | `src/Grace.Types/Artifact.Types.fs` and `src/Grace.Actors/Artifact.Actor.fs` | Own reviewer attachments have a generation-bound logical-delete and recovery lifecycle. | Comments must not reuse the attachment lifecycle. | Delivered and covered by focused and hosted tests. |
 | `src/Grace.Server.Tests/WorkItem.Integration.Server.Tests.fs` | Proves attachment add, visibility, recovery, generic-unlink rejection, and final cleanup. | Protects the #810 baseline during later coordination work. | Current test source; #810 integrated validation passed. |
+| `src/Grace.Types/Usage.Types.fs`, `src/Grace.Actors/OperationalFactsPublisher.Actor.fs`, and Operations tests | Define, publish, ingest, deduplicate, and aggregate `RepositoryStorageBytesMinute` facts, but no production repository-storage producer calls the publisher. | Proves Section A cannot extend an existing measurement source without adding a new durable measurement design. | Current #825 branch and Operations PR #712 were inspected on 2026-08-10. |
+| PRs #830, #831, and #832 | Deliver immutable inline descriptions, explicit clear, and exactly-one text/file/stdin input. | Establishes Section A implementation and proof before the final epic gate. | Each merged to the epic branch after exact-head CI and fresh review. |
 
 No named work-item source, test, or documentation path changed between the #810 merge commit
 `af1aa306a3107bec13383069dfb812d54a3a5362` and the evidence revision.
@@ -157,6 +162,7 @@ No named work-item source, test, or documentation path changed between the #810 
 | CAP-012 | Treating attachment unlink as deletion | Rejected | Contradicts the delivered recoverable lifecycle. |
 | CAP-013 | Treating an attachment as a comment | Rejected | Loses comment identity, ordering, creator, timestamp, and collaboration lifecycle. |
 | CAP-014 | Arbitrary deletion of nonattachment artifacts | Out of scope | Not part of the work-item coordination outcome. |
+| CAP-015 | Retained TextContent usage accounting | Deferred | Owner-selected Option A keeps Section A focused on description storage and retrieval. #829 moved to Operations epic #554 because Grace has no production repository-storage bytes-minute producer to extend. |
 
 Deferred recommendations in this inventory are not owner decisions. They remain open until their linked decision closes.
 
@@ -174,6 +180,7 @@ Rows are ordered by the stage in which they should be closed, not by decision ID
 | DEC-011 | 2 | What is the public long-text workflow? | Product | Accepted | Accept exactly one of `--text`, `--file`, or `--stdin`; defer interactive editing, structured sections, and patch-language input. | Defines one convergent CLI input contract plus parsing and inert introspection proof. | Owner | CLI, docs, tests |
 | DEC-006 | 3 | What distinguishes set and clear? | Product | Accepted | Use `workitem description set` and `workitem description clear`. Set requires exactly one non-empty `--text`, `--file`, or `--stdin` source; empty input fails with guidance to use clear. The API and SDK represent set, clear, and omission distinctly. | Removes empty-string ambiguity and gives scripts an explicit clear operation. | Owner | Parameters, validation, serialization, CLI, API, SDK |
 | DEC-007 | 3 | What determines the current description when supported callers compete? | Architecture | Accepted | Append-order last-write-wins. The serialized actor accepts descriptions in order; the last appended description is current. Do not add a public or persisted revision, previous-version link, or compare-before-write requirement. | Requires ordered actor projection, stable retry identity, and last-append proof; removes revision propagation and mismatch proof. | Owner decision, 2026-08-10 | Actor, internal projection, API/SDK/CLI hydration, tests, docs |
+| DEC-013 | 3 | Does Section A implement retained TextContent usage accounting? | Scope | Accepted | No. Owner-selected Option A defers accounting to #829 under Operations epic #554. Section A retains `Utf8ByteLength` for integrity but publishes no usage fact and claims no quota or billing effect. | Removes a new durable minute-measurement producer and the active PR #712 write-set conflict from #825. Future #829 work must first close the producer design in #554. | Owner decision, 2026-08-10 | Capability inventory, quality boundary, evidence, proof, tracker relationships |
 | DEC-008 | 4 | How should the three notes concepts be named? | Domain | Open | Recommend reserving `comment` for collaboration, keeping structured review records explicit, and renaming the attachment classification away from bare `notes`; exact label needs a vocabulary pass. | Prevents a fourth overlapping notes concept. | Owner | Types, CLI, docs, generated contracts |
 | DEC-012 | 5 | What is the V1 comment lifecycle? | Product | Open | After Stage 1 closes, define identity, creator, timestamp, ordering, correction, deletion, visibility, duplicate-request, and replay behavior inside that boundary. | Establishes the durable comment contract consumed by activity and search. | Owner | Types, actor, API, SDK, CLI, events, tests |
 | DEC-010 | 6 | Is progress one combined activity timeline? | Product | Open | Recommend a read-only projection combining WorkItem changes and comments; do not create a second write model. | Requires stable event categories and visibility rules after updates and comments are defined. | Owner | Events, server projection, CLI, tests |
@@ -317,8 +324,9 @@ epic review and validation gates.
 
 ## Candidate value-bearing tracer
 
-The #826 tracer is one inline whole-body replacement through the nearest stable public boundary. #827 extends that
-same boundary with explicit clear while retaining prior immutable content:
+The delivered #826 tracer is one inline whole-body replacement through the nearest stable public boundary. #827
+extends that boundary with explicit clear while retaining prior immutable content, and #828 adds file and standard-input
+sources:
 
 1. Create or resolve a work item and set its Markdown body with inline `--text`.
 1. Observe one successful durable transition and a hydrated public description with no storage facts.
@@ -326,14 +334,14 @@ same boundary with explicit clear while retaining prior immutable content:
 1. Retry one operation identity and prove the immutable object is verified rather than silently reused for different
    content.
 1. Keep help, schema, examples, and parse failures inert. Clear appends an empty immutable Description without a blob,
-   retains earlier objects, and does not expose history. The remaining accepted long-input forms are separate Section A
-   delivery obligations.
+   retains earlier objects, and does not expose history. File and standard-input sources preserve their complete text
+   without trimming or newline normalization.
 
 This tracer crosses shared contracts, actor persistence, server validation, SDK, CLI, public output, tests, and docs. It
 does not require comments, activity aggregation, or search, so evidence from it can refine those later decisions.
 
-This tracer implements the settled DEC-007 contract without broadening into comments, activity, search, public history,
-or cross-provider storage.
+This tracer implements the settled DEC-007 and DEC-013 contracts without broadening into comments, activity, search,
+public history, cross-provider storage, or retained-content accounting.
 
 ## Likely propagation surfaces
 
@@ -342,14 +350,14 @@ disposition.
 
 | Surface | Likely relevance | Current design status |
 | ------- | ---------------- | --------------------- |
-| `Grace.Types` WorkItem DTOs, commands, events, persisted state | Internal immutable description reference, current projection, comment identities and events | #826 updates description storage; later comment decisions remain pending |
-| `Grace.Shared` parameters and validators | Dedicated description request, explicit clear/omit distinction, comment requests | #826 updates inline set; remaining Section A forms are planned |
-| WorkItem actor | Ordered description append, current projection, replay | #826 updates description path; comments remain pending |
-| Server handlers and routes | Update, comment, activity, list, and search behavior | Pending decisions |
+| `Grace.Types` WorkItem DTOs, commands, events, persisted state | Internal immutable description reference, current projection, comment identities and events | Section A delivered; later comment decisions remain pending |
+| `Grace.Shared` parameters and validators | Dedicated description request, explicit clear/omit distinction, comment requests | Section A delivered; comments remain pending |
+| WorkItem actor | Ordered description append, current projection, replay | Section A delivered and proven; comments remain pending |
+| Server handlers and routes | Description set/show/clear plus future comment, activity, list, and search behavior | Description routes delivered; later surfaces pending decisions |
 | Endpoint access rules | Stored-resource scope and list filtering | Pending decisions |
-| SDK facade | Thin methods aligned to accepted routes and DTOs | Pending decisions |
-| CLI and executable output registry | Update/body, comments, activity, list/search, long-text input | Pending decisions |
-| Static OpenAPI and generated clients | Every accepted public route and shape | Pending decisions |
+| SDK facade | Thin methods aligned to accepted routes and DTOs | Description methods delivered; later methods pending decisions |
+| CLI and executable output registry | Update/body, comments, activity, list/search, long-text input | Description set/clear/show and exactly-one input delivered; later commands pending |
+| Static OpenAPI and generated clients | Every accepted public route and shape | Description contract delivered and freshness-proven; later contracts pending |
 | Events, webhooks, SignalR, Watch, and search projections | Classify accepted WorkItem and comment events or record specific non-applicability | Pending decisions |
 | Tests | Pure contract, actor replay/concurrency, server behavior, CLI parsing/output, generated freshness | Pending decisions |
 | Documentation and agent guidance | Work-item workflows, vocabulary, lifecycle, and future implementation guidance | Pending decisions |
@@ -372,6 +380,10 @@ The Plan-ready specification will need false-positive-resistant proof for at lea
 
 Exact proof seams and requirement IDs will be added after the dependent owner decisions close. Until then, this section
 records expected proof classes rather than claiming traceability coverage.
+
+Section A's tracked issues already provide focused proof for immutable storage integrity, actor ordering and replay,
+explicit clear and retained objects, exact CLI text/file/stdin dispatch, inert introspection, public-contract freshness,
+and cross-repository rejection. The final #825 gate reconciles those results without claiming deferred accounting proof.
 
 ## Fog
 
@@ -397,6 +409,8 @@ Promote a fog item into the decision frontier only when an earlier answer makes 
 - Reactions, mentions, subscriptions, notification preferences, or rich-text editing.
 - Cross-provider integrations that mirror GitHub issues or pull requests.
 - Organization-wide indexing before repository-scoped behavior proves its value.
+- Retained TextContent usage accounting, quota effects, or a new repository-storage minute producer; deferred to #829
+  under Operations epic #554.
 - Production-data migration or legacy compatibility machinery.
 
 ## Readiness status
@@ -413,8 +427,8 @@ The artifact passes these early criteria:
 - likely public, durable, generated, event, documentation, and proof surfaces are mapped.
 
 The complete coordination surface is not Design-ready because the notes vocabulary, comment lifecycle, activity
-projection, and list/search scope remain open. Section A is Design-ready and Plan-ready; its bounded delivery is in
-progress. Individual
+projection, and list/search scope remain open. Section A is Design-ready, Plan-ready, and delivered through #826, #827,
+and #828; only its final #825 integration gate remains. Individual
 bounded sections may advance to Plan-ready and tracked implementation once their own decisions, requirements,
 propagation dispositions, and proof seams are closed without depending on unresolved later behavior.
 
@@ -438,8 +452,8 @@ propagation dispositions, and requirement-to-proof traceability depend on those 
 
 ## Next action
 
-Complete the bounded Section A delivery under #825, starting with #826's inline immutable-text tracer, before
-broadening the active frontier. Ask DEC-008 only:
+Complete #825's final Section A integration gate and release-candidate review without claiming retained-content
+accounting. Then broaden the active frontier by asking DEC-008 only:
 
 > Which existing notes concepts remain, and what public name replaces the attachment classification currently exposed as
 > `notes`?
