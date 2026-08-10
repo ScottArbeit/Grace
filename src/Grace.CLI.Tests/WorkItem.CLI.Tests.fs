@@ -5,6 +5,7 @@ open FsUnit
 open Grace.CLI
 open System
 open System.Collections.Generic
+open System.IO
 open NUnit.Framework
 
 /// Groups work item command coverage for the CLI test project.
@@ -122,6 +123,170 @@ module WorkItemCommandTests =
 
         parseResult.Errors.Count |> should equal 0
         parseResult.Invoke() |> should equal -1
+
+    /// Verifies that description set rejects every source combination except exactly one source before SDK dispatch.
+    [<FsCheck.NUnit.Property(MaxTest = 64)>]
+    let ``workitem description set input source combinations are valid iff exactly one is selected`` (useFile: bool) (useText: bool) (useStdin: bool) =
+        let args = List<string>()
+        args.Add("workitem")
+        args.Add("description")
+        args.Add("set")
+        args.Add("42")
+
+        if useFile then
+            args.Add("--file")
+            args.Add(Path.Combine(Path.GetTempPath(), "description.md"))
+
+        if useText then
+            args.Add("--text")
+            args.Add("inline description")
+
+        if useStdin then args.Add("--stdin")
+
+        let selectedCount =
+            (if useFile then 1 else 0)
+            + (if useText then 1 else 0)
+            + (if useStdin then 1 else 0)
+
+        let parseResult =
+            args.ToArray()
+            |> withIdsAndSilent
+            |> GraceCommand.rootCommand.Parse
+
+        if selectedCount = 1 then
+            parseResult.Errors.Count = 0
+        else
+            parseResult.Invoke() = -1
+
+    /// Verifies that a missing description file fails through the bound action before SDK dispatch.
+    [<Test>]
+    let ``workitem description set rejects a missing file through its bound action`` () =
+        let filePath = Path.Combine(Path.GetTempPath(), $"missing-description-{Guid.NewGuid():N}.md")
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "description"
+                                    "set"
+                                    "42"
+                                    "--file"
+                                    filePath |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+        parseResult.Invoke() |> should equal -1
+
+    /// Verifies that an empty description file fails through the bound action before SDK dispatch.
+    [<Test>]
+    let ``workitem description set rejects an empty file through its bound action`` () =
+        let filePath = Path.Combine(Path.GetTempPath(), $"empty-description-{Guid.NewGuid():N}.md")
+        File.WriteAllText(filePath, String.Empty)
+
+        try
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    withIdsAndSilent [| "workitem"
+                                        "description"
+                                        "set"
+                                        "42"
+                                        "--file"
+                                        filePath |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+            parseResult.Invoke() |> should equal -1
+        finally
+            if File.Exists(filePath) then File.Delete(filePath)
+
+    /// Verifies that a locally unreadable description file fails through the bound action before SDK dispatch.
+    [<Test>]
+    let ``workitem description set rejects an unreadable file through its bound action`` () =
+        let filePath = Path.Combine(Path.GetTempPath(), $"locked-description-{Guid.NewGuid():N}.md")
+        File.WriteAllText(filePath, "content")
+        let lockedFile = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+
+        try
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    withIdsAndSilent [| "workitem"
+                                        "description"
+                                        "set"
+                                        "42"
+                                        "--file"
+                                        filePath |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+            parseResult.Invoke() |> should equal -1
+        finally
+            lockedFile.Dispose()
+
+            if File.Exists(filePath) then File.Delete(filePath)
+
+    /// Verifies that an empty inline description fails locally instead of becoming an implicit clear operation.
+    [<Test>]
+    let ``workitem description set rejects empty inline text through its bound action`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "description"
+                                    "set"
+                                    "42"
+                                    "--text"
+                                    String.Empty |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+        parseResult.Invoke() |> should equal -1
+
+    /// Verifies that empty standard input fails through the bound action without leaking process-global console state.
+    [<Test>]
+    let ``workitem description set rejects empty standard input through its bound action`` () =
+        let originalIn = Console.In
+        use input = new StringReader(String.Empty)
+
+        try
+            Console.SetIn(input)
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    withIdsAndSilent [| "workitem"
+                                        "description"
+                                        "set"
+                                        "42"
+                                        "--stdin" |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+            parseResult.Invoke() |> should equal -1
+        finally
+            Console.SetIn(originalIn)
+
+    /// Verifies that help leaves standard input untouched and does not invoke the bound description action.
+    [<Test>]
+    let ``workitem description set help leaves standard input unread`` () =
+        let originalIn = Console.In
+        let expectedInput = "# remains unread\r\n🙂"
+        use input = new StringReader(expectedInput)
+
+        try
+            Console.SetIn(input)
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    withIds [| "workitem"
+                               "description"
+                               "set"
+                               "42"
+                               "--stdin"
+                               "--help" |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+            parseResult.Invoke() |> should equal 0
+            input.ReadToEnd() |> should equal expectedInput
+        finally
+            Console.SetIn(originalIn)
 
     /// Verifies that workitem link ref rejects invalid reference id.
     [<Test>]

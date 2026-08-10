@@ -79,14 +79,19 @@ bash / zsh:
 
 ### Set and clear the current description
 
-`description set` replaces the current Markdown with non-empty inline text. `description clear` appends an explicit
-empty description. Both accept a work-item GUID or positive number. Clear retains prior immutable description content,
-does not expose a public history, and a later set becomes current in actor append order.
+`description set` replaces the current Markdown from exactly one non-empty source: `--text`, `--file`, or `--stdin`.
+The CLI reads file and standard-input content completely before sending the unchanged text through the existing set
+request; it does not trim, normalize line endings, or rewrite Unicode. Empty input, a missing or unreadable file, no
+source, and multiple sources fail without a request. Use `description clear` for intentional removal. Both commands
+accept a work-item GUID or positive number. Clear retains prior immutable description content, does not expose a public
+history, and a later set becomes current in actor append order.
 
 PowerShell:
 
 ```powershell
 ./grace workitem description set 42 --text "Describe the next delivery slice."
+./grace workitem description set 42 --file .\description.md
+Get-Content -Raw .\description.md | ./grace workitem description set 42 --stdin
 ./grace workitem description clear 42
 ```
 
@@ -94,6 +99,8 @@ bash / zsh:
 
 ```bash
 ./grace workitem description set 42 --text "Describe the next delivery slice."
+./grace workitem description set 42 --file ./description.md
+cat ./description.md | ./grace workitem description set 42 --stdin
 ./grace workitem description clear 42
 ```
 

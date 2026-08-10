@@ -235,8 +235,10 @@ and exactly-one-source behavior.
 ### Stage 3: atomic description updates
 
 **Accepted decision (DEC-006):** The CLI uses `workitem description set|clear`. `set` requires exactly one non-empty
-`--text`, `--file`, or `--stdin` source. Empty input fails with guidance to use `clear`. The API and SDK represent set,
-clear, and omission distinctly rather than overloading an empty string.
+`--text`, `--file`, or `--stdin` source. File and standard-input readers complete before one unchanged text string is
+sent through the existing set request; they do not trim, normalize line endings, or rewrite Unicode. Empty, missing,
+unreadable, absent, or multiple sources fail before a request with guidance to use `clear`. The API and SDK represent
+set, clear, and omission distinctly rather than overloading an empty string.
 
 **Accepted decision (DEC-007):** Supported description writes use append-order last-write-wins. The serialized actor
 accepts each valid append; the last accepted description is current. No public or persisted revision, compare-before-
