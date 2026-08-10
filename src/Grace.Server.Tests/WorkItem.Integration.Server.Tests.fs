@@ -10,16 +10,19 @@ open Grace.Shared.Validation.Errors
 open Grace.Types.Artifact
 open Grace.Types.PersonalAccessToken
 open Grace.Types.Common
+open Grace.Types.Events
 open Grace.Types.Reminder
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.IO
 open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
 open System.Text
+open System.Text.Json
 open System.Threading.Tasks
 
 /// Groups shared helpers for work item integration helpers.
@@ -52,6 +55,51 @@ module private WorkItemIntegrationHelpers =
                 count <- count + (response.Resource |> Seq.sum)
 
             return count > 0
+        }
+
+    /// Reads the exact WorkItem event stream directly from the hosted Cosmos container for durable no-effect assertions.
+    let getWorkItemEventsAsync (repositoryId: string) (workItemId: Guid) =
+        task {
+            let hostState = getSharedHostState ()
+            use client = AspireTestHost.createCosmosClient hostState
+            let container = client.GetContainer(hostState.CosmosDatabaseName, hostState.CosmosContainerName)
+
+            let query =
+                QueryDefinition("SELECT c.State FROM c WHERE c.GrainType = @grainType AND c.PartitionKey = @partitionKey AND CONTAINS(c.id, @workItemId, true)")
+                    .WithParameter("@grainType", "WorkItem")
+                    .WithParameter("@partitionKey", Guid.Parse repositoryId)
+                    .WithParameter("@workItemId", workItemId.ToString("N"))
+
+            use iterator = container.GetItemQueryIterator<Dictionary<string, obj>>(query)
+            let events = ResizeArray<WorkItemEvent>()
+
+            while iterator.HasMoreResults do
+                let! page = iterator.ReadNextAsync()
+
+                for document in page do
+                    match document.TryGetValue "State" with
+                    | true, (:? JsonElement as state) ->
+                        let persisted = JsonSerializer.Deserialize<List<WorkItemEvent>>(state.GetRawText(), Constants.JsonSerializerOptions)
+
+                        if not (isNull persisted) then events.AddRange(persisted)
+                    | _ -> ()
+
+            return events.ToArray()
+        }
+
+    /// Checks the exact deterministic TextContent object through the hosted repository storage connection.
+    let textContentObjectExistsAsync (repositoryId: string) (textContentId: TextContentId) =
+        task {
+            let connectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
+
+            if String.IsNullOrWhiteSpace(connectionString) then
+                return invalidOp "The hosted Azure Storage connection is unavailable for deterministic TextContent absence proof."
+            else
+                let serviceClient = BlobServiceClient(connectionString)
+                let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
+                let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
+                let! exists = blobClient.ExistsAsync()
+                return exists.Value
         }
 
     /// Reads one reminder through the hosted server so its terminal actor state is observed independently of Artifact cleanup.
@@ -784,6 +832,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
         task {
             let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-empty"
             let workItemId = Guid.NewGuid().ToString()
+            let correlationId = "corr-empty-description"
 
             let! createResponse =
                 WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync
@@ -792,13 +841,27 @@ type WorkItemNumberAndLinksIntegrationTests() =
                     workItemId
                     "empty description"
                     String.Empty
-                    "corr-empty-description"
+                    correlationId
 
             createResponse.EnsureSuccessStatusCode() |> ignore
 
             let! workItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let! events = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId (Guid.Parse workItemId)
+
+            let expectedTextContent =
+                Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryId) (Guid.Parse workItemId) correlationId String.Empty
+                |> fun description -> description.TextContent.Value
+
+            let! textObjectExists = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId expectedTextContent.TextContentId
 
             Assert.That(workItem.Description, Is.EqualTo(String.Empty))
+            Assert.That(events, Has.Length.EqualTo(1))
+
+            match events[0].Event with
+            | Created (_, _, _, _, _, _, None) -> ()
+            | _ -> Assert.Fail("An empty create must persist only a Created event without a Description reference.")
+
+            Assert.That(textObjectExists, Is.False)
         }
 
     /// Verifies a work-item GUID cannot reveal or change a description through a different repository request.
@@ -808,15 +871,40 @@ type WorkItemNumberAndLinksIntegrationTests() =
             let! repositoryA = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-repository-a"
             let! repositoryB = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-repository-b"
             let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryA "repository-bound description"
+            let workItemGuid = Guid.Parse workItemId
+            let crossRepositoryText = "must not be written"
+            let crossRepositoryCorrelationId = "corr-cross-repository-description"
+            let! eventsBefore = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryA workItemGuid
 
-            let! crossRepositorySet = WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryB workItemId "must not be written"
+            let! crossRepositorySet =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync
+                    Client
+                    repositoryB
+                    workItemId
+                    crossRepositoryText
+                    crossRepositoryCorrelationId
 
             let! crossRepositoryGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync Client repositoryB workItemId
             let! original = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryA workItemId
+            let! eventsAfter = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryA workItemGuid
+
+            let requestRepositoryTextContent =
+                Grace.Server.TextContentStorage.createDescription (Guid.Parse repositoryB) workItemGuid crossRepositoryCorrelationId crossRepositoryText
+                |> fun description -> description.TextContent.Value
+
+            let! requestRepositoryTextObjectExists =
+                WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryB requestRepositoryTextContent.TextContentId
 
             Assert.That(crossRepositorySet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             Assert.That(crossRepositoryGet.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! setError = deserializeContent<GraceError> crossRepositorySet
+            let! getError = deserializeContent<GraceError> crossRepositoryGet
+
+            Assert.That(setError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
+            Assert.That(getError.Error, Is.EqualTo(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
             Assert.That(original.Description, Is.EqualTo("integration test work item"))
+            Assert.That(eventsAfter, Is.EqualTo(eventsBefore))
+            Assert.That(requestRepositoryTextObjectExists, Is.False)
         }
 
     /// Verifies create and set retries converge only for the current matching event and immutable description reference.

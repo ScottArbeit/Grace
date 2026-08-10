@@ -608,7 +608,7 @@ type WorkItemServerUnitTests() =
 
         let exact =
             WorkItem.classifyDescriptionReplay
-                WorkItem.SetDescription
+                WorkItem.DescriptionOperation.SetDescription
                 workItemId
                 repositoryId
                 (Some expected)
@@ -618,7 +618,7 @@ type WorkItemServerUnitTests() =
 
         let differentCommand =
             WorkItem.classifyDescriptionReplay
-                WorkItem.SetDescription
+                WorkItem.DescriptionOperation.SetDescription
                 workItemId
                 repositoryId
                 (Some expected)
@@ -628,7 +628,7 @@ type WorkItemServerUnitTests() =
 
         let differentText =
             WorkItem.classifyDescriptionReplay
-                WorkItem.SetDescription
+                WorkItem.DescriptionOperation.SetDescription
                 workItemId
                 repositoryId
                 (Some expected)
@@ -638,7 +638,7 @@ type WorkItemServerUnitTests() =
 
         let superseded =
             WorkItem.classifyDescriptionReplay
-                WorkItem.SetDescription
+                WorkItem.DescriptionOperation.SetDescription
                 workItemId
                 repositoryId
                 (Some expected)
