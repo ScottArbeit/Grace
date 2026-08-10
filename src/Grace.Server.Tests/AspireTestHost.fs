@@ -16,6 +16,8 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Net
+open System.Net.Sockets
 open System.Net.Http
 open System.Net.Security
 open System.Security.Cryptography.X509Certificates
@@ -75,8 +77,10 @@ module AspireTestHost =
     let private operationsWorkerResourceName = "grace-operations-worker"
     let private azuriteResourceName = "azurite"
     let private redisResourceName = "redis"
+    let private descriptionClearPreAppendTestGatePortEnvironmentVariable = "GRACE_TEST_DESCRIPTION_CLEAR_PRE_APPEND_PORT"
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
+    let mutable private sharedDescriptionClearPreAppendTestGate: (int * TcpListener) option = None
     let mutable private sharedBootstrapUserId: string option = None
 
     /// Gets service bus sql resource name from the running test server.
@@ -1178,6 +1182,27 @@ module AspireTestHost =
             logProgress "Docker cleanup complete."
             logProgress "building Aspire AppHost."
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
+            let descriptionClearPreAppendTestGateListener = new TcpListener(IPAddress.Loopback, 0)
+            descriptionClearPreAppendTestGateListener.Start(2)
+
+            let descriptionClearPreAppendTestGatePort =
+                (descriptionClearPreAppendTestGateListener.LocalEndpoint :?> IPEndPoint)
+                    .Port
+
+            let graceServerResource: ProjectResource =
+                builder.Resources
+                |> Seq.tryPick (fun resource ->
+                    match resource with
+                    | :? ProjectResource as project when project.Name = graceServerResourceName -> Some project
+                    | _ -> None)
+                |> Option.defaultWith (fun () -> failwith $"Resource '{graceServerResourceName}' was not added by the test AppHost.")
+
+            builder
+                .CreateResourceBuilder(graceServerResource)
+                .WithEnvironment("GRACE_TESTING", "1")
+                .WithEnvironment(descriptionClearPreAppendTestGatePortEnvironmentVariable, string descriptionClearPreAppendTestGatePort)
+            |> ignore
+
             let! app = builder.BuildAsync()
             appToCleanup <- Some app
             logProgress "starting Aspire AppHost resources."
@@ -1242,6 +1267,11 @@ module AspireTestHost =
             logProgress "container resources reported healthy; validating service readiness."
 
             let! env = getEnvironmentVariablesAsync app graceServerResourceName
+
+            let injectedDescriptionClearPreAppendTestGatePort = requireEnv graceServerResourceName descriptionClearPreAppendTestGatePortEnvironmentVariable env
+
+            if not (String.Equals(injectedDescriptionClearPreAppendTestGatePort, string descriptionClearPreAppendTestGatePort, StringComparison.Ordinal)) then
+                invalidOp "The Grace.Server test resource did not retain its generated description-clear test gate port."
 
             match env
                   |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory
@@ -1485,6 +1515,7 @@ module AspireTestHost =
                 Console.WriteLine("Skipping Service Bus functional readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
 
             logProgress "containers and service readiness checks complete."
+            sharedDescriptionClearPreAppendTestGate <- Some(descriptionClearPreAppendTestGatePort, descriptionClearPreAppendTestGateListener)
 
             return state
         }
@@ -1529,6 +1560,11 @@ module AspireTestHost =
             finally
                 sharedStateLock.Release() |> ignore
         }
+
+    /// Gets the ephemeral loopback listener injected into the currently running Grace.Server test resource.
+    let getDescriptionClearPreAppendTestGate () =
+        sharedDescriptionClearPreAppendTestGate
+        |> Option.defaultWith (fun () -> failwith "The Grace.Server test gate is unavailable before the Aspire host starts.")
 
     /// Starts a fresh host owned only by an explicitly selected measurement fixture.
     let startIsolatedAsync (bootstrapUserId: string) =

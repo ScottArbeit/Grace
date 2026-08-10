@@ -26,6 +26,7 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Net.Sockets
 open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
@@ -526,6 +527,86 @@ module WorkItem =
             value.Equals("1", StringComparison.OrdinalIgnoreCase)
             || value.Equals("true", StringComparison.OrdinalIgnoreCase)
             || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+
+    /// Holds a test-hosted clear request after its final fresh replay classification.
+    type private DescriptionClearPreAppendTestGate = { Client: TcpClient; Reader: StreamReader; Writer: StreamWriter }
+
+    /// Reads the private ephemeral loopback port only when the hosted-race request explicitly selects it.
+    let private tryGetDescriptionClearPreAppendTestGatePort (context: HttpContext) =
+        if isGraceTestingEnabled () then
+            match Environment.GetEnvironmentVariable("GRACE_TEST_DESCRIPTION_CLEAR_PRE_APPEND_PORT"),
+                  context.Request.Headers.TryGetValue("X-Grace-Test-Description-Clear-Gate-Port")
+                with
+            | configuredPort, (true, requestedPort) when
+                not (String.IsNullOrWhiteSpace configuredPort)
+                && String.Equals(configuredPort, string requestedPort, StringComparison.Ordinal)
+                ->
+                match Int32.TryParse configuredPort with
+                | true, port when port > 0 && port <= 65535 -> Some port
+                | _ -> None
+            | _ -> None
+        else
+            None
+
+    /// Waits at the inert test-host gate only for the selected request and injected loopback port.
+    let private tryEnterDescriptionClearPreAppendTestGate (context: HttpContext) =
+        task {
+            match tryGetDescriptionClearPreAppendTestGatePort context with
+            | None -> return None
+            | Some port ->
+                try
+                    use gateTimeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+                    let client = new TcpClient(AddressFamily.InterNetwork)
+                    do! client.ConnectAsync("127.0.0.1", port, gateTimeout.Token)
+
+                    let stream = client.GetStream()
+                    let reader = new StreamReader(stream, Encoding.UTF8, false, 1024, true)
+                    let writer = new StreamWriter(stream, Encoding.UTF8, 1024, true)
+                    do! writer.WriteLineAsync("fresh-description-operation")
+                    do! writer.FlushAsync()
+                    let! release = reader.ReadLineAsync(gateTimeout.Token).AsTask()
+
+                    if String.Equals(release, "release", StringComparison.Ordinal) then
+                        return Some { Client = client; Reader = reader; Writer = writer }
+                    else
+                        writer.Dispose()
+                        reader.Dispose()
+                        client.Dispose()
+                        return None
+                with
+                | :? TimeoutException -> return None
+                | :? SocketException -> return None
+                | :? OperationCanceledException -> return None
+        }
+
+    /// Records that a gated request entered duplicate-result reclassification before returning its HTTP result.
+    let private observeDescriptionClearDuplicateResultReclassification (testGate: DescriptionClearPreAppendTestGate option) =
+        task {
+            match testGate with
+            | None -> ()
+            | Some gate ->
+                do! gate.Writer.WriteLineAsync("duplicate-result-reclassified")
+                do! gate.Writer.FlushAsync()
+        }
+
+    /// Records that a gated request appended its description-clear event without a duplicate result.
+    let private observeDescriptionClearAppendSucceeded (testGate: DescriptionClearPreAppendTestGate option) =
+        task {
+            match testGate with
+            | None -> ()
+            | Some gate ->
+                do! gate.Writer.WriteLineAsync("append-succeeded")
+                do! gate.Writer.FlushAsync()
+        }
+
+    /// Releases the loopback resources held by one test-hosted clear request.
+    let private disposeDescriptionClearPreAppendTestGate (testGate: DescriptionClearPreAppendTestGate option) =
+        match testGate with
+        | None -> ()
+        | Some gate ->
+            gate.Writer.Dispose()
+            gate.Reader.Dispose()
+            gate.Client.Dispose()
 
     /// Implements upload artifact content for the server request pipeline.
     let private uploadArtifactContent repositoryDto (blobPath: string) (contentBytes: byte array) (correlationId: CorrelationId) =
@@ -1443,40 +1524,47 @@ module WorkItem =
                                             |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
                                     | FreshDescriptionOperation ->
                                         let metadata = createMetadata context
+                                        let! testGate = tryEnterDescriptionClearPreAppendTestGate context
 
-                                        match! actorProxy.Handle (WorkItemCommand.ClearDescription expectedDescription) metadata with
-                                        | Ok _ ->
-                                            return!
-                                                context
-                                                |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
-                                        | Error error when isDuplicateCorrelationIdError error ->
-                                            let! stateAfterDuplicateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+                                        try
+                                            match! actorProxy.Handle (WorkItemCommand.ClearDescription expectedDescription) metadata with
+                                            | Ok _ ->
+                                                do! observeDescriptionClearAppendSucceeded testGate
 
-                                            match stateAfterDuplicateResult with
-                                            | Error repositoryError -> return! context |> result400BadRequest repositoryError
-                                            | Ok stateAfterDuplicate ->
-                                                let! eventsAfterDuplicate = actorProxy.GetEvents correlationId
+                                                return!
+                                                    context
+                                                    |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                            | Error error when isDuplicateCorrelationIdError error ->
+                                                do! observeDescriptionClearDuplicateResultReclassification testGate
+                                                let! stateAfterDuplicateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
 
-                                                match
-                                                    classifyDescriptionReplay
-                                                        ClearDescription
-                                                        workItemId
-                                                        graceIds.RepositoryId
-                                                        (Some expectedDescription)
-                                                        stateAfterDuplicate
-                                                        eventsAfterDuplicate
-                                                        correlationId
-                                                    with
-                                                | ExactDescriptionReplay ->
-                                                    return!
-                                                        context
-                                                        |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
-                                                | ConflictingDescriptionCorrelation ->
-                                                    return!
-                                                        context
-                                                        |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
-                                                | FreshDescriptionOperation -> return! context |> result400BadRequest error
-                                        | Error error -> return! context |> result400BadRequest error
+                                                match stateAfterDuplicateResult with
+                                                | Error repositoryError -> return! context |> result400BadRequest repositoryError
+                                                | Ok stateAfterDuplicate ->
+                                                    let! eventsAfterDuplicate = actorProxy.GetEvents correlationId
+
+                                                    match
+                                                        classifyDescriptionReplay
+                                                            ClearDescription
+                                                            workItemId
+                                                            graceIds.RepositoryId
+                                                            (Some expectedDescription)
+                                                            stateAfterDuplicate
+                                                            eventsAfterDuplicate
+                                                            correlationId
+                                                        with
+                                                    | ExactDescriptionReplay ->
+                                                        return!
+                                                            context
+                                                            |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                                    | ConflictingDescriptionCorrelation ->
+                                                        return!
+                                                            context
+                                                            |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                                    | FreshDescriptionOperation -> return! context |> result400BadRequest error
+                                            | Error error -> return! context |> result400BadRequest error
+                                        finally
+                                            disposeDescriptionClearPreAppendTestGate testGate
             }
 
     /// Implements fetch linked reviewer attachments for the server request pipeline.

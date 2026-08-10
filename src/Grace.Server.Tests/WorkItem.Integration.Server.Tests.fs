@@ -21,6 +21,7 @@ open System.IO
 open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
+open System.Net.Sockets
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -28,6 +29,81 @@ open System.Threading.Tasks
 
 /// Groups shared helpers for work item integration helpers.
 module private WorkItemIntegrationHelpers =
+    /// Coordinates two server requests at the test-only post-precheck clear gate.
+    type DescriptionClearPreAppendGate private (listener: TcpListener) =
+        let clients = ResizeArray<TcpClient>()
+        let readers = ResizeArray<StreamReader>()
+        let writers = ResizeArray<StreamWriter>()
+
+        /// Waits until both server requests have classified their clear operation as fresh.
+        member _.WaitForFreshOperationsAsync() =
+            task {
+                use timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+
+                let! firstClient = listener.AcceptTcpClientAsync(timeout.Token)
+                clients.Add firstClient
+                let firstStream = firstClient.GetStream()
+                readers.Add(new StreamReader(firstStream, Encoding.UTF8, false, 1024, true))
+                writers.Add(new StreamWriter(firstStream, Encoding.UTF8, 1024, true))
+
+                let! secondClient = listener.AcceptTcpClientAsync(timeout.Token)
+                clients.Add secondClient
+                let secondStream = secondClient.GetStream()
+                readers.Add(new StreamReader(secondStream, Encoding.UTF8, false, 1024, true))
+                writers.Add(new StreamWriter(secondStream, Encoding.UTF8, 1024, true))
+
+                let reads: Task<string> array =
+                    readers
+                    |> Seq.toArray
+                    |> Seq.map (fun reader -> reader.ReadLineAsync())
+                    |> Seq.toArray
+
+                return! Task.WhenAll reads
+            }
+
+        /// Releases both server requests from the post-precheck clear gate.
+        member _.ReleaseAsync() =
+            task {
+                let releases: Task<unit> array =
+                    writers
+                    |> Seq.map (fun writer ->
+                        task {
+                            do! writer.WriteLineAsync("release")
+                            do! writer.FlushAsync()
+                        })
+                    |> Seq.toArray
+
+                let! _ = Task.WhenAll releases
+                return ()
+            }
+
+        /// Reads the route result observed by each request after the test gate releases it.
+        member _.ReadOutcomesAsync() =
+            task {
+                let reads: Task<string> array =
+                    readers
+                    |> Seq.toArray
+                    |> Array.map (fun reader -> reader.ReadLineAsync())
+
+                return! Task.WhenAll reads
+            }
+
+        interface IDisposable with
+            member _.Dispose() =
+                writers
+                |> Seq.iter (fun writer -> writer.Dispose())
+
+                readers
+                |> Seq.iter (fun reader -> reader.Dispose())
+
+                clients
+                |> Seq.iter (fun client -> client.Dispose())
+
+                listener.Stop()
+
+        /// Creates a two-request loopback gate for the externally hosted Grace.Server test process.
+        static member Create(listener: TcpListener) = new DescriptionClearPreAppendGate(listener)
+
     /// Returns the shared Aspire host state required for direct durable-state assertions.
     let getSharedHostState () =
         HostState
@@ -301,6 +377,28 @@ module private WorkItemIntegrationHelpers =
             parameters.CorrelationId <- correlationId
             use request = new HttpRequestMessage(HttpMethod.Post, "/work/description/clear")
             request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Content <- createJsonContent parameters
+            return! client.SendAsync(request)
+        }
+
+    /// Clears one description while selecting the private ephemeral hosted-race rendezvous.
+    let clearWorkItemDescriptionWithGateResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemIdentifier: string)
+        (correlationId: string)
+        (gatePort: int)
+        =
+        task {
+            let parameters = Parameters.WorkItem.ClearWorkItemDescriptionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.CorrelationId <- correlationId
+            use request = new HttpRequestMessage(HttpMethod.Post, "/work/description/clear")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Headers.Add("X-Grace-Test-Description-Clear-Gate-Port", string gatePort)
             request.Content <- createJsonContent parameters
             return! client.SendAsync(request)
         }
@@ -945,7 +1043,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(afterSet.Description, Is.EqualTo("set after clear"))
         }
 
-    /// Verifies overlapping exact clear retries reclassify a racing actor duplicate from durable current state.
+    /// Verifies two post-precheck clear requests force an actor duplicate and reclassify it from durable current state.
     [<Test>]
     member _.OverlappingExactDescriptionClearRetriesReturnSuccess() =
         task {
@@ -953,28 +1051,29 @@ type WorkItemNumberAndLinksIntegrationTests() =
             let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description clear overlap"
             let workItemGuid = Guid.Parse workItemId
             let correlationId = "corr-description-clear-overlap"
-            use startRequestsTogether = new Barrier(2)
 
-            let startClearRequest () =
-                Task
-                    .Factory
-                    .StartNew(
-                        (fun () ->
-                            startRequestsTogether.SignalAndWait()
+            let gatePort, gateListener = AspireTestHost.getDescriptionClearPreAppendTestGate ()
+            use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(gateListener)
 
-                            WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId correlationId),
-                        CancellationToken.None,
-                        TaskCreationOptions.LongRunning,
-                        TaskScheduler.Default
-                    )
-                    .Unwrap()
-
-            let! responses =
+            let requests =
                 [|
-                    startClearRequest ()
-                    startClearRequest ()
+                    WorkItemIntegrationHelpers.clearWorkItemDescriptionWithGateResponseAsync Client repositoryId workItemId correlationId gatePort
+                    WorkItemIntegrationHelpers.clearWorkItemDescriptionWithGateResponseAsync Client repositoryId workItemId correlationId gatePort
                 |]
-                |> Task.WhenAll
+
+            let! freshOperations = gate.WaitForFreshOperationsAsync()
+
+            Assert.That(freshOperations, Has.Length.EqualTo(2))
+
+            Assert.That(
+                freshOperations
+                |> Array.forall (fun operation -> operation = "fresh-description-operation"),
+                Is.True
+            )
+
+            do! gate.ReleaseAsync()
+
+            let! responses = Task.WhenAll requests
 
             let! responseBodies =
                 responses
@@ -991,6 +1090,10 @@ type WorkItemNumberAndLinksIntegrationTests() =
                 |> Array.choose id
 
             Assert.That(failedResponses, Is.Empty, String.Join(Environment.NewLine, failedResponses))
+
+            let! outcomes = gate.ReadOutcomesAsync()
+            Assert.That(outcomes, Does.Contain("append-succeeded"))
+            Assert.That(outcomes, Does.Contain("duplicate-result-reclassified"))
 
             let! workItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
             let! events = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
