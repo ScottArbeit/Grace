@@ -86,6 +86,10 @@ source, and multiple sources fail without a request. Use `description clear` for
 accept a work-item GUID or positive number. Clear retains prior immutable description content, does not expose a public
 history, and a later set becomes current in actor append order.
 
+The system-wide description limit applies to both `description set` and create-with-description. It counts Unicode
+scalar values; configure it for the `Grace.Server` process in the
+[environment inventory](../src/docs/ENVIRONMENT.md#work-item-descriptions). There are no owner-level overrides.
+
 PowerShell:
 
 ```powershell

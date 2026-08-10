@@ -275,6 +275,29 @@ counter/workflow snapshots remain responsible for correctness.
   M2M and interactive login.
 - `GRACE_TOKEN_FILE`: not supported; local plaintext token file storage is intentionally disabled.
 
+### Work-item descriptions
+
+- `grace__text_content__max_characters` (configuration key `grace:text_content:max_characters`): positive integer
+  limit for one work-item description. The default is `65,536` Unicode scalar values, not UTF-16 code units or UTF-8
+  bytes.
+
+Set this once for each `Grace.Server` process; it is a system-wide setting for every owner served by that process, not
+an owner-level override. Grace uses it when validating description text for work-item create and `description set`
+storage. Text over the limit is rejected before storage. An absent or whitespace value uses the default; a malformed,
+zero, or negative value prevents the server from starting.
+
+PowerShell:
+
+```powershell
+$env:grace__text_content__max_characters="65536"
+```
+
+bash / zsh:
+
+```bash
+export grace__text_content__max_characters="65536"
+```
+
 ### Reminders
 
 - `grace__reminder__batch__size`: batch size for reminder processing.
