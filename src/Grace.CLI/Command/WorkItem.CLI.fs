@@ -100,6 +100,25 @@ module WorkItemCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+        /// Identifies a Markdown file whose complete text replaces the current work-item description.
+        let descriptionFile =
+            new Option<string>(
+                "--file",
+                [| "-f" |],
+                Required = false,
+                Description = "Read the complete Markdown description from this file path.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        /// Selects standard input as the complete Markdown replacement for the current work-item description.
+        let descriptionStdin =
+            new Option<bool>(
+                "--stdin",
+                Required = false,
+                Description = "Read the complete Markdown description from standard input.",
+                Arity = ArgumentArity.ZeroOrOne
+            )
+
         let stdin = new Option<bool>("--stdin", Required = false, Description = "Read attachment content from standard input.", Arity = ArgumentArity.ZeroOrOne)
 
         let attachmentType =
@@ -548,32 +567,108 @@ module WorkItemCommand =
                 return result |> renderOutput parseResult
             }
 
-    /// Routes description replacement from parsed Markdown through the dedicated SDK operation.
+    /// Resolves exactly one local Markdown source without changing its Unicode or line-ending content before dispatch.
+    let private tryGetDescriptionInput (parseResult: ParseResult) =
+        task {
+            let filePath =
+                parseResult.GetValue(Options.descriptionFile)
+                |> Option.ofObj
+
+            let textInput =
+                parseResult.GetValue(Options.descriptionText)
+                |> Option.ofObj
+
+            let readFromStdin = parseResult.GetValue(Options.descriptionStdin)
+
+            let selectedCount =
+                (if filePath.IsSome then 1 else 0)
+                + (if textInput.IsSome then 1 else 0)
+                + (if readFromStdin then 1 else 0)
+
+            let emptyInputError =
+                GraceError.Create
+                    "Description input is empty. Use 'workitem description clear <work-item>' for intentional removal."
+                    (getCorrelationId parseResult)
+
+            if selectedCount <> 1 then
+                return
+                    Error(
+                        GraceError.Create
+                            "Specify exactly one of --text, --file, or --stdin. Use 'workitem description clear <work-item>' for intentional removal."
+                            (getCorrelationId parseResult)
+                    )
+            else
+                match filePath, textInput, readFromStdin with
+                | Some path, None, false ->
+                    try
+                        if not <| File.Exists(path) then
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"Description file does not exist: {path}. Use 'workitem description clear <work-item>' for intentional removal."
+                                        (getCorrelationId parseResult)
+                                )
+                        else
+                            let! text = File.ReadAllTextAsync(path)
+                            return if String.IsNullOrEmpty(text) then Error emptyInputError else Ok text
+                    with
+                    | ex ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"Unable to read description file '{path}': {ex.Message}. Use 'workitem description clear <work-item>' for intentional removal."
+                                    (getCorrelationId parseResult)
+                            )
+                | None, Some text, false -> return if String.IsNullOrEmpty(text) then Error emptyInputError else Ok text
+                | None, None, true ->
+                    try
+                        let! text = Console.In.ReadToEndAsync()
+                        return if String.IsNullOrEmpty(text) then Error emptyInputError else Ok text
+                    with
+                    | ex ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"Unable to read description standard input: {ex.Message}. Use 'workitem description clear <work-item>' for intentional removal."
+                                    (getCorrelationId parseResult)
+                            )
+                | _ ->
+                    return
+                        Error(
+                            GraceError.Create
+                                "Specify exactly one of --text, --file, or --stdin. Use 'workitem description clear <work-item>' for intentional removal."
+                                (getCorrelationId parseResult)
+                        )
+        }
+
+    /// Routes description replacement from exactly one resolved Markdown source through the dedicated SDK operation.
     let private setDescriptionHandler (parseResult: ParseResult) =
         task {
             try
-                let graceIds = parseResult |> getNormalizedIdsAndNames
                 let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
-                let text = parseResult.GetValue(Options.descriptionText)
 
-                match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+                match! tryGetDescriptionInput parseResult with
                 | Error error -> return Error error
-                | Ok _ when String.IsNullOrWhiteSpace(text) -> return Error(GraceError.Create "Description text is required." (getCorrelationId parseResult))
-                | Ok workItem ->
-                    let parameters =
-                        Parameters.WorkItem.SetWorkItemDescriptionParameters(
-                            WorkItemId = workItem,
-                            Text = text,
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            CorrelationId = graceIds.CorrelationId
-                        )
+                | Ok text ->
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
 
-                    return! WorkItem.SetDescription(parameters)
+                    match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+                    | Error error -> return Error error
+                    | Ok workItem ->
+                        let parameters =
+                            Parameters.WorkItem.SetWorkItemDescriptionParameters(
+                                WorkItemId = workItem,
+                                Text = text,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        return! WorkItem.SetDescription(parameters)
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
@@ -1377,8 +1472,10 @@ module WorkItemCommand =
         let descriptionCommand = new Command("description", Description = "Manage the current immutable work-item description.")
 
         let setDescriptionCommand =
-            new Command("set", Description = "Set the current Markdown description for a work item by ID or number.")
+            new Command("set", Description = "Set the current Markdown description from exactly one text, file, or standard-input source.")
             |> addOption Options.descriptionText
+            |> addOption Options.descriptionFile
+            |> addOption Options.descriptionStdin
             |> addCommonOptions
 
         setDescriptionCommand.Arguments.Add(Arguments.workItemIdentifier)
