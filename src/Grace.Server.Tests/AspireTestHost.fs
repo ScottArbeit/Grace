@@ -4,6 +4,8 @@ open Aspire.Hosting
 open Aspire.Hosting.ApplicationModel
 open Aspire.Hosting.Testing
 open Aspire.Hosting.Azure
+open global.Azure.Storage
+open global.Azure.Storage.Blobs
 open Azure.Messaging.ServiceBus
 open Grace.Shared
 open Microsoft.Azure.Cosmos
@@ -789,6 +791,56 @@ module AspireTestHost =
                 replaceConnValue "AccountEndpoint=" endpoint connectionString
             | None -> connectionString
         | None -> connectionString
+
+    /// Rewrites the server's internal Azurite blob endpoint to the live Aspire endpoint reachable by the test process.
+    let private resolveLiveAzureStorageConnectionString (app: DistributedApplication) (connectionString: string) =
+        match tryGetRuntimeEndpoint app azuriteResourceName 10000 with
+        | Some runtimeEndpoint ->
+            let configuredEndpoint = tryGetConnValue "BlobEndpoint=" connectionString
+            let mutable configuredUri = Unchecked.defaultof<Uri>
+
+            if Uri.TryCreate(configuredEndpoint, UriKind.Absolute, &configuredUri) then
+                let endpoint =
+                    runtimeEndpoint.ToString().TrimEnd('/')
+                    + configuredUri.AbsolutePath
+
+                if not (endpoint.Equals(configuredEndpoint, StringComparison.OrdinalIgnoreCase)) then
+                    Console.WriteLine($"Azurite blob endpoint adjusted from {configuredEndpoint} to {endpoint}.")
+
+                replaceConnValue "BlobEndpoint=" endpoint connectionString
+            else
+                connectionString
+        | None -> connectionString
+
+    /// Builds a repository container client against the same translated Azurite endpoint and credential shape used by Grace.Server.
+    let private createLiveAzureStorageContainerClient (connectionString: string) (repositoryId: string) =
+        let accountName = tryGetConnValue "AccountName=" connectionString
+        let accountKey = tryGetConnValue "AccountKey=" connectionString
+        let configuredEndpoint = tryGetConnValue "BlobEndpoint=" connectionString
+        let mutable blobEndpoint = Unchecked.defaultof<Uri>
+
+        if
+            accountName = "<missing>"
+            || accountKey = "<missing>"
+            || not (Uri.TryCreate(configuredEndpoint, UriKind.Absolute, &blobEndpoint))
+        then
+            failwith "The running Grace.Server resource did not expose a complete Azure Storage Blob endpoint configuration."
+
+        let containerUri = Uri($"{blobEndpoint.AbsoluteUri.TrimEnd('/')}/{repositoryId}")
+        let accountPathPrefix = $"/{accountName}/"
+
+        let normalizedContainerUri =
+            if
+                containerUri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                && containerUri.AbsolutePath.StartsWith(accountPathPrefix, StringComparison.OrdinalIgnoreCase)
+            then
+                let builder = UriBuilder(containerUri)
+                builder.Host <- "127.0.0.1"
+                builder.Uri
+            else
+                containerUri
+
+        BlobContainerClient(normalizedContainerUri, StorageSharedKeyCredential(accountName, accountKey))
 
     /// Formats exception chain for diagnostics.
     let private formatExceptionChain (ex: exn) =
@@ -2024,7 +2076,16 @@ module AspireTestHost =
         task {
             let! env = getEnvironmentVariablesAsync state.App graceServerResourceName
 
-            return requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureStorageConnectionString env
+            return
+                requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureStorageConnectionString env
+                |> resolveLiveAzureStorageConnectionString state.App
+        }
+
+    /// Resolves a repository-scoped Blob container client that targets the same live object storage used by Grace.Server.
+    let getAzureStorageContainerClientAsync (state: TestHostState) (repositoryId: string) =
+        task {
+            let! connectionString = getAzureStorageConnectionStringAsync state
+            return createLiveAzureStorageContainerClient connectionString repositoryId
         }
 
     /// Returns current Grace.Server resource logs for focused Aspire failure diagnostics.

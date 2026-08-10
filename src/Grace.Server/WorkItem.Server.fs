@@ -1449,6 +1449,33 @@ module WorkItem =
                                             return!
                                                 context
                                                 |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                        | Error error when isDuplicateCorrelationIdError error ->
+                                            let! stateAfterDuplicateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                                            match stateAfterDuplicateResult with
+                                            | Error repositoryError -> return! context |> result400BadRequest repositoryError
+                                            | Ok stateAfterDuplicate ->
+                                                let! eventsAfterDuplicate = actorProxy.GetEvents correlationId
+
+                                                match
+                                                    classifyDescriptionReplay
+                                                        ClearDescription
+                                                        workItemId
+                                                        graceIds.RepositoryId
+                                                        (Some expectedDescription)
+                                                        stateAfterDuplicate
+                                                        eventsAfterDuplicate
+                                                        correlationId
+                                                    with
+                                                | ExactDescriptionReplay ->
+                                                    return!
+                                                        context
+                                                        |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                                | ConflictingDescriptionCorrelation ->
+                                                    return!
+                                                        context
+                                                        |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                                | FreshDescriptionOperation -> return! context |> result400BadRequest error
                                         | Error error -> return! context |> result400BadRequest error
             }
 

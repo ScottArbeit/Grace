@@ -23,6 +23,7 @@ open System.Net.Http
 open System.Net.Http.Headers
 open System.Text
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups shared helpers for work item integration helpers.
@@ -91,10 +92,8 @@ module private WorkItemIntegrationHelpers =
     let textContentObjectExistsAsync (repositoryId: string) (textContentId: TextContentId) =
         task {
             let hostState = getSharedHostState ()
-            let! connectionString = AspireTestHost.getAzureStorageConnectionStringAsync hostState
+            let! containerClient = AspireTestHost.getAzureStorageContainerClientAsync hostState (repositoryId.ToLowerInvariant())
 
-            let serviceClient = BlobServiceClient(connectionString)
-            let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
             let blobClient = containerClient.GetBlobClient(StorageKeys.textContentObjectKey textContentId)
             let! exists = blobClient.ExistsAsync()
             return exists.Value
@@ -861,6 +860,13 @@ type WorkItemNumberAndLinksIntegrationTests() =
 
             let! beforeClear = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
 
+            let expectedSetDescriptionId, expectedSetTextContentId =
+                Grace.Server.TextContentStorage.createIds (Guid.Parse repositoryId) workItemGuid setCorrelationId
+
+            Assert.That(beforeClear.Description, Is.EqualTo(originalText))
+
+            let! persistedTextObjectExistsBeforeClear = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId expectedSetTextContentId
+
             let! firstClear = WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId clearCorrelationId
 
             let! conflictingClear =
@@ -880,6 +886,25 @@ type WorkItemNumberAndLinksIntegrationTests() =
 
             let! afterClear = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
             let! eventsAfterClear = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            let persistedSetDescription =
+                eventsAfterClear
+                |> Array.pick (fun workItemEvent ->
+                    match workItemEvent.Event with
+                    | DescriptionSet description -> Some description
+                    | _ -> None)
+
+            let persistedTextContent =
+                match persistedSetDescription.TextContent with
+                | Some textContent -> textContent
+                | None -> failwith "The persisted DescriptionSet event must retain its text-content reference."
+
+            let! persistedTextObjectExistsAfterClear = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId persistedTextContent.TextContentId
+
+            Assert.That(persistedSetDescription.DescriptionId, Is.EqualTo(expectedSetDescriptionId))
+            Assert.That(persistedTextContent.TextContentId, Is.EqualTo(expectedSetTextContentId))
+            Assert.That(persistedTextObjectExistsBeforeClear, Is.True)
+            Assert.That(persistedTextObjectExistsAfterClear, Is.True)
 
             let! finalSet = WorkItemIntegrationHelpers.setWorkItemDescriptionResponseAsync Client repositoryId workItemId "set after clear"
 
@@ -913,29 +938,72 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(clearDescriptions, Has.Length.EqualTo(2))
             Assert.That(clearDescriptions[0].DescriptionId, Is.Not.EqualTo(clearDescriptions[1].DescriptionId))
 
-            let persistedSetDescription =
-                eventsAfterClear
-                |> Array.pick (fun workItemEvent ->
-                    match workItemEvent.Event with
-                    | DescriptionSet description -> Some description
-                    | _ -> None)
-
-            let persistedTextContent =
-                match persistedSetDescription.TextContent with
-                | Some textContent -> textContent
-                | None -> failwith "The persisted DescriptionSet event must retain its text-content reference."
-
-            let expectedSetDescriptionId, expectedSetTextContentId =
-                Grace.Server.TextContentStorage.createIds (Guid.Parse repositoryId) workItemGuid setCorrelationId
-
-            Assert.That(persistedSetDescription.DescriptionId, Is.EqualTo(expectedSetDescriptionId))
-            Assert.That(persistedTextContent.TextContentId, Is.EqualTo(expectedSetTextContentId))
-
             let! clearObjectExists = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId expectedClearTextContentId
 
             Assert.That(clearObjectExists, Is.False)
             Assert.That(eventsAfterSet.Length, Is.EqualTo(eventsAfterClear.Length + 1))
             Assert.That(afterSet.Description, Is.EqualTo("set after clear"))
+        }
+
+    /// Verifies overlapping exact clear retries reclassify a racing actor duplicate from durable current state.
+    [<Test>]
+    member _.OverlappingExactDescriptionClearRetriesReturnSuccess() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-clear-overlap"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description clear overlap"
+            let workItemGuid = Guid.Parse workItemId
+            let correlationId = "corr-description-clear-overlap"
+            use startRequestsTogether = new Barrier(2)
+
+            let startClearRequest () =
+                Task
+                    .Factory
+                    .StartNew(
+                        (fun () ->
+                            startRequestsTogether.SignalAndWait()
+
+                            WorkItemIntegrationHelpers.clearWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId correlationId),
+                        CancellationToken.None,
+                        TaskCreationOptions.LongRunning,
+                        TaskScheduler.Default
+                    )
+                    .Unwrap()
+
+            let! responses =
+                [|
+                    startClearRequest ()
+                    startClearRequest ()
+                |]
+                |> Task.WhenAll
+
+            let! responseBodies =
+                responses
+                |> Array.map (fun response -> response.Content.ReadAsStringAsync())
+                |> Task.WhenAll
+
+            let failedResponses =
+                responses
+                |> Array.mapi (fun index response ->
+                    if response.IsSuccessStatusCode then
+                        None
+                    else
+                        Some $"request {index} returned {response.StatusCode}: {responseBodies[index]}")
+                |> Array.choose id
+
+            Assert.That(failedResponses, Is.Empty, String.Join(Environment.NewLine, failedResponses))
+
+            let! workItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let! events = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            let clearDescriptions =
+                events
+                |> Array.choose (fun workItemEvent ->
+                    match workItemEvent.Event with
+                    | DescriptionCleared description -> Some description
+                    | _ -> None)
+
+            Assert.That(workItem.Description, Is.EqualTo(String.Empty))
+            Assert.That(clearDescriptions, Has.Length.EqualTo(1))
         }
 
     /// Verifies an empty create returns no hydrated text and bypasses the immutable description reference path.
