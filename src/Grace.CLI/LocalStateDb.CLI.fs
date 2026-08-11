@@ -9,6 +9,7 @@ open System.Text
 open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
+open Grace.CLI.Command
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open Grace.Types.Common
@@ -20,7 +21,7 @@ open SQLitePCL
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let SchemaVersion = "9"
+    let SchemaVersion = "10"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]
@@ -33,6 +34,11 @@ module LocalStateDb =
     /// Keeps a bounded diagnostic tail of already-applied Watch journal rows.
     [<Literal>]
     let WatchJournalRetainedAppliedRows = 1024L
+
+    /// Represents the only durable local completion states retained for a Working Directory Update operation.
+    type internal WorkingDirectoryUpdateCompletion =
+        | Pending
+        | Terminal
 
     [<Literal>]
     let private BusyTimeoutMs = 30000
@@ -232,6 +238,9 @@ module LocalStateDb =
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_status_directories_directory_version_id ON status_directories(directory_version_id);"
             "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE TABLE IF NOT EXISTS remote_reference_boundaries (repository_id TEXT NOT NULL, branch_id TEXT NOT NULL, root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, root_directory_blake3_hash TEXT NOT NULL, event_cursor TEXT NOT NULL, PRIMARY KEY (repository_id, branch_id));"
+            "CREATE TABLE IF NOT EXISTS working_directory_update_completions (operation_value TEXT PRIMARY KEY, caller_kind TEXT NOT NULL CHECK (caller_kind IN ('Watch', 'Branch', 'Connect')), target_canonical TEXT NOT NULL, finalization_state TEXT NOT NULL CHECK (finalization_state IN ('Pending', 'Terminal')), completed_at_unix_ticks INTEGER NOT NULL);"
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_pending ON working_directory_update_completions(finalization_state) WHERE finalization_state = 'Pending';"
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_working_directory_update_completions_terminal_caller ON working_directory_update_completions(caller_kind) WHERE finalization_state = 'Terminal';"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_path ON status_files(directory_path);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_version_id ON status_files(directory_version_id);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_sha256 ON status_files(sha256_hash);"
@@ -252,6 +261,7 @@ module LocalStateDb =
             "status_directories"
             "status_files"
             "remote_reference_boundaries"
+            "working_directory_update_completions"
             "object_cache_directories"
             "object_cache_directory_children"
             "object_cache_directory_files"
@@ -269,6 +279,8 @@ module LocalStateDb =
             "ix_object_cache_directories_relative_path"
             "ix_object_cache_children_parent"
             "ix_object_cache_files_path_hash"
+            "ux_working_directory_update_completions_pending"
+            "ux_working_directory_update_completions_terminal_caller"
         |]
 
     /// Models read only local state inspection values passed between the parser and local state db handlers.
@@ -785,11 +797,6 @@ module LocalStateDb =
             | None -> false
         | _ -> false
 
-    /// Adds one nullable Watch journal column when migrating v6 databases without deleting pending rows.
-    let private addWatchJournalColumnIfMissing (connection: SqliteConnection) columnName columnDeclaration =
-        if not (columnExists connection "watch_journal" columnName) then
-            executeNonQuery connection $"ALTER TABLE watch_journal ADD COLUMN {columnDeclaration};"
-
     /// Adds the lifecycle diagnostics table that records Watch recovery decisions without replay payloads.
     let private ensureWatchLifecycleEventTable (connection: SqliteConnection) =
         executeNonQuery
@@ -798,25 +805,6 @@ module LocalStateDb =
 
         if not (columnExists connection "watch_lifecycle_events" "root_directory_sha256_hash") then
             executeNonQuery connection "ALTER TABLE watch_lifecycle_events ADD COLUMN root_directory_sha256_hash TEXT;"
-
-    /// Migrates the v6 Watch journal shape by preserving rows and adding identity plus quarantine metadata.
-    let private migrateWatchJournalV6ToV7 (connection: SqliteConnection) =
-        addWatchJournalColumnIfMissing connection "repository_id" "repository_id TEXT"
-        addWatchJournalColumnIfMissing connection "branch_id" "branch_id TEXT"
-        addWatchJournalColumnIfMissing connection "workspace_root" "workspace_root TEXT"
-        addWatchJournalColumnIfMissing connection "watch_root" "watch_root TEXT"
-        addWatchJournalColumnIfMissing connection "root_directory_version_id" "root_directory_version_id TEXT"
-        addWatchJournalColumnIfMissing connection "root_directory_sha256_hash" "root_directory_sha256_hash TEXT"
-        addWatchJournalColumnIfMissing connection "root_directory_blake3_hash" "root_directory_blake3_hash TEXT"
-        addWatchJournalColumnIfMissing connection "watch_mode" "watch_mode TEXT"
-        addWatchJournalColumnIfMissing connection "quarantined_at_unix_ticks" "quarantined_at_unix_ticks INTEGER"
-        addWatchJournalColumnIfMissing connection "quarantine_reason" "quarantine_reason TEXT"
-        ensureWatchLifecycleEventTable connection
-
-    /// Adds root SHA-256 identity to Watch journal and lifecycle records; preexisting incomplete rows remain replay-incompatible.
-    let private migrateWatchJournalV7ToV8 (connection: SqliteConnection) =
-        addWatchJournalColumnIfMissing connection "root_directory_sha256_hash" "root_directory_sha256_hash TEXT"
-        ensureWatchLifecycleEventTable connection
 
     /// Verifies that the Watch journal table can support ordered local recovery and retention operations.
     let private hasRequiredWatchJournalShape (connection: SqliteConnection) =
@@ -1640,28 +1628,6 @@ module LocalStateDb =
 
                                                 match tryGetMetaValue connection "schema_version" with
                                                 | Some version when version = SchemaVersion -> ()
-                                                | Some "6" ->
-                                                    if hasRequiredMetaKeyValueShape connection
-                                                       && tableExists connection "watch_journal" then
-                                                        try
-                                                            logTrace "migrating local state DB schema from v6 to v9"
-                                                            migrateWatchJournalV6ToV7 connection
-                                                            setMetaValue connection "schema_version" SchemaVersion
-                                                        with
-                                                        | :? SqliteException -> recreate <- true
-                                                    else
-                                                        recreate <- true
-                                                | Some "7" ->
-                                                    if hasRequiredMetaKeyValueShape connection
-                                                       && tableExists connection "watch_journal" then
-                                                        try
-                                                            logTrace "migrating local state DB schema from v7 to v9"
-                                                            migrateWatchJournalV7ToV8 connection
-                                                            setMetaValue connection "schema_version" SchemaVersion
-                                                        with
-                                                        | :? SqliteException -> recreate <- true
-                                                    else
-                                                        recreate <- true
                                                 | Some _ -> recreate <- true
                                                 | None ->
                                                     logTrace "meta schema_version missing; writing defaults"
@@ -2957,11 +2923,188 @@ module LocalStateDb =
                     return UnreadableLocalStateDatabase(file.Length, file.LastWriteTimeUtc)
         }
 
+    /// Applies object-cache directory metadata through the caller's already-open SQLite transaction.
+    let private upsertObjectCacheRows (connection: SqliteConnection) (directoriesToUpsert: LocalDirectoryVersion array) =
+        let knownDirectoryIds = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+        use knownDirectoryIdsCommand = connection.CreateCommand()
+        knownDirectoryIdsCommand.CommandText <- "SELECT directory_version_id FROM object_cache_directories;"
+
+        use knownDirectoryIdsReader = knownDirectoryIdsCommand.ExecuteReader()
+
+        while knownDirectoryIdsReader.Read() do
+            knownDirectoryIds.Add(knownDirectoryIdsReader.GetString(0))
+            |> ignore
+
+        knownDirectoryIdsReader.Close()
+
+        directoriesToUpsert
+        |> Array.iter (fun directory ->
+            let directoryVersionId = directory.DirectoryVersionId.ToString()
+
+            executeNonQueryWithParams
+                connection
+                "INSERT INTO object_cache_directories (directory_version_id, relative_path, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $blake3_hash, $size_bytes, $created_at, $last_write) ON CONFLICT(directory_version_id) DO UPDATE SET relative_path = excluded.relative_path, sha256_hash = excluded.sha256_hash, blake3_hash = excluded.blake3_hash, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
+                (fun parameters ->
+                    parameters.AddWithValue("$directory_version_id", directoryVersionId)
+                    |> ignore
+
+                    parameters.AddWithValue("$relative_path", directory.RelativePath)
+                    |> ignore
+
+                    parameters.AddWithValue("$sha256_hash", directory.Sha256Hash)
+                    |> ignore
+
+                    parameters.AddWithValue("$blake3_hash", directory.Blake3Hash)
+                    |> ignore
+
+                    parameters.AddWithValue("$size_bytes", directory.Size)
+                    |> ignore
+
+                    parameters.AddWithValue("$created_at", directory.CreatedAt.ToUnixTimeTicks())
+                    |> ignore
+
+                    parameters.AddWithValue("$last_write", directory.LastWriteTimeUtc.Ticks)
+                    |> ignore)
+
+            knownDirectoryIds.Add(directoryVersionId)
+            |> ignore)
+
+        directoriesToUpsert
+        |> Array.iter (fun directory ->
+            let directoryVersionId = directory.DirectoryVersionId.ToString()
+
+            executeNonQueryWithParams
+                connection
+                "DELETE FROM object_cache_directory_children WHERE parent_directory_version_id = $directory_version_id;"
+                (fun parameters ->
+                    parameters.AddWithValue("$directory_version_id", directoryVersionId)
+                    |> ignore)
+
+            executeNonQueryWithParams
+                connection
+                "DELETE FROM object_cache_directory_files WHERE directory_version_id = $directory_version_id;"
+                (fun parameters ->
+                    parameters.AddWithValue("$directory_version_id", directoryVersionId)
+                    |> ignore)
+
+            directory.Directories
+            |> Seq.iteri (fun ordinal childDirectoryVersionId ->
+                let childId = childDirectoryVersionId.ToString()
+
+                if not (knownDirectoryIds.Contains(childId)) then
+                    invalidOp
+                        $"Cannot upsert object cache because child DirectoryVersionId {childDirectoryVersionId} is missing. Parent DirectoryVersionId: {directory.DirectoryVersionId}."
+
+                executeNonQueryWithParams
+                    connection
+                    "INSERT INTO object_cache_directory_children (parent_directory_version_id, child_directory_version_id, ordinal) VALUES ($parent_directory_version_id, $child_directory_version_id, $ordinal) ON CONFLICT(parent_directory_version_id, child_directory_version_id) DO UPDATE SET ordinal = excluded.ordinal;"
+                    (fun parameters ->
+                        parameters.AddWithValue("$parent_directory_version_id", directoryVersionId)
+                        |> ignore
+
+                        parameters.AddWithValue("$child_directory_version_id", childId)
+                        |> ignore
+
+                        parameters.AddWithValue("$ordinal", ordinal)
+                        |> ignore))
+
+            directory.Files
+            |> Seq.iter (fun file ->
+                executeNonQueryWithParams
+                    connection
+                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $blake3_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write) ON CONFLICT(directory_version_id, relative_path) DO UPDATE SET sha256_hash = excluded.sha256_hash, blake3_hash = excluded.blake3_hash, is_binary = excluded.is_binary, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, uploaded_to_object_storage = excluded.uploaded_to_object_storage, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
+                    (fun parameters ->
+                        parameters.AddWithValue("$directory_version_id", directoryVersionId)
+                        |> ignore
+
+                        parameters.AddWithValue("$relative_path", file.RelativePath)
+                        |> ignore
+
+                        parameters.AddWithValue("$sha256_hash", file.Sha256Hash)
+                        |> ignore
+
+                        parameters.AddWithValue("$blake3_hash", file.Blake3Hash)
+                        |> ignore
+
+                        parameters.AddWithValue("$is_binary", (if file.IsBinary then 1 else 0))
+                        |> ignore
+
+                        parameters.AddWithValue("$size_bytes", file.Size)
+                        |> ignore
+
+                        parameters.AddWithValue("$created_at", file.CreatedAt.ToUnixTimeTicks())
+                        |> ignore
+
+                        parameters.AddWithValue("$uploaded", (if file.UploadedToObjectStorage then 1 else 0))
+                        |> ignore
+
+                        parameters.AddWithValue("$last_write", file.LastWriteTimeUtc.Ticks)
+                        |> ignore)))
+
+    /// Converts one Working Directory Update caller kind into its bounded completion retention key.
+    let private workingDirectoryUpdateCallerKindValue callerKind =
+        match callerKind with
+        | WorkingDirectoryUpdate.CallerKind.Watch -> "Watch"
+        | WorkingDirectoryUpdate.CallerKind.Branch -> "Branch"
+        | WorkingDirectoryUpdate.CallerKind.Connect -> "Connect"
+
+    /// Verifies that completion input repeats one exact target through status, object metadata, and caller operation contracts.
+    let private validateWorkingDirectoryUpdateCompletionInput
+        (graceStatus: GraceStatus)
+        (objectCacheDirectories: LocalDirectoryVersion array)
+        (target: WorkingDirectoryUpdate.Target)
+        (operation: WorkingDirectoryUpdate.Operation)
+        (connectCursor: string option)
+        =
+        if not (WorkingDirectoryUpdate.Operation.matchesTarget target operation) then
+            invalidArg (nameof operation) "The Working Directory Update operation must match its target."
+
+        let statusTarget =
+            WorkingDirectoryUpdate.Target.create
+                (WorkingDirectoryUpdate.Target.repositoryId target)
+                (WorkingDirectoryUpdate.Target.branchId target)
+                graceStatus.RootDirectoryId
+                graceStatus.RootDirectorySha256Hash
+                (getRootDirectoryBlake3Hash graceStatus)
+
+        match statusTarget with
+        | Ok statusTarget when WorkingDirectoryUpdate.Target.canonical statusTarget = WorkingDirectoryUpdate.Target.canonical target -> ()
+        | _ -> invalidArg (nameof graceStatus) "The local status root must exactly match the Working Directory Update target."
+
+        let targetRepositoryId = WorkingDirectoryUpdate.Target.repositoryId target
+
+        if objectCacheDirectories
+           |> Array.exists (fun directory -> directory.RepositoryId <> targetRepositoryId) then
+            invalidArg (nameof objectCacheDirectories) "Working Directory Update object metadata must belong to the target repository."
+
+        let rootMetadata =
+            objectCacheDirectories
+            |> Array.filter (fun directory -> directory.DirectoryVersionId = graceStatus.RootDirectoryId)
+
+        match rootMetadata with
+        | [| root |] when
+            root.RepositoryId = targetRepositoryId
+            && root.RelativePath = Grace.Shared.Constants.RootDirectoryPath
+            && root.Sha256Hash = graceStatus.RootDirectorySha256Hash
+            && root.Blake3Hash = getRootDirectoryBlake3Hash graceStatus
+            ->
+            ()
+        | _ -> invalidArg (nameof objectCacheDirectories) "Working Directory Update object metadata must contain the exact target root once."
+
+        match WorkingDirectoryUpdate.Operation.callerKind operation, connectCursor with
+        | WorkingDirectoryUpdate.CallerKind.Connect, Some cursor when not (String.IsNullOrWhiteSpace(cursor)) -> ()
+        | WorkingDirectoryUpdate.CallerKind.Connect, _ -> invalidArg (nameof connectCursor) "Connect completion requires its exact initial cursor."
+        | _, None -> ()
+        | _ -> invalidArg (nameof connectCursor) "Only Connect completion may persist a cursor."
+
     /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
     let private replaceStatusSnapshotWithRevisionCore
         (dbPath: string)
         (graceStatus: GraceStatus)
         (boundary: ReferenceMaterializationBoundaryDto option)
+        (objectCacheDirectories: LocalDirectoryVersion array)
+        (completion: (WorkingDirectoryUpdate.Target * WorkingDirectoryUpdate.Operation * string option) option)
         (cancellationToken: CancellationToken)
         (repairBaseline: LocalStateRepairBaseline option)
         (beforeWriteClaim: unit -> unit)
@@ -2982,6 +3125,11 @@ module LocalStateDb =
                 ->
                 invalidArg (nameof boundary) "The remote Reference boundary must match the complete persisted status root identity."
             | _ -> ()
+
+            match completion with
+            | Some (target, operation, connectCursor) ->
+                validateWorkingDirectoryUpdateCompletionInput graceStatus objectCacheDirectories target operation connectCursor
+            | None -> ()
 
             cancellationToken.ThrowIfCancellationRequested()
 
@@ -3131,6 +3279,8 @@ module LocalStateDb =
                                     fileCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
                                     fileCommand.ExecuteNonQuery() |> ignore))
 
+                            upsertObjectCacheRows connection objectCacheDirectories
+
                             match boundary with
                             | Some boundary ->
                                 executeNonQueryWithParams
@@ -3154,6 +3304,99 @@ module LocalStateDb =
 
                                         parameters.AddWithValue("$event_cursor", boundary.EventCursor)
                                         |> ignore)
+                            | None -> ()
+
+                            match completion with
+                            | Some (target, operation, connectCursor) ->
+                                let operationValue = WorkingDirectoryUpdate.Operation.value operation
+
+                                let operationCallerKind = WorkingDirectoryUpdate.Operation.callerKind operation
+
+                                let callerKind = workingDirectoryUpdateCallerKindValue operationCallerKind
+
+                                let finalizationState =
+                                    match operationCallerKind with
+                                    | WorkingDirectoryUpdate.CallerKind.Connect -> "Terminal"
+                                    | _ -> "Pending"
+
+                                let targetCanonical = WorkingDirectoryUpdate.Target.canonical target
+
+                                use pendingCommand = connection.CreateCommand()
+
+                                pendingCommand.CommandText <-
+                                    "SELECT operation_value FROM working_directory_update_completions WHERE finalization_state = 'Pending' AND operation_value <> $operation_value LIMIT 1;"
+
+                                pendingCommand.Parameters.AddWithValue("$operation_value", operationValue)
+                                |> ignore
+
+                                if not (isNull (pendingCommand.ExecuteScalar())) then
+                                    invalidOp "A different Working Directory Update finalization is already pending."
+
+                                match connectCursor with
+                                | Some cursor ->
+                                    executeNonQueryWithParams
+                                        connection
+                                        "INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ($repository_id, $branch_id, $root_id, $root_sha256_hash, $root_blake3_hash, $event_cursor);"
+                                        (fun parameters ->
+                                            parameters.AddWithValue(
+                                                "$repository_id",
+                                                WorkingDirectoryUpdate.Target.repositoryId target
+                                                |> string
+                                            )
+                                            |> ignore
+
+                                            parameters.AddWithValue(
+                                                "$branch_id",
+                                                WorkingDirectoryUpdate.Target.branchId target
+                                                |> string
+                                            )
+                                            |> ignore
+
+                                            parameters.AddWithValue("$root_id", graceStatus.RootDirectoryId.ToString())
+                                            |> ignore
+
+                                            parameters.AddWithValue("$root_sha256_hash", graceStatus.RootDirectorySha256Hash)
+                                            |> ignore
+
+                                            parameters.AddWithValue("$root_blake3_hash", getRootDirectoryBlake3Hash graceStatus)
+                                            |> ignore
+
+                                            parameters.AddWithValue("$event_cursor", cursor)
+                                            |> ignore)
+                                | None -> ()
+
+                                if operationCallerKind = WorkingDirectoryUpdate.CallerKind.Connect then
+                                    executeNonQueryWithParams
+                                        connection
+                                        "DELETE FROM working_directory_update_completions WHERE caller_kind = $caller_kind AND finalization_state = 'Terminal';"
+                                        (fun parameters ->
+                                            parameters.AddWithValue("$caller_kind", callerKind)
+                                            |> ignore)
+
+                                use completionCommand = connection.CreateCommand()
+
+                                completionCommand.CommandText <-
+                                    "INSERT INTO working_directory_update_completions (operation_value, caller_kind, target_canonical, finalization_state, completed_at_unix_ticks) VALUES ($operation_value, $caller_kind, $target_canonical, $finalization_state, $completed_at) ON CONFLICT(operation_value) DO UPDATE SET completed_at_unix_ticks = excluded.completed_at_unix_ticks WHERE working_directory_update_completions.caller_kind = excluded.caller_kind AND working_directory_update_completions.target_canonical = excluded.target_canonical AND working_directory_update_completions.finalization_state = excluded.finalization_state;"
+
+                                completionCommand.Parameters.AddWithValue("$operation_value", operationValue)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$caller_kind", callerKind)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$target_canonical", targetCanonical)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$finalization_state", finalizationState)
+                                |> ignore
+
+                                completionCommand.Parameters.AddWithValue("$completed_at", getCurrentInstant().ToUnixTimeTicks())
+                                |> ignore
+
+                                let rowsWritten = completionCommand.ExecuteNonQuery()
+
+                                if rowsWritten <> 1 then
+                                    invalidOp "The existing Working Directory Update completion does not match the requested finalization state."
                             | None -> ()
 
                             beforeCommit ()
@@ -3186,7 +3429,7 @@ module LocalStateDb =
         (boundary: ReferenceMaterializationBoundaryDto)
         (cancellationToken: CancellationToken)
         =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken None ignore ignore
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) Array.empty None cancellationToken None ignore ignore
 
     /// Refuses exact local-state repair when another SQLite connection currently owns the write claim.
     let ensureNoActiveWriterForLocalStateRepair (dbPath: string) =
@@ -3225,7 +3468,7 @@ module LocalStateDb =
         (cancellationToken: CancellationToken)
         (beforeCommit: unit -> unit)
         =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken None ignore beforeCommit
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) Array.empty None cancellationToken None ignore beforeCommit
 
     /// Replaces exact repair status only if no writer changed or owns the captured local-state generation.
     let replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepair
@@ -3235,7 +3478,7 @@ module LocalStateDb =
         (boundary: ReferenceMaterializationBoundaryDto)
         (cancellationToken: CancellationToken)
         =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken (Some baseline) ignore ignore
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) Array.empty None cancellationToken (Some baseline) ignore ignore
 
     /// Exposes the final repair write-claim seam so deterministic tests can race a real SQLite writer.
     let internal replaceStatusSnapshotWithRemoteReferenceBoundaryForLocalStateRepairWithBeforeWriteClaim
@@ -3246,11 +3489,11 @@ module LocalStateDb =
         (cancellationToken: CancellationToken)
         (beforeWriteClaim: unit -> unit)
         =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) cancellationToken (Some baseline) beforeWriteClaim ignore
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus (Some boundary) Array.empty None cancellationToken (Some baseline) beforeWriteClaim ignore
 
     /// Replaces status without changing any branch-scoped remote Reference boundary.
     let replaceStatusSnapshotWithRevision (dbPath: string) (graceStatus: GraceStatus) =
-        replaceStatusSnapshotWithRevisionCore dbPath graceStatus None CancellationToken.None None ignore ignore
+        replaceStatusSnapshotWithRevisionCore dbPath graceStatus None Array.empty None CancellationToken.None None ignore ignore
 
     /// Reads the boundary for one repository and branch without falling back to global metadata.
     let readRemoteReferenceBoundary (dbPath: string) repositoryId branchId =
@@ -3481,176 +3724,199 @@ module LocalStateDb =
             return ()
         }
 
-    /// Persists upsert object cache changes in the local SQLite state database.
-    let upsertObjectCache (dbPath: string) (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
+    /// Atomically stores exact local status, object metadata, an optional Connect cursor, and its bounded update completion.
+    let internal commitWorkingDirectoryUpdateCompletion
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (objectCacheDirectories: IEnumerable<LocalDirectoryVersion>)
+        (connectCursor: string option)
+        (target: WorkingDirectoryUpdate.Target)
+        (operation: WorkingDirectoryUpdate.Operation)
+        =
+        let directories =
+            if isNull (box objectCacheDirectories) then
+                invalidArg (nameof objectCacheDirectories) "Working Directory Update completion requires explicit object metadata."
+            else
+                objectCacheDirectories |> Seq.toArray
+
+        replaceStatusSnapshotWithRevisionCore
+            dbPath
+            graceStatus
+            None
+            directories
+            (Some(target, operation, connectCursor))
+            CancellationToken.None
+            None
+            ignore
+            ignore
+
+    /// Commits a pending update completion through an injected pre-commit seam used by deterministic rollback proof.
+    let internal commitWorkingDirectoryUpdateCompletionWithBeforeCommit
+        (dbPath: string)
+        (graceStatus: GraceStatus)
+        (objectCacheDirectories: IEnumerable<LocalDirectoryVersion>)
+        (connectCursor: string option)
+        (target: WorkingDirectoryUpdate.Target)
+        (operation: WorkingDirectoryUpdate.Operation)
+        (beforeCommit: unit -> unit)
+        =
+        let directories =
+            if isNull (box objectCacheDirectories) then
+                invalidArg (nameof objectCacheDirectories) "Working Directory Update completion requires explicit object metadata."
+            else
+                objectCacheDirectories |> Seq.toArray
+
+        replaceStatusSnapshotWithRevisionCore
+            dbPath
+            graceStatus
+            None
+            directories
+            (Some(target, operation, connectCursor))
+            CancellationToken.None
+            None
+            ignore
+            beforeCommit
+
+    /// Reads the exact retained completion state for one caller operation and its complete target.
+    let internal readWorkingDirectoryUpdateCompletion (dbPath: string) (target: WorkingDirectoryUpdate.Target) (operation: WorkingDirectoryUpdate.Operation) =
         task {
+            if not (WorkingDirectoryUpdate.Operation.matchesTarget target operation) then
+                invalidArg (nameof operation) "The Working Directory Update operation must match its target."
+
             do! ensureDbInitialized dbPath
-            let directoriesToUpsert = newDirectoryVersions |> Seq.toArray
+            use connection = openConnection dbPath
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT finalization_state FROM working_directory_update_completions WHERE operation_value = $operation_value AND caller_kind = $caller_kind AND target_canonical = $target_canonical LIMIT 1;"
+
+            command.Parameters.AddWithValue("$operation_value", WorkingDirectoryUpdate.Operation.value operation)
+            |> ignore
+
+            command.Parameters.AddWithValue(
+                "$caller_kind",
+                WorkingDirectoryUpdate.Operation.callerKind operation
+                |> workingDirectoryUpdateCallerKindValue
+            )
+            |> ignore
+
+            command.Parameters.AddWithValue("$target_canonical", WorkingDirectoryUpdate.Target.canonical target)
+            |> ignore
+
+            match command.ExecuteScalar() with
+            | :? string as "Pending" -> return Some WorkingDirectoryUpdateCompletion.Pending
+            | :? string as "Terminal" -> return Some WorkingDirectoryUpdateCompletion.Terminal
+            | null -> return None
+            | value -> return invalidOp $"Invalid Working Directory Update completion state '{value}'."
+        }
+
+    /// Marks one exact pending completion terminal while retaining only the latest terminal result for its caller kind.
+    let internal finalizeWorkingDirectoryUpdateCompletion
+        (dbPath: string)
+        (target: WorkingDirectoryUpdate.Target)
+        (operation: WorkingDirectoryUpdate.Operation)
+        =
+        task {
+            if not (WorkingDirectoryUpdate.Operation.matchesTarget target operation) then
+                invalidArg (nameof operation) "The Working Directory Update operation must match its target."
+
+            let operationValue = WorkingDirectoryUpdate.Operation.value operation
+
+            let callerKind =
+                WorkingDirectoryUpdate.Operation.callerKind operation
+                |> workingDirectoryUpdateCallerKindValue
+
+            let targetCanonical = WorkingDirectoryUpdate.Target.canonical target
+
+            do! ensureDbInitialized dbPath
 
             return!
                 executeWithRetry (fun () ->
                     task {
-                        let connection = openConnection dbPath
+                        use connection = openConnection dbPath
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
 
                         try
-                            executeNonQuery connection "BEGIN IMMEDIATE;"
+                            use currentCommand = connection.CreateCommand()
 
-                            try
-                                let knownDirectoryIds = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                            currentCommand.CommandText <-
+                                "SELECT finalization_state FROM working_directory_update_completions WHERE operation_value = $operation_value AND caller_kind = $caller_kind AND target_canonical = $target_canonical LIMIT 1;"
 
-                                use knownDirectoryIdsCommand = connection.CreateCommand()
-                                knownDirectoryIdsCommand.CommandText <- "SELECT directory_version_id FROM object_cache_directories;"
+                            currentCommand.Parameters.AddWithValue("$operation_value", operationValue)
+                            |> ignore
 
-                                use knownDirectoryIdsReader = knownDirectoryIdsCommand.ExecuteReader()
+                            currentCommand.Parameters.AddWithValue("$caller_kind", callerKind)
+                            |> ignore
 
-                                while knownDirectoryIdsReader.Read() do
-                                    knownDirectoryIds.Add(knownDirectoryIdsReader.GetString(0))
-                                    |> ignore
+                            currentCommand.Parameters.AddWithValue("$target_canonical", targetCanonical)
+                            |> ignore
 
-                                use directoryCommand = connection.CreateCommand()
+                            match currentCommand.ExecuteScalar() with
+                            | :? string as "Terminal" ->
+                                executeNonQuery connection "COMMIT;"
+                                return ()
+                            | :? string as "Pending" ->
+                                executeNonQueryWithParams
+                                    connection
+                                    "DELETE FROM working_directory_update_completions WHERE caller_kind = $caller_kind AND finalization_state = 'Terminal';"
+                                    (fun parameters ->
+                                        parameters.AddWithValue("$caller_kind", callerKind)
+                                        |> ignore)
 
-                                directoryCommand.CommandText <-
-                                    "INSERT INTO object_cache_directories (directory_version_id, relative_path, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $blake3_hash, $size_bytes, $created_at, $last_write) ON CONFLICT(directory_version_id) DO UPDATE SET relative_path = excluded.relative_path, sha256_hash = excluded.sha256_hash, blake3_hash = excluded.blake3_hash, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
+                                use updateCommand = connection.CreateCommand()
 
-                                directoryCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
+                                updateCommand.CommandText <-
+                                    "UPDATE working_directory_update_completions SET finalization_state = 'Terminal' WHERE operation_value = $operation_value AND caller_kind = $caller_kind AND target_canonical = $target_canonical AND finalization_state = 'Pending';"
+
+                                updateCommand.Parameters.AddWithValue("$operation_value", operationValue)
                                 |> ignore
 
-                                directoryCommand.Parameters.Add("$relative_path", SqliteType.Text)
+                                updateCommand.Parameters.AddWithValue("$caller_kind", callerKind)
                                 |> ignore
 
-                                directoryCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                                updateCommand.Parameters.AddWithValue("$target_canonical", targetCanonical)
                                 |> ignore
 
-                                directoryCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
-                                |> ignore
+                                let updated = updateCommand.ExecuteNonQuery()
 
-                                directoryCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$created_at", SqliteType.Integer)
-                                |> ignore
-
-                                directoryCommand.Parameters.Add("$last_write", SqliteType.Integer)
-                                |> ignore
-
-                                use deleteChildrenCommand = connection.CreateCommand()
-
-                                deleteChildrenCommand.CommandText <-
-                                    "DELETE FROM object_cache_directory_children WHERE parent_directory_version_id = $parent_directory_version_id;"
-
-                                deleteChildrenCommand.Parameters.Add("$parent_directory_version_id", SqliteType.Text)
-                                |> ignore
-
-                                use insertChildCommand = connection.CreateCommand()
-
-                                insertChildCommand.CommandText <-
-                                    "INSERT INTO object_cache_directory_children (parent_directory_version_id, child_directory_version_id, ordinal) VALUES ($parent_directory_version_id, $child_directory_version_id, $ordinal) ON CONFLICT(parent_directory_version_id, child_directory_version_id) DO UPDATE SET ordinal = excluded.ordinal;"
-
-                                insertChildCommand.Parameters.Add("$parent_directory_version_id", SqliteType.Text)
-                                |> ignore
-
-                                insertChildCommand.Parameters.Add("$child_directory_version_id", SqliteType.Text)
-                                |> ignore
-
-                                insertChildCommand.Parameters.Add("$ordinal", SqliteType.Integer)
-                                |> ignore
-
-                                use deleteFilesCommand = connection.CreateCommand()
-                                deleteFilesCommand.CommandText <- "DELETE FROM object_cache_directory_files WHERE directory_version_id = $directory_version_id;"
-
-                                deleteFilesCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
-                                |> ignore
-
-                                use insertFileCommand = connection.CreateCommand()
-
-                                insertFileCommand.CommandText <-
-                                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $blake3_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write) ON CONFLICT(directory_version_id, relative_path) DO UPDATE SET sha256_hash = excluded.sha256_hash, blake3_hash = excluded.blake3_hash, is_binary = excluded.is_binary, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, uploaded_to_object_storage = excluded.uploaded_to_object_storage, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
-
-                                insertFileCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$relative_path", SqliteType.Text)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$is_binary", SqliteType.Integer)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$created_at", SqliteType.Integer)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$uploaded", SqliteType.Integer)
-                                |> ignore
-
-                                insertFileCommand.Parameters.Add("$last_write", SqliteType.Integer)
-                                |> ignore
-
-                                // Pass 1: Ensure all directory rows exist before adding any FK-dependent rows.
-                                directoriesToUpsert
-                                |> Seq.iter (fun directory ->
-                                    let directoryVersionId = directory.DirectoryVersionId.ToString()
-                                    directoryCommand.Parameters["$directory_version_id"].Value <- directoryVersionId
-                                    directoryCommand.Parameters["$relative_path"].Value <- directory.RelativePath
-                                    directoryCommand.Parameters["$sha256_hash"].Value <- directory.Sha256Hash
-                                    directoryCommand.Parameters["$blake3_hash"].Value <- directory.Blake3Hash
-                                    directoryCommand.Parameters["$size_bytes"].Value <- directory.Size
-                                    directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
-                                    directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
-                                    directoryCommand.ExecuteNonQuery() |> ignore
-
-                                    knownDirectoryIds.Add(directoryVersionId)
-                                    |> ignore)
-
-                                // Pass 2: Refresh child and file links for each upserted directory.
-                                directoriesToUpsert
-                                |> Seq.iter (fun directory ->
-                                    deleteChildrenCommand.Parameters["$parent_directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
-                                    deleteChildrenCommand.ExecuteNonQuery() |> ignore
-
-                                    deleteFilesCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
-                                    deleteFilesCommand.ExecuteNonQuery() |> ignore
-
-                                    directory.Directories
-                                    |> Seq.iteri (fun index childId ->
-                                        let childDirectoryVersionId = childId.ToString()
-
-                                        if knownDirectoryIds.Contains(childDirectoryVersionId) then
-                                            insertChildCommand.Parameters["$parent_directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
-                                            insertChildCommand.Parameters["$child_directory_version_id"].Value <- childDirectoryVersionId
-                                            insertChildCommand.Parameters["$ordinal"].Value <- index
-                                            insertChildCommand.ExecuteNonQuery() |> ignore
-                                        else
-                                            invalidOp
-                                                $"Cannot upsert object cache because child DirectoryVersionId {childDirectoryVersionId} is missing. Parent DirectoryVersionId: {directory.DirectoryVersionId}.")
-
-                                    directory.Files
-                                    |> Seq.iter (fun file ->
-                                        insertFileCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
-                                        insertFileCommand.Parameters["$relative_path"].Value <- file.RelativePath
-                                        insertFileCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
-                                        insertFileCommand.Parameters["$blake3_hash"].Value <- file.Blake3Hash
-                                        insertFileCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
-                                        insertFileCommand.Parameters["$size_bytes"].Value <- file.Size
-                                        insertFileCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
-                                        insertFileCommand.Parameters["$uploaded"].Value <- if file.UploadedToObjectStorage then 1 else 0
-                                        insertFileCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
-                                        insertFileCommand.ExecuteNonQuery() |> ignore))
+                                if updated <> 1 then
+                                    invalidOp "The pending Working Directory Update completion changed before finalization."
 
                                 executeNonQuery connection "COMMIT;"
-                            with
-                            | ex ->
-                                executeNonQuery connection "ROLLBACK;"
-                                return raise ex
-                        finally
-                            connection.Dispose()
+                                return ()
+                            | null -> invalidOp "The Working Directory Update completion is missing."
+                            | value -> invalidOp $"Invalid Working Directory Update completion state '{value}'."
+                        with
+                        | ex ->
+                            executeNonQuery connection "ROLLBACK;"
+                            return raise ex
+                    })
+        }
+
+    /// Persists upsert object cache changes in the local SQLite state database.
+    let upsertObjectCache (dbPath: string) (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
+        task {
+            do! ensureDbInitialized dbPath
+
+            let directoriesToUpsert =
+                if isNull (box newDirectoryVersions) then
+                    invalidArg (nameof newDirectoryVersions) "Object-cache directory metadata must not be null."
+                else
+                    newDirectoryVersions |> Seq.toArray
+
+            return!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
+
+                        try
+                            upsertObjectCacheRows connection directoriesToUpsert
+                            executeNonQuery connection "COMMIT;"
+                        with
+                        | ex ->
+                            executeNonQuery connection "ROLLBACK;"
+                            return raise ex
                     })
         }
 
