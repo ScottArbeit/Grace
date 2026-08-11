@@ -39,6 +39,7 @@ docs/BranchesApi.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
+docs/ClearWorkItemDescriptionParameters.md
 docs/CommonParameters.md
 docs/ConfirmContentBlockUploadParameters.md
 docs/ConfirmedBlockUpload.md
@@ -209,6 +210,7 @@ docs/SetRepositoryNameParameters.md
 docs/SetRepositoryStatusParameters.md
 docs/SetRepositoryVisibilityParameters.md
 docs/SetSaveDaysParameters.md
+docs/SetWorkItemDescriptionParameters.md
 docs/StartManifestUploadSessionParameters.md
 docs/StartUploadSession.md
 docs/StorageParameters.md
@@ -301,6 +303,7 @@ src/models/branch_return_value.rs
 src/models/change_type.rs
 src/models/claim_reuse_ranges_parameters.rs
 src/models/claimed_reuse_range.rs
+src/models/clear_work_item_description_parameters.rs
 src/models/common_parameters.rs
 src/models/confirm_content_block_upload_parameters.rs
 src/models/confirmed_block_upload.rs
@@ -466,6 +469,7 @@ src/models/set_repository_name_parameters.rs
 src/models/set_repository_status_parameters.rs
 src/models/set_repository_visibility_parameters.rs
 src/models/set_save_days_parameters.rs
+src/models/set_work_item_description_parameters.rs
 src/models/start_manifest_upload_session_parameters.rs
 src/models/start_upload_session.rs
 src/models/storage_parameters.rs

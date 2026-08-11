@@ -203,7 +203,9 @@ Class | Method | HTTP request | Description
 *WebhooksApi* | [**show_webhook_rule**](docs/WebhooksApi.md#show_webhook_rule) | **POST** /webhook/rule/show | Show a webhook rule.
 *WebhooksApi* | [**test_webhook_rule**](docs/WebhooksApi.md#test_webhook_rule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**update_webhook_rule**](docs/WebhooksApi.md#update_webhook_rule) | **POST** /webhook/rule/update | Update a webhook rule.
+*WorkItemsApi* | [**clear_work_item_description**](docs/WorkItemsApi.md#clear_work_item_description) | **POST** /work/description/clear | Clear a work-item description.
 *WorkItemsApi* | [**delete_work_item_attachment**](docs/WorkItemsApi.md#delete_work_item_attachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**set_work_item_description**](docs/WorkItemsApi.md#set_work_item_description) | **POST** /work/description/set | Replace a work-item description.
 *WorkItemsApi* | [**undelete_work_item_attachment**](docs/WorkItemsApi.md#undelete_work_item_attachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 *DefaultApi* | [**claim_reuse_ranges**](docs/DefaultApi.md#claim_reuse_ranges) | **POST** /storage/claimReuseRanges | Claims reusable ContentBlock ranges.
 *DefaultApi* | [**confirm_content_block_upload**](docs/DefaultApi.md#confirm_content_block_upload) | **POST** /storage/confirmContentBlockUpload | Confirms a ContentBlock upload.
@@ -256,6 +258,7 @@ Class | Method | HTTP request | Description
  - [ChangeType](docs/ChangeType.md)
  - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
  - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
+ - [ClearWorkItemDescriptionParameters](docs/ClearWorkItemDescriptionParameters.md)
  - [CommonParameters](docs/CommonParameters.md)
  - [ConfirmContentBlockUploadParameters](docs/ConfirmContentBlockUploadParameters.md)
  - [ConfirmedBlockUpload](docs/ConfirmedBlockUpload.md)
@@ -420,6 +423,7 @@ Class | Method | HTTP request | Description
  - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
  - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
  - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
+ - [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
  - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
  - [StartUploadSession](docs/StartUploadSession.md)
  - [StorageParameters](docs/StorageParameters.md)

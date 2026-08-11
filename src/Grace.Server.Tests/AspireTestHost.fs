@@ -4,6 +4,8 @@ open Aspire.Hosting
 open Aspire.Hosting.ApplicationModel
 open Aspire.Hosting.Testing
 open Aspire.Hosting.Azure
+open global.Azure.Storage
+open global.Azure.Storage.Blobs
 open Azure.Messaging.ServiceBus
 open Grace.Shared
 open Microsoft.Azure.Cosmos
@@ -14,6 +16,8 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Net
+open System.Net.Sockets
 open System.Net.Http
 open System.Net.Security
 open System.Security.Cryptography.X509Certificates
@@ -73,9 +77,34 @@ module AspireTestHost =
     let private operationsWorkerResourceName = "grace-operations-worker"
     let private azuriteResourceName = "azurite"
     let private redisResourceName = "redis"
+    let private descriptionClearPreAppendTestGatePortEnvironmentVariable = "GRACE_TEST_DESCRIPTION_CLEAR_PRE_APPEND_PORT"
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
+    let mutable private sharedDescriptionClearPreAppendTestGate: (int * TcpListener) option = None
+    let mutable private sharedDescriptionClearPreAppendTestGatePort: int option = None
     let mutable private sharedBootstrapUserId: string option = None
+
+    /// Stops the active test-only description-clear listener before a subsequent test creates a fresh listener for the same run port.
+    let private stopDescriptionClearPreAppendTestGate () =
+        match sharedDescriptionClearPreAppendTestGate with
+        | Some (_, listener) ->
+            sharedDescriptionClearPreAppendTestGate <- None
+            listener.Stop()
+        | None -> ()
+
+    /// Clears all test-only description-clear listener state when its host run can no longer use the injected port.
+    let private resetDescriptionClearPreAppendTestGate () =
+        stopDescriptionClearPreAppendTestGate ()
+        sharedDescriptionClearPreAppendTestGatePort <- None
+
+    /// Starts the loopback listener used only by a hosted description-clear overlap test.
+    let private startDescriptionClearPreAppendTestGate (port: int) =
+        let listener = new TcpListener(IPAddress.Loopback, port)
+        listener.Start(2)
+        let boundPort = (listener.LocalEndpoint :?> IPEndPoint).Port
+        sharedDescriptionClearPreAppendTestGatePort <- Some boundPort
+        sharedDescriptionClearPreAppendTestGate <- Some(boundPort, listener)
+        boundPort, listener
 
     /// Gets service bus sql resource name from the running test server.
     let private getServiceBusSqlResourceName () =
@@ -790,6 +819,56 @@ module AspireTestHost =
             | None -> connectionString
         | None -> connectionString
 
+    /// Rewrites the server's internal Azurite blob endpoint to the live Aspire endpoint reachable by the test process.
+    let private resolveLiveAzureStorageConnectionString (app: DistributedApplication) (connectionString: string) =
+        match tryGetRuntimeEndpoint app azuriteResourceName 10000 with
+        | Some runtimeEndpoint ->
+            let configuredEndpoint = tryGetConnValue "BlobEndpoint=" connectionString
+            let mutable configuredUri = Unchecked.defaultof<Uri>
+
+            if Uri.TryCreate(configuredEndpoint, UriKind.Absolute, &configuredUri) then
+                let endpoint =
+                    runtimeEndpoint.ToString().TrimEnd('/')
+                    + configuredUri.AbsolutePath
+
+                if not (endpoint.Equals(configuredEndpoint, StringComparison.OrdinalIgnoreCase)) then
+                    Console.WriteLine($"Azurite blob endpoint adjusted from {configuredEndpoint} to {endpoint}.")
+
+                replaceConnValue "BlobEndpoint=" endpoint connectionString
+            else
+                connectionString
+        | None -> connectionString
+
+    /// Builds a repository container client against the same translated Azurite endpoint and credential shape used by Grace.Server.
+    let private createLiveAzureStorageContainerClient (connectionString: string) (repositoryId: string) =
+        let accountName = tryGetConnValue "AccountName=" connectionString
+        let accountKey = tryGetConnValue "AccountKey=" connectionString
+        let configuredEndpoint = tryGetConnValue "BlobEndpoint=" connectionString
+        let mutable blobEndpoint = Unchecked.defaultof<Uri>
+
+        if
+            accountName = "<missing>"
+            || accountKey = "<missing>"
+            || not (Uri.TryCreate(configuredEndpoint, UriKind.Absolute, &blobEndpoint))
+        then
+            failwith "The running Grace.Server resource did not expose a complete Azure Storage Blob endpoint configuration."
+
+        let containerUri = Uri($"{blobEndpoint.AbsoluteUri.TrimEnd('/')}/{repositoryId}")
+        let accountPathPrefix = $"/{accountName}/"
+
+        let normalizedContainerUri =
+            if
+                containerUri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                && containerUri.AbsolutePath.StartsWith(accountPathPrefix, StringComparison.OrdinalIgnoreCase)
+            then
+                let builder = UriBuilder(containerUri)
+                builder.Host <- "127.0.0.1"
+                builder.Uri
+            else
+                containerUri
+
+        BlobContainerClient(normalizedContainerUri, StorageSharedKeyCredential(accountName, accountKey))
+
     /// Formats exception chain for diagnostics.
     let private formatExceptionChain (ex: exn) =
         let parts = ResizeArray<string>()
@@ -1100,6 +1179,7 @@ module AspireTestHost =
         let mutable appToCleanup: DistributedApplication option = None
 
         task {
+            resetDescriptionClearPreAppendTestGate ()
             logProgress "Aspire setup starting."
 
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
@@ -1126,6 +1206,22 @@ module AspireTestHost =
             logProgress "Docker cleanup complete."
             logProgress "building Aspire AppHost."
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
+            let descriptionClearPreAppendTestGatePort, _ = startDescriptionClearPreAppendTestGate 0
+
+            let graceServerResource: ProjectResource =
+                builder.Resources
+                |> Seq.tryPick (fun resource ->
+                    match resource with
+                    | :? ProjectResource as project when project.Name = graceServerResourceName -> Some project
+                    | _ -> None)
+                |> Option.defaultWith (fun () -> failwith $"Resource '{graceServerResourceName}' was not added by the test AppHost.")
+
+            builder
+                .CreateResourceBuilder(graceServerResource)
+                .WithEnvironment("GRACE_TESTING", "1")
+                .WithEnvironment(descriptionClearPreAppendTestGatePortEnvironmentVariable, string descriptionClearPreAppendTestGatePort)
+            |> ignore
+
             let! app = builder.BuildAsync()
             appToCleanup <- Some app
             logProgress "starting Aspire AppHost resources."
@@ -1190,6 +1286,11 @@ module AspireTestHost =
             logProgress "container resources reported healthy; validating service readiness."
 
             let! env = getEnvironmentVariablesAsync app graceServerResourceName
+
+            let injectedDescriptionClearPreAppendTestGatePort = requireEnv graceServerResourceName descriptionClearPreAppendTestGatePortEnvironmentVariable env
+
+            if not (String.Equals(injectedDescriptionClearPreAppendTestGatePort, string descriptionClearPreAppendTestGatePort, StringComparison.Ordinal)) then
+                invalidOp "The Grace.Server test resource did not retain its generated description-clear test gate port."
 
             match env
                   |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory
@@ -1442,6 +1543,8 @@ module AspireTestHost =
                     return! startupTask
                 with
                 | startupFailure ->
+                    resetDescriptionClearPreAppendTestGate ()
+
                     match appToCleanup with
                     | None -> return raise startupFailure
                     | Some app ->
@@ -1478,6 +1581,20 @@ module AspireTestHost =
                 sharedStateLock.Release() |> ignore
         }
 
+    /// Gets the ephemeral loopback listener injected into the currently running Grace.Server test resource.
+    let getDescriptionClearPreAppendTestGate () =
+        sharedDescriptionClearPreAppendTestGate
+        |> Option.defaultWith (fun () ->
+            match sharedDescriptionClearPreAppendTestGatePort with
+            | Some port -> startDescriptionClearPreAppendTestGate port
+            | None -> failwith "The Grace.Server test gate is unavailable before the Aspire host starts.")
+
+    /// Stops a completed description-clear test gate without allowing a stale test to clear a newer listener.
+    let releaseDescriptionClearPreAppendTestGate (listener: TcpListener) =
+        match sharedDescriptionClearPreAppendTestGate with
+        | Some (_, activeListener) when Object.ReferenceEquals(activeListener, listener) -> stopDescriptionClearPreAppendTestGate ()
+        | _ -> listener.Stop()
+
     /// Starts a fresh host owned only by an explicitly selected measurement fixture.
     let startIsolatedAsync (bootstrapUserId: string) =
         task {
@@ -1494,11 +1611,18 @@ module AspireTestHost =
 
     /// Disposes a fixture-owned host and removes its local containers while preserving every cleanup failure.
     let stopIsolatedAsync (state: TestHostState) =
-        FixtureLifecycle.cleanupAsync (fun () -> task { do! state.App.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
+        task {
+            try
+                return! FixtureLifecycle.cleanupAsync (fun () -> task { do! state.App.DisposeAsync().AsTask() }) cleanupDockerContainersAsync
+            finally
+                resetDescriptionClearPreAppendTestGate ()
+        }
 
     /// Defines stop behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let stopAsync (app: DistributedApplication option) =
         task {
+            resetDescriptionClearPreAppendTestGate ()
+
             match app with
             | None -> ()
             | Some appHost ->
@@ -2018,6 +2142,23 @@ module AspireTestHost =
 
     /// Creates a permissive local Cosmos client for integration assertions against the Aspire emulator.
     let createCosmosClient (state: TestHostState) = new CosmosClient(state.CosmosConnectionString, createLocalCosmosClientOptions ())
+
+    /// Resolves the live Azure Storage connection configured for a running Aspire test host.
+    let getAzureStorageConnectionStringAsync (state: TestHostState) =
+        task {
+            let! env = getEnvironmentVariablesAsync state.App graceServerResourceName
+
+            return
+                requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureStorageConnectionString env
+                |> resolveLiveAzureStorageConnectionString state.App
+        }
+
+    /// Resolves a repository-scoped Blob container client that targets the same live object storage used by Grace.Server.
+    let getAzureStorageContainerClientAsync (state: TestHostState) (repositoryId: string) =
+        task {
+            let! connectionString = getAzureStorageConnectionStringAsync state
+            return createLiveAzureStorageContainerClient connectionString repositoryId
+        }
 
     /// Returns current Grace.Server resource logs for focused Aspire failure diagnostics.
     let getGraceServerLogsAsync (state: TestHostState) = getResourceLogsAsync state.App graceServerResourceName

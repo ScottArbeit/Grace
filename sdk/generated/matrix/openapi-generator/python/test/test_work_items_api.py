@@ -27,10 +27,24 @@ class TestWorkItemsApi(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
+    def test_clear_work_item_description(self) -> None:
+        """Test case for clear_work_item_description
+
+        Clear a work-item description.
+        """
+        pass
+
     def test_delete_work_item_attachment(self) -> None:
         """Test case for delete_work_item_attachment
 
         Logically delete one owned work-item attachment.
+        """
+        pass
+
+    def test_set_work_item_description(self) -> None:
+        """Test case for set_work_item_description
+
+        Replace a work-item description.
         """
         pass
 

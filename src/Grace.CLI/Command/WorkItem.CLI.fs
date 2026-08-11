@@ -91,6 +91,34 @@ module WorkItemCommand =
         let text =
             new Option<string>("--text", [| "-t" |], Required = false, Description = "Attach inline text content directly.", Arity = ArgumentArity.ExactlyOne)
 
+        let descriptionText =
+            new Option<string>(
+                "--text",
+                [| "-t" |],
+                Required = false,
+                Description = "Markdown text for the current work-item description.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        /// Identifies a Markdown file whose complete text replaces the current work-item description.
+        let descriptionFile =
+            new Option<string>(
+                "--file",
+                [| "-f" |],
+                Required = false,
+                Description = "Read the complete Markdown description from this file path.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        /// Selects standard input as the complete Markdown replacement for the current work-item description.
+        let descriptionStdin =
+            new Option<bool>(
+                "--stdin",
+                Required = false,
+                Description = "Read the complete Markdown description from standard input.",
+                Arity = ArgumentArity.ZeroOrOne
+            )
+
         let stdin = new Option<bool>("--stdin", Required = false, Description = "Read attachment content from standard input.", Arity = ArgumentArity.ZeroOrOne)
 
         let attachmentType =
@@ -536,6 +564,161 @@ module WorkItemCommand =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = setStatusHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    /// Resolves exactly one local Markdown source without changing its Unicode or line-ending content before dispatch.
+    let private tryGetDescriptionInput (parseResult: ParseResult) =
+        task {
+            let filePath =
+                parseResult.GetValue(Options.descriptionFile)
+                |> Option.ofObj
+
+            let textInput =
+                parseResult.GetValue(Options.descriptionText)
+                |> Option.ofObj
+
+            let readFromStdin = parseResult.GetValue(Options.descriptionStdin)
+
+            let selectedCount =
+                (if filePath.IsSome then 1 else 0)
+                + (if textInput.IsSome then 1 else 0)
+                + (if readFromStdin then 1 else 0)
+
+            let emptyInputError =
+                GraceError.Create
+                    "Description input is empty. Use 'workitem description clear <work-item>' for intentional removal."
+                    (getCorrelationId parseResult)
+
+            if selectedCount <> 1 then
+                return
+                    Error(
+                        GraceError.Create
+                            "Specify exactly one of --text, --file, or --stdin. Use 'workitem description clear <work-item>' for intentional removal."
+                            (getCorrelationId parseResult)
+                    )
+            else
+                match filePath, textInput, readFromStdin with
+                | Some path, None, false ->
+                    try
+                        if not <| File.Exists(path) then
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"Description file does not exist: {path}. Use 'workitem description clear <work-item>' for intentional removal."
+                                        (getCorrelationId parseResult)
+                                )
+                        else
+                            let! text = File.ReadAllTextAsync(path)
+                            return if String.IsNullOrEmpty(text) then Error emptyInputError else Ok text
+                    with
+                    | ex ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"Unable to read description file '{path}': {ex.Message}. Use 'workitem description clear <work-item>' for intentional removal."
+                                    (getCorrelationId parseResult)
+                            )
+                | None, Some text, false -> return if String.IsNullOrEmpty(text) then Error emptyInputError else Ok text
+                | None, None, true ->
+                    try
+                        let! text = Console.In.ReadToEndAsync()
+                        return if String.IsNullOrEmpty(text) then Error emptyInputError else Ok text
+                    with
+                    | ex ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"Unable to read description standard input: {ex.Message}. Use 'workitem description clear <work-item>' for intentional removal."
+                                    (getCorrelationId parseResult)
+                            )
+                | _ ->
+                    return
+                        Error(
+                            GraceError.Create
+                                "Specify exactly one of --text, --file, or --stdin. Use 'workitem description clear <work-item>' for intentional removal."
+                                (getCorrelationId parseResult)
+                        )
+        }
+
+    /// Routes description replacement from exactly one resolved Markdown source through the dedicated SDK operation.
+    let private setDescriptionHandler (parseResult: ParseResult) =
+        task {
+            try
+                let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
+
+                match! tryGetDescriptionInput parseResult with
+                | Error error -> return Error error
+                | Ok text ->
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+                    | Error error -> return Error error
+                    | Ok workItem ->
+                        let parameters =
+                            Parameters.WorkItem.SetWorkItemDescriptionParameters(
+                                WorkItemId = workItem,
+                                Text = text,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        return! WorkItem.SetDescription(parameters)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Executes the dedicated description set command through the normal CLI output contract.
+    type SetDescription() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs description replacement after System.CommandLine binds the work-item identifier and Markdown text.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let! result = setDescriptionHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    /// Routes explicit description clearing through the dedicated SDK operation.
+    let private clearDescriptionHandler (parseResult: ParseResult) =
+        task {
+            try
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
+
+                match tryNormalizeWorkItemIdentifier workItemRaw parseResult with
+                | Error error -> return Error error
+                | Ok workItem ->
+                    let parameters =
+                        Parameters.WorkItem.ClearWorkItemDescriptionParameters(
+                            WorkItemId = workItem,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    return! WorkItem.ClearDescription(parameters)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    /// Executes the dedicated description clear command through the normal CLI output contract.
+    type ClearDescription() =
+        inherit AsynchronousCommandLineAction()
+
+        /// Runs explicit description clearing after System.CommandLine binds the work-item identifier.
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let! result = clearDescriptionHandler parseResult
                 return result |> renderOutput parseResult
             }
 
@@ -1285,6 +1468,28 @@ module WorkItemCommand =
         setStatusCommand.Arguments.Add(Arguments.workItemIdentifier)
         setStatusCommand.Action <- new SetStatus()
         workCommand.Subcommands.Add(setStatusCommand)
+
+        let descriptionCommand = new Command("description", Description = "Manage the current immutable work-item description.")
+
+        let setDescriptionCommand =
+            new Command("set", Description = "Set the current Markdown description from exactly one text, file, or standard-input source.")
+            |> addOption Options.descriptionText
+            |> addOption Options.descriptionFile
+            |> addOption Options.descriptionStdin
+            |> addCommonOptions
+
+        setDescriptionCommand.Arguments.Add(Arguments.workItemIdentifier)
+        setDescriptionCommand.Action <- new SetDescription()
+        descriptionCommand.Subcommands.Add(setDescriptionCommand)
+
+        let clearDescriptionCommand =
+            new Command("clear", Description = "Clear the current description while retaining prior immutable content.")
+            |> addCommonOptions
+
+        clearDescriptionCommand.Arguments.Add(Arguments.workItemIdentifier)
+        clearDescriptionCommand.Action <- new ClearDescription()
+        descriptionCommand.Subcommands.Add(clearDescriptionCommand)
+        workCommand.Subcommands.Add(descriptionCommand)
 
         let linkCommand = new Command("link", Description = "Link related entities to a work item.")
 

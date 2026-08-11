@@ -78,6 +78,94 @@ module WorkItemCommandParsingTests =
                        "Alias command" |]
         )
 
+    /// Verifies that work-item description set parses every supported noun alias and identifier form.
+    [<TestCase("workitem", "42")>]
+    [<TestCase("work", "50c93cc6-34f0-43cf-a431-c6e9b89b1178")>]
+    [<TestCase("work-item", "43")>]
+    [<TestCase("wi", "2cf69ef6-31a7-48af-9f26-28fae596ee6f")>]
+    let ``workitem description set parses supported aliases`` (commandAlias: string, workItemIdentifier: string) =
+        assertParsesWithoutErrors (
+            withIds [| commandAlias
+                       "description"
+                       "set"
+                       workItemIdentifier
+                       "--text"
+                       "A durable work-item description." |]
+        )
+
+    /// Verifies that description set parses each accepted Markdown source without reading local input during parsing.
+    [<TestCase("--text", "A durable work-item description.")>]
+    [<TestCase("--file", "C:\\temp\\description.md")>]
+    [<TestCase("--stdin", "")>]
+    let ``workitem description set parses every supported input source`` (optionName: string, optionValue: string) =
+        let sourceArgs =
+            if optionName = "--stdin" then
+                [| optionName |]
+            else
+                [| optionName; optionValue |]
+
+        [|
+            "workitem"
+            "description"
+            "set"
+            "42"
+            yield! sourceArgs
+        |]
+        |> withIds
+        |> assertParsesWithoutErrors
+
+    /// Verifies that every work-item alias accepts every description source with GUID and positive-number identifiers.
+    [<TestCase("workitem", "42")>]
+    [<TestCase("work", "50c93cc6-34f0-43cf-a431-c6e9b89b1178")>]
+    [<TestCase("work-item", "43")>]
+    [<TestCase("wi", "2cf69ef6-31a7-48af-9f26-28fae596ee6f")>]
+    let ``workitem description set parses every source across aliases`` (commandAlias: string, workItemIdentifier: string) =
+        let inputSources =
+            [|
+                [|
+                    "--text"
+                    "A durable work-item description."
+                |]
+                [|
+                    "--file"
+                    "C:\\temp\\description.md"
+                |]
+                [| "--stdin" |]
+            |]
+
+        for inputSource in inputSources do
+            [|
+                commandAlias
+                "description"
+                "set"
+                workItemIdentifier
+                yield! inputSource
+            |]
+            |> withIds
+            |> assertParsesWithoutErrors
+
+    /// Verifies that work-item description clear parses every supported noun alias and identifier form.
+    [<TestCase("workitem", "42")>]
+    [<TestCase("work", "50c93cc6-34f0-43cf-a431-c6e9b89b1178")>]
+    [<TestCase("work-item", "43")>]
+    [<TestCase("wi", "2cf69ef6-31a7-48af-9f26-28fae596ee6f")>]
+    let ``workitem description clear parses supported aliases`` (commandAlias: string, workItemIdentifier: string) =
+        assertParsesWithoutErrors (
+            withIds [| commandAlias
+                       "description"
+                       "clear"
+                       workItemIdentifier |]
+        )
+
+    /// Verifies that work-item description set leaves missing text to its action so introspection remains inert.
+    [<Test>]
+    let ``workitem description set parses missing text for action validation`` () =
+        withIds [| "workitem"
+                   "description"
+                   "set"
+                   "42" |]
+        |> assertParsesWithoutErrors
+
     /// Verifies that every supported status value routes through set-status for both work item identifier shapes.
     [<TestCase("42", "--status", "Active")>]
     [<TestCase("43", "--status", "Backlog")>]

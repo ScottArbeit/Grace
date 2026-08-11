@@ -210,21 +210,26 @@ module EventingPublisher =
                     Option.None
             | _ -> Option.None
         | WorkItemEvent workItemEvent ->
-            let eventType =
-                match workItemEvent.Event with
-                | WorkItemEventType.ArtifactLinked _ -> AutomationEventType.AgentSummaryAdded
-                | _ -> AutomationEventType.ReviewNotesUpdated
+            match workItemEvent.Event with
+            | WorkItemEventType.Created (_, _, _, _, _, _, Some _)
+            | WorkItemEventType.DescriptionSet _
+            | WorkItemEventType.DescriptionCleared _ -> Option.None
+            | _ ->
+                let eventType =
+                    match workItemEvent.Event with
+                    | WorkItemEventType.ArtifactLinked _ -> AutomationEventType.AgentSummaryAdded
+                    | _ -> AutomationEventType.ReviewNotesUpdated
 
-            envelope
-                eventType
-                workItemEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId workItemEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId workItemEvent.Metadata "WorkItem")
-                (serialize workItemEvent)
-            |> Some
+                envelope
+                    eventType
+                    workItemEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId workItemEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId workItemEvent.Metadata "WorkItem")
+                    (serialize workItemEvent)
+                |> Some
         | PolicyEvent _
         | ApprovalRequestEvent _
         | OwnerEvent _

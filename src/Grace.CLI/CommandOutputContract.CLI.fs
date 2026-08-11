@@ -151,6 +151,12 @@ module CommandOutputContract =
     /// Defines structured data exchanged by CLI helpers.
     type CommandExampleDocument = { Name: string; Description: string; Document: obj }
 
+    /// Describes one command-line input accepted by a command-specific machine-readable contract.
+    type CommandInputOptionDocument = { Name: string; ValueKind: string; Description: string }
+
+    /// Describes a command-specific input-selection rule for callers that cannot infer it from an output envelope.
+    type CommandInputDocument = { Selection: string; Description: string; Options: CommandInputOptionDocument list }
+
     /// Models command introspection document values passed between the parser and command output contract handlers.
     type CommandIntrospectionDocument =
         {
@@ -158,6 +164,7 @@ module CommandOutputContract =
             ContractVersion: string
             Command: CommandIdentityDocument
             Registry: CommandRegistryDocument
+            Input: CommandInputDocument option
             Schema: CommandSchemaDocument option
             Examples: CommandExampleDocument list
         }
@@ -775,6 +782,8 @@ module CommandOutputContract =
         | "workitem.attachments.list" -> typeof<Grace.Shared.Parameters.WorkItem.ListWorkItemAttachmentsResult>
         | "workitem.attachments.show" -> typeof<Grace.Shared.Parameters.WorkItem.ShowWorkItemAttachmentResult>
         | "workitem.attachments.undelete" -> typeof<string>
+        | "workitem.description.clear"
+        | "workitem.description.set" -> typeof<string>
         | "workitem.create"
         | "workitem.link.prset"
         | "workitem.link.ref"
@@ -945,6 +954,23 @@ module CommandOutputContract =
                     |}
         }
 
+    /// Returns command-specific source metadata where output-envelope metadata alone cannot express input exclusivity.
+    let private commandInputDocument (identity: CommandIdentity) =
+        match identity.CommandId with
+        | "workitem.description.set" ->
+            Some
+                {
+                    Selection = "ExactlyOne"
+                    Description = "Supply exactly one complete Markdown source; the selected text is sent unchanged."
+                    Options =
+                        [
+                            { Name = "--text"; ValueKind = "string"; Description = "Use inline Markdown text." }
+                            { Name = "--file"; ValueKind = "path"; Description = "Read complete Markdown text from a file." }
+                            { Name = "--stdin"; ValueKind = "flag"; Description = "Read complete Markdown text from standard input." }
+                        ]
+                }
+        | _ -> None
+
     /// Builds the introspection document section of the machine-readable command-output contract.
     let introspectionDocument (kind: IntrospectionKind) (entry: CommandContractEntry) =
         {
@@ -955,6 +981,7 @@ module CommandOutputContract =
             ContractVersion = "cli-json-v1"
             Command = commandDocument entry.Identity
             Registry = registryDocument entry
+            Input = commandInputDocument entry.Identity
             Schema =
                 match kind with
                 | Schema -> Some(schemaDocument entry)
@@ -1373,6 +1400,8 @@ module CommandOutputContract =
                 server_via_sdk
                 ReuseExistingApiOrSdkDto
             row [ "workitem" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem"; "description" ] "clear" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "workitem"; "description" ] "set" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "link" ] "prset" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "link" ] "ref" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "links" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto

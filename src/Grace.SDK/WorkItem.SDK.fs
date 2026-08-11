@@ -19,6 +19,14 @@ type WorkItem() =
     static member public Update(parameters: UpdateWorkItemParameters) =
         postServer<UpdateWorkItemParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/update")
 
+    /// Replaces the current work-item Markdown description through immutable text storage.
+    static member public SetDescription(parameters: SetWorkItemDescriptionParameters) =
+        postServer<SetWorkItemDescriptionParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/description/set")
+
+    /// Clears the current work-item description by appending an immutable empty description reference.
+    static member public ClearDescription(parameters: ClearWorkItemDescriptionParameters) =
+        postServer<ClearWorkItemDescriptionParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/description/clear")
+
     /// Links a reference to a work item.
     static member public LinkReference(parameters: LinkReferenceParameters) =
         postServer<LinkReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/link/reference")

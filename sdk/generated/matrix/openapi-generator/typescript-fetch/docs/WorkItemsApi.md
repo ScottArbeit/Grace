@@ -4,9 +4,84 @@ All URIs are relative to *http://localhost:5000*
 
 | Method | HTTP request | Description |
 |------------- | ------------- | -------------|
+| [**clearWorkItemDescription**](WorkItemsApi.md#clearworkitemdescription) | **POST** /work/description/clear | Clear a work-item description. |
 | [**deleteWorkItemAttachment**](WorkItemsApi.md#deleteworkitemattachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment. |
+| [**setWorkItemDescription**](WorkItemsApi.md#setworkitemdescription) | **POST** /work/description/set | Replace a work-item description. |
 | [**undeleteWorkItemAttachment**](WorkItemsApi.md#undeleteworkitemattachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment. |
 
+
+
+## clearWorkItemDescription
+
+> InlineObject9 clearWorkItemDescription(clearWorkItemDescriptionParameters)
+
+Clear a work-item description.
+
+Appends a new immutable empty description without deleting or exposing prior description history.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  WorkItemsApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { ClearWorkItemDescriptionRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new WorkItemsApi(config);
+
+  const body = {
+    // ClearWorkItemDescriptionParameters
+    clearWorkItemDescriptionParameters: ...,
+  } satisfies ClearWorkItemDescriptionRequest;
+
+  try {
+    const data = await api.clearWorkItemDescription(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **clearWorkItemDescriptionParameters** | [ClearWorkItemDescriptionParameters](ClearWorkItemDescriptionParameters.md) |  | |
+
+### Return type
+
+[**InlineObject9**](InlineObject9.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
 ## deleteWorkItemAttachment
@@ -76,6 +151,79 @@ example().catch(console.error);
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 | **200** | Attachment deletion accepted with a recoverable cleanup deadline. |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
+## setWorkItemDescription
+
+> InlineObject9 setWorkItemDescription(setWorkItemDescriptionParameters)
+
+Replace a work-item description.
+
+Stores a new immutable UTF-8 description and makes it the current description in append order.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  WorkItemsApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { SetWorkItemDescriptionRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new WorkItemsApi(config);
+
+  const body = {
+    // SetWorkItemDescriptionParameters
+    setWorkItemDescriptionParameters: ...,
+  } satisfies SetWorkItemDescriptionRequest;
+
+  try {
+    const data = await api.setWorkItemDescription(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **setWorkItemDescriptionParameters** | [SetWorkItemDescriptionParameters](SetWorkItemDescriptionParameters.md) |  | |
+
+### Return type
+
+[**InlineObject9**](InlineObject9.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
 | **400** | Bad Request |  -  |
 | **500** | Internal Server Error |  -  |
 

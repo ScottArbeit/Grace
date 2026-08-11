@@ -40,6 +40,7 @@ docs/BranchesApi.md
 docs/ChangeType.md
 docs/ClaimReuseRangesParameters.md
 docs/ClaimedReuseRange.md
+docs/ClearWorkItemDescriptionParameters.md
 docs/CommonParameters.md
 docs/ConfirmContentBlockUploadParameters.md
 docs/ConfirmedBlockUpload.md
@@ -210,6 +211,7 @@ docs/SetRepositoryNameParameters.md
 docs/SetRepositoryStatusParameters.md
 docs/SetRepositoryVisibilityParameters.md
 docs/SetSaveDaysParameters.md
+docs/SetWorkItemDescriptionParameters.md
 docs/StartManifestUploadSessionParameters.md
 docs/StartUploadSession.md
 docs/StorageParameters.md
@@ -306,6 +308,7 @@ grace_generated_openapi_probe/models/branch_return_value.py
 grace_generated_openapi_probe/models/change_type.py
 grace_generated_openapi_probe/models/claim_reuse_ranges_parameters.py
 grace_generated_openapi_probe/models/claimed_reuse_range.py
+grace_generated_openapi_probe/models/clear_work_item_description_parameters.py
 grace_generated_openapi_probe/models/common_parameters.py
 grace_generated_openapi_probe/models/confirm_content_block_upload_parameters.py
 grace_generated_openapi_probe/models/confirmed_block_upload.py
@@ -470,6 +473,7 @@ grace_generated_openapi_probe/models/set_repository_name_parameters.py
 grace_generated_openapi_probe/models/set_repository_status_parameters.py
 grace_generated_openapi_probe/models/set_repository_visibility_parameters.py
 grace_generated_openapi_probe/models/set_save_days_parameters.py
+grace_generated_openapi_probe/models/set_work_item_description_parameters.py
 grace_generated_openapi_probe/models/start_manifest_upload_session_parameters.py
 grace_generated_openapi_probe/models/start_upload_session.py
 grace_generated_openapi_probe/models/storage_parameters.py
@@ -556,6 +560,7 @@ test/test_branches_api.py
 test/test_change_type.py
 test/test_claim_reuse_ranges_parameters.py
 test/test_claimed_reuse_range.py
+test/test_clear_work_item_description_parameters.py
 test/test_common_parameters.py
 test/test_confirm_content_block_upload_parameters.py
 test/test_confirmed_block_upload.py
@@ -726,6 +731,7 @@ test/test_set_repository_name_parameters.py
 test/test_set_repository_status_parameters.py
 test/test_set_repository_visibility_parameters.py
 test/test_set_save_days_parameters.py
+test/test_set_work_item_description_parameters.py
 test/test_start_manifest_upload_session_parameters.py
 test/test_start_upload_session.py
 test/test_storage_parameters.py

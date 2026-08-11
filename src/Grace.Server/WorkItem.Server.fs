@@ -17,6 +17,7 @@ open Grace.Shared.Validation.Utilities
 open Grace.Types.Artifact
 open Grace.Types.WorkItem
 open Grace.Types.Common
+open Grace.Types.TextContent
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
@@ -25,6 +26,7 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Net.Sockets
 open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
@@ -319,11 +321,6 @@ module WorkItem =
         [
             if not <| String.IsNullOrEmpty(parameters.Title) then
                 WorkItemCommand.SetTitle parameters.Title
-            if
-                not
-                <| String.IsNullOrEmpty(parameters.Description)
-            then
-                WorkItemCommand.SetDescription parameters.Description
             if not <| String.IsNullOrEmpty(parameters.Status) then
                 let status =
                     discriminatedUnionFromString<WorkItemStatus> parameters.Status
@@ -531,6 +528,125 @@ module WorkItem =
             || value.Equals("true", StringComparison.OrdinalIgnoreCase)
             || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
 
+    /// Holds a test-hosted clear request after its final fresh replay classification.
+    type private DescriptionClearPreAppendTestGate = { Client: TcpClient; Reader: StreamReader; Writer: StreamWriter }
+
+    /// Reads the private ephemeral loopback port only when the hosted-race request explicitly selects it.
+    let private tryGetDescriptionClearPreAppendTestGatePort (context: HttpContext) =
+        if isGraceTestingEnabled () then
+            match Environment.GetEnvironmentVariable("GRACE_TEST_DESCRIPTION_CLEAR_PRE_APPEND_PORT"),
+                  context.Request.Headers.TryGetValue("X-Grace-Test-Description-Clear-Gate-Port")
+                with
+            | configuredPort, (true, requestedPort) when
+                not (String.IsNullOrWhiteSpace configuredPort)
+                && String.Equals(configuredPort, string requestedPort, StringComparison.Ordinal)
+                ->
+                match Int32.TryParse configuredPort with
+                | true, port when port > 0 && port <= 65535 -> Some port
+                | _ -> None
+            | _ -> None
+        else
+            None
+
+    /// Waits at the inert test-host gate only for the selected request and injected loopback port.
+    let private tryEnterDescriptionClearPreAppendTestGate (context: HttpContext) =
+        task {
+            match tryGetDescriptionClearPreAppendTestGatePort context with
+            | None -> return None
+            | Some port ->
+                let client = new TcpClient(AddressFamily.InterNetwork)
+                let mutable gate: DescriptionClearPreAppendTestGate option = None
+                let mutable stream: NetworkStream option = None
+                let mutable reader: StreamReader option = None
+                let mutable writer: StreamWriter option = None
+
+                try
+                    try
+                        use gateTimeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+                        do! client.ConnectAsync("127.0.0.1", port, gateTimeout.Token)
+
+                        let connectedStream = client.GetStream()
+                        stream <- Some connectedStream
+                        let connectedReader = new StreamReader(connectedStream, Encoding.UTF8, false, 1024, true)
+                        reader <- Some connectedReader
+                        let connectedWriter = new StreamWriter(connectedStream, Encoding.UTF8, 1024, true)
+                        writer <- Some connectedWriter
+
+                        do! connectedWriter.WriteLineAsync("fresh-description-operation".AsMemory(), gateTimeout.Token)
+
+                        do! connectedWriter.FlushAsync(gateTimeout.Token)
+
+                        let! release =
+                            connectedReader
+                                .ReadLineAsync(gateTimeout.Token)
+                                .AsTask()
+
+                        if String.Equals(release, "release", StringComparison.Ordinal) then
+                            let acquiredGate = { Client = client; Reader = connectedReader; Writer = connectedWriter }
+                            gate <- Some acquiredGate
+                            return Some acquiredGate
+                        else
+                            return None
+                    with
+                    | :? TimeoutException -> return None
+                    | :? SocketException -> return None
+                    | :? OperationCanceledException -> return None
+                finally
+                    match gate with
+                    | Some _ -> ()
+                    | None ->
+                        writer
+                        |> Option.iter (fun activeWriter -> activeWriter.Dispose())
+
+                        reader
+                        |> Option.iter (fun activeReader -> activeReader.Dispose())
+
+                        stream
+                        |> Option.iter (fun activeStream -> activeStream.Dispose())
+
+                        client.Dispose()
+        }
+
+    /// Writes one bounded diagnostic outcome to a selected test-only description-clear gate.
+    let private writeDescriptionClearPreAppendTestGateOutcome (gate: DescriptionClearPreAppendTestGate) (outcome: string) =
+        task {
+            use gateTimeout = new Threading.CancellationTokenSource(TimeSpan.FromSeconds(20.0))
+
+            try
+                do! gate.Writer.WriteLineAsync(outcome.AsMemory(), gateTimeout.Token)
+
+                do! gate.Writer.FlushAsync(gateTimeout.Token)
+            with
+            | :? TimeoutException -> ()
+            | :? SocketException -> ()
+            | :? OperationCanceledException -> ()
+        }
+
+    /// Records that a gated request entered duplicate-result reclassification before returning its HTTP result.
+    let private observeDescriptionClearDuplicateResultReclassification (testGate: DescriptionClearPreAppendTestGate option) =
+        task {
+            match testGate with
+            | None -> ()
+            | Some gate -> do! writeDescriptionClearPreAppendTestGateOutcome gate "duplicate-result-reclassified"
+        }
+
+    /// Records that a gated request appended its description-clear event without a duplicate result.
+    let private observeDescriptionClearAppendSucceeded (testGate: DescriptionClearPreAppendTestGate option) =
+        task {
+            match testGate with
+            | None -> ()
+            | Some gate -> do! writeDescriptionClearPreAppendTestGateOutcome gate "append-succeeded"
+        }
+
+    /// Releases the loopback resources held by one test-hosted clear request.
+    let private disposeDescriptionClearPreAppendTestGate (testGate: DescriptionClearPreAppendTestGate option) =
+        match testGate with
+        | None -> ()
+        | Some gate ->
+            gate.Writer.Dispose()
+            gate.Reader.Dispose()
+            gate.Client.Dispose()
+
     /// Implements upload artifact content for the server request pipeline.
     let private uploadArtifactContent repositoryDto (blobPath: string) (contentBytes: byte array) (correlationId: CorrelationId) =
         task {
@@ -585,6 +701,117 @@ module WorkItem =
             | Ok _ -> return Ok()
             | Error graceError when isDuplicateCorrelationIdError graceError -> return Ok()
             | Error graceError -> return Error graceError
+        }
+
+    /// Identifies the description operation whose durable event can make a retry successful.
+    type internal DescriptionOperation =
+        | CreateDescription
+        | SetDescription
+        | ClearDescription
+
+    /// Classifies whether persisted work-item evidence proves, rejects, or has not yet seen a description operation.
+    type internal DescriptionReplay =
+        | FreshDescriptionOperation
+        | ExactDescriptionReplay
+        | ConflictingDescriptionCorrelation
+
+    /// Classifies whether a newly written text object can be deleted without discarding ambiguous retry evidence.
+    type internal DescriptionAppendFailure =
+        | ProvenPreAppendRejection
+        | AmbiguousAppendOutcome
+
+    /// Rejects a GUID that resolves to a work item stored under a different repository without disclosing its state.
+    let internal isWorkItemBoundToRepository (repositoryId: RepositoryId) (state: WorkItemState) =
+        state.WorkItem.WorkItemId <> WorkItemId.Empty
+        && state.WorkItem.RepositoryId = repositoryId
+
+    /// Determines whether a persisted event proves the same description operation and immutable reference as a retry.
+    let private isMatchingDescriptionEvent operation workItemId repositoryId description workItemEvent =
+        match operation, workItemEvent.Event with
+        | CreateDescription, Created (eventWorkItemId, _, _, _, eventRepositoryId, _, eventDescription) ->
+            eventWorkItemId = workItemId
+            && eventRepositoryId = repositoryId
+            && eventDescription = description
+        | SetDescription, DescriptionSet eventDescription -> Some eventDescription = description
+        | ClearDescription, DescriptionCleared eventDescription -> Some eventDescription = description
+        | _ -> false
+
+    /// Uses the persisted event stream and current state to distinguish an exact retry from correlation reuse or a new operation.
+    let internal classifyDescriptionReplay
+        operation
+        (workItemId: WorkItemId)
+        (repositoryId: RepositoryId)
+        (description: Description option)
+        (state: WorkItemState)
+        (events: IReadOnlyList<WorkItemEvent>)
+        (correlationId: CorrelationId)
+        =
+        match events
+              |> Seq.tryFind (fun workItemEvent -> workItemEvent.Metadata.CorrelationId = correlationId)
+            with
+        | None -> FreshDescriptionOperation
+        | Some workItemEvent when
+            isMatchingDescriptionEvent operation workItemId repositoryId description workItemEvent
+            && state.Description = description
+            ->
+            ExactDescriptionReplay
+        | Some _ -> ConflictingDescriptionCorrelation
+
+    /// Returns a user-safe error when a correlation belongs to another description operation or an obsolete append.
+    let internal conflictingDescriptionCorrelationError correlationId =
+        GraceError.Create "The correlation ID cannot be reused for a different or superseded work-item description operation." correlationId
+
+    /// Verifies an exact replay object's immutable bytes, recreating only a missing deterministic object before replay success.
+    let private ensureExactDescriptionStorage repositoryDto repositoryId workItemId correlationId text expectedDescription =
+        task {
+            match! TextContentStorage.write repositoryDto repositoryId workItemId correlationId text with
+            | Ok (actualDescription, _) when actualDescription = expectedDescription -> return Ok()
+            | Ok _ -> return Error(GraceError.Create "Text-content replay identity did not reproduce the expected immutable description." correlationId)
+            | Error error -> return Error error
+        }
+
+    /// Verifies immutable content before reporting an exact create replay, while keeping description-free creates free of text storage work.
+    let private ensureExactCreateDescriptionStorage organizationId repositoryId workItemId correlationId text expectedDescription =
+        match expectedDescription with
+        | None -> Task.FromResult(Ok())
+        | Some expectedDescription ->
+            task {
+                let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
+                let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                return! ensureExactDescriptionStorage repositoryDto repositoryId workItemId correlationId text expectedDescription
+            }
+
+    /// Classifies actor validation failures that prove a create request did not append its event before rejection.
+    let internal classifyDescriptionAppendFailure (graceError: GraceError) =
+        if
+            isDuplicateCorrelationIdError graceError
+            || String.Equals(graceError.Error, WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists, StringComparison.OrdinalIgnoreCase)
+            || String.Equals(graceError.Error, WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist, StringComparison.OrdinalIgnoreCase)
+        then
+            ProvenPreAppendRejection
+        else
+            AmbiguousAppendOutcome
+
+    /// Removes a create-only immutable object after a proven rejection before any WorkItem can reference that object identity.
+    let private cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId =
+        task {
+            match description.TextContent, wasCreated with
+            | Some reference, true ->
+                let! _ = TextContentStorage.deleteIfNewlyCreated repositoryDto reference correlationId
+                return ()
+            | _ -> return ()
+        }
+
+    /// Reads the latest work-item state and prevents a request repository from acting on another repository's GUID.
+    let private getRepositoryBoundWorkItemState (actorProxy: IWorkItemActor) repositoryId correlationId =
+        task {
+            let! state = actorProxy.GetState correlationId
+
+            if isWorkItemBoundToRepository repositoryId state then
+                return Ok state
+            else
+                return Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist) correlationId)
         }
 
     /// Uploads generated work-item content as a deterministic artifact and links its metadata to the work item.
@@ -871,56 +1098,251 @@ module WorkItem =
                     let metadata = createMetadata context
                     let parameterDictionary = getParametersAsDictionary parameters
 
-                    let! createResult =
-                        withWorkItemNumberLock graceIds.RepositoryId correlationId (fun () ->
-                            task {
-                                let workItemNumberCounterActorProxy = WorkItemNumberCounter.CreateActorProxy graceIds.RepositoryId correlationId
-                                let! workItemNumber = workItemNumberCounterActorProxy.AllocateNext correlationId
-                                let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                    let descriptionValidation =
+                        if String.IsNullOrWhiteSpace(parameters.Description) then
+                            Ok()
+                        else
+                            TextContentStorage.validateText parameters.Description
 
-                                let command =
-                                    WorkItemCommand.Create(
-                                        workItemId,
-                                        workItemNumber,
-                                        Guid.Parse(parameters.OwnerId),
-                                        Guid.Parse(parameters.OrganizationId),
-                                        Guid.Parse(parameters.RepositoryId),
-                                        parameters.Title,
-                                        parameters.Description
-                                    )
+                    match descriptionValidation with
+                    | Error error ->
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create error correlationId)
+                    | Ok () ->
+                        let expectedDescription =
+                            if String.IsNullOrWhiteSpace(parameters.Description) then
+                                None
+                            else
+                                Some(TextContentStorage.createDescription graceIds.RepositoryId workItemId correlationId parameters.Description)
 
-                                match! actorProxy.Handle command metadata with
-                                | Ok graceReturnValue ->
-                                    do! cacheWorkItemNumber graceIds.RepositoryId workItemNumber workItemId correlationId
-                                    return Ok graceReturnValue
-                                | Error graceError -> return Error graceError
-                            })
+                        let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                        let! existingState = actorProxy.GetState correlationId
+                        let! existingEvents = actorProxy.GetEvents correlationId
 
-                    match createResult with
-                    | Ok graceReturnValue ->
-                        graceReturnValue
-                            .enhance(parameterDictionary)
-                            .enhance(nameof OwnerId, graceIds.OwnerId)
-                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof WorkItemId, workItemId)
-                            .enhance("Command", nameof Create)
-                            .enhance ("Path", context.Request.Path.Value)
-                        |> ignore
+                        let existingReplay =
+                            classifyDescriptionReplay
+                                CreateDescription
+                                workItemId
+                                graceIds.RepositoryId
+                                expectedDescription
+                                existingState
+                                existingEvents
+                                correlationId
 
-                        return! context |> result200Ok graceReturnValue
-                    | Error graceError ->
-                        graceError
-                            .enhance(parameterDictionary)
-                            .enhance(nameof OwnerId, graceIds.OwnerId)
-                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof WorkItemId, workItemId)
-                            .enhance("Command", nameof Create)
-                            .enhance ("Path", context.Request.Path.Value)
-                        |> ignore
+                        let! createResult =
+                            match existingReplay with
+                            | ExactDescriptionReplay ->
+                                task {
+                                    match!
+                                        ensureExactCreateDescriptionStorage
+                                            graceIds.OrganizationId
+                                            graceIds.RepositoryId
+                                            workItemId
+                                            correlationId
+                                            parameters.Description
+                                            expectedDescription
+                                        with
+                                    | Ok () -> return Ok(GraceReturnValue.Create "Work item command succeeded." correlationId)
+                                    | Error error -> return Error error
+                                }
+                            | ConflictingDescriptionCorrelation -> Task.FromResult(Error(conflictingDescriptionCorrelationError correlationId))
+                            | FreshDescriptionOperation when
+                                existingState.WorkItem.WorkItemId
+                                <> WorkItemId.Empty
+                                && existingState.WorkItem.RepositoryId
+                                   <> graceIds.RepositoryId
+                                ->
+                                Task.FromResult(Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist) correlationId))
+                            | FreshDescriptionOperation when
+                                existingState.WorkItem.WorkItemId
+                                <> WorkItemId.Empty
+                                ->
+                                Task.FromResult(Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists) correlationId))
+                            | FreshDescriptionOperation ->
+                                task {
+                                    let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
 
-                        return! context |> result400BadRequest graceError
+                                    let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                                    return!
+                                        withWorkItemNumberLock graceIds.RepositoryId correlationId (fun () ->
+                                            task {
+                                                let workItemNumberCounterActorProxy = WorkItemNumberCounter.CreateActorProxy graceIds.RepositoryId correlationId
+
+                                                let! workItemNumber = workItemNumberCounterActorProxy.AllocateNext correlationId
+                                                let! stateBeforeWrite = actorProxy.GetState correlationId
+                                                let! eventsBeforeWrite = actorProxy.GetEvents correlationId
+
+                                                match
+                                                    classifyDescriptionReplay
+                                                        CreateDescription
+                                                        workItemId
+                                                        graceIds.RepositoryId
+                                                        expectedDescription
+                                                        stateBeforeWrite
+                                                        eventsBeforeWrite
+                                                        correlationId
+                                                    with
+                                                | ExactDescriptionReplay ->
+                                                    match!
+                                                        ensureExactCreateDescriptionStorage
+                                                            graceIds.OrganizationId
+                                                            graceIds.RepositoryId
+                                                            workItemId
+                                                            correlationId
+                                                            parameters.Description
+                                                            expectedDescription
+                                                        with
+                                                    | Ok () -> return Ok(GraceReturnValue.Create "Work item command succeeded." correlationId)
+                                                    | Error error -> return Error error
+                                                | ConflictingDescriptionCorrelation -> return Error(conflictingDescriptionCorrelationError correlationId)
+                                                | FreshDescriptionOperation when
+                                                    stateBeforeWrite.WorkItem.WorkItemId
+                                                    <> WorkItemId.Empty
+                                                    && stateBeforeWrite.WorkItem.RepositoryId
+                                                       <> graceIds.RepositoryId
+                                                    ->
+                                                    return
+                                                        Error(
+                                                            GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist) correlationId
+                                                        )
+                                                | FreshDescriptionOperation when
+                                                    stateBeforeWrite.WorkItem.WorkItemId
+                                                    <> WorkItemId.Empty
+                                                    ->
+                                                    return
+                                                        Error(
+                                                            GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists) correlationId
+                                                        )
+                                                | FreshDescriptionOperation ->
+                                                    let! writeResult =
+                                                        match expectedDescription with
+                                                        | None -> Task.FromResult(Ok(None, false))
+                                                        | Some _ ->
+                                                            task {
+                                                                match!
+                                                                    TextContentStorage.write
+                                                                        repositoryDto
+                                                                        graceIds.RepositoryId
+                                                                        workItemId
+                                                                        correlationId
+                                                                        parameters.Description
+                                                                    with
+                                                                | Ok (storedDescription, wasCreated) -> return Ok(Some storedDescription, wasCreated)
+                                                                | Error error -> return Error error
+                                                            }
+
+                                                    match writeResult with
+                                                    | Error error -> return Error error
+                                                    | Ok (storedDescription, wasCreated) ->
+                                                        let! stateBeforeAppend = actorProxy.GetState correlationId
+                                                        let! eventsBeforeAppend = actorProxy.GetEvents correlationId
+
+                                                        match
+                                                            classifyDescriptionReplay
+                                                                CreateDescription
+                                                                workItemId
+                                                                graceIds.RepositoryId
+                                                                expectedDescription
+                                                                stateBeforeAppend
+                                                                eventsBeforeAppend
+                                                                correlationId
+                                                            with
+                                                        | ExactDescriptionReplay ->
+                                                            return Ok(GraceReturnValue.Create "Work item command succeeded." correlationId)
+                                                        | ConflictingDescriptionCorrelation ->
+                                                            match storedDescription with
+                                                            | Some description ->
+                                                                do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
+                                                            | None -> ()
+
+                                                            return Error(conflictingDescriptionCorrelationError correlationId)
+                                                        | FreshDescriptionOperation when
+                                                            stateBeforeAppend.WorkItem.WorkItemId
+                                                            <> WorkItemId.Empty
+                                                            && stateBeforeAppend.WorkItem.RepositoryId
+                                                               <> graceIds.RepositoryId
+                                                            ->
+                                                            match storedDescription with
+                                                            | Some description ->
+                                                                do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
+                                                            | None -> ()
+
+                                                            return
+                                                                Error(
+                                                                    GraceError.Create
+                                                                        (WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist)
+                                                                        correlationId
+                                                                )
+                                                        | FreshDescriptionOperation when
+                                                            stateBeforeAppend.WorkItem.WorkItemId
+                                                            <> WorkItemId.Empty
+                                                            ->
+                                                            match storedDescription with
+                                                            | Some description ->
+                                                                do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
+                                                            | None -> ()
+
+                                                            return
+                                                                Error(
+                                                                    GraceError.Create
+                                                                        (WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists)
+                                                                        correlationId
+                                                                )
+                                                        | FreshDescriptionOperation ->
+                                                            let command =
+                                                                WorkItemCommand.Create(
+                                                                    workItemId,
+                                                                    workItemNumber,
+                                                                    Guid.Parse(parameters.OwnerId),
+                                                                    Guid.Parse(parameters.OrganizationId),
+                                                                    Guid.Parse(parameters.RepositoryId),
+                                                                    parameters.Title,
+                                                                    storedDescription
+                                                                )
+
+                                                            match! actorProxy.Handle command metadata with
+                                                            | Ok graceReturnValue ->
+                                                                do! cacheWorkItemNumber graceIds.RepositoryId workItemNumber workItemId correlationId
+
+                                                                return Ok graceReturnValue
+                                                            | Error graceError ->
+                                                                if classifyDescriptionAppendFailure graceError = ProvenPreAppendRejection then
+                                                                    match storedDescription with
+                                                                    | Some description ->
+                                                                        do! cleanupProvenDescriptionRejection repositoryDto wasCreated description correlationId
+                                                                    | None -> ()
+
+                                                                return Error graceError
+                                            })
+                                }
+
+                        match createResult with
+                        | Ok graceReturnValue ->
+                            graceReturnValue
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof WorkItemId, workItemId)
+                                .enhance("Command", nameof Create)
+                                .enhance ("Path", context.Request.Path.Value)
+                            |> ignore
+
+                            return! context |> result200Ok graceReturnValue
+                        | Error graceError ->
+                            graceError
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof WorkItemId, workItemId)
+                                .enhance("Command", nameof Create)
+                                .enhance ("Path", context.Request.Path.Value)
+                            |> ignore
+
+                            return! context |> result400BadRequest graceError
                 else
                     let! error = validations |> getFirstError
                     let errorMessage = WorkItemError.getErrorMessage error
@@ -935,22 +1357,354 @@ module WorkItem =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-
-                /// Implements validations for the server request pipeline.
-                let validations (parameters: GetWorkItemParameters) =
-                    [|
-                        validateWorkItemIdentifier parameters.WorkItemId
-                    |]
-
-                /// Implements query for the server request pipeline.
-                let query (context: HttpContext) _ (actorProxy: IWorkItemActor) = actorProxy.Get(getCorrelationId context)
-
+                let correlationId = getCorrelationId context
                 let! parameters = context |> parse<GetWorkItemParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
-                context.Items[ "Command" ] <- "Get"
-                return! processQuery context parameters validations query
+
+                match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                | Error error -> return! context |> result400BadRequest error
+                | Ok workItemId ->
+                    let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                    let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+
+                    let! repositoryDto = repositoryActorProxy.Get correlationId
+                    let! stateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                    match stateResult with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok state ->
+
+                        let! hydratedDescription =
+                            match state.Description with
+                            | None -> Task.FromResult(Ok String.Empty)
+                            | Some description ->
+                                match description.TextContent with
+                                | None -> Task.FromResult(Ok String.Empty)
+                                | Some reference -> TextContentStorage.read repositoryDto reference correlationId
+
+                        match hydratedDescription with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok description ->
+                            let hydrated = { state.WorkItem with Description = description }
+
+                            return!
+                                context
+                                |> result200Ok (GraceReturnValue.Create hydrated correlationId)
+            }
+
+    /// Sets the current work-item description after first writing its immutable text object.
+    let SetDescription: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+                let! parameters = context |> parse<SetWorkItemDescriptionParameters>
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                let! workItemValidation = validateWorkItemIdentifier parameters.WorkItemId
+
+                match workItemValidation, TextContentStorage.validateText parameters.Text with
+                | Error validationError, _ ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (WorkItemError.getErrorMessage validationError) correlationId)
+                | _, Error validationError ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create validationError correlationId)
+                | Ok (), Ok () ->
+                    match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok workItemId ->
+                        let expectedDescription = TextContentStorage.createDescription graceIds.RepositoryId workItemId correlationId parameters.Text
+
+                        let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                        let! initialStateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                        match initialStateResult with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok initialState ->
+                            let! initialEvents = actorProxy.GetEvents correlationId
+
+                            match
+                                classifyDescriptionReplay
+                                    SetDescription
+                                    workItemId
+                                    graceIds.RepositoryId
+                                    (Some expectedDescription)
+                                    initialState
+                                    initialEvents
+                                    correlationId
+                                with
+                            | ExactDescriptionReplay ->
+                                let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                                match!
+                                    ensureExactDescriptionStorage
+                                        repositoryDto
+                                        graceIds.RepositoryId
+                                        workItemId
+                                        correlationId
+                                        parameters.Text
+                                        expectedDescription
+                                    with
+                                | Ok () ->
+                                    return!
+                                        context
+                                        |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                | Error error -> return! context |> result400BadRequest error
+                            | ConflictingDescriptionCorrelation ->
+                                return!
+                                    context
+                                    |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                            | FreshDescriptionOperation ->
+                                let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
+                                let! stateBeforeWriteResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                                match stateBeforeWriteResult with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok stateBeforeWrite ->
+                                    let! eventsBeforeWrite = actorProxy.GetEvents correlationId
+
+                                    match
+                                        classifyDescriptionReplay
+                                            SetDescription
+                                            workItemId
+                                            graceIds.RepositoryId
+                                            (Some expectedDescription)
+                                            stateBeforeWrite
+                                            eventsBeforeWrite
+                                            correlationId
+                                        with
+                                    | ExactDescriptionReplay ->
+                                        match!
+                                            ensureExactDescriptionStorage
+                                                repositoryDto
+                                                graceIds.RepositoryId
+                                                workItemId
+                                                correlationId
+                                                parameters.Text
+                                                expectedDescription
+                                            with
+                                        | Ok () ->
+                                            return!
+                                                context
+                                                |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                        | Error error -> return! context |> result400BadRequest error
+                                    | ConflictingDescriptionCorrelation ->
+                                        return!
+                                            context
+                                            |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                    | FreshDescriptionOperation ->
+                                        let! writeResult = TextContentStorage.write repositoryDto graceIds.RepositoryId workItemId correlationId parameters.Text
+
+                                        match writeResult with
+                                        | Error error -> return! context |> result400BadRequest error
+                                        | Ok (description, wasCreated) ->
+                                            let! testGate = tryEnterDescriptionClearPreAppendTestGate context
+                                            disposeDescriptionClearPreAppendTestGate testGate
+                                            let! stateBeforeAppendResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                                            match stateBeforeAppendResult with
+                                            | Error error -> return! context |> result400BadRequest error
+                                            | Ok stateBeforeAppend ->
+                                                let! eventsBeforeAppend = actorProxy.GetEvents correlationId
+
+                                                match
+                                                    classifyDescriptionReplay
+                                                        SetDescription
+                                                        workItemId
+                                                        graceIds.RepositoryId
+                                                        (Some expectedDescription)
+                                                        stateBeforeAppend
+                                                        eventsBeforeAppend
+                                                        correlationId
+                                                    with
+                                                | ExactDescriptionReplay ->
+                                                    return!
+                                                        context
+                                                        |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                                | ConflictingDescriptionCorrelation ->
+                                                    return!
+                                                        context
+                                                        |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                                | FreshDescriptionOperation ->
+                                                    let metadata = createMetadata context
+
+                                                    match! actorProxy.Handle (WorkItemCommand.SetDescription description) metadata with
+                                                    | Ok _ ->
+                                                        return!
+                                                            context
+                                                            |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                                    | Error error ->
+                                                        let! stateAfterAppendResult =
+                                                            getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                                                        match stateAfterAppendResult with
+                                                        | Error _ -> return! context |> result400BadRequest error
+                                                        | Ok stateAfterAppend ->
+                                                            let! eventsAfterAppend = actorProxy.GetEvents correlationId
+
+                                                            match
+                                                                classifyDescriptionReplay
+                                                                    SetDescription
+                                                                    workItemId
+                                                                    graceIds.RepositoryId
+                                                                    (Some expectedDescription)
+                                                                    stateAfterAppend
+                                                                    eventsAfterAppend
+                                                                    correlationId
+                                                                with
+                                                            | ExactDescriptionReplay ->
+                                                                match!
+                                                                    ensureExactDescriptionStorage
+                                                                        repositoryDto
+                                                                        graceIds.RepositoryId
+                                                                        workItemId
+                                                                        correlationId
+                                                                        parameters.Text
+                                                                        expectedDescription
+                                                                    with
+                                                                | Ok () ->
+                                                                    return!
+                                                                        context
+                                                                        |> result200Ok (GraceReturnValue.Create "Work item description set." correlationId)
+                                                                | Error storageError -> return! context |> result400BadRequest storageError
+                                                            | ConflictingDescriptionCorrelation ->
+                                                                return!
+                                                                    context
+                                                                    |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                                            | FreshDescriptionOperation -> return! context |> result400BadRequest error
+            }
+
+    /// Appends an immutable empty description without reading, writing, or deleting text-content objects.
+    let ClearDescription: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                let! parameters =
+                    context
+                    |> parse<ClearWorkItemDescriptionParameters>
+
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                match! validateWorkItemIdentifier parameters.WorkItemId with
+                | Error validationError ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (WorkItemError.getErrorMessage validationError) correlationId)
+                | Ok () ->
+                    match! resolveWorkItemId graceIds.RepositoryId parameters.WorkItemId correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok workItemId ->
+                        let descriptionId, _ = TextContentStorage.createIds graceIds.RepositoryId workItemId correlationId
+                        let expectedDescription = { DescriptionId = descriptionId; TextContent = None }
+                        let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                        let! initialStateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                        match initialStateResult with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok initialState ->
+                            let! initialEvents = actorProxy.GetEvents correlationId
+
+                            match
+                                classifyDescriptionReplay
+                                    ClearDescription
+                                    workItemId
+                                    graceIds.RepositoryId
+                                    (Some expectedDescription)
+                                    initialState
+                                    initialEvents
+                                    correlationId
+                                with
+                            | ExactDescriptionReplay ->
+                                return!
+                                    context
+                                    |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                            | ConflictingDescriptionCorrelation ->
+                                return!
+                                    context
+                                    |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                            | FreshDescriptionOperation ->
+                                let! stateBeforeAppendResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                                match stateBeforeAppendResult with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok stateBeforeAppend ->
+                                    let! eventsBeforeAppend = actorProxy.GetEvents correlationId
+
+                                    match
+                                        classifyDescriptionReplay
+                                            ClearDescription
+                                            workItemId
+                                            graceIds.RepositoryId
+                                            (Some expectedDescription)
+                                            stateBeforeAppend
+                                            eventsBeforeAppend
+                                            correlationId
+                                        with
+                                    | ExactDescriptionReplay ->
+                                        return!
+                                            context
+                                            |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                    | ConflictingDescriptionCorrelation ->
+                                        return!
+                                            context
+                                            |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                    | FreshDescriptionOperation ->
+                                        let metadata = createMetadata context
+                                        let! testGate = tryEnterDescriptionClearPreAppendTestGate context
+
+                                        try
+                                            match! actorProxy.Handle (WorkItemCommand.ClearDescription expectedDescription) metadata with
+                                            | Ok _ ->
+                                                do! observeDescriptionClearAppendSucceeded testGate
+
+                                                return!
+                                                    context
+                                                    |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                            | Error error when isDuplicateCorrelationIdError error ->
+                                                do! observeDescriptionClearDuplicateResultReclassification testGate
+                                                let! stateAfterDuplicateResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
+
+                                                match stateAfterDuplicateResult with
+                                                | Error repositoryError -> return! context |> result400BadRequest repositoryError
+                                                | Ok stateAfterDuplicate ->
+                                                    let! eventsAfterDuplicate = actorProxy.GetEvents correlationId
+
+                                                    match
+                                                        classifyDescriptionReplay
+                                                            ClearDescription
+                                                            workItemId
+                                                            graceIds.RepositoryId
+                                                            (Some expectedDescription)
+                                                            stateAfterDuplicate
+                                                            eventsAfterDuplicate
+                                                            correlationId
+                                                        with
+                                                    | ExactDescriptionReplay ->
+                                                        return!
+                                                            context
+                                                            |> result200Ok (GraceReturnValue.Create "Work item description cleared." correlationId)
+                                                    | ConflictingDescriptionCorrelation ->
+                                                        return!
+                                                            context
+                                                            |> result400BadRequest (conflictingDescriptionCorrelationError correlationId)
+                                                    | FreshDescriptionOperation -> return! context |> result400BadRequest error
+                                            | Error error -> return! context |> result400BadRequest error
+                                        finally
+                                            disposeDescriptionClearPreAppendTestGate testGate
             }
 
     /// Implements fetch linked reviewer attachments for the server request pipeline.

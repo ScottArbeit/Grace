@@ -1,9 +1,10 @@
 # Work-Item Coordination Surface Design Map
 
-- **Status:** Exploratory
+- **Status:** Exploratory; Section A is delivered and awaiting its final epic integration gate
 - **Quality contract:** Product V1
 - **Canonical source:** `docs/Design concepts/Work-item coordination surface.md`
-- **Evidence current through:** 2026-08-07, `main` at `45d5db0ed90347437e45a5997d1ddff523321ae7`
+- **Evidence current through:** 2026-08-10, `epic/825-blob-backed-work-item-descriptions` at
+  `78ff968f569eacbd2ebc9ad1d487d7f312426689`
 
 ## Destination
 
@@ -21,14 +22,16 @@ Follow these stages in order. This is the order for closing design decisions, no
 order. Work one owner decision at a time, update this document after each answer, and advance only when the current
 stage's exit condition is satisfied.
 
-> **Current stage: Stage 3 — competing body edits (DEC-007).** DEC-006 is accepted: the CLI exposes
-> `description set|clear`, `set` requires exactly one non-empty source, and empty input is rejected with guidance to use
-> `clear`. Later stages remain visible so their dependencies are clear, but they are not the current decision.
+> **Current stage: Stage 4 — notes vocabulary (DEC-008).** DEC-007 is accepted: supported description writes append in
+> accepted actor order and the last appended description is current. There is no public revision, persisted revision,
+> or compare-before-write requirement. DEC-006 keeps clear explicit and leaves earlier immutable objects retained.
+> DEC-013 defers retained TextContent usage accounting to #829 under Operations epic #554; Section A publishes no usage
+> fact and makes no accounting claim.
 
 ```mermaid
 flowchart TD
     A["1. Bound collaboration depth"] --> B["2. Define body meaning and input"]
-    B --> C["3. Define atomic update and revision"]
+    B --> C["3. Define atomic append-order description updates"]
     C --> D["4. Resolve notes vocabulary"]
     D --> E["5. Define comment lifecycle"]
     E --> F["6. Define progress projection"]
@@ -40,7 +43,7 @@ flowchart TD
 | ----- | ------------------ | ----------------- | ------------------------------- |
 | 1. Collaboration depth | DEC-003 and DEC-004 accepted | Removes or retains the expensive thread, resolution, and direct-edit capabilities before modeling comments. | Satisfied: V1 defers replies, resolution, direct editing, and edit history. |
 | 2. Body meaning and input | DEC-005 and DEC-011 accepted | Defines the primary mutable resource and the long-Markdown workflow used by the first tracer. | Satisfied: the body meaning and exactly-one-source input behavior are coherent. |
-| 3. Atomic update and revision | DEC-006 accepted; DEC-007 open | Completes the first bounded delivery section and establishes a clear competing-edit contract for the body resource. | Set, clear, validation failure, atomicity, and competing edits have one explicit contract. |
+| 3. Atomic description updates | DEC-006 and DEC-007 accepted | Completes the first bounded delivery section and establishes append-order last-write-wins for the body resource. | Set, clear, validation failure, immutable storage, and append-order behavior have one explicit contract. |
 | 4. Notes vocabulary | DEC-008 | Opens the comments section by preventing a fourth overlapping notes concept before public names spread further. | Inline notes, attached evidence, structured review records, and comments have distinct names and ownership. |
 | 5. Comment lifecycle | DEC-012 | Applies the Stage 1 capability boundary using the vocabulary and concurrency model established earlier. | Comment identity, creator, timestamp, ordering, correction, deletion, visibility, retry, and replay behavior are explicit. |
 | 6. Progress projection | DEC-010 | A truthful activity view can be designed only after the complete update and comment event families are known. | Included event categories, ordering, pagination, and visibility are explicit, with no second write model. |
@@ -66,8 +69,8 @@ must not silently change their product behavior.
 
 | Section | Decisions required before planning | User-visible outcome | Tracking shape |
 | ------- | ---------------------------------- | -------------------- | -------------- |
-| A. Work-item body mutation | DEC-005, DEC-011, DEC-006, DEC-007 | Replace the issue-like Markdown body atomically, with explicit clearing and a clear competing-edit result. | First tracer section; compile into one or more narrow vertical issues after its section gate passes. |
-| B. Immutable comments | Accepted DEC-003 and DEC-004, plus DEC-008 and DEC-012 | Add, list, and explicitly correct chronological comments without replies, resolution, or direct editing. | Start after Section A establishes reusable mutation and revision patterns; split only if the selected lifecycle adds another state machine. |
+| A. Work-item body mutation | DEC-005, DEC-011, DEC-006, DEC-007, DEC-013 | Replace the issue-like Markdown body through immutable repository-scoped content, with explicit clearing and append-order last-write-wins. | Delivered through #826, #827, and #828; #825 owns the final integration gate. Retained TextContent usage accounting is deferred to #829 under #554. |
+| B. Immutable comments | Accepted DEC-003 and DEC-004, plus DEC-008 and DEC-012 | Add, list, and explicitly correct chronological comments without replies, resolution, or direct editing. | Start after Section A establishes reusable immutable-content and append-order patterns; split only if the selected lifecycle adds another state machine. |
 | C. Progress inspection | DEC-010 | Inspect a truthful read-only projection of meaningful work-item and collaboration activity. | One projection-focused section after update and comment events are stable. |
 | D. Repository list and search | DEC-009 | Find work items within a repository using only stable, visible fields selected for V1. | One bounded discovery section; defer organization aggregation and comment-content search. |
 | E. Completion audit | All accepted section contracts | Confirm propagation, proof, documentation, and integrated behavior across the complete coordination surface. | Final integration and audit work under the coordination epic. |
@@ -79,14 +82,14 @@ feed only material findings back into the remaining design frontier.
 ## User-visible outcome
 
 A Grace user or agent can use one work item to keep the current Markdown description of a task, record chronological
-collaboration, and inspect meaningful progress. Competing edits fail clearly instead of partially updating or silently
-overwriting newer work.
+collaboration, and inspect meaningful progress. Competing supported description writes append in accepted actor order;
+the last appended description is current.
 
 The smallest plausible V1 provides:
 
 - repeatable whole-body replacement for the work-item description;
-- one atomic update result with explicit clear-versus-omit behavior;
-- competing-edit protection;
+- append-order last-write-wins with explicit clear-versus-omit behavior;
+- no public history, previous-version link, or caller comparison value;
 - first-class chronological comments distinct from attached evidence; and
 - enough progress inspection to understand what changed and what collaborators said.
 
@@ -100,12 +103,14 @@ Grace's Product V1 profile applies.
 - Data posture: Grace is not in production. Current persisted and generated contracts may change directly; no
   production migration or compatibility machinery is required unless a later decision adds it.
 - Durability: accepted work-item and comment mutations must survive actor restart and event replay.
-- Concurrency: any revision or compare-before-write capability selected by this design must be correct under competing
-  supported callers.
-- Failure behavior: validation, revision mismatch, and persistence failure must not publish partial success.
+- Concurrency: competing supported description writes append in serialized actor order, and the last accepted append is
+  current without a caller comparison value.
+- Failure behavior: validation and persistence failure must not publish partial success; an uncertain actor outcome
+  retains its immutable object so the stable operation retry can converge.
 - Public contract: CLI, HTTP API, SDK, OpenAPI, generated clients, machine-readable output, docs, and tests must agree.
 - Deliberately absent unless reopened: high availability, disaster recovery automation, broad GitHub feature parity,
-  cross-provider portability work, and compatibility aliases for replaced commands.
+  cross-provider portability work, retained TextContent usage accounting, and compatibility aliases for replaced
+  commands.
 - Complexity stop: return to the owner if V1 gains threaded discussion resolution, comment edit history, a second new
   durable state machine, or organization-wide indexing before the core body-and-comment path is proven.
 
@@ -118,10 +123,12 @@ Grace's Product V1 profile applies.
 | `src/Grace.CLI/Command/WorkItem.CLI.fs` | Registers `create`, `show`, `set-status`, link operations, attachment operations, and link inspection/removal. It does not register general update, list, search, comments, or history commands. | Establishes the public CLI gap. | Current source was inspected. The local Debug executable is stale and was not used as current evidence. |
 | `src/Grace.Server/WorkItem.Server.fs`, `buildUpdateCommands` and `Update` | Converts each non-empty update field to a separate actor command while reusing one metadata value. Empty strings are omitted. | Shows the existing general update is not a safe public body-edit contract. | Source-backed conclusion; a fresh runtime reproduction remains optional evidence work. |
 | `src/Grace.Actors/WorkItem.Actor.fs`, `hasDuplicateCorrelationId` and `Handle` | Rejects a correlation ID already present in the WorkItem event stream. | Combined with the server loop, a multi-field request appears able to persist one field before rejecting the next. | Source-backed conclusion; verify through a focused hosted reproduction before implementation planning. |
-| `src/Grace.Types/WorkItem.Types.fs`, `WorkItemDto`, and `src/Grace.Actors/WorkItem.Actor.fs`, `Get` and `GetEvents` | The actor persists an ordered list of events, but public `WorkItemDto` reads expose no aggregate or description revision. | A new public comparison value is required; the existing event count is only an internal aggregate position. | Current source inspected after DEC-006 closed. |
+| `src/Grace.Types/WorkItem.Types.fs`, `WorkItemDto`, and `src/Grace.Actors/WorkItem.Actor.fs`, `Get` and `GetEvents` | The actor persists an ordered list of events, while public `WorkItemDto` reads expose hydrated description text only. | The ordered event stream supplies append-order last-write-wins; public storage facts and revision-like values remain absent. | Current source inspected for #826. |
 | `src/Grace.Types/WorkItem.Types.fs` | Contains inline `Notes`, `ReviewNotesIds`, and a links projection with `ReviewNotesArtifactIds`. | Confirms the current notes vocabulary collision. | Current source. |
 | `src/Grace.Types/Artifact.Types.fs` and `src/Grace.Actors/Artifact.Actor.fs` | Own reviewer attachments have a generation-bound logical-delete and recovery lifecycle. | Comments must not reuse the attachment lifecycle. | Delivered and covered by focused and hosted tests. |
 | `src/Grace.Server.Tests/WorkItem.Integration.Server.Tests.fs` | Proves attachment add, visibility, recovery, generic-unlink rejection, and final cleanup. | Protects the #810 baseline during later coordination work. | Current test source; #810 integrated validation passed. |
+| `src/Grace.Types/Usage.Types.fs`, `src/Grace.Actors/OperationalFactsPublisher.Actor.fs`, and Operations tests | Define, publish, ingest, deduplicate, and aggregate `RepositoryStorageBytesMinute` facts, but no production repository-storage producer calls the publisher. | Proves Section A cannot extend an existing measurement source without adding a new durable measurement design. | Current #825 branch and Operations PR #712 were inspected on 2026-08-10. |
+| PRs #830, #831, and #832 | Deliver immutable inline descriptions, explicit clear, and exactly-one text/file/stdin input. | Establishes Section A implementation and proof before the final epic gate. | Each merged to the epic branch after exact-head CI and fresh review. |
 
 No named work-item source, test, or documentation path changed between the #810 merge commit
 `af1aa306a3107bec13383069dfb812d54a3a5362` and the evidence revision.
@@ -144,7 +151,7 @@ No named work-item source, test, or documentation path changed between the #810 
 | CAP-001 | #810 status and attachment lifecycle | Informational only | Delivered baseline; later work preserves it rather than redesigning it. |
 | CAP-002 | Repeatable work-item body replacement | Required now | The owner wants the work-item description to carry evolving task intent like an issue body. Exact semantics remain open. |
 | CAP-003 | Atomic multi-field work-item mutation | Required now | A request must not persist only its first accepted field and then fail. |
-| CAP-004 | Competing-edit protection | Required now | Collaborators need a clear mismatch instead of silent overwrite. Recommend a description-specific monotonic revision so unrelated status or comment events do not invalidate body edits; DEC-007 remains open. |
+| CAP-004 | Competing description writes | Required now | Supported writes append in accepted actor order; the last appended description is current. No mismatch response, revision, or compare-before-write input is exposed. |
 | CAP-005 | First-class chronological comments | Required now | Feedback and progress are immutable records in one flat stream. Corrections are new comments that explicitly identify the original. |
 | CAP-006 | Progress inspection | Required now | Users need to understand meaningful state changes and collaboration. The projection shape remains open. |
 | CAP-007 | Direct comment editing | Deferred | DEC-004 accepts immutable comments and explicit correction entries; direct editing and edit history are not part of V1. |
@@ -155,6 +162,7 @@ No named work-item source, test, or documentation path changed between the #810 
 | CAP-012 | Treating attachment unlink as deletion | Rejected | Contradicts the delivered recoverable lifecycle. |
 | CAP-013 | Treating an attachment as a comment | Rejected | Loses comment identity, ordering, creator, timestamp, and collaboration lifecycle. |
 | CAP-014 | Arbitrary deletion of nonattachment artifacts | Out of scope | Not part of the work-item coordination outcome. |
+| CAP-015 | Retained TextContent usage accounting | Deferred | Owner-selected Option A keeps Section A focused on description storage and retrieval. #829 moved to Operations epic #554 because Grace has no production repository-storage bytes-minute producer to extend. |
 
 Deferred recommendations in this inventory are not owner decisions. They remain open until their linked decision closes.
 
@@ -171,7 +179,8 @@ Rows are ordered by the stage in which they should be closed, not by decision ID
 | DEC-005 | 2 | Is `Description` the issue-like Markdown body? | Domain | Accepted | `Description` is one replaceable Markdown body containing the task's current intent, purpose, and acceptance context; `Title` remains separate. | Defines the main update contract and long-input workflow without structured sections or patch operations. | Owner | Domain language, CLI, API, SDK |
 | DEC-011 | 2 | What is the public long-text workflow? | Product | Accepted | Accept exactly one of `--text`, `--file`, or `--stdin`; defer interactive editing, structured sections, and patch-language input. | Defines one convergent CLI input contract plus parsing and inert introspection proof. | Owner | CLI, docs, tests |
 | DEC-006 | 3 | What distinguishes set and clear? | Product | Accepted | Use `workitem description set` and `workitem description clear`. Set requires exactly one non-empty `--text`, `--file`, or `--stdin` source; empty input fails with guidance to use clear. The API and SDK represent set, clear, and omission distinctly. | Removes empty-string ambiguity and gives scripts an explicit clear operation. | Owner | Parameters, validation, serialization, CLI, API, SDK |
-| DEC-007 | 3 | What protects competing body edits? | Architecture | Open | Recommend a description-specific monotonic revision returned by reads and required by both description mutation commands. Only an intervening body change causes mismatch. | Adds a public body revision and actor-level compare-before-write proof without conflicts from unrelated work-item events. | Owner after repository evidence | DTO, actor, API, CLI, SDK, generated clients |
+| DEC-007 | 3 | What determines the current description when supported callers compete? | Architecture | Accepted | Append-order last-write-wins. The serialized actor accepts descriptions in order; the last appended description is current. Do not add a public or persisted revision, previous-version link, or compare-before-write requirement. | Requires ordered actor projection, stable retry identity, and last-append proof; removes revision propagation and mismatch proof. | Owner decision, 2026-08-10 | Actor, internal projection, API/SDK/CLI hydration, tests, docs |
+| DEC-013 | 3 | Does Section A implement retained TextContent usage accounting? | Scope | Accepted | No. Owner-selected Option A defers accounting to #829 under Operations epic #554. Section A retains `Utf8ByteLength` for integrity but publishes no usage fact and claims no quota or billing effect. | Removes a new durable minute-measurement producer and the active PR #712 write-set conflict from #825. Future #829 work must first close the producer design in #554. | Owner decision, 2026-08-10 | Capability inventory, quality boundary, evidence, proof, tracker relationships |
 | DEC-008 | 4 | How should the three notes concepts be named? | Domain | Open | Recommend reserving `comment` for collaboration, keeping structured review records explicit, and renaming the attachment classification away from bare `notes`; exact label needs a vocabulary pass. | Prevents a fourth overlapping notes concept. | Owner | Types, CLI, docs, generated contracts |
 | DEC-012 | 5 | What is the V1 comment lifecycle? | Product | Open | After Stage 1 closes, define identity, creator, timestamp, ordering, correction, deletion, visibility, duplicate-request, and replay behavior inside that boundary. | Establishes the durable comment contract consumed by activity and search. | Owner | Types, actor, API, SDK, CLI, events, tests |
 | DEC-010 | 6 | Is progress one combined activity timeline? | Product | Open | Recommend a read-only projection combining WorkItem changes and comments; do not create a second write model. | Requires stable event categories and visibility rules after updates and comments are defined. | Owner | Events, server projection, CLI, tests |
@@ -189,7 +198,7 @@ These terms are recommendations until their linked decisions close.
 | Activity entry | A read-only projection of a durable WorkItem change or comment event. | A second mutation endpoint or duplicate state store. |
 | Attached evidence | Prompt, agent summary, or review-related file/text content governed by the #810 lifecycle. | A comment or discussion thread. |
 | Structured review record | A review-domain object referenced by `ReviewNotesIds`. | Inline work-item notes or generic attachment text. |
-| Revision | A compare-before-write value identifying the WorkItem event-stream state read by a caller. | A timestamp used only as a best-effort collision hint. |
+| Append order | The accepted serialized order of description events; the final accepted description is current. | A public revision, history API, previous-version link, or caller comparison value. |
 
 The design must still decide whether inline `WorkItemDto.Notes` remains a supported concept, is renamed, or is removed.
 
@@ -230,30 +239,28 @@ or multiple sources fails validation without changing the work item.
 **Exit condition:** Satisfied. DEC-005 and DEC-011 define the body meaning, replacement model, accepted content sources,
 and exactly-one-source behavior.
 
-### Stage 3: atomic update and revision
+### Stage 3: atomic description updates
 
 **Accepted decision (DEC-006):** The CLI uses `workitem description set|clear`. `set` requires exactly one non-empty
-`--text`, `--file`, or `--stdin` source. Empty input fails with guidance to use `clear`. The API and SDK represent set,
-clear, and omission distinctly rather than overloading an empty string.
+`--text`, `--file`, or `--stdin` source. File and standard-input readers complete before one unchanged text string is
+sent through the existing set request; they do not trim, normalize line endings, or rewrite Unicode. Empty, missing,
+unreadable, absent, or multiple sources fail before a request with guidance to use `clear`. The API and SDK represent
+set, clear, and omission distinctly rather than overloading an empty string.
 
-**Current question (DEC-007):** Should reads return a description-specific monotonic revision that every
-`description set|clear` request must supply, so only an intervening body change—not an unrelated status, link,
-attachment, or future comment event—causes a revision mismatch?
+**Accepted decision (DEC-007):** Supported description writes use append-order last-write-wins. The serialized actor
+accepts each valid append; the last accepted description is current. No public or persisted revision, compare-before-
+write input, mismatch response, history traversal, or previous-version link is added.
 
-**Repository evidence:** `WorkItemDto` currently exposes no revision. The actor persists an ordered event list and can
-derive an aggregate event position, but that value changes for every work-item event and is not currently returned by
-public reads.
+**Repository evidence:** The actor already persists ordered events. #826 replaces description strings with immutable
+`Description` and `TextContent` references, retains only the current reference in the internal projection, and hydrates
+only current UTF-8 text at the public read boundary.
 
-**Recommendation:** Add a description-specific monotonic revision. Reads return it; set and clear require the expected
-value; the actor compares it inside the serialized mutation turn. A mismatch leaves the body unchanged and returns the
-current description revision. Success returns the incremented revision.
+**Failure and retry:** A failed validation or known actor rejection publishes no description. A stable operation identity
+lets an ambiguous retry find and verify its immutable object. Objects from earlier successful sets, explicit clear, or
+uncertain outcomes remain retained; no public history exposes them.
 
-**Alternatives rejected by the recommendation:** A work-item-wide event revision would reject body edits after
-unrelated changes. A content hash permits the body to change away and back without detecting the intervening edit. A
-timestamp adds clock concerns without improving the user contract.
-
-**Exit condition:** DEC-006 and DEC-007 define set, clear, validation failure, atomicity, revision comparison, mismatch
-behavior, and the resulting description revision.
+**Exit condition:** Satisfied. DEC-006 and DEC-007 define set, explicit clear, validation failure, immutable storage,
+retry, and append-order last-write-wins.
 
 When this exit condition is satisfied, Section A can receive its section-level readiness audit and issue packet without
 waiting for the comments, activity, or search sections.
@@ -317,19 +324,24 @@ epic review and validation gates.
 
 ## Candidate value-bearing tracer
 
-The provisional tracer is one atomic whole-body replacement through the nearest stable public boundary:
+The delivered #826 tracer is one inline whole-body replacement through the nearest stable public boundary. #827
+extends that boundary with explicit clear while retaining prior immutable content, and #828 adds file and standard-input
+sources:
 
-1. Read a work item and obtain its description revision.
-1. Replace its Markdown body using that expected revision.
-1. Observe one successful durable transition and the new revision.
-1. Reject a competing set or clear using the older revision without changing the body.
-1. Prove non-empty inline, file, and standard-input CLI paths route to `description set`; prove empty input fails with
-   guidance to use `description clear`; keep help, schema, examples, and parse failures inert.
+1. Create or resolve a work item and set its Markdown body with inline `--text`.
+1. Observe one successful durable transition and a hydrated public description with no storage facts.
+1. Set two different descriptions and observe that the last accepted actor append is current.
+1. Retry one operation identity and prove the immutable object is verified rather than silently reused for different
+   content.
+1. Keep help, schema, examples, and parse failures inert. Clear appends an empty immutable Description without a blob,
+   retains earlier objects, and does not expose history. File and standard-input sources preserve their complete text
+   without trimming or newline normalization.
 
 This tracer crosses shared contracts, actor persistence, server validation, SDK, CLI, public output, tests, and docs. It
 does not require comments, activity aggregation, or search, so evidence from it can refine those later decisions.
 
-The tracer remains provisional until DEC-007 closes.
+This tracer implements the settled DEC-007 and DEC-013 contracts without broadening into comments, activity, search,
+public history, cross-provider storage, or retained-content accounting.
 
 ## Likely propagation surfaces
 
@@ -338,14 +350,14 @@ disposition.
 
 | Surface | Likely relevance | Current design status |
 | ------- | ---------------- | --------------------- |
-| `Grace.Types` WorkItem DTOs, commands, events, persisted state | Body revision, atomic update event, comment identities and events | Pending decisions |
-| `Grace.Shared` parameters and validators | Explicit field presence, expected revision, comment requests | Pending decisions |
-| WorkItem actor | Atomic transition, revision comparison, replay | Pending decisions |
-| Server handlers and routes | Update, comment, activity, list, and search behavior | Pending decisions |
+| `Grace.Types` WorkItem DTOs, commands, events, persisted state | Internal immutable description reference, current projection, comment identities and events | Section A delivered; later comment decisions remain pending |
+| `Grace.Shared` parameters and validators | Dedicated description request, explicit clear/omit distinction, comment requests | Section A delivered; comments remain pending |
+| WorkItem actor | Ordered description append, current projection, replay | Section A delivered and proven; comments remain pending |
+| Server handlers and routes | Description set/show/clear plus future comment, activity, list, and search behavior | Description routes delivered; later surfaces pending decisions |
 | Endpoint access rules | Stored-resource scope and list filtering | Pending decisions |
-| SDK facade | Thin methods aligned to accepted routes and DTOs | Pending decisions |
-| CLI and executable output registry | Update/body, comments, activity, list/search, long-text input | Pending decisions |
-| Static OpenAPI and generated clients | Every accepted public route and shape | Pending decisions |
+| SDK facade | Thin methods aligned to accepted routes and DTOs | Description methods delivered; later methods pending decisions |
+| CLI and executable output registry | Update/body, comments, activity, list/search, long-text input | Description set/clear/show and exactly-one input delivered; later commands pending |
+| Static OpenAPI and generated clients | Every accepted public route and shape | Description contract delivered and freshness-proven; later contracts pending |
 | Events, webhooks, SignalR, Watch, and search projections | Classify accepted WorkItem and comment events or record specific non-applicability | Pending decisions |
 | Tests | Pure contract, actor replay/concurrency, server behavior, CLI parsing/output, generated freshness | Pending decisions |
 | Documentation and agent guidance | Work-item workflows, vocabulary, lifecycle, and future implementation guidance | Pending decisions |
@@ -356,8 +368,8 @@ The Plan-ready specification will need false-positive-resistant proof for at lea
 
 - one atomic multi-field success and one validation failure that leaves every field unchanged;
 - explicit omitted, clear, and replace behavior;
-- two callers using the same revision, with exactly one accepted mutation;
-- actor restart and event replay preserving the body, revision, comments, and ordering selected by the design;
+- two callers setting different descriptions, with the last accepted actor append current;
+- actor restart and event replay preserving the current body, ordered description events, comments, and selected ordering;
 - duplicate request behavior without duplicate comments or transitions;
 - comment identity, creator, timestamp, order, correction, deletion, and visibility semantics selected for V1;
 - activity pagination and event classification without duplicating or hiding supported entries;
@@ -368,6 +380,10 @@ The Plan-ready specification will need false-positive-resistant proof for at lea
 
 Exact proof seams and requirement IDs will be added after the dependent owner decisions close. Until then, this section
 records expected proof classes rather than claiming traceability coverage.
+
+Section A's tracked issues already provide focused proof for immutable storage integrity, actor ordering and replay,
+explicit clear and retained objects, exact CLI text/file/stdin dispatch, inert introspection, public-contract freshness,
+and cross-repository rejection. The final #825 gate reconciles those results without claiming deferred accounting proof.
 
 ## Fog
 
@@ -393,6 +409,8 @@ Promote a fog item into the decision frontier only when an earlier answer makes 
 - Reactions, mentions, subscriptions, notification preferences, or rich-text editing.
 - Cross-provider integrations that mirror GitHub issues or pull requests.
 - Organization-wide indexing before repository-scoped behavior proves its value.
+- Retained TextContent usage accounting, quota effects, or a new repository-storage minute producer; deferred to #829
+  under Operations epic #554.
 - Production-data migration or legacy compatibility machinery.
 
 ## Readiness status
@@ -408,8 +426,9 @@ The artifact passes these early criteria:
 - decision dependencies and a provisional tracer are explicit; and
 - likely public, durable, generated, event, documentation, and proof surfaces are mapped.
 
-The complete coordination surface is not Design-ready because the body revision model, notes vocabulary, comment
-lifecycle, activity projection, and list/search scope remain open. Individual
+The complete coordination surface is not Design-ready because the notes vocabulary, comment lifecycle, activity
+projection, and list/search scope remain open. Section A is Design-ready, Plan-ready, and delivered through #826, #827,
+and #828; only its final #825 integration gate remains. Individual
 bounded sections may advance to Plan-ready and tracked implementation once their own decisions, requirements,
 propagation dispositions, and proof seams are closed without depending on unresolved later behavior.
 
@@ -422,22 +441,21 @@ propagation dispositions, and requirement-to-proof traceability depend on those 
 - Accepted Stage 1 risk: a flat immutable comment stream may not be sufficient for every feedback conversation or
   correction workflow Grace wants to move away from GitHub; richer discussion and edit history remain deferred until
   experience demonstrates the need.
-- Highest-risk dependency: the description revision must remain distinct from the aggregate activity position; later
-  append-only comments should not invalidate or consume body-edit revisions.
+- Highest-risk dependency: the current-description projection must preserve accepted append order while keeping immutable
+  storage facts, prior objects, and uncertain retry evidence out of public contracts.
 - Easiest way to overbuild: clone editable threaded discussions, resolution, notifications, and organization-wide search
   before the body-and-comment path is proven.
-- Easiest way to under-test: prove only successful updates and comments while missing partial persistence, competing
-  revisions, duplicate requests, replay, and hidden-resource filtering.
+- Easiest way to under-test: prove only successful updates and comments while missing partial persistence, ordered
+  competing sets, duplicate requests, replay, corruption, and hidden-resource filtering.
 - Simpler alternative: whole-body replacement plus append-only comments and resource-specific reads, with no combined
   activity or search in the first release.
 
 ## Next action
 
-Define and deliver Section A before broadening the active frontier. Ask DEC-007 only:
+Complete #825's final Section A integration gate and release-candidate review without claiming retained-content
+accounting. Then broaden the active frontier by asking DEC-008 only:
 
-> Should reads return a description-specific monotonic revision that `description set|clear` must supply, so only an
-> intervening body change causes a mismatch?
+> Which existing notes concepts remain, and what public name replaces the attachment classification currently exposed as
+> `notes`?
 
-After the owner answers, update this canonical artifact and continue only through the decisions required for Section A.
-Once Section A passes its own Plan-ready audit, compile and deliver that issue packet before defining Section B in
-detail.
+After the owner answers, update this canonical artifact and continue only through the decisions required for Section B.

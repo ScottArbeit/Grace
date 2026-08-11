@@ -164,7 +164,9 @@ All URIs are relative to *http://localhost:5000*
 *WebhooksApi* | [**showWebhookRule**](docs/WebhooksApi.md#showwebhookrule) | **POST** /webhook/rule/show | Show a webhook rule.
 *WebhooksApi* | [**testWebhookRule**](docs/WebhooksApi.md#testwebhookrule) | **POST** /webhook/rule/test | Create a test webhook delivery.
 *WebhooksApi* | [**updateWebhookRule**](docs/WebhooksApi.md#updatewebhookrule) | **POST** /webhook/rule/update | Update a webhook rule.
+*WorkItemsApi* | [**clearWorkItemDescription**](docs/WorkItemsApi.md#clearworkitemdescription) | **POST** /work/description/clear | Clear a work-item description.
 *WorkItemsApi* | [**deleteWorkItemAttachment**](docs/WorkItemsApi.md#deleteworkitemattachment) | **POST** /work/attachments/delete | Logically delete one owned work-item attachment.
+*WorkItemsApi* | [**setWorkItemDescription**](docs/WorkItemsApi.md#setworkitemdescription) | **POST** /work/description/set | Replace a work-item description.
 *WorkItemsApi* | [**undeleteWorkItemAttachment**](docs/WorkItemsApi.md#undeleteworkitemattachment) | **POST** /work/attachments/undelete | Recover one logically deleted work-item attachment.
 
 
@@ -204,6 +206,7 @@ All URIs are relative to *http://localhost:5000*
 - [ChangeType](docs/ChangeType.md)
 - [ClaimReuseRangesParameters](docs/ClaimReuseRangesParameters.md)
 - [ClaimedReuseRange](docs/ClaimedReuseRange.md)
+- [ClearWorkItemDescriptionParameters](docs/ClearWorkItemDescriptionParameters.md)
 - [CommonParameters](docs/CommonParameters.md)
 - [ConfirmContentBlockUploadParameters](docs/ConfirmContentBlockUploadParameters.md)
 - [ConfirmedBlockUpload](docs/ConfirmedBlockUpload.md)
@@ -368,6 +371,7 @@ All URIs are relative to *http://localhost:5000*
 - [SetRepositoryStatusParameters](docs/SetRepositoryStatusParameters.md)
 - [SetRepositoryVisibilityParameters](docs/SetRepositoryVisibilityParameters.md)
 - [SetSaveDaysParameters](docs/SetSaveDaysParameters.md)
+- [SetWorkItemDescriptionParameters](docs/SetWorkItemDescriptionParameters.md)
 - [StartManifestUploadSessionParameters](docs/StartManifestUploadSessionParameters.md)
 - [StartUploadSession](docs/StartUploadSession.md)
 - [StorageParameters](docs/StorageParameters.md)
