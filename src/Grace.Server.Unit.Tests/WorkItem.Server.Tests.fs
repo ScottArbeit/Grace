@@ -804,12 +804,14 @@ type WorkItemServerUnitTests() =
 
             let scriptedState = ScriptedWorkItemEventState([ created ], [ PersistThenFail; Persist ])
             let state = scriptedState :> IPersistentState<List<WorkItemEvent>>
+            let projection = WorkItemProjection()
+            projection.Rebuild state.State
 
-            match! persistWorkItemEventWithDurableRecovery state candidate with
+            match! projection.PersistAndApply(state, candidate) with
             | FailedRecovered (true, error) -> Assert.That(error.Message, Is.EqualTo("simulated WorkItem persistence failure after durable copy"))
             | outcome -> Assert.Fail($"Expected a recovered durable candidate, but got {outcome}.")
 
-            let recoveredState = rebuildWorkItemState state.State
+            let recoveredState = projection.Current
 
             Assert.That(recoveredState.Description, Is.EqualTo(Some description))
             Assert.That(state.State, Has.Count.EqualTo(2))
@@ -826,11 +828,11 @@ type WorkItemServerUnitTests() =
 
             Assert.That(exactRetry, Is.EqualTo(WorkItem.ExactDescriptionReplay))
 
-            match! persistWorkItemEventWithDurableRecovery state unrelated with
+            match! projection.PersistAndApply(state, unrelated) with
             | Persisted -> ()
             | outcome -> Assert.Fail($"The unrelated command must persist from rebuilt state, but got {outcome}.")
 
-            let convergedState = rebuildWorkItemState state.State
+            let convergedState = projection.Current
 
             Assert.That(state.State, Has.Count.EqualTo(3))
 

@@ -77,6 +77,34 @@ module WorkItem =
         | Persisted
         | FailedRecovered _ -> false
 
+    /// Owns the WorkItem projection installed by an activation after ordinary persistence or a recovered uncertain write.
+    type internal WorkItemProjection() =
+        let mutable currentState = WorkItemState.Default
+
+        /// Returns the projection currently installed for this actor activation.
+        member _.Current = currentState
+
+        /// Rebuilds the installed projection from the full durable stream after activation or recovered persistence.
+        member _.Rebuild(events: seq<WorkItemEvent>) = currentState <- rebuildWorkItemState events
+
+        /// Applies an event after a confirmed ordinary persistence write.
+        member _.ApplyPersisted(workItemEvent: WorkItemEvent) =
+            currentState <-
+                currentState
+                |> WorkItemState.UpdateState workItemEvent
+
+        /// Drives the actor's persistence transition and installs the reloaded durable projection before returning a recovered result.
+        member this.PersistAndApply(state: IPersistentState<List<WorkItemEvent>>, workItemEvent: WorkItemEvent) =
+            task {
+                match! persistWorkItemEventWithDurableRecovery state workItemEvent with
+                | Persisted as outcome ->
+                    this.ApplyPersisted workItemEvent
+                    return outcome
+                | FailedRecovered _ as outcome ->
+                    this.Rebuild state.State
+                    return outcome
+                | FailedUnrecoverable _ as outcome -> return outcome
+            }
 
     /// Implements the Orleans grain for work item actor.
     type WorkItemActor([<PersistentState(StateName.WorkItem, Constants.GraceActorStorage)>] state: IPersistentState<List<WorkItemEvent>>) =
@@ -88,7 +116,7 @@ module WorkItem =
 
         let mutable currentCommand = String.Empty
 
-        let mutable workItemState = WorkItemState.Default
+        let workItemProjection = WorkItemProjection()
 
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
@@ -98,7 +126,7 @@ module WorkItem =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            workItemState <- state.State |> rebuildWorkItemState
+            workItemProjection.Rebuild state.State
 
             Task.CompletedTask
 
@@ -111,8 +139,8 @@ module WorkItem =
 
                 return
                     (GraceReturnValue.Create "Work item command succeeded." correlationId)
-                        .enhance(nameof RepositoryId, workItemState.WorkItem.RepositoryId)
-                        .enhance(nameof WorkItemId, workItemState.WorkItem.WorkItemId)
+                        .enhance(nameof RepositoryId, workItemProjection.Current.WorkItem.RepositoryId)
+                        .enhance(nameof WorkItemId, workItemProjection.Current.WorkItem.WorkItemId)
                         .enhance (nameof WorkItemEventType, getDiscriminatedUnionFullName workItemEvent.Event)
             }
 
@@ -122,17 +150,11 @@ module WorkItem =
                 let correlationId = workItemEvent.Metadata.CorrelationId
 
                 try
-                    match! persistWorkItemEventWithDurableRecovery state workItemEvent with
+                    match! workItemProjection.PersistAndApply(state, workItemEvent) with
                     | Persisted ->
-                        workItemState <-
-                            workItemState
-                            |> WorkItemState.UpdateState workItemEvent
-
                         let! returnValue = this.CompletePersistedEvent workItemEvent
                         return Ok returnValue
                     | FailedRecovered (candidateIsDurable, writeError) ->
-                        workItemState <- rebuildWorkItemState state.State
-
                         if candidateIsDurable then
                             let! returnValue = this.CompletePersistedEvent workItemEvent
                             return Ok returnValue
@@ -151,19 +173,21 @@ module WorkItem =
                         getMachineName,
                         correlationId,
                         getDiscriminatedUnionCaseName workItemEvent.Event,
-                        workItemState.WorkItem.WorkItemId
+                        workItemProjection.Current.WorkItem.WorkItemId
                     )
 
                     let graceError =
                         (GraceError.CreateWithException ex (WorkItemError.getErrorMessage WorkItemError.FailedWhileApplyingEvent) correlationId)
-                            .enhance (nameof WorkItemId, workItemState.WorkItem.WorkItemId)
+                            .enhance (nameof WorkItemId, workItemProjection.Current.WorkItem.WorkItemId)
 
                     return Error graceError
             }
 
         interface IHasRepositoryId with
             /// Returns the repository id recorded in this WorkItem actor state.
-            member this.GetRepositoryId correlationId = workItemState.WorkItem.RepositoryId |> returnTask
+            member this.GetRepositoryId correlationId =
+                workItemProjection.Current.WorkItem.RepositoryId
+                |> returnTask
 
         interface IWorkItemActor with
             /// Reports whether this WorkItem actor has persisted state.
@@ -171,18 +195,18 @@ module WorkItem =
                 this.correlationId <- correlationId
 
                 not
-                <| workItemState.WorkItem.WorkItemId.Equals(WorkItemDto.Default.WorkItemId)
+                <| workItemProjection.Current.WorkItem.WorkItemId.Equals(WorkItemDto.Default.WorkItemId)
                 |> returnTask
 
             /// Returns the current WorkItem actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
-                workItemState.WorkItem |> returnTask
+                workItemProjection.Current.WorkItem |> returnTask
 
             /// Returns the actor-only description reference for server hydration without exposing storage facts publicly.
             member this.GetState correlationId =
                 this.correlationId <- correlationId
-                workItemState |> returnTask
+                workItemProjection.Current |> returnTask
 
             /// Returns the persisted WorkItem event stream for replay or audit.
             member this.GetEvents correlationId =
@@ -201,13 +225,13 @@ module WorkItem =
                         else
                             match command with
                             | Create _ ->
-                                if workItemState.WorkItem.WorkItemId
+                                if workItemProjection.Current.WorkItem.WorkItemId
                                    <> WorkItemId.Empty then
                                     return Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemAlreadyExists) metadata.CorrelationId)
                                 else
                                     return Ok command
                             | _ ->
-                                if workItemState.WorkItem.WorkItemId = WorkItemId.Empty then
+                                if workItemProjection.Current.WorkItem.WorkItemId = WorkItemId.Empty then
                                     return Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist) metadata.CorrelationId)
                                 else
                                     return Ok command
