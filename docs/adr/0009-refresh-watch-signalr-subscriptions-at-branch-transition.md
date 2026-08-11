@@ -92,3 +92,9 @@ stale rebase.
 The rebase handler runs after an event has already passed the parent predicate. Refreshing there is too late to prevent
 old-parent events from satisfying the stale predicate. The transition boundary must refresh before Watch resumes
 trusting parent-promotion events.
+
+## Related decision
+
+[ADR 0011](0011-working-directory-update-transaction.md) places verified Branch working-directory changes and selected
+branch finalization in one shared local transaction. This ADR continues to define the Watch subscription refresh that
+follows that completed Branch transition.

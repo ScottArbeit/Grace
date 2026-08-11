@@ -23,6 +23,13 @@ version-hash algorithm for new version lookup surfaces, and SHA-256 is retained 
 parity, and non-version SHA-256 uses that intentionally stay SHA-256.
 _Avoid_: FileContentHash, ChunkAddress, ContentBlockAddress, ManifestAddress
 
+**Working Directory Update**:
+The accepted, Plan-ready design for a Grace-controlled operation that will change indexed working-directory content and
+durable local state to match one selected server root, then commit caller-specific progress only after verifying that
+match. After implementation, Branch switching, Watch current-Reference replay, and Connect retrieval will use this
+shared operation while retaining their own admission and presentation policies.
+_Avoid_: WorkingDirectoryMaterialization, exact materialization, caller-owned filesystem transaction
+
 **FileManifest**:
 The reconstruction description for large file content that spans ContentChunks stored in ContentBlocks. A FileManifest
 references ordered ContentBlockRanges. FileManifest identity comes from reconstruction content, not from the Repository
