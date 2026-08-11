@@ -7,9 +7,11 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Diagnostics
+open System.Globalization
 open System.IO
 open System.Security.Cryptography
 open System.Text
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
@@ -32,14 +34,18 @@ module WorkingDirectoryUpdateCoordinationTests =
             if Directory.Exists(root) then Directory.Delete(root, true)
 
     /// Builds the complete selected target needed by marker scenarios.
+    let private targetWith repositoryId branchId rootDirectoryVersionId (sha256Hash: string) (blake3Hash: string) =
+        WorkingDirectoryUpdate.Target.create repositoryId branchId rootDirectoryVersionId (Sha256Hash sha256Hash) (Blake3Hash blake3Hash)
+        |> required
+
+    /// Builds the standard complete selected target needed by marker scenarios.
     let private target repositoryId branchId =
-        WorkingDirectoryUpdate.Target.create
+        targetWith
             repositoryId
             branchId
             (Guid.Parse("b1f5373a-7303-4dc1-b085-113e8efed444"))
-            (Sha256Hash "40786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9")
-            (Blake3Hash "dc938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836")
-        |> required
+            "40786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9"
+            "dc938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836"
 
     /// Builds a deterministic Branch operation bound to the supplied target.
     let private branchOperation target =
@@ -226,14 +232,17 @@ module WorkingDirectoryUpdateCoordinationTests =
 
                 ())
 
-    /// Proves marker inspection only permits the exact logical operation to adopt known owned evidence.
+    /// Proves marker inspection requires the complete expected target as well as the exact Watch identity.
     [<Test>]
-    let ``marker inspection adopts only the same operation and rejects malformed schemas`` () =
+    let ``marker inspection adopts only the exact operation caller and target and rejects malformed schemas`` () =
         withTempRoot (fun root ->
             let repositoryId = Guid.NewGuid()
             let branchId = Guid.NewGuid()
             let selectedTarget = target repositoryId branchId
-            let operation = branchOperation selectedTarget
+
+            let operation =
+                WorkingDirectoryUpdate.Operation.watchReplay repositoryId branchId "selected-cursor"
+                |> required
 
             let scope =
                 WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
@@ -249,18 +258,114 @@ module WorkingDirectoryUpdateCoordinationTests =
             WorkingDirectoryUpdateCoordination.Sidecar.write scope operation
             |> fun task -> task.GetAwaiter().GetResult()
 
-            File.Exists(WorkingDirectoryUpdateCoordination.Scope.sidecarPath scope)
-            |> should equal true
+            let sidecarPath = WorkingDirectoryUpdateCoordination.Scope.sidecarPath scope
 
-            WorkingDirectoryUpdateCoordination.Marker.inspect scope operation
+            File.Exists(sidecarPath) |> should equal true
+
+            use sidecarDocument = JsonDocument.Parse(File.ReadAllText(sidecarPath))
+            let sidecar = sidecarDocument.RootElement
+
+            sidecar.ValueKind
+            |> should equal JsonValueKind.Object
+
+            sidecar.EnumerateObject()
+            |> Seq.map (fun property -> property.Name)
+            |> Set.ofSeq
+            |> should
+                equal
+                (Set.ofList [ "schemaVersion"
+                              "operationId"
+                              "completedUtc" ])
+
+            let schemaVersion = sidecar.GetProperty("schemaVersion")
+
+            schemaVersion.ValueKind
+            |> should equal JsonValueKind.Number
+
+            schemaVersion.GetInt32() |> should equal 1
+
+            let operationId = sidecar.GetProperty("operationId")
+
+            operationId.ValueKind
+            |> should equal JsonValueKind.String
+
+            operationId.GetString()
+            |> should equal (WorkingDirectoryUpdate.Operation.value operation)
+
+            let completedUtc = sidecar.GetProperty("completedUtc")
+
+            completedUtc.ValueKind
+            |> should equal JsonValueKind.String
+
+            let completedValue = completedUtc.GetString()
+
+            match DateTimeOffset.TryParse(completedValue, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
+            | true, completedAt ->
+                completedAt.Offset |> should equal TimeSpan.Zero
+
+                completedValue
+                |> should
+                    equal
+                    (completedAt
+                        .ToUniversalTime()
+                        .ToString("O", CultureInfo.InvariantCulture))
+            | false, _ -> Assert.Fail("The sidecar completion timestamp must be an ISO 8601 UTC value.")
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.Adopt
+
+            let differentRootDirectoryVersion =
+                targetWith
+                    repositoryId
+                    branchId
+                    (Guid.Parse("6bf7e6e5-33ac-450d-8e24-b07856a06cf0"))
+                    "40786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9"
+                    "dc938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836"
+
+            let differentSha256 =
+                targetWith
+                    repositoryId
+                    branchId
+                    (Guid.Parse("b1f5373a-7303-4dc1-b085-113e8efed444"))
+                    "50786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9"
+                    "dc938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836"
+
+            let differentBlake3 =
+                targetWith
+                    repositoryId
+                    branchId
+                    (Guid.Parse("b1f5373a-7303-4dc1-b085-113e8efed444"))
+                    "40786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9"
+                    "ec938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836"
+
+            for differentTarget in
+                [
+                    differentRootDirectoryVersion
+                    differentSha256
+                    differentBlake3
+                ] do
+                WorkingDirectoryUpdateCoordination.Marker.inspect scope differentTarget operation
+                |> fun task -> task.GetAwaiter().GetResult()
+                |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
 
             let differentOperation =
                 WorkingDirectoryUpdate.Operation.watchReplay repositoryId branchId "different-cursor"
                 |> required
 
-            WorkingDirectoryUpdateCoordination.Marker.inspect scope differentOperation
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget differentOperation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
+
+            let persistedMarker = File.ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
+
+            let wrongCaller = persistedMarker.Replace("\"callerKind\":\"watch\"", "\"callerKind\":\"branch\"", StringComparison.Ordinal)
+
+            wrongCaller |> should not' (equal persistedMarker)
+
+            File.WriteAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, wrongCaller)
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
 
@@ -271,13 +376,13 @@ module WorkingDirectoryUpdateCoordinationTests =
 
             File.WriteAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, unsupported)
 
-            WorkingDirectoryUpdateCoordination.Marker.inspect scope operation
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
 
             File.WriteAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, "{not-json")
 
-            WorkingDirectoryUpdateCoordination.Marker.inspect scope operation
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor)
 

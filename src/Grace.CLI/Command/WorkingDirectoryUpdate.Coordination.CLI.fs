@@ -101,6 +101,7 @@ module internal WorkingDirectoryUpdateCoordination =
     let private isCanonicalTarget (repositoryId: string) (branchId: string) (target: string) =
         let lines = target.Split('\n', StringSplitOptions.None)
 
+        /// Decodes one named canonical target field only when its Base64 spelling round-trips exactly.
         let tryDecode index name =
             let prefix = name + ":"
 
@@ -340,24 +341,33 @@ module internal WorkingDirectoryUpdateCoordination =
                 File.WriteAllText(Scope.markerPath scope, serialized)
             }
 
-        /// Classifies only an exact known operation as adoptable; every other marker state requires Doctor.
-        let inspect scope operation =
+        /// Classifies a marker as adoptable only when its complete target, caller kind, and operation exactly match the retry.
+        let inspect scope expectedTarget operation =
             task {
-                let path = Scope.markerPath scope
-
-                if not (File.Exists(path)) then
-                    return Missing
+                if not (WorkingDirectoryUpdate.Operation.matchesTarget expectedTarget operation) then
+                    return RequiresDoctor
                 else
-                    try
-                        let content = File.ReadAllText(path)
+                    let path = Scope.markerPath scope
 
-                        match tryReadMarkerDocument scope content with
-                        | Ok marker when marker.OperationId = WorkingDirectoryUpdate.Operation.value operation -> return Adopt
-                        | Ok _ -> return RequiresDoctor
-                        | Error _ -> return RequiresDoctor
-                    with
-                    | :? IOException
-                    | :? UnauthorizedAccessException -> return RequiresDoctor
+                    if not (File.Exists(path)) then
+                        return Missing
+                    else
+                        try
+                            let content = File.ReadAllText(path)
+
+                            match tryReadMarkerDocument scope content with
+                            | Ok marker when
+                                marker.OperationId = WorkingDirectoryUpdate.Operation.value operation
+                                && marker.Target = WorkingDirectoryUpdate.Target.canonical expectedTarget
+                                && marker.CallerKind = (WorkingDirectoryUpdate.Operation.callerKind operation
+                                                        |> callerKindText)
+                                ->
+                                return Adopt
+                            | Ok _ -> return RequiresDoctor
+                            | Error _ -> return RequiresDoctor
+                        with
+                        | :? IOException
+                        | :? UnauthorizedAccessException -> return RequiresDoctor
             }
 
         /// Removes a marker only after its currently persisted token exactly matches this attempt token.
