@@ -2925,6 +2925,15 @@ module Services =
 
         Path.Combine(Path.GetTempPath(), "Grace", "repositories", repositoryScope, rootScope, "branches", branchScope)
 
+    /// Gets the branch-independent temp directory that holds one Working Directory Update lease and its owned evidence.
+    let internal workingDirectoryUpdateTempDirectory (repositoryId: Guid) (localRootScope: string) =
+        if repositoryId = Guid.Empty then
+            invalidArg (nameof repositoryId) "Working Directory Update coordination requires a repository id."
+        elif not (Sha256FullHashRegex.IsMatch(localRootScope)) then
+            invalidArg (nameof localRootScope) "Working Directory Update coordination requires a lowercase SHA-256 local-root scope."
+        else
+            Path.Combine(Path.GetTempPath(), "Grace", "repositories", repositoryId.ToString("N"), localRootScope, "working-directory-update")
+
     /// Gets the repository-scoped Watch IPC path for a specific local repository identity.
     let internal IpcFileNameForIdentity (repositoryId: Guid) (repositoryName: string) (rootDirectory: string) (branchId: Guid) (branchName: string) =
         getNativeFilePath (
