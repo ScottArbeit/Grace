@@ -34,7 +34,7 @@ module internal WorkingDirectoryUpdate =
     type LocalRootScope = private LocalRootScope of string
 
     /// Represents one deterministic caller-specific logical update identity.
-    type Operation = private Operation of callerKind: CallerKind * repositoryId: RepositoryId * branchId: BranchId * value: string
+    type Operation = private Operation of callerKind: CallerKind * target: Target option * repositoryId: RepositoryId * branchId: BranchId * value: string
 
     /// Represents one random marker token that never participates in logical operation identity.
     type AttemptToken = private AttemptToken of string
@@ -267,9 +267,9 @@ module internal WorkingDirectoryUpdate =
     /// Supplies construction and access functions for deterministic operation identities.
     module Operation =
         /// Constructs an operation from a complete caller tuple after repository and branch validation.
-        let private create callerKind repositoryId branchId canonical =
+        let private create callerKind target repositoryId branchId canonical =
             match requireId "RepositoryId" repositoryId, requireId "BranchId" branchId with
-            | Ok repositoryId, Ok branchId -> Ok(Operation(callerKind, repositoryId, branchId, operationValue canonical))
+            | Ok repositoryId, Ok branchId -> Ok(Operation(callerKind, target, repositoryId, branchId, operationValue canonical))
             | Error error, _ -> Error error
             | _, Error error -> Error error
 
@@ -285,7 +285,7 @@ module internal WorkingDirectoryUpdate =
                     + canonicalField "branch" (guidText branchId)
                     + canonicalField "event-cursor" eventCursor
 
-                create Watch repositoryId branchId canonical
+                create Watch None repositoryId branchId canonical
 
         /// Creates the Branch identity from branch transition, Reference, and selected target facts.
         let branchSwitch previousBranchId selectedReferenceId target =
@@ -303,7 +303,7 @@ module internal WorkingDirectoryUpdate =
                     + canonicalField "selected-reference" (guidText selectedReferenceId)
                     + canonicalField "target" (Target.canonical target)
 
-                create Branch repositoryId branchId canonical
+                create Branch (Some target) repositoryId branchId canonical
             | Error error, _ -> Error error
             | _, Error error -> Error error
 
@@ -324,18 +324,24 @@ module internal WorkingDirectoryUpdate =
                     + canonicalField "initial-cursor" initialCursor
                     + canonicalField "local-root-scope" (LocalRootScope.value localRootScope)
 
-                create Connect repositoryId branchId canonical
+                create Connect (Some target) repositoryId branchId canonical
 
         /// Returns the operation identity independently of diagnostic correlation.
-        let value (Operation (_, _, _, value)) = value
+        let value (Operation (_, _, _, _, value)) = value
 
         /// Returns the caller kind that owns completion progress.
-        let callerKind (Operation (callerKind, _, _, _)) = callerKind
+        let callerKind (Operation (callerKind, _, _, _, _)) = callerKind
 
-        /// Verifies operation repository and branch facts match a selected target.
-        let matchesTarget target (Operation (_, repositoryId, branchId, _)) =
-            repositoryId = Target.repositoryId target
-            && branchId = Target.branchId target
+        /// Verifies Watch scope or the complete Branch and Connect target embedded by the operation.
+        let matchesTarget target (Operation (callerKind, operationTarget, repositoryId, branchId, _)) =
+            match callerKind, operationTarget with
+            | Watch, None ->
+                repositoryId = Target.repositoryId target
+                && branchId = Target.branchId target
+            | (Branch
+              | Connect),
+              Some operationTarget -> operationTarget = target
+            | _ -> false
 
     /// Supplies construction and access functions for marker attempt tokens.
     module AttemptToken =

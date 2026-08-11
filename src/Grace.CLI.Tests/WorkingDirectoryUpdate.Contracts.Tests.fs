@@ -2,9 +2,15 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI.Command
+open Grace.Shared
 open Grace.Types.Common
 open NUnit.Framework
 open System
+open System.IO
+open System.Security.Cryptography
+open System.Text
+open System.Threading
+open System.Threading.Tasks
 
 /// Covers immutable selected-target and caller-operation identity construction.
 module WorkingDirectoryUpdateContractsTests =
@@ -34,6 +40,12 @@ module WorkingDirectoryUpdateContractsTests =
     /// Supplies the fixed target BLAKE3 fact used by canonical operation vectors.
     let private blake3Hash = Blake3Hash "dc938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836"
 
+    /// Supplies a deterministic absolute local root accepted by the host platform.
+    let private localRootPath = if OperatingSystem.IsWindows() then @"C:\Grace\repo" else "/Grace/repo"
+
+    /// Supplies a second deterministic absolute local root for Connect identity sensitivity proof.
+    let private otherLocalRootPath = if OperatingSystem.IsWindows() then @"C:\Grace\other" else "/Grace/other"
+
     /// Builds the fixed complete target whose operation vectors are pinned below.
     let private selectedTarget () = target repositoryId branchId rootDirectoryVersionId sha256Hash blake3Hash
 
@@ -41,6 +53,41 @@ module WorkingDirectoryUpdateContractsTests =
     let private shouldChange baseline operation =
         WorkingDirectoryUpdate.Operation.value operation
         |> should not' (equal baseline)
+
+    /// Supplies deterministic bytes to the private request constructor without a filesystem dependency.
+    type private BindingReader(bytes: byte array) =
+        interface WorkingDirectoryUpdate.IPreparedContentReader with
+            /// Lists the single deterministic file used by target-binding tests.
+            member _.FilePaths = seq { "binding.txt" }
+
+            /// Opens a fresh stream so preparation owns immutable verified bytes.
+            member _.OpenReadAsync(_relativePath, _cancellationToken) = Task.FromResult<Stream>(new MemoryStream(bytes, writable = false))
+
+            /// Requires no cleanup because this test reader owns no external resource.
+            member _.Dispose() = ()
+
+    /// Builds verified private content required to construct a Request in target-binding scenarios.
+    let private preparedContent () =
+        let bytes = Encoding.UTF8.GetBytes("target binding")
+
+        let sha256Hash =
+            SHA256.HashData(bytes)
+            |> Convert.ToHexString
+            |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+        let blake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+        let preparedManifest =
+            WorkingDirectoryUpdate.PreparedManifest.create [ WorkingDirectoryUpdate.PreparedManifestEntry.File(
+                                                                 RelativePath "binding.txt",
+                                                                 sha256Hash,
+                                                                 blake3Hash
+                                                             ) ]
+            |> required
+
+        WorkingDirectoryUpdate.PreparedContent.create preparedManifest (new BindingReader(bytes)) CancellationToken.None
+        |> fun task -> task.GetAwaiter().GetResult()
+        |> required
 
     /// Verifies target construction rejects incomplete identifiers and noncanonical hashes.
     [<Test>]
@@ -86,7 +133,7 @@ module WorkingDirectoryUpdateContractsTests =
         let selectedReferenceId = Guid.Parse("d9622ad2-552d-4ab1-996e-2d756af82047")
 
         let localRootScope =
-            WorkingDirectoryUpdate.LocalRootScope.create @"C:\Grace\repo"
+            WorkingDirectoryUpdate.LocalRootScope.create localRootPath
             |> required
 
         let watch =
@@ -105,14 +152,19 @@ module WorkingDirectoryUpdateContractsTests =
         let branchValue = WorkingDirectoryUpdate.Operation.value branch
         let connectValue = WorkingDirectoryUpdate.Operation.value connect
 
+        let expectedConnectValue =
+            if OperatingSystem.IsWindows() then
+                "sha256:33f3783b372f75f2df7df1312d6b298521ced2e6817e1958d769edca736dcac6"
+            else
+                "sha256:e56c2d2453222159def2f09bd75b8df8bbdb6686fb0bafe0e11d69217612e30f"
+
         watchValue
         |> should equal "sha256:66d663c833c8a6984092cbd243d78dd7c01518aae7fa3456f234e7c7339f94f2"
 
         branchValue
         |> should equal "sha256:e08980617e39f55a9fd1272b848b88b871bca0b11680ff4b99c5d8209518f1c2"
 
-        connectValue
-        |> should equal "sha256:33f3783b372f75f2df7df1312d6b298521ced2e6817e1958d769edca736dcac6"
+        connectValue |> should equal expectedConnectValue
 
         [
             WorkingDirectoryUpdate.Operation.watchReplay (Guid.Parse("8c7de5d5-6683-4c49-b0e0-4ea99a3294ef")) branchId "cursor-001"
@@ -197,7 +249,7 @@ module WorkingDirectoryUpdateContractsTests =
             WorkingDirectoryUpdate.Operation.connectBootstrap
                 selectedTarget
                 "initial-cursor"
-                (WorkingDirectoryUpdate.LocalRootScope.create @"C:\Grace\other"
+                (WorkingDirectoryUpdate.LocalRootScope.create otherLocalRootPath
                  |> required)
         ]
         |> List.map required
@@ -229,3 +281,55 @@ module WorkingDirectoryUpdateContractsTests =
 
         WorkingDirectoryUpdate.Operation.value operation
         |> should equal "sha256:66d663c833c8a6984092cbd243d78dd7c01518aae7fa3456f234e7c7339f94f2"
+
+    /// Verifies Branch and Connect requests and receipts cannot substitute any root identity fact.
+    [<Test>]
+    let ``Branch and Connect bind requests and receipts to their complete selected target`` () =
+        let selectedTarget = selectedTarget ()
+        let preparedContent = preparedContent ()
+
+        let branchOperation =
+            WorkingDirectoryUpdate.Operation.branchSwitch
+                (Guid.Parse("2c461ab1-72a0-42c3-9c2e-ea9c0c3b83de"))
+                (Guid.Parse("d9622ad2-552d-4ab1-996e-2d756af82047"))
+                selectedTarget
+            |> required
+
+        let connectOperation =
+            WorkingDirectoryUpdate.Operation.connectBootstrap
+                selectedTarget
+                "initial-cursor"
+                (WorkingDirectoryUpdate.LocalRootScope.create localRootPath
+                 |> required)
+            |> required
+
+        let mismatchedTargets =
+            [
+                target repositoryId branchId (Guid.Parse("e71c392d-16a8-4ec1-a759-9f1b56fe5363")) sha256Hash blake3Hash
+                target repositoryId branchId rootDirectoryVersionId (Sha256Hash "50786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9") blake3Hash
+                target repositoryId branchId rootDirectoryVersionId sha256Hash (Blake3Hash "ec938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836")
+            ]
+
+        let assertCompleteBinding operation =
+            WorkingDirectoryUpdate.Request.create selectedTarget operation preparedContent "target-binding"
+            |> Result.isOk
+            |> should equal true
+
+            WorkingDirectoryUpdate.Receipt.create selectedTarget operation true
+            |> Result.isOk
+            |> should equal true
+
+            mismatchedTargets
+            |> List.iter (fun mismatchedTarget ->
+                WorkingDirectoryUpdate.Request.create mismatchedTarget operation preparedContent "target-binding"
+                |> Result.isError
+                |> should equal true
+
+                WorkingDirectoryUpdate.Receipt.create mismatchedTarget operation true
+                |> Result.isError
+                |> should equal true)
+
+        assertCompleteBinding branchOperation
+        assertCompleteBinding connectOperation
+
+        WorkingDirectoryUpdate.PreparedContent.dispose preparedContent
