@@ -111,6 +111,13 @@ module WorkingDirectoryUpdatePreparedContentTests =
     [<TestCase("a/../b")>]
     [<TestCase("a//b")>]
     [<TestCase("a/./b")>]
+    [<TestCase("CON")>]
+    [<TestCase("con.txt")>]
+    [<TestCase("AUX")>]
+    [<TestCase("COM1.ext")>]
+    [<TestCase("folder./item.txt")>]
+    [<TestCase("folder /item.txt")>]
+    [<TestCase("control\u0001.txt")>]
     let ``prepared manifest rejects unsafe paths`` path =
         let bytes = Encoding.UTF8.GetBytes("content")
 
@@ -136,6 +143,12 @@ module WorkingDirectoryUpdatePreparedContentTests =
                 fileEntry "same.txt" bytes
             ]
 
+        let separatorAliasCollision =
+            [
+                fileEntry "folder\\item.txt" bytes
+                fileEntry "folder/item.txt" bytes
+            ]
+
         let directConflict =
             [
                 WorkingDirectoryUpdate.PreparedManifestEntry.Directory(RelativePath "folder")
@@ -145,12 +158,13 @@ module WorkingDirectoryUpdatePreparedContentTests =
         let nestedConflict =
             [
                 WorkingDirectoryUpdate.PreparedManifestEntry.File(RelativePath "folder", sha256, blake3)
-                fileEntry "folder/item.txt" bytes
+                fileEntry "FOLDER/item.txt" bytes
             ]
 
         [
             duplicate
             caseCollision
+            separatorAliasCollision
             directConflict
             nestedConflict
         ]
@@ -222,9 +236,9 @@ module WorkingDirectoryUpdatePreparedContentTests =
 
             reader.Disposed |> should equal true)
 
-    /// Verifies a shared diagnostic correlation cannot merge requests with distinct Watch operation identities.
+    /// Verifies diagnostic correlations cannot redefine or merge Watch operation identities.
     [<Test>]
-    let ``same diagnostic correlation preserves distinct request operations`` () =
+    let ``diagnostic correlations preserve operation identity boundaries`` () =
         let bytes = Encoding.UTF8.GetBytes("request bytes")
         let preparedManifest = manifest [ fileEntry "content.txt" bytes ]
 
@@ -259,6 +273,17 @@ module WorkingDirectoryUpdatePreparedContentTests =
         let secondRequest =
             WorkingDirectoryUpdate.Request.create target second preparedContent "diagnostic-42"
             |> required
+
+        let differentCorrelationRequest =
+            WorkingDirectoryUpdate.Request.create target first preparedContent "diagnostic-99"
+            |> required
+
+        WorkingDirectoryUpdate.Request.operation firstRequest
+        |> WorkingDirectoryUpdate.Operation.value
+        |> should
+            equal
+            (WorkingDirectoryUpdate.Request.operation differentCorrelationRequest
+             |> WorkingDirectoryUpdate.Operation.value)
 
         WorkingDirectoryUpdate.Request.operation firstRequest
         |> WorkingDirectoryUpdate.Operation.value

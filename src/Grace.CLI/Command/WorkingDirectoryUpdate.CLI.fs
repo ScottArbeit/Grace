@@ -128,6 +128,24 @@ module internal WorkingDirectoryUpdate =
         |> Convert.ToHexString
         |> fun hash -> $"sha256:{hash.ToLowerInvariant()}"
 
+    /// Identifies DOS device basenames that Windows reserves even when an extension follows.
+    let private isReservedWindowsDeviceName (segment: string) =
+        let extensionIndex = segment.IndexOf('.')
+
+        let baseName =
+            (if extensionIndex < 0 then segment else segment.Substring(0, extensionIndex))
+            |> fun value -> value.ToUpperInvariant()
+
+        baseName = "CON"
+        || baseName = "PRN"
+        || baseName = "AUX"
+        || baseName = "NUL"
+        || (baseName.Length = 4
+            && (baseName.StartsWith("COM", StringComparison.Ordinal)
+                || baseName.StartsWith("LPT", StringComparison.Ordinal))
+            && baseName[3] >= '1'
+            && baseName[3] <= '9')
+
     /// Validates a relative path and converts Windows separators to the canonical slash form.
     let private normalizeRelativePath (path: RelativePath) =
         let value = string path
@@ -153,17 +171,29 @@ module internal WorkingDirectoryUpdate =
                         Some "Prepared-content paths must not contain empty segments."
                     elif segment = "." || segment = ".." then
                         Some "Prepared-content paths must not contain traversal segments."
+                    elif segment
+                         |> Seq.exists (fun character -> int character < 32) then
+                        Some "Prepared-content paths must not contain Windows control characters."
                     elif
                         segment.IndexOfAny([| '<'; '>'; ':'; '"'; '|'; '?'; '*' |])
                         >= 0
                     then
                         Some "Prepared-content paths must be representable on Windows."
+                    elif segment.EndsWith('.') || segment.EndsWith(' ') then
+                        Some "Prepared-content paths must not end a Windows segment with a dot or space."
+                    elif isReservedWindowsDeviceName segment then
+                        Some "Prepared-content paths must not use a reserved Windows device name."
                     else
                         None)
 
             match invalid with
             | Some error -> Error error
             | None -> Ok(RelativePath normalized)
+
+    /// Produces the canonical Windows comparison key used for manifest, reader, and verified-byte lookup.
+    let private windowsPathKey (path: RelativePath) =
+        string path
+        |> fun value -> value.ToUpperInvariant()
 
     /// Supplies construction and access functions for complete selected targets.
     module Target =
@@ -320,7 +350,7 @@ module internal WorkingDirectoryUpdate =
             if isNull (box entries) then
                 Error "Prepared-content manifest entries must not be null."
             else
-                let paths = Dictionary<string, PreparedManifestEntry>(StringComparer.OrdinalIgnoreCase)
+                let paths = Dictionary<string, PreparedManifestEntry>(StringComparer.Ordinal)
                 let canonicalEntries = ResizeArray<PreparedManifestEntry>()
                 let files = ResizeArray<PreparedFile>()
                 let mutable error = None
@@ -333,7 +363,7 @@ module internal WorkingDirectoryUpdate =
                         match normalizeRelativePath path with
                         | Error pathError -> error <- Some pathError
                         | Ok normalizedPath ->
-                            let key = string normalizedPath
+                            let key = windowsPathKey normalizedPath
 
                             if paths.ContainsKey(key) then
                                 error <- Some $"Prepared-content manifest contains a duplicate or case-colliding path '{key}'."
@@ -347,7 +377,7 @@ module internal WorkingDirectoryUpdate =
                         | _, Error hashError, _ -> error <- Some hashError
                         | _, _, Error hashError -> error <- Some hashError
                         | Ok normalizedPath, Ok sha256Hash, Ok blake3Hash ->
-                            let key = string normalizedPath
+                            let key = windowsPathKey normalizedPath
 
                             if paths.ContainsKey(key) then
                                 error <- Some $"Prepared-content manifest contains a duplicate or case-colliding path '{key}'."
@@ -368,7 +398,7 @@ module internal WorkingDirectoryUpdate =
                             match paths[path] with
                             | File _ when
                                 keys
-                                |> Array.exists (fun candidate -> candidate.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase))
+                                |> Array.exists (fun candidate -> candidate.StartsWith(path + "/", StringComparison.Ordinal))
                                 ->
                                 Some $"Prepared-content file '{path}' conflicts with a contained path."
                             | _ -> None)
@@ -393,15 +423,15 @@ module internal WorkingDirectoryUpdate =
                 else
                     try
                         let files = PreparedManifest.filePaths manifest |> Seq.toArray
-                        let declaredHashes = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.OrdinalIgnoreCase)
+                        let declaredHashes = Dictionary<string, Sha256Hash * Blake3Hash>(StringComparer.Ordinal)
 
                         PreparedManifest.entries manifest
                         |> Seq.iter (function
-                            | File (path, sha256Hash, blake3Hash) -> declaredHashes[string path] <- (sha256Hash, blake3Hash)
+                            | File (path, sha256Hash, blake3Hash) -> declaredHashes[windowsPathKey path] <- (sha256Hash, blake3Hash)
                             | Directory _ -> ())
 
                         let readerPaths = reader.FilePaths |> Seq.toArray
-                        let readerKeys = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        let readerKeys = HashSet<string>(StringComparer.Ordinal)
                         let mutable error = None
                         let mutable readerIndex = 0
 
@@ -409,13 +439,13 @@ module internal WorkingDirectoryUpdate =
                               && Option.isNone error do
                             match normalizeRelativePath (RelativePath readerPaths[readerIndex]) with
                             | Error pathError -> error <- Some pathError
-                            | Ok path when not (readerKeys.Add(string path)) ->
+                            | Ok path when not (readerKeys.Add(windowsPathKey path)) ->
                                 error <- Some $"Prepared-content reader contains a duplicate or case-colliding path '{path}'."
                             | Ok _ -> ()
 
                             readerIndex <- readerIndex + 1
 
-                        let expected = HashSet<string>(files |> Seq.map string, StringComparer.OrdinalIgnoreCase)
+                        let expected = HashSet<string>(files |> Seq.map windowsPathKey, StringComparer.Ordinal)
 
                         if
                             Option.isNone error
@@ -426,7 +456,7 @@ module internal WorkingDirectoryUpdate =
                         match error with
                         | Some error -> return Error error
                         | None ->
-                            let bytesByPath = Dictionary<string, byte array>(StringComparer.OrdinalIgnoreCase)
+                            let bytesByPath = Dictionary<string, byte array>(StringComparer.Ordinal)
                             let mutable fileIndex = 0
                             let mutable byteError = None
 
@@ -447,14 +477,14 @@ module internal WorkingDirectoryUpdate =
                                         let bytes = copy.ToArray()
                                         use hashStream = new MemoryStream(bytes, writable = false)
                                         let! sha256Hash, blake3Hash = computeHashesForFile hashStream path
-                                        let expectedSha256Hash, expectedBlake3Hash = declaredHashes[string path]
+                                        let expectedSha256Hash, expectedBlake3Hash = declaredHashes[windowsPathKey path]
 
                                         if sha256Hash <> expectedSha256Hash then
                                             byteError <- Some $"Prepared-content bytes do not match declared SHA-256 for '{path}'."
                                         elif blake3Hash <> expectedBlake3Hash then
                                             byteError <- Some $"Prepared-content bytes do not match declared BLAKE3 for '{path}'."
                                         else
-                                            bytesByPath[string path] <- bytes
+                                            bytesByPath[windowsPathKey path] <- bytes
                                 with
                                 | ex -> byteError <- Some $"Prepared-content reader failed for '{path}': {ex.Message}"
 
@@ -473,7 +503,7 @@ module internal WorkingDirectoryUpdate =
             | Error error -> Error error
             | Ok path when !disposed -> Error "Prepared-content has already been disposed."
             | Ok path ->
-                match bytesByPath.TryGetValue(string path) with
+                match bytesByPath.TryGetValue(windowsPathKey path) with
                 | true, bytes -> Ok(new MemoryStream(bytes, writable = false) :> Stream)
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
