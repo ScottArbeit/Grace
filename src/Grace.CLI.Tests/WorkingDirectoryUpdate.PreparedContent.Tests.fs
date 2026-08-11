@@ -39,6 +39,7 @@ module WorkingDirectoryUpdatePreparedContentTests =
     type private TrackingReader(paths: string list, contents: (string * byte array) list) =
         let bytesByPath = Dictionary<string, byte array>(StringComparer.Ordinal)
         let mutable disposed = false
+        let mutable openReadCount = 0
 
         do
             contents
@@ -46,12 +47,17 @@ module WorkingDirectoryUpdatePreparedContentTests =
 
         member _.Disposed = disposed
 
+        /// Reports the number of byte streams preparation attempted to open.
+        member _.OpenReadCount = openReadCount
+
         interface WorkingDirectoryUpdate.IPreparedContentReader with
             /// Lists the uncompressed file paths made available by this test reader.
             member _.FilePaths = paths :> seq<string>
 
             /// Opens the bytes associated with one declared prepared-content path.
             member _.OpenReadAsync((relativePath: RelativePath), _cancellationToken) =
+                openReadCount <- openReadCount + 1
+
                 match bytesByPath.TryGetValue(string relativePath) with
                 | true, bytes -> Task.FromResult<Stream>(new MemoryStream(bytes, writable = false))
                 | false, _ -> Task.FromException<Stream>(FileNotFoundException($"Missing test bytes for '{relativePath}'."))
@@ -68,6 +74,35 @@ module WorkingDirectoryUpdatePreparedContentTests =
     let private prepare preparedManifest reader =
         WorkingDirectoryUpdate.PreparedContent.create preparedManifest reader CancellationToken.None
         |> fun task -> task.GetAwaiter().GetResult()
+
+    /// Lists direct and nested superscript device aliases that Windows reserves before any reader opens bytes.
+    let private superscriptDevicePaths =
+        [
+            "COM¹"
+            "COM¹.txt"
+            "COM²"
+            "COM².txt"
+            "COM³"
+            "COM³.tar.gz"
+            "LPT¹"
+            "LPT¹.txt"
+            "LPT²"
+            "LPT².txt"
+            "LPT³"
+            "LPT³.tar.gz"
+            "nested/COM¹"
+            "nested/COM¹.txt"
+            "nested/COM²"
+            "nested/COM².txt"
+            "nested/COM³"
+            "nested/COM³.tar.gz"
+            "nested/LPT¹"
+            "nested/LPT¹.txt"
+            "nested/LPT²"
+            "nested/LPT².txt"
+            "nested/LPT³"
+            "nested/LPT³.tar.gz"
+        ]
 
     /// Verifies exact deterministic content preserves empty files and releases its input reader.
     [<Test>]
@@ -91,6 +126,34 @@ module WorkingDirectoryUpdatePreparedContentTests =
 
         let preparedContent = prepare preparedManifest reader |> required
         reader.Disposed |> should equal true
+
+        use firstAlphaStream =
+            WorkingDirectoryUpdate.PreparedContent.openRead preparedContent (RelativePath "src/alpha.txt")
+            |> required
+
+        let firstAlphaByte = firstAlphaStream.ReadByte()
+        firstAlphaByte |> should equal (int alpha[0])
+
+        use secondAlphaStream =
+            WorkingDirectoryUpdate.PreparedContent.openRead preparedContent (RelativePath "src/alpha.txt")
+            |> required
+
+        let secondAlphaByte = secondAlphaStream.ReadByte()
+        secondAlphaByte |> should equal (int alpha[0])
+
+        use firstAlphaCopy = new MemoryStream()
+        firstAlphaStream.CopyTo(firstAlphaCopy)
+
+        let firstAlphaBytes = Array.append [| byte firstAlphaByte |] (firstAlphaCopy.ToArray())
+
+        firstAlphaBytes |> should equal alpha
+
+        use secondAlphaCopy = new MemoryStream()
+        secondAlphaStream.CopyTo(secondAlphaCopy)
+
+        let secondAlphaBytes = Array.append [| byte secondAlphaByte |] (secondAlphaCopy.ToArray())
+
+        secondAlphaBytes |> should equal alpha
 
         use emptyStream =
             WorkingDirectoryUpdate.PreparedContent.openRead preparedContent (RelativePath "empty.txt")
@@ -124,6 +187,34 @@ module WorkingDirectoryUpdatePreparedContentTests =
         WorkingDirectoryUpdate.PreparedManifest.create [ fileEntry path bytes ]
         |> Result.isError
         |> should equal true
+
+    /// Verifies all direct and nested superscript device aliases reject as manifest paths.
+    [<Test>]
+    let ``prepared manifest rejects superscript Windows device aliases`` () =
+        let bytes = Encoding.UTF8.GetBytes("content")
+
+        superscriptDevicePaths
+        |> List.iter (fun path ->
+            WorkingDirectoryUpdate.PreparedManifest.create [ fileEntry path bytes ]
+            |> Result.isError
+            |> should equal true)
+
+    /// Verifies reserved reader paths reject before preparation opens any declared file bytes.
+    [<Test>]
+    let ``prepared content rejects superscript Windows device aliases before reader use`` () =
+        let bytes = Encoding.UTF8.GetBytes("content")
+        let preparedManifest = manifest [ fileEntry "safe.txt" bytes ]
+
+        superscriptDevicePaths
+        |> List.iter (fun path ->
+            let reader = new TrackingReader([ path ], [ path, bytes ])
+
+            prepare preparedManifest reader
+            |> Result.isError
+            |> should equal true
+
+            reader.OpenReadCount |> should equal 0
+            reader.Disposed |> should equal true)
 
     /// Verifies manifest construction rejects duplicate names, Windows case collisions, and file-directory conflicts.
     [<Test>]

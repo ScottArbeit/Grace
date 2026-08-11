@@ -143,8 +143,10 @@ module internal WorkingDirectoryUpdate =
         || (baseName.Length = 4
             && (baseName.StartsWith("COM", StringComparison.Ordinal)
                 || baseName.StartsWith("LPT", StringComparison.Ordinal))
-            && baseName[3] >= '1'
-            && baseName[3] <= '9')
+            && ((baseName[3] >= '1' && baseName[3] <= '9')
+                || baseName[3] = '¹'
+                || baseName[3] = '²'
+                || baseName[3] = '³'))
 
     /// Validates a relative path and converts Windows separators to the canonical slash form.
     let private normalizeRelativePath (path: RelativePath) =
