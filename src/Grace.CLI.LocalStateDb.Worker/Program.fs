@@ -1,6 +1,8 @@
 namespace Grace.CLI.LocalStateDb.Worker
 
 open System
+open System.IO
+open System.Threading
 open System.Threading.Tasks
 open Grace.CLI
 open Grace.Types.Common
@@ -52,11 +54,28 @@ module Program =
                 index <- index + 1
         }
 
+    /// Holds a supplied lease path until the test process terminates this helper.
+    let private holdFileLease (leasePath: string) (readyFile: string) =
+        task {
+            Directory.CreateDirectory(Path.GetDirectoryName(leasePath))
+            |> ignore
+
+            use _lease = new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+
+            File.WriteAllText(readyFile, "held")
+            do! Task.Delay(Timeout.Infinite, CancellationToken.None)
+        }
+
     /// Runs the process entry point.
     [<EntryPoint>]
     let main argv =
         try
-            if argv.Length < 5 then
+            if argv.Length = 3 && argv[0] = "hold-file-lease" then
+                holdFileLease argv[1] argv[2]
+                |> fun task -> task.GetAwaiter().GetResult()
+
+                0
+            elif argv.Length < 5 then
                 Console.Error.WriteLine("Usage: <dbPath> <rootId> <rootSha256Hash> <rootBlake3Hash> <iterations>")
                 2
             else
