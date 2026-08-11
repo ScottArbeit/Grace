@@ -19,16 +19,22 @@ open System.Text
 open System.Threading.Tasks
 open Orleans.Runtime
 
-/// Simulates WorkItem persistence with a definite first-write failure and durable-state reload.
-type private ScriptedWorkItemEventState(initialDurableEvents: seq<WorkItemEvent>, failedWrites: int) =
+/// Selects whether a scripted WorkItem persistence attempt changes durable events before completing.
+type private ScriptedWorkItemWriteOutcome =
+    | FailBeforePersist
+    | PersistThenFail
+    | Persist
+
+/// Simulates WorkItem persistence outcomes while keeping activation and durable event streams independently observable.
+type private ScriptedWorkItemEventState(initialDurableEvents: seq<WorkItemEvent>, writeOutcomes: seq<ScriptedWorkItemWriteOutcome>) =
     let mutable durableEvents = List<WorkItemEvent>(initialDurableEvents)
     let mutable activationEvents = List<WorkItemEvent>(durableEvents)
-    let mutable remainingFailedWrites = failedWrites
+    let writeOutcomes = Queue<ScriptedWorkItemWriteOutcome>(writeOutcomes)
     let mutable writeCount = 0
 
     member _.WriteCount = writeCount
 
-    member _.CreateReactivatedState() = ScriptedWorkItemEventState(durableEvents, 0)
+    member _.CreateReactivatedState() = ScriptedWorkItemEventState(durableEvents, Seq.empty)
 
     interface IPersistentState<List<WorkItemEvent>> with
         member _.State
@@ -45,10 +51,14 @@ type private ScriptedWorkItemEventState(initialDurableEvents: seq<WorkItemEvent>
         member _.WriteStateAsync() =
             writeCount <- writeCount + 1
 
-            if remainingFailedWrites > 0 then
-                remainingFailedWrites <- remainingFailedWrites - 1
-                Task.FromException(InvalidOperationException("simulated WorkItem persistence failure"))
-            else
+            let outcome = if writeOutcomes.Count = 0 then Persist else writeOutcomes.Dequeue()
+
+            match outcome with
+            | FailBeforePersist -> Task.FromException(InvalidOperationException("simulated WorkItem persistence failure"))
+            | PersistThenFail ->
+                durableEvents <- List<WorkItemEvent>(activationEvents)
+                Task.FromException(InvalidOperationException("simulated WorkItem persistence failure after durable copy"))
+            | Persist ->
                 durableEvents <- List<WorkItemEvent>(activationEvents)
                 Task.CompletedTask
 
@@ -744,11 +754,11 @@ type WorkItemServerUnitTests() =
     member _.FailedWorkItemPersistenceDoesNotLeakAGhostEventAndRetryPersistsExactlyOnce() =
         task {
             let event = { Event = TitleSet "persist once"; Metadata = metadata (Instant.FromUtc(2026, 8, 10, 0, 0)) }
-            let scriptedState = ScriptedWorkItemEventState(Seq.empty, 1)
+            let scriptedState = ScriptedWorkItemEventState(Seq.empty, [ FailBeforePersist ])
             let state = scriptedState :> IPersistentState<List<WorkItemEvent>>
 
             match! persistWorkItemEventWithDurableRecovery state event with
-            | FailedRecovered error -> Assert.That(error.Message, Is.EqualTo("simulated WorkItem persistence failure"))
+            | FailedRecovered (false, error) -> Assert.That(error.Message, Is.EqualTo("simulated WorkItem persistence failure"))
             | outcome -> Assert.Fail($"Expected a recovered failed write, but got {outcome}.")
 
             Assert.That(state.State, Is.Empty, "A failed event must not remain visible to this activation.")
@@ -766,4 +776,71 @@ type WorkItemServerUnitTests() =
             let reactivatedAfterRetry = scriptedState.CreateReactivatedState() :> IPersistentState<List<WorkItemEvent>>
             Assert.That(reactivatedAfterRetry.State, Has.Count.EqualTo(1))
             Assert.That(reactivatedAfterRetry.State[0], Is.EqualTo(event))
+        }
+
+    /// Verifies a copied-then-failed description event rebuilds projection state so exact replay and later commands converge without duplicates.
+    [<Test>]
+    member _.PersistedThenFailedWorkItemDescriptionRebuildsProjectionAndConvergesLaterCommands() =
+        task {
+            let repositoryId = Guid.Parse("2d88e784-8f03-45a6-a497-820ea9c215ea")
+            let workItemId = Guid.Parse("51d2b22c-da25-499a-a533-bbe91b77c130")
+            let descriptionCorrelationId = "corr-persisted-then-failed-description"
+            let description = TextContentStorage.createDescription repositoryId workItemId descriptionCorrelationId "persisted description"
+
+            let created =
+                {
+                    Event = Created(workItemId, 1L, Guid.NewGuid(), Guid.NewGuid(), repositoryId, "original title", None)
+                    Metadata = { metadata (Instant.FromUtc(2026, 8, 10, 0, 0)) with CorrelationId = "corr-created" }
+                }
+
+            let candidate =
+                {
+                    Event = DescriptionSet description
+                    Metadata = { metadata (Instant.FromUtc(2026, 8, 10, 0, 1)) with CorrelationId = descriptionCorrelationId }
+                }
+
+            let unrelated =
+                { Event = TitleSet "later title"; Metadata = { metadata (Instant.FromUtc(2026, 8, 10, 0, 2)) with CorrelationId = "corr-unrelated-title" } }
+
+            let scriptedState = ScriptedWorkItemEventState([ created ], [ PersistThenFail; Persist ])
+            let state = scriptedState :> IPersistentState<List<WorkItemEvent>>
+
+            match! persistWorkItemEventWithDurableRecovery state candidate with
+            | FailedRecovered (true, error) -> Assert.That(error.Message, Is.EqualTo("simulated WorkItem persistence failure after durable copy"))
+            | outcome -> Assert.Fail($"Expected a recovered durable candidate, but got {outcome}.")
+
+            let recoveredState = rebuildWorkItemState state.State
+
+            Assert.That(recoveredState.Description, Is.EqualTo(Some description))
+            Assert.That(state.State, Has.Count.EqualTo(2))
+
+            let exactRetry =
+                WorkItem.classifyDescriptionReplay
+                    WorkItem.DescriptionOperation.SetDescription
+                    workItemId
+                    repositoryId
+                    (Some description)
+                    recoveredState
+                    (state.State :> IReadOnlyList<WorkItemEvent>)
+                    descriptionCorrelationId
+
+            Assert.That(exactRetry, Is.EqualTo(WorkItem.ExactDescriptionReplay))
+
+            match! persistWorkItemEventWithDurableRecovery state unrelated with
+            | Persisted -> ()
+            | outcome -> Assert.Fail($"The unrelated command must persist from rebuilt state, but got {outcome}.")
+
+            let convergedState = rebuildWorkItemState state.State
+
+            Assert.That(state.State, Has.Count.EqualTo(3))
+
+            Assert.That(
+                state.State
+                |> Seq.filter (fun workItemEvent -> workItemEvent.Metadata.CorrelationId = descriptionCorrelationId)
+                |> Seq.length,
+                Is.EqualTo(1)
+            )
+
+            Assert.That(convergedState.Description, Is.EqualTo(Some description))
+            Assert.That(convergedState.WorkItem.Title, Is.EqualTo("later title"))
         }

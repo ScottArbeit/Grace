@@ -33,8 +33,20 @@ module WorkItem =
     /// Describes whether a WorkItem event candidate became durable before the actor can update its projection or publish it.
     type internal WorkItemEventPersistenceOutcome =
         | Persisted
-        | FailedRecovered of exn
+        | FailedRecovered of candidateIsDurable: bool * writeError: exn
         | FailedUnrecoverable of writeError: exn * reloadError: exn
+
+    /// Rebuilds the actor projection from the full durable WorkItem event stream after activation or uncertain persistence.
+    let internal rebuildWorkItemState (events: seq<WorkItemEvent>) =
+        events
+        |> Seq.fold (fun currentState workItemEvent -> WorkItemState.UpdateState workItemEvent currentState) WorkItemState.Default
+
+    /// Confirms a reloaded durable stream contains this exact correlation and domain event candidate.
+    let internal containsDurableWorkItemEventCandidate (candidate: WorkItemEvent) (events: seq<WorkItemEvent>) =
+        events
+        |> Seq.exists (fun persisted ->
+            persisted.Metadata.CorrelationId = candidate.Metadata.CorrelationId
+            && persisted.Event = candidate.Event)
 
     /// Persists a copied event stream so failed writes cannot leave an activation-only WorkItem event for later commands to publish.
     let internal persistWorkItemEventWithDurableRecovery (state: IPersistentState<List<WorkItemEvent>>) workItemEvent =
@@ -51,7 +63,7 @@ module WorkItem =
             | writeError ->
                 try
                     do! state.ReadStateAsync()
-                    return FailedRecovered writeError
+                    return FailedRecovered(containsDurableWorkItemEventCandidate workItemEvent state.State, writeError)
                 with
                 | reloadError ->
                     state.State <- originalEvents
@@ -86,11 +98,23 @@ module WorkItem =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            workItemState <-
-                state.State
-                |> Seq.fold (fun currentState ev -> WorkItemState.UpdateState ev currentState) workItemState
+            workItemState <- state.State |> rebuildWorkItemState
 
             Task.CompletedTask
+
+        /// Completes the success path only after this activation has a projection derived from the durable event stream.
+        member private this.CompletePersistedEvent(workItemEvent: WorkItemEvent) =
+            task {
+                let correlationId = workItemEvent.Metadata.CorrelationId
+                let graceEvent = GraceEvent.WorkItemEvent workItemEvent
+                do! publishGraceEvent graceEvent workItemEvent.Metadata
+
+                return
+                    (GraceReturnValue.Create "Work item command succeeded." correlationId)
+                        .enhance(nameof RepositoryId, workItemState.WorkItem.RepositoryId)
+                        .enhance(nameof WorkItemId, workItemState.WorkItem.WorkItemId)
+                        .enhance (nameof WorkItemEventType, getDiscriminatedUnionFullName workItemEvent.Event)
+            }
 
         /// Applies one persisted WorkItem event to this activation's in-memory state.
         member private this.ApplyEvent(workItemEvent: WorkItemEvent) =
@@ -104,17 +128,16 @@ module WorkItem =
                             workItemState
                             |> WorkItemState.UpdateState workItemEvent
 
-                        let graceEvent = GraceEvent.WorkItemEvent workItemEvent
-                        do! publishGraceEvent graceEvent workItemEvent.Metadata
-
-                        let returnValue =
-                            (GraceReturnValue.Create "Work item command succeeded." correlationId)
-                                .enhance(nameof RepositoryId, workItemState.WorkItem.RepositoryId)
-                                .enhance(nameof WorkItemId, workItemState.WorkItem.WorkItemId)
-                                .enhance (nameof WorkItemEventType, getDiscriminatedUnionFullName workItemEvent.Event)
-
+                        let! returnValue = this.CompletePersistedEvent workItemEvent
                         return Ok returnValue
-                    | FailedRecovered writeError -> return raise writeError
+                    | FailedRecovered (candidateIsDurable, writeError) ->
+                        workItemState <- rebuildWorkItemState state.State
+
+                        if candidateIsDurable then
+                            let! returnValue = this.CompletePersistedEvent workItemEvent
+                            return Ok returnValue
+                        else
+                            return raise writeError
                     | FailedUnrecoverable (writeError, reloadError) as outcome ->
                         if workItemPersistenceRequiresDeactivation outcome then this.DeactivateOnIdle()
 

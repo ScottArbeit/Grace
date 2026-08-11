@@ -29,29 +29,24 @@ open System.Threading.Tasks
 
 /// Groups shared helpers for work item integration helpers.
 module private WorkItemIntegrationHelpers =
-    /// Coordinates two server requests at the test-only post-precheck clear gate.
-    type DescriptionClearPreAppendGate private (listener: TcpListener) =
+    /// Coordinates a selected number of server requests at the test-only post-precheck description gate.
+    type DescriptionClearPreAppendGate private (listener: TcpListener, expectedRequestCount: int) =
         let protocolTimeout = TimeSpan.FromSeconds(20.0)
         let clients = ResizeArray<TcpClient>()
         let readers = ResizeArray<StreamReader>()
         let writers = ResizeArray<StreamWriter>()
 
-        /// Waits until both server requests have classified their clear operation as fresh.
+        /// Waits until every selected server request has classified its description operation as fresh.
         member _.WaitForFreshOperationsAsync() =
             task {
                 use timeout = new CancellationTokenSource(protocolTimeout)
 
-                let! firstClient = listener.AcceptTcpClientAsync(timeout.Token)
-                clients.Add firstClient
-                let firstStream = firstClient.GetStream()
-                readers.Add(new StreamReader(firstStream, Encoding.UTF8, false, 1024, true))
-                writers.Add(new StreamWriter(firstStream, Encoding.UTF8, 1024, true))
-
-                let! secondClient = listener.AcceptTcpClientAsync(timeout.Token)
-                clients.Add secondClient
-                let secondStream = secondClient.GetStream()
-                readers.Add(new StreamReader(secondStream, Encoding.UTF8, false, 1024, true))
-                writers.Add(new StreamWriter(secondStream, Encoding.UTF8, 1024, true))
+                for _ in 1..expectedRequestCount do
+                    let! client = listener.AcceptTcpClientAsync(timeout.Token)
+                    clients.Add client
+                    let stream = client.GetStream()
+                    readers.Add(new StreamReader(stream, Encoding.UTF8, false, 1024, true))
+                    writers.Add(new StreamWriter(stream, Encoding.UTF8, 1024, true))
 
                 let reads: Task<string> array =
                     readers
@@ -107,8 +102,8 @@ module private WorkItemIntegrationHelpers =
 
                 AspireTestHost.releaseDescriptionClearPreAppendTestGate listener
 
-        /// Creates a two-request loopback gate for the externally hosted Grace.Server test process.
-        static member Create(listener: TcpListener) = new DescriptionClearPreAppendGate(listener)
+        /// Creates a loopback gate for the selected number of externally hosted Grace.Server requests.
+        static member Create(listener: TcpListener, expectedRequestCount: int) = new DescriptionClearPreAppendGate(listener, expectedRequestCount)
 
     /// Returns the shared Aspire host state required for direct durable-state assertions.
     let getSharedHostState () =
@@ -392,6 +387,30 @@ module private WorkItemIntegrationHelpers =
     /// Sets one work-item description through the public route for hosted integration scenarios.
     let setWorkItemDescriptionResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (text: string) =
         setWorkItemDescriptionWithCorrelationResponseAsync client repositoryId workItemIdentifier text (generateCorrelationId ())
+
+    /// Sets one description while selecting the private ephemeral hosted-race rendezvous after immutable storage writes.
+    let setWorkItemDescriptionWithGateResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemIdentifier: string)
+        (text: string)
+        (correlationId: string)
+        (gatePort: int)
+        =
+        task {
+            let parameters = Parameters.WorkItem.SetWorkItemDescriptionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.Text <- text
+            parameters.CorrelationId <- correlationId
+            use request = new HttpRequestMessage(HttpMethod.Post, "/work/description/set")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+            request.Headers.Add("X-Grace-Test-Description-Clear-Gate-Port", string gatePort)
+            request.Content <- createJsonContent parameters
+            return! client.SendAsync(request)
+        }
 
     /// Clears one work-item description through the public route with caller-selected correlation data for replay proof.
     let clearWorkItemDescriptionWithCorrelationResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (correlationId: string) =
@@ -1080,7 +1099,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             let correlationId = "corr-description-clear-overlap"
 
             let gatePort, gateListener = AspireTestHost.getDescriptionClearPreAppendTestGate ()
-            use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(gateListener)
+            use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(gateListener, 2)
 
             let requests =
                 [|
@@ -1345,6 +1364,94 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(hydratedAfterRecreate.Description, Is.EqualTo(text))
             Assert.That(corruptReplay.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             Assert.That(eventsAfterCorruptReplay, Is.EqualTo<WorkItemEvent>(eventsBeforeReplay))
+        }
+
+    /// Verifies exact create replay verifies immutable storage, recreates only a missing object, and rejects corruption without another event.
+    [<Test>]
+    member _.ExactCreateDescriptionReplayRecreatesMissingStorageAndRejectsCorruption() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-create-description-replay-storage"
+            let workItemId = Guid.NewGuid().ToString()
+            let workItemGuid = Guid.Parse workItemId
+            let correlationId = "corr-create-description-replay-storage"
+            let title = "create replay storage"
+            let text = "immutable create replay text"
+            let _, textContentId = Grace.Server.TextContentStorage.createIds (Guid.Parse repositoryId) workItemGuid correlationId
+
+            let! firstCreate = WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync Client repositoryId workItemId title text correlationId
+
+            firstCreate.EnsureSuccessStatusCode() |> ignore
+            let! eventsBeforeReplay = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            do! WorkItemIntegrationHelpers.deleteTextContentObjectAsync repositoryId textContentId
+
+            let! missingReplay = WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync Client repositoryId workItemId title text correlationId
+
+            missingReplay.EnsureSuccessStatusCode() |> ignore
+            let! recreated = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId textContentId
+            let! hydratedAfterRecreate = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            do! WorkItemIntegrationHelpers.overwriteTextContentObjectAsync repositoryId textContentId
+
+            let! corruptReplay = WorkItemIntegrationHelpers.createWorkItemWithDescriptionResponseAsync Client repositoryId workItemId title text correlationId
+
+            let! eventsAfterCorruptReplay = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+
+            Assert.That(recreated, Is.True)
+            Assert.That(hydratedAfterRecreate.Description, Is.EqualTo(text))
+            Assert.That(corruptReplay.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            Assert.That(eventsAfterCorruptReplay, Is.EqualTo<WorkItemEvent>(eventsBeforeReplay))
+        }
+
+    /// Verifies a set request that creates immutable storage but reaches the actor second converges through exact replay without deleting the winner's object.
+    [<Test>]
+    member _.CreatorLosesExactDescriptionSetOverlapRetainsObjectAndHydrates() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-description-set-creator-loses"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "description set creator loses"
+            let workItemGuid = Guid.Parse workItemId
+            let correlationId = "corr-description-set-creator-loses"
+            let text = "creator-loses immutable description"
+            let _, textContentId = Grace.Server.TextContentStorage.createIds (Guid.Parse repositoryId) workItemGuid correlationId
+            let gatePort, gateListener = AspireTestHost.getDescriptionClearPreAppendTestGate ()
+            use gate = WorkItemIntegrationHelpers.DescriptionClearPreAppendGate.Create(gateListener, 1)
+
+            let creatorRequest =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithGateResponseAsync Client repositoryId workItemId text correlationId gatePort
+
+            let! freshOperations = gate.WaitForFreshOperationsAsync()
+
+            Assert.That(freshOperations, Has.Length.EqualTo(1))
+            Assert.That(freshOperations[0], Is.EqualTo("fresh-description-operation"))
+
+            let! objectCreatedBeforeActor = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId textContentId
+
+            Assert.That(objectCreatedBeforeActor, Is.True)
+
+            let! winnerResponse =
+                WorkItemIntegrationHelpers.setWorkItemDescriptionWithCorrelationResponseAsync Client repositoryId workItemId text correlationId
+
+            winnerResponse.EnsureSuccessStatusCode() |> ignore
+            do! gate.ReleaseAsync()
+            let! creatorResponse = creatorRequest
+
+            creatorResponse.EnsureSuccessStatusCode()
+            |> ignore
+
+            let! events = WorkItemIntegrationHelpers.getWorkItemEventsAsync repositoryId workItemGuid
+            let! objectRetained = WorkItemIntegrationHelpers.textContentObjectExistsAsync repositoryId textContentId
+            let! hydrated = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            let descriptionEvents =
+                events
+                |> Array.choose (fun workItemEvent ->
+                    match workItemEvent.Event with
+                    | DescriptionSet description -> Some description
+                    | _ -> None)
+
+            Assert.That(descriptionEvents, Has.Length.EqualTo(1))
+            Assert.That(objectRetained, Is.True)
+            Assert.That(hydrated.Description, Is.EqualTo(text))
         }
 
     /// Verifies the create then fetch by guid and number returns same work item scenario.

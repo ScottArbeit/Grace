@@ -770,6 +770,18 @@ module WorkItem =
             | Error error -> return Error error
         }
 
+    /// Verifies immutable content before reporting an exact create replay, while keeping description-free creates free of text storage work.
+    let private ensureExactCreateDescriptionStorage organizationId repositoryId workItemId correlationId text expectedDescription =
+        match expectedDescription with
+        | None -> Task.FromResult(Ok())
+        | Some expectedDescription ->
+            task {
+                let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
+                let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                return! ensureExactDescriptionStorage repositoryDto repositoryId workItemId correlationId text expectedDescription
+            }
+
     /// Classifies actor validation failures that prove a create request did not append its event before rejection.
     let internal classifyDescriptionAppendFailure (graceError: GraceError) =
         if
@@ -1120,7 +1132,20 @@ module WorkItem =
 
                         let! createResult =
                             match existingReplay with
-                            | ExactDescriptionReplay -> Task.FromResult(Ok(GraceReturnValue.Create "Work item command succeeded." correlationId))
+                            | ExactDescriptionReplay ->
+                                task {
+                                    match!
+                                        ensureExactCreateDescriptionStorage
+                                            graceIds.OrganizationId
+                                            graceIds.RepositoryId
+                                            workItemId
+                                            correlationId
+                                            parameters.Description
+                                            expectedDescription
+                                        with
+                                    | Ok () -> return Ok(GraceReturnValue.Create "Work item command succeeded." correlationId)
+                                    | Error error -> return Error error
+                                }
                             | ConflictingDescriptionCorrelation -> Task.FromResult(Error(conflictingDescriptionCorrelationError correlationId))
                             | FreshDescriptionOperation when
                                 existingState.WorkItem.WorkItemId
@@ -1159,7 +1184,18 @@ module WorkItem =
                                                         eventsBeforeWrite
                                                         correlationId
                                                     with
-                                                | ExactDescriptionReplay -> return Ok(GraceReturnValue.Create "Work item command succeeded." correlationId)
+                                                | ExactDescriptionReplay ->
+                                                    match!
+                                                        ensureExactCreateDescriptionStorage
+                                                            graceIds.OrganizationId
+                                                            graceIds.RepositoryId
+                                                            workItemId
+                                                            correlationId
+                                                            parameters.Description
+                                                            expectedDescription
+                                                        with
+                                                    | Ok () -> return Ok(GraceReturnValue.Create "Work item command succeeded." correlationId)
+                                                    | Error error -> return Error error
                                                 | ConflictingDescriptionCorrelation -> return Error(conflictingDescriptionCorrelationError correlationId)
                                                 | FreshDescriptionOperation when
                                                     stateBeforeWrite.WorkItem.WorkItemId
@@ -1472,6 +1508,8 @@ module WorkItem =
                                         match writeResult with
                                         | Error error -> return! context |> result400BadRequest error
                                         | Ok (description, wasCreated) ->
+                                            let! testGate = tryEnterDescriptionClearPreAppendTestGate context
+                                            disposeDescriptionClearPreAppendTestGate testGate
                                             let! stateBeforeAppendResult = getRepositoryBoundWorkItemState actorProxy graceIds.RepositoryId correlationId
 
                                             match stateBeforeAppendResult with
