@@ -49,6 +49,8 @@
     <Compile Include="LocalPlanner.SDK.Tests.fs" />
     <Compile Include="ManifestUpload.SDK.Tests.fs" />
     <Compile Include="ManifestDownload.SDK.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.Contracts.Tests.fs" />
+    <Compile Include="WorkingDirectoryUpdate.PreparedContent.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
