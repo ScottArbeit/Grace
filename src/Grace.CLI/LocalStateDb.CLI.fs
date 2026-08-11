@@ -3055,7 +3055,7 @@ module LocalStateDb =
         (objectCacheDirectories: LocalDirectoryVersion array)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
-        (connectCursor: string option)
+        (connectIdentity: (string * WorkingDirectoryUpdate.LocalRootScope) option)
         =
         if not (WorkingDirectoryUpdate.Operation.matchesTarget target operation) then
             invalidArg (nameof operation) "The Working Directory Update operation must match its target."
@@ -3092,11 +3092,15 @@ module LocalStateDb =
             ()
         | _ -> invalidArg (nameof objectCacheDirectories) "Working Directory Update object metadata must contain the exact target root once."
 
-        match WorkingDirectoryUpdate.Operation.callerKind operation, connectCursor with
-        | WorkingDirectoryUpdate.CallerKind.Connect, Some cursor when not (String.IsNullOrWhiteSpace(cursor)) -> ()
-        | WorkingDirectoryUpdate.CallerKind.Connect, _ -> invalidArg (nameof connectCursor) "Connect completion requires its exact initial cursor."
+        match WorkingDirectoryUpdate.Operation.callerKind operation, connectIdentity with
+        | WorkingDirectoryUpdate.CallerKind.Connect, Some (cursor, localRootScope) when not (String.IsNullOrWhiteSpace(cursor)) ->
+            match WorkingDirectoryUpdate.Operation.connectBootstrap target cursor localRootScope with
+            | Ok expectedOperation when WorkingDirectoryUpdate.Operation.value expectedOperation = WorkingDirectoryUpdate.Operation.value operation -> ()
+            | _ -> invalidArg (nameof operation) "Connect completion identity must exactly match its target, initial cursor, and local-root scope."
+        | WorkingDirectoryUpdate.CallerKind.Connect, _ ->
+            invalidArg (nameof connectIdentity) "Connect completion requires its exact initial cursor and local-root scope."
         | _, None -> ()
-        | _ -> invalidArg (nameof connectCursor) "Only Connect completion may persist a cursor."
+        | _ -> invalidArg (nameof connectIdentity) "Only Connect completion may persist a cursor and local-root scope."
 
     /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
     let private replaceStatusSnapshotWithRevisionCore
@@ -3104,7 +3108,7 @@ module LocalStateDb =
         (graceStatus: GraceStatus)
         (boundary: ReferenceMaterializationBoundaryDto option)
         (objectCacheDirectories: LocalDirectoryVersion array)
-        (completion: (WorkingDirectoryUpdate.Target * WorkingDirectoryUpdate.Operation * string option) option)
+        (completion: (WorkingDirectoryUpdate.Target * WorkingDirectoryUpdate.Operation * (string * WorkingDirectoryUpdate.LocalRootScope) option) option)
         (cancellationToken: CancellationToken)
         (repairBaseline: LocalStateRepairBaseline option)
         (beforeWriteClaim: unit -> unit)
@@ -3127,8 +3131,8 @@ module LocalStateDb =
             | _ -> ()
 
             match completion with
-            | Some (target, operation, connectCursor) ->
-                validateWorkingDirectoryUpdateCompletionInput graceStatus objectCacheDirectories target operation connectCursor
+            | Some (target, operation, connectIdentity) ->
+                validateWorkingDirectoryUpdateCompletionInput graceStatus objectCacheDirectories target operation connectIdentity
             | None -> ()
 
             cancellationToken.ThrowIfCancellationRequested()
@@ -3307,7 +3311,7 @@ module LocalStateDb =
                             | None -> ()
 
                             match completion with
-                            | Some (target, operation, connectCursor) ->
+                            | Some (target, operation, connectIdentity) ->
                                 let operationValue = WorkingDirectoryUpdate.Operation.value operation
 
                                 let operationCallerKind = WorkingDirectoryUpdate.Operation.callerKind operation
@@ -3332,8 +3336,8 @@ module LocalStateDb =
                                 if not (isNull (pendingCommand.ExecuteScalar())) then
                                     invalidOp "A different Working Directory Update finalization is already pending."
 
-                                match connectCursor with
-                                | Some cursor ->
+                                match connectIdentity with
+                                | Some (cursor, _) ->
                                     executeNonQueryWithParams
                                         connection
                                         "INSERT OR REPLACE INTO remote_reference_boundaries (repository_id, branch_id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, event_cursor) VALUES ($repository_id, $branch_id, $root_id, $root_sha256_hash, $root_blake3_hash, $event_cursor);"
@@ -3724,12 +3728,12 @@ module LocalStateDb =
             return ()
         }
 
-    /// Atomically stores exact local status, object metadata, an optional Connect cursor, and its bounded update completion.
+    /// Atomically stores exact local facts and a bounded completion after proving optional Connect cursor identity.
     let internal commitWorkingDirectoryUpdateCompletion
         (dbPath: string)
         (graceStatus: GraceStatus)
         (objectCacheDirectories: IEnumerable<LocalDirectoryVersion>)
-        (connectCursor: string option)
+        (connectIdentity: (string * WorkingDirectoryUpdate.LocalRootScope) option)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
         =
@@ -3744,18 +3748,18 @@ module LocalStateDb =
             graceStatus
             None
             directories
-            (Some(target, operation, connectCursor))
+            (Some(target, operation, connectIdentity))
             CancellationToken.None
             None
             ignore
             ignore
 
-    /// Commits a pending update completion through an injected pre-commit seam used by deterministic rollback proof.
+    /// Commits update completion through an injected pre-commit seam used by deterministic rollback proof.
     let internal commitWorkingDirectoryUpdateCompletionWithBeforeCommit
         (dbPath: string)
         (graceStatus: GraceStatus)
         (objectCacheDirectories: IEnumerable<LocalDirectoryVersion>)
-        (connectCursor: string option)
+        (connectIdentity: (string * WorkingDirectoryUpdate.LocalRootScope) option)
         (target: WorkingDirectoryUpdate.Target)
         (operation: WorkingDirectoryUpdate.Operation)
         (beforeCommit: unit -> unit)
@@ -3771,7 +3775,7 @@ module LocalStateDb =
             graceStatus
             None
             directories
-            (Some(target, operation, connectCursor))
+            (Some(target, operation, connectIdentity))
             CancellationToken.None
             None
             ignore

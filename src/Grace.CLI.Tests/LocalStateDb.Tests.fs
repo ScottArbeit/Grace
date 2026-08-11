@@ -3762,8 +3762,28 @@ module LocalStateDbTests =
                     WorkingDirectoryUpdate.Operation.connectBootstrap target cursor localRootScope
                     |> requiredWorkingDirectoryUpdate
 
+                let mismatchedIdentityCommit =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            (Some("different-connect-cursor", localRootScope))
+                            target
+                            operation
+                        :> Task)
+
+                Assert.ThrowsAsync<ArgumentException>(mismatchedIdentityCommit)
+                |> ignore
+
                 let! _ =
-                    LocalStateDb.commitWorkingDirectoryUpdateCompletion configuration.GraceStatusFile status [ rootDirectory ] (Some cursor) target operation
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (Some(cursor, localRootScope))
+                        target
+                        operation
 
                 let nextCursor = "connect-cursor-002"
 
@@ -3776,7 +3796,7 @@ module LocalStateDbTests =
                         configuration.GraceStatusFile
                         status
                         [ rootDirectory ]
-                        (Some nextCursor)
+                        (Some(nextCursor, localRootScope))
                         target
                         nextOperation
 
