@@ -369,10 +369,12 @@ module WorkingDirectoryUpdateCoordinationTests =
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.RequiresDoctor
 
-            let unsupported =
-                File
-                    .ReadAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
-                    .Replace("\"schemaVersion\":1", "\"schemaVersion\":2", StringComparison.Ordinal)
+            let unsupported = persistedMarker.Replace("\"schemaVersion\":1", "\"schemaVersion\":2", StringComparison.Ordinal)
+
+            unsupported |> should not' (equal persistedMarker)
+
+            unsupported.Replace("\"schemaVersion\":2", "\"schemaVersion\":1", StringComparison.Ordinal)
+            |> should equal persistedMarker
 
             File.WriteAllText(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, unsupported)
 
