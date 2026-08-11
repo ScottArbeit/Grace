@@ -65,7 +65,8 @@ the final write cannot be verified, would let an unproven state cross that proce
 
 ## Related decision
 
-[ADR 0011](0011-working-directory-update-transaction.md) moves filesystem planning, mutation, dual-hash verification,
-marker behavior, and local completion into the shared Working Directory Update module. This ADR continues to define
-Watch's server-event ordering, replay admission, cursor progression, IPC publication, and resync policy around that
-shared transaction.
+[ADR 0011](0011-working-directory-update-transaction.md) records the accepted design for a future shared Working
+Directory Update transaction covering filesystem planning, mutation, dual-hash verification, marker behavior, and local
+completion. That transaction is not executable until its implementation issues land; current source still uses the
+callback-only wrapper and caller-owned mutation paths. This ADR continues to define Watch's server-event ordering,
+replay admission, cursor progression, IPC publication, and resync policy around that future shared transaction.

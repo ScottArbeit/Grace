@@ -95,6 +95,8 @@ trusting parent-promotion events.
 
 ## Related decision
 
-[ADR 0011](0011-working-directory-update-transaction.md) places verified Branch working-directory changes and selected
-branch finalization in one shared local transaction. This ADR continues to define the Watch subscription refresh that
-follows that completed Branch transition.
+[ADR 0011](0011-working-directory-update-transaction.md) records the accepted design for a future shared local
+transaction covering verified Branch working-directory changes and selected branch finalization. That transaction is not
+executable until its implementation issues land; current source still uses the callback-only wrapper and caller-owned
+mutation paths. This ADR continues to define the Watch subscription refresh that will follow the completed Branch
+transition.
