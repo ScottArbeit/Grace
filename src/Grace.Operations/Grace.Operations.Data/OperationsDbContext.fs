@@ -794,6 +794,7 @@ module OperationsModel =
         |> ignore
 
         OperationsChargePreviewModel.configure modelBuilder
+        OperationsBillingPeriodModel.configure modelBuilder
 
 /// Owns the EF Core model for Grace Operations SQL Server schema evolution.
 type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
@@ -834,6 +835,22 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     /// Provides EF access to provisional charge-preview lines.
     [<DefaultValue>]
     val mutable private chargePreviewLines: DbSet<ChargePreviewLineEntity>
+
+    /// Provides EF access to exact-scope billing periods.
+    [<DefaultValue>]
+    val mutable private billingPeriods: DbSet<BillingPeriodEntity>
+
+    /// Provides EF access to append-only initial charge postings.
+    [<DefaultValue>]
+    val mutable private charges: DbSet<ChargeEntity>
+
+    /// Provides EF access to immutable close evidence.
+    [<DefaultValue>]
+    val mutable private billingPeriodCloseEvidence: DbSet<BillingPeriodCloseEvidenceEntity>
+
+    /// Provides EF access to minimal durable late-work handoff rows.
+    [<DefaultValue>]
+    val mutable private billingPeriodLateWork: DbSet<BillingPeriodLateWorkEntity>
 
     /// Provides the EF set for immutable usage fact rows.
     member this.RawUsageFacts
@@ -879,6 +896,26 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     member this.ChargePreviewLines
         with get () = this.chargePreviewLines
         and set value = this.chargePreviewLines <- value
+
+    /// Provides the EF set for exact-scope billing periods.
+    member this.BillingPeriods
+        with get () = this.billingPeriods
+        and set value = this.billingPeriods <- value
+
+    /// Provides the EF set for immutable initial charge postings.
+    member this.Charges
+        with get () = this.charges
+        and set value = this.charges <- value
+
+    /// Provides the EF set for immutable close evidence.
+    member this.BillingPeriodCloseEvidence
+        with get () = this.billingPeriodCloseEvidence
+        and set value = this.billingPeriodCloseEvidence <- value
+
+    /// Provides the EF set for pending automatic late-work handoffs.
+    member this.BillingPeriodLateWork
+        with get () = this.billingPeriodLateWork
+        and set value = this.billingPeriodLateWork <- value
 
     /// Configures the Operations SQL Server schema shape that migrations must preserve.
     override _.OnModelCreating(modelBuilder: ModelBuilder) = OperationsModel.configure modelBuilder

@@ -17,6 +17,7 @@ open Microsoft.Extensions.Logging
 open NodaTime
 open System
 open System.Collections.Generic
+open System.Data
 open System.Globalization
 open System.IO
 open System.IO.Compression
@@ -2352,6 +2353,116 @@ type internal IOperationsUsageJournalSignalSender =
 
     /// Sends the immutable Pending entry that was reread immediately before this call.
     abstract SendAsync: entry: UsageFactJournalEntry * cancellationToken: CancellationToken -> Task
+
+/// Runs bounded, repeatable billing-period discovery without persisting a second claim or retry lifecycle.
+type OperationsBillingPeriodCloseWorkerService
+    (
+        settings: OperationsWorkerSettings,
+        schema: IOperationsUsageSchemaInitializer,
+        closer: IBillingPeriodCloser,
+        logger: ILogger<OperationsBillingPeriodCloseWorkerService>
+    ) =
+    inherit BackgroundService()
+
+    /// Caps one discovery pass so a worker restart or long history cannot monopolize the hosted process.
+    let batchSize = 100
+
+    /// Uses a short fixed cadence because database eligibility and the scope-locked closer remain the source of truth.
+    let cadence = TimeSpan.FromMinutes(5.0)
+
+    /// Discovers accepted-usage, pricing-coverage, and existing nonterminal scopes in a single bounded SQL read.
+    let discoverAsync cancellationToken =
+        task {
+            use connection = new SqlConnection(settings.SqlConnectionString)
+            do! connection.OpenAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.Parameters.Add("@BatchSize", SqlDbType.Int).Value <- batchSize
+
+            command.CommandText <-
+                """
+WITH candidate AS
+(
+    SELECT OwnerId, OrganizationId, RepositoryId,
+           DATETIME2FROMPARTS(YEAR(ObservedAtUtc), MONTH(ObservedAtUtc), 1, 0, 0, 0, 0, 7) AS MonthStartUtc
+    FROM ops.RawUsageFact
+    UNION
+    SELECT OwnerId, OrganizationId, RepositoryId, MonthStartUtc
+    FROM ops.BillingPeriod
+    WHERE State IN (0, 1)
+    UNION
+    SELECT assignment.OwnerId, assignment.OrganizationId, assignment.RepositoryId,
+           DATETIME2FROMPARTS(YEAR(assignment.EffectiveFromUtc), MONTH(assignment.EffectiveFromUtc), 1, 0, 0, 0, 0, 7)
+    FROM ops.PricingAssignment AS assignment
+    WHERE assignment.EffectiveFromUtc < SYSUTCDATETIME()
+      AND (assignment.EffectiveToUtc IS NULL OR assignment.EffectiveToUtc > DATEADD(month, DATEDIFF(month, 0, assignment.EffectiveFromUtc), 0))
+)
+SELECT TOP (@BatchSize) OwnerId, OrganizationId, RepositoryId, MonthStartUtc
+FROM candidate
+WHERE MonthStartUtc < DATETIME2FROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1, 0, 0, 0, 0, 7)
+ORDER BY MonthStartUtc, OwnerId, OrganizationId, RepositoryId;
+"""
+
+            use! reader = command.ExecuteReaderAsync cancellationToken
+            let scopes = ResizeArray<BillingCompletenessScope>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync cancellationToken
+                reading <- hasRow
+
+                if hasRow then
+                    scopes.Add(
+                        {
+                            OwnerId = reader.GetGuid 0
+                            OrganizationId = reader.GetGuid 1
+                            RepositoryId = reader.GetGuid 2
+                            MonthStart = reader.GetDateTime 3 |> Instant.FromDateTimeUtc
+                        }
+                    )
+
+            return scopes |> Seq.toArray
+        }
+
+    /// Revalidates every discovered candidate through the closer; stale scans cannot decide close eligibility.
+    let runPassAsync cancellationToken =
+        task {
+            do! schema.EnsureCreatedAsync cancellationToken
+            let! scopes = discoverAsync cancellationToken
+            let mutable index = 0
+
+            while index < scopes.Length do
+                let request = { Scope = scopes[index]; ScheduledOperationProvenance = "operations-worker/billing-period-close/v1" }
+                let! preview = closer.PreviewAsync(request, cancellationToken)
+
+                match preview with
+                | NotEligible -> ()
+                | Blocked diagnostic ->
+                    logger.LogWarning(
+                        "Billing period {Scope} remains nonterminal: {Diagnostic}",
+                        BillingCompletenessScope.databaseLockIdentity request.Scope,
+                        diagnostic
+                    )
+                | Provisional _
+                | Closed _ ->
+                    let! _ = closer.CloseAsync(request, cancellationToken)
+                    ()
+
+                index <- index + 1
+        }
+
+    /// Repeats bounded discovery and leaves every failure retryable through the next scan without an additional claim table.
+    override _.ExecuteAsync(cancellationToken: CancellationToken) =
+        task {
+            while not cancellationToken.IsCancellationRequested do
+                try
+                    do! runPassAsync cancellationToken
+                with
+                | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> ()
+                | ex -> logger.LogWarning(ex, "Operations billing-period close pass failed; the next bounded scan will revalidate candidates.")
+
+                if not cancellationToken.IsCancellationRequested then
+                    do! Task.Delay(cadence, cancellationToken)
+        }
 
 /// Observes the narrow gap between one Pending scan and its per-row production reread for deterministic stale-scan proof.
 type internal IOperationsUsageJournalDispatchInterleaving =

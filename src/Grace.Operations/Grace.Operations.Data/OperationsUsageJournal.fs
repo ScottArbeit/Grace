@@ -249,6 +249,43 @@ VALUES
             return ()
         }
 
+    /// Adds the one minimal late-work handoff only when this newly accepted fact commits after its exact period closed.
+    let addClosedPeriodLateWorkAsync
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (rawFact: RawUsageFact)
+        (scope: BillingCompletenessScope)
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            use command =
+                createCommand
+                    connection
+                    transaction
+                    """
+INSERT INTO ops.BillingPeriodLateWork (BillingPeriodId, UsageFactId)
+SELECT period.BillingPeriodId, @UsageFactId
+FROM ops.BillingPeriod AS period WITH (UPDLOCK,HOLDLOCK)
+WHERE period.OwnerId=@OwnerId AND period.OrganizationId=@OrganizationId AND period.RepositoryId=@RepositoryId
+  AND period.MonthStartUtc=@MonthStartUtc AND period.NextMonthStartUtc=@NextMonthStartUtc
+  AND period.State=2
+  AND NOT EXISTS
+  (
+      SELECT 1 FROM ops.BillingPeriodLateWork AS existing
+      WHERE existing.BillingPeriodId=period.BillingPeriodId AND existing.UsageFactId=@UsageFactId
+  );
+"""
+
+            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+            addParameter command "@OwnerId" SqlDbType.UniqueIdentifier scope.OwnerId
+            addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier scope.OrganizationId
+            addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier scope.RepositoryId
+            addParameter command "@MonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime scope.MonthStart)
+            addParameter command "@NextMonthStartUtc" SqlDbType.DateTime2 (toUtcDateTime (BillingCompletenessScope.nextMonthStart scope))
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
     /// Marks one still-unresolved matching journal row Accepted only after raw and aggregate persistence succeeded.
     let markAcceptedAsync (connection: SqlConnection) (transaction: SqlTransaction) (usageFactId: UsageFactId) (cancellationToken: CancellationToken) =
         task {
@@ -513,6 +550,7 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
 
                                     if inserted then
                                         do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
+                                        do! addClosedPeriodLateWorkAsync connection transaction plan.RawFact scope operationCancellationToken
 
                                     do! transactionInterleaving.AfterRawAndAggregateStagedAsync(operationCancellationToken)
                                     do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
@@ -546,6 +584,7 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
 
                                     if inserted then
                                         do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
+                                        do! addClosedPeriodLateWorkAsync connection transaction plan.RawFact scope operationCancellationToken
 
                                     do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
                                     do! markAcceptedAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken

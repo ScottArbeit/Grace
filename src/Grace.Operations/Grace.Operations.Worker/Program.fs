@@ -63,6 +63,9 @@ module Program =
         services.AddSingleton<IChargePreviewRebuilder>(fun _ -> SqlChargePreviewRebuilder(settings.SqlConnectionString) :> IChargePreviewRebuilder)
         |> ignore
 
+        services.AddSingleton<IBillingPeriodCloser>(fun _ -> SqlBillingPeriodCloser(settings.SqlConnectionString) :> IBillingPeriodCloser)
+        |> ignore
+
         services.AddSingleton<OperationsUsageIngestionProcessor>()
         |> ignore
 
@@ -78,6 +81,9 @@ module Program =
         |> ignore
 
         services.AddHostedService<OperationsUsageJournalDispatcherService>()
+        |> ignore
+
+        services.AddHostedService<OperationsBillingPeriodCloseWorkerService>()
         |> ignore
 
         services.AddHostedService<OperationsUsageTemporaryHotCleanupWorkerService>()

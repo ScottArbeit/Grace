@@ -934,3 +934,5 @@ type OperationsDbContextModelSnapshot() =
             .HasDatabaseName("UX_ops_ChargePreviewLine_CompleteGrain")
             .IsUnique()
         |> ignore
+
+        BillingPeriodFrozenModel.apply modelBuilder

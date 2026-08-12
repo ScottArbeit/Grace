@@ -347,3 +347,62 @@ type ChargePreviewLineEntity() =
 
     /// Stores the once-rounded provisional charge in whole currency micros.
     member val ChargeMicros = 0L with get, set
+
+/// Represents the durable lifecycle and exact UTC-month identity of one repository billing period.
+[<AllowNullLiteral>]
+type BillingPeriodEntity() =
+
+    /// Stores the deterministic identity derived from the complete billing scope and half-open month.
+    member val BillingPeriodId = Guid.Empty with get, set
+
+    /// Stores the exact owner, organization, and repository scope that cannot share a period with another repository.
+    member val OwnerId = Guid.Empty with get, set
+    member val OrganizationId = Guid.Empty with get, set
+    member val RepositoryId = Guid.Empty with get, set
+
+    /// Stores the inclusive and exclusive UTC month boundaries for all period work.
+    member val MonthStartUtc = DateTime.MinValue with get, set
+    member val NextMonthStartUtc = DateTime.MinValue with get, set
+
+    /// Stores Open, Provisional, or Closed without introducing a terminal failure state.
+    member val State = 0 with get, set
+
+    /// Stores a bounded retry diagnostic only while the period remains nonterminal.
+    member val RetryDiagnostic: string = null with get, set
+    member val RetryDiagnosticAtUtc = Nullable<DateTime>() with get, set
+
+    /// Stores database-created and database-updated ordering evidence.
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+    member val UpdatedAtUtc = DateTime.MinValue with get, set
+
+/// Represents an append-only initial charge copied from one exact preview line at period close.
+[<AllowNullLiteral>]
+type ChargeEntity() =
+
+    /// Stores the deterministic immutable posting identity.
+    member val ChargeId = Guid.Empty with get, set
+    member val BillingPeriodId = Guid.Empty with get, set
+    member val ChargePreviewLineId = Guid.Empty with get, set
+    member val CurrencyCode = String.Empty with get, set
+    member val ChargeMicros = 0L with get, set
+    member val CreatedAtUtc = DateTime.MinValue with get, set
+
+/// Preserves the exact facts, calculated preview, database time, and scheduled operation that closed a period.
+[<AllowNullLiteral>]
+type BillingPeriodCloseEvidenceEntity() =
+
+    /// Uses the period identity as the one immutable close-evidence identity.
+    member val BillingPeriodId = Guid.Empty with get, set
+    member val AcceptedFactDigestSha256Hex = String.Empty with get, set
+    member val PricingPreviewDigestSha256Hex = String.Empty with get, set
+    member val ClosedAtUtc = DateTime.MinValue with get, set
+    member val ScheduledOperationProvenance = String.Empty with get, set
+
+/// Records one accepted fact that arrived after a closed period without calculating or claiming a correction.
+[<AllowNullLiteral>]
+type BillingPeriodLateWorkEntity() =
+
+    /// Pairs exact period and accepted fact identities so duplicate delivery cannot enqueue more work.
+    member val BillingPeriodId = Guid.Empty with get, set
+    member val UsageFactId = Guid.Empty with get, set
+    member val CreatedAtUtc = DateTime.MinValue with get, set
