@@ -309,7 +309,8 @@ module internal WorkingDirectoryUpdateContracts =
                                 + canonicalField "selected-reference" (guidText selectedReferenceId)
                             )
                         | Error error -> Error error
-                    | DirectoryVersion -> Ok(canonicalField "branch-selection" "directory-version")
+                    | DirectoryVersion when branchId = previousBranchId -> Ok(canonicalField "branch-selection" "directory-version")
+                    | DirectoryVersion -> Error "DirectoryVersion Branch selection must retain the current Branch."
 
                 match selectionCanonical with
                 | Error error -> Error error

@@ -3115,6 +3115,11 @@ module LocalStateDb =
         let operationMatches expectedOperation = WorkingDirectoryUpdate.Operation.value expectedOperation = WorkingDirectoryUpdate.Operation.value operation
 
         match WorkingDirectoryUpdate.Operation.callerKind operation, completionDetails with
+        | WorkingDirectoryUpdate.CallerKind.Branch, BranchDirectoryVersionFinalization previousBranchId when
+            WorkingDirectoryUpdate.Target.branchId target
+            <> previousBranchId
+            ->
+            invalidArg (nameof completionDetails) "DirectoryVersion Branch completion must retain the current Branch."
         | WorkingDirectoryUpdate.CallerKind.Branch, BranchFinalization (previousBranchId, selectedReferenceId) ->
             match WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId target with
             | Ok expectedOperation when operationMatches expectedOperation -> ()

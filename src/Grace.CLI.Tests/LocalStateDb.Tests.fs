@@ -177,6 +177,18 @@ module LocalStateDbTests =
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Closes every SQLite handle so a pending-finalization assertion exercises the production restart reconstruction path.
+    let private assertPendingFinalizationReopenRejects (configuration: GraceConfiguration) expectedMessage =
+        SqliteConnection.ClearAllPools()
+        LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
+
+        let corruptedRead = Func<Task>(fun () -> LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile :> Task)
+
+        let thrownException = Assert.ThrowsAsync<InvalidOperationException>(corruptedRead)
+
+        thrownException.Message
+        |> should equal expectedMessage
+
     /// Allocates Watch journal sequences without adding replay semantics beyond the schema scaffold.
     let private insertWatchJournalRows (connection: SqliteConnection) throughSequence =
         [| 1L .. throughSequence |]
@@ -3857,7 +3869,7 @@ module LocalStateDbTests =
                     WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
                     |> requiredWorkingDirectoryUpdate
 
-                let previousBranchId = Guid.NewGuid()
+                let previousBranchId = configuration.BranchId
                 let selectedReferenceId = Guid.NewGuid()
 
                 let branchOperation =
@@ -4002,6 +4014,48 @@ module LocalStateDbTests =
                 | _ -> failwith "Expected the persisted hash-selected Branch finalizer after restart."
             })
 
+    /// Proves persisted DirectoryVersion selections reject when their previous Branch no longer matches the exact target Branch.
+    [<Test>]
+    let ``working directory update pending DirectoryVersion Branch corruption rejects on reopen`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "e")
+                let blake3Hash = Blake3Hash(String.replicate 64 "f")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 225L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.branchSwitchWithSelection
+                        configuration.BranchId
+                        WorkingDirectoryUpdate.BranchSelection.DirectoryVersion
+                        target
+                    |> requiredWorkingDirectoryUpdate
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization configuration.BranchId)
+                        target
+                        operation
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery
+                        connection
+                        $"UPDATE working_directory_update_completions SET branch_previous_branch_id = '{Guid.NewGuid()}' WHERE finalization_state = 'Pending';"
+
+                assertPendingFinalizationReopenRejects
+                    configuration
+                    "Pending Branch finalization is invalid: DirectoryVersion Branch selection must retain the current Branch."
+            })
+
     /// Proves impossible persisted selector and Reference combinations reject during strict pending-row reconstruction.
     [<Test>]
     let ``working directory update pending Branch selector corruption rejects on reopen`` () =
@@ -4016,7 +4070,7 @@ module LocalStateDbTests =
                     WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
                     |> requiredWorkingDirectoryUpdate
 
-                let previousBranchId = Guid.NewGuid()
+                let previousBranchId = configuration.BranchId
                 let selectedReferenceId = Guid.NewGuid()
 
                 let operation =
@@ -4040,13 +4094,74 @@ module LocalStateDbTests =
                         connection
                         "UPDATE working_directory_update_completions SET branch_selection_kind = 'DirectoryVersion' WHERE finalization_state = 'Pending';"
 
+                    executeNonQuery connection "PRAGMA ignore_check_constraints = OFF;"
+
                 SqliteConnection.ClearAllPools()
                 LocalStateDb.invalidateInitializationCacheForLocalStateRepair configuration.GraceStatusFile
 
-                let corruptedRead = Func<Task>(fun () -> LocalStateDb.readPendingWorkingDirectoryUpdateFinalization configuration.GraceStatusFile :> Task)
+                assertPendingFinalizationReopenRejects configuration "DirectoryVersion Branch finalization must not persist a Reference id."
+            })
 
-                Assert.ThrowsAsync<InvalidOperationException>(corruptedRead)
-                |> ignore
+    /// Proves restart validation rejects independently mutated target, operation, and caller facts from an otherwise valid pending row.
+    [<TestCase("target")>]
+    [<TestCase("operation")>]
+    [<TestCase("caller")>]
+    let ``working directory update pending finalization rejects each corrupted persisted identity fact`` (corruptedFact: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let sha256Hash = Sha256Hash(String.replicate 64 "a")
+                let blake3Hash = Blake3Hash(String.replicate 64 "b")
+                let status, rootDirectory = completionStatus configuration rootId sha256Hash blake3Hash 226L
+
+                let target =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let operation =
+                    WorkingDirectoryUpdate.Operation.branchSwitchWithSelection
+                        configuration.BranchId
+                        WorkingDirectoryUpdate.BranchSelection.DirectoryVersion
+                        target
+                    |> requiredWorkingDirectoryUpdate
+
+                let! _ =
+                    LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                        configuration.GraceStatusFile
+                        status
+                        [ rootDirectory ]
+                        (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization configuration.BranchId)
+                        target
+                        operation
+
+                let expectedMessage =
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    match corruptedFact with
+                    | "target" ->
+                        executeNonQuery
+                            connection
+                            "UPDATE working_directory_update_completions SET target_root_directory_sha256_hash = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' WHERE finalization_state = 'Pending';"
+
+                        "Pending Working Directory Update finalization target facts do not match their canonical target."
+                    | "operation" ->
+                        executeNonQuery
+                            connection
+                            "UPDATE working_directory_update_completions SET operation_value = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' WHERE finalization_state = 'Pending';"
+
+                        "Pending Working Directory Update finalization facts do not match their operation identity."
+                    | "caller" ->
+                        executeNonQuery connection "PRAGMA ignore_check_constraints = ON;"
+
+                        executeNonQuery
+                            connection
+                            "UPDATE working_directory_update_completions SET caller_kind = 'Connect' WHERE finalization_state = 'Pending';"
+
+                        executeNonQuery connection "PRAGMA ignore_check_constraints = OFF;"
+                        "Connect completion must be terminal and cannot be a pending finalization."
+                    | value -> failwith $"Unexpected persisted identity fact '{value}'."
+
+                assertPendingFinalizationReopenRejects configuration expectedMessage
             })
 
     /// Verifies Connect cursor progress and its terminal completion cannot commit separately from matching local facts.
@@ -4165,9 +4280,9 @@ module LocalStateDbTests =
                 |> should equal (Some LocalStateDb.WorkingDirectoryUpdateCompletion.Terminal)
             })
 
-    /// Proves completion writes reject any Branch operation whose typed selector disagrees with persisted finalization details.
+    /// Proves completion writes reject selector disagreement and the impossible DirectoryVersion target/previous-Branch tuple.
     [<Test>]
-    let ``working directory update completion rejects mismatched Branch selector on write`` () =
+    let ``working directory update completion rejects mismatched Branch selector and DirectoryVersion Branch retention on write`` () =
         withTempDir (fun _ configuration ->
             task {
                 let rootId = Guid.NewGuid()
@@ -4179,7 +4294,7 @@ module LocalStateDbTests =
                     WorkingDirectoryUpdate.Target.create configuration.RepositoryId configuration.BranchId rootId sha256Hash blake3Hash
                     |> requiredWorkingDirectoryUpdate
 
-                let previousBranchId = Guid.NewGuid()
+                let previousBranchId = configuration.BranchId
                 let selectedReferenceId = Guid.NewGuid()
 
                 let directoryVersionOperation =
@@ -4221,6 +4336,30 @@ module LocalStateDbTests =
 
                 Assert.ThrowsAsync<ArgumentException>(mismatchedDirectoryVersionWrite)
                 |> ignore
+
+                let otherBranchTarget =
+                    WorkingDirectoryUpdate.Target.create configuration.RepositoryId (Guid.NewGuid()) rootId sha256Hash blake3Hash
+                    |> requiredWorkingDirectoryUpdate
+
+                let referenceOperationForOtherBranch =
+                    WorkingDirectoryUpdate.Operation.branchSwitch previousBranchId selectedReferenceId otherBranchTarget
+                    |> requiredWorkingDirectoryUpdate
+
+                let invalidDirectoryVersionWrite =
+                    Func<Task> (fun () ->
+                        LocalStateDb.commitWorkingDirectoryUpdateCompletion
+                            configuration.GraceStatusFile
+                            status
+                            [ rootDirectory ]
+                            (LocalStateDb.WorkingDirectoryUpdateCompletionDetails.BranchDirectoryVersionFinalization previousBranchId)
+                            otherBranchTarget
+                            referenceOperationForOtherBranch
+                        :> Task)
+
+                let thrownException = Assert.ThrowsAsync<ArgumentException>(invalidDirectoryVersionWrite)
+
+                thrownException.Message
+                |> should equal "DirectoryVersion Branch completion must retain the current Branch. (Parameter 'completionDetails')"
             })
 
     /// Verifies an injected pre-commit failure rolls back every local fact in the update completion transaction.
