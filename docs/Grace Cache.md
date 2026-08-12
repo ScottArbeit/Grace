@@ -189,6 +189,17 @@ proof before every serve, and validate exact prepared content before making late
 8. Missing, corrupt, or mismatched configured key material fails closed. The recovery is server revocation, local reset,
    and manual re-enrollment.
 
+R1A owns only the static local identity boundary. It creates `<root>/attempt/identity.pk8` at `0600` beneath a `0700`
+root and attempt directory, and publishes a `0700` `<root>/ready` directory only after writing a matching `0600`
+`registration.json`. The fingerprint is the base64url SHA-256 of the derived P-256 `X || Y` bytes. Inspection is
+read-only and returns only missing, attempt-present, ready, invalid, or inaccessible; unsupported platforms fail before
+local mutation. R1A does not make an HTTP request, acquire credentials, start a listener, publish status output, retry,
+reconcile, rotate keys, or serve artifacts.
+
+The administrator enrollment request has no caller `Health`. Grace Server durably creates every registration as
+`Unhealthy`, so existing eligibility selection rejects it until R2's authenticated refresh publishes a healthy state.
+The actor saves that durable transition before returning enrollment success.
+
 ### Run and bounded registration liveness
 
 1. `grace cache run` acquires its machine-wide guard before configuration, key, listener, store, or server work.

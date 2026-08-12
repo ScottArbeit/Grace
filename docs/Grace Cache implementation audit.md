@@ -105,15 +105,18 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 - **Proof:** Inventory and generated-contract freshness show no active cache identity rotation surface remains; focused
   grant-key validation proof remains green.
 
-### R1: static enrollment and redacted status (#856)
+### R1A: static enrollment identity foundation (#886)
 
-- **Status classification:** `planned`.
-- **Required result:** An administrator enrolls one static P-256 identity, atomically commits one ready local
-  configuration, and receives truthful redacted status. Manual recovery is revoke, local reset, and re-enrollment.
-- **Gate:** Before implementation, prove that an inactive server enrollment after an ambiguous result cannot be selected
-  and cannot block fresh manual re-enrollment. Stop for a maintainer decision if the proof fails.
-- **Proof:** Validation-before-effect, definitive rejection, unknown result, crash cleanup, atomic-write failure, key
-  mismatch, redaction, and unsupported-profile cases.
+- **Status classification:** `implementation leaf`.
+- **Required result:** Enrollment has no caller `Health`; the server creates an `Unhealthy` durable registration before
+  success, and existing selection excludes it. The internal Linux-only identity primitive stages one `0700` attempt
+  directory with a flushed `0600` PKCS#8 P-256 key, then publishes `0700` ready only after a flushed `0600`
+  registration configuration matches the derived base64url SHA-256 `X || Y` fingerprint.
+- **Proof:** Actor persistence failure cannot advance authoritative in-memory selection; raw JSON `Health` cannot make
+  a new registration healthy; inspection distinguishes missing, attempt, ready, invalid, and inaccessible without
+  mutation; Linux tests restore modified modes before cleanup.
+- **Deferred:** #887 owns HTTP, credentials, command output, accepted/rejected/unknown orchestration, and cleanup calls;
+  #857 owns liveness. R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
 
 ### R2: registration liveness (#857)
 
