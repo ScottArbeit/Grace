@@ -256,6 +256,14 @@ module internal WorkingDirectoryUpdateCoordination =
                     let rootScope = WorkingDirectoryUpdate.LocalRootScope.value localRootScope
                     Scope(repositoryId, rootScope, Services.workingDirectoryUpdateTempDirectory repositoryId rootScope))
 
+        /// Rebuilds the stable lease location from the immutable root scope retained by a recovery-only request.
+        let createFromLocalRootScope repositoryId localRootScope =
+            if repositoryId = Guid.Empty then
+                Error "Working Directory Update coordination requires a repository id."
+            else
+                let rootScope = WorkingDirectoryUpdate.LocalRootScope.value localRootScope
+                Ok(Scope(repositoryId, rootScope, Services.workingDirectoryUpdateTempDirectory repositoryId rootScope))
+
         /// Returns the lower-case SHA-256 local-root component of a scope.
         let value (scope: Scope) = scopeValue scope
 
@@ -411,6 +419,32 @@ module internal WorkingDirectoryUpdateCoordination =
 
         /// Removes a marker only after its currently persisted token exactly matches this attempt and reports every refusal distinctly.
         let tryRemoveOwned scope attemptToken = tryRemoveOwnedWithDelete scope attemptToken File.Delete
+
+        /// Removes only marker evidence that exactly identifies an already completed operation.
+        let tryRemoveMatchingCompletion scope expectedTarget operation =
+            task {
+                let path = Scope.markerPath scope
+
+                if not (File.Exists(path)) then
+                    return false
+                else
+                    try
+                        let content = File.ReadAllText(path)
+
+                        match tryReadMarkerDocument scope content with
+                        | Ok marker when
+                            marker.OperationId = WorkingDirectoryUpdate.Operation.value operation
+                            && marker.Target = WorkingDirectoryUpdate.Target.canonical expectedTarget
+                            && marker.CallerKind = (WorkingDirectoryUpdate.Operation.callerKind operation
+                                                    |> callerKindText)
+                            ->
+                            File.Delete(path)
+                            return true
+                        | _ -> return false
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException -> return false
+            }
 
     /// Supplies derived sidecar creation without changing or deleting marker evidence.
     module Sidecar =

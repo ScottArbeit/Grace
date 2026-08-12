@@ -66,7 +66,7 @@ module internal WorkingDirectoryUpdateContracts =
         abstract member OpenReadAsync: RelativePath * CancellationToken -> Task<Stream>
 
     /// Represents immutable dual-hash-verified bytes for a future update engine.
-    type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref
+    type PreparedContent = private PreparedContent of PreparedManifest * Dictionary<string, byte array> * disposed: bool ref * disposalCount: int ref
 
     /// Holds validated update inputs without exposing a mutation plan, writer, or transaction callback.
     type Request = private Request of Target * Operation * PreparedContent * CorrelationId
@@ -233,6 +233,15 @@ module internal WorkingDirectoryUpdateContracts =
 
         /// Returns the branch selected by this target.
         let branchId (Target (_, branchId, _, _, _, _)) = branchId
+
+        /// Returns the exact root directory version that the completed working tree must represent.
+        let rootDirectoryVersionId (Target (_, _, rootDirectoryVersionId, _, _, _)) = rootDirectoryVersionId
+
+        /// Returns the selected root SHA-256 that binds the status graph to the target.
+        let sha256Hash (Target (_, _, _, sha256Hash, _, _)) = sha256Hash
+
+        /// Returns the selected root BLAKE3 that binds the status graph to the target.
+        let blake3Hash (Target (_, _, _, _, blake3Hash, _)) = blake3Hash
 
         /// Returns the canonical target encoding included in caller operation tuples.
         let canonical (Target (_, _, _, _, _, canonical)) = canonical
@@ -522,13 +531,16 @@ module internal WorkingDirectoryUpdateContracts =
 
                             match byteError with
                             | Some error -> return Error error
-                            | None -> return Ok(PreparedContent(manifest, bytesByPath, ref false))
+                            | None -> return Ok(PreparedContent(manifest, bytesByPath, ref false, ref 0))
                     finally
                         reader.Dispose()
             }
 
+        /// Returns the immutable manifest that defines every path the update may materialize.
+        let manifest (PreparedContent (manifest, _, _, _)) = manifest
+
         /// Opens a read-only stream over verified bytes for one declared file.
-        let openRead (PreparedContent (_, bytesByPath, disposed)) path =
+        let openRead (PreparedContent (_, bytesByPath, disposed, _)) path =
             match normalizeRelativePath path with
             | Error error -> Error error
             | Ok path when !disposed -> Error "Prepared-content has already been disposed."
@@ -538,13 +550,17 @@ module internal WorkingDirectoryUpdateContracts =
                 | false, _ -> Error $"Prepared-content has no declared file '{path}'."
 
         /// Clears verified bytes when the owning update operation reaches a terminal path.
-        let dispose (PreparedContent (_, bytesByPath, disposed)) =
+        let dispose (PreparedContent (_, bytesByPath, disposed, disposalCount)) =
             if not !disposed then
                 bytesByPath.Values
                 |> Seq.iter (fun bytes -> Array.Clear(bytes, 0, bytes.Length))
 
                 bytesByPath.Clear()
                 disposed := true
+                disposalCount := !disposalCount + 1
+
+        /// Returns how often the private verified-byte snapshot has been disposed for focused lifetime proof.
+        let internal disposalCount (PreparedContent (_, _, _, disposalCount)) = !disposalCount
 
     /// Supplies construction and access functions for private update requests.
     module Request =
