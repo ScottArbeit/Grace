@@ -435,6 +435,52 @@ module WorkingDirectoryUpdateCoordinationTests =
             File.Exists(WorkingDirectoryUpdateCoordination.Scope.markerPath scope)
             |> should equal false)
 
+    /// Proves missing, damaged, and unreadable cleanup evidence is never treated as successful cleanup.
+    [<Test>]
+    let ``marker cleanup distinguishes every non-successful evidence disposition`` () =
+        withTempRoot (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let selectedTarget = target repositoryId branchId
+            let operation = branchOperation selectedTarget
+
+            let scope =
+                WorkingDirectoryUpdateCoordination.Scope.create repositoryId root
+                |> required
+
+            let token = WorkingDirectoryUpdate.AttemptToken.create ()
+            let markerPath = WorkingDirectoryUpdateCoordination.Scope.markerPath scope
+
+            WorkingDirectoryUpdateCoordination.Marker.inspect scope selectedTarget operation
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerInspection.Missing
+
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope token
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.NoMarker
+
+            Directory.CreateDirectory(Path.GetDirectoryName(markerPath))
+            |> ignore
+
+            File.WriteAllText(markerPath, "{not-json")
+
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope token
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.MalformedOrUnsupportedEvidence
+
+            let marker =
+                WorkingDirectoryUpdateCoordination.Marker.create scope token selectedTarget operation
+                |> required
+
+            WorkingDirectoryUpdateCoordination.Marker.write scope marker
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            use markerHandle = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.None)
+
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope token
+            |> fun task -> task.GetAwaiter().GetResult()
+            |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.UnreadableEvidence)
+
     /// Proves an unreadable marker is preserved rather than treated as missing or adoptable evidence.
     [<Test>]
     let ``marker inspection distinguishes unreadable evidence`` () =
@@ -483,9 +529,8 @@ module WorkingDirectoryUpdateCoordinationTests =
             WorkingDirectoryUpdateCoordination.Marker.write scope marker
             |> fun task -> task.GetAwaiter().GetResult()
 
-            use markerHandle = new FileStream(WorkingDirectoryUpdateCoordination.Scope.markerPath scope, FileMode.Open, FileAccess.Read, FileShare.Read)
-
-            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwned scope token
+            WorkingDirectoryUpdateCoordination.Marker.tryRemoveOwnedWithDelete scope token (fun _ ->
+                raise (IOException("forced portable marker deletion failure")))
             |> fun task -> task.GetAwaiter().GetResult()
             |> should equal WorkingDirectoryUpdateCoordination.MarkerCleanup.ExactCleanupFailed
 

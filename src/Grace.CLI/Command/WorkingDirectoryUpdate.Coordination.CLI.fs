@@ -383,8 +383,8 @@ module internal WorkingDirectoryUpdateCoordination =
                         | :? UnauthorizedAccessException -> return Unreadable
             }
 
-        /// Removes a marker only after its currently persisted token exactly matches this attempt and reports every refusal distinctly.
-        let tryRemoveOwned scope attemptToken =
+        /// Removes a marker with an injected deletion action so portable focused proofs can force the exact cleanup-failure boundary.
+        let tryRemoveOwnedWithDelete scope attemptToken deleteMarker =
             task {
                 let path = Scope.markerPath scope
 
@@ -397,7 +397,7 @@ module internal WorkingDirectoryUpdateCoordination =
                         match tryReadMarkerDocument scope content with
                         | Ok marker when marker.AttemptToken = WorkingDirectoryUpdate.AttemptToken.value attemptToken ->
                             try
-                                File.Delete(path)
+                                deleteMarker path
                                 return ExactMatchCleaned
                             with
                             | :? IOException
@@ -408,6 +408,9 @@ module internal WorkingDirectoryUpdateCoordination =
                     | :? IOException
                     | :? UnauthorizedAccessException -> return UnreadableEvidence
             }
+
+        /// Removes a marker only after its currently persisted token exactly matches this attempt and reports every refusal distinctly.
+        let tryRemoveOwned scope attemptToken = tryRemoveOwnedWithDelete scope attemptToken File.Delete
 
     /// Supplies derived sidecar creation without changing or deleting marker evidence.
     module Sidecar =
