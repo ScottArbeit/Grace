@@ -333,7 +333,11 @@ module internal WorkingDirectoryUpdate =
                                 | Directory ->
                                     match localClassification classifier trackedFiles trackedDirectories fullPath targetDirectory Directory with
                                     | Error value -> rejection <- Some value
-                                    | Ok "tracked-directory" -> ()
+                                    | Ok "tracked-directory" ->
+                                        match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath targetDirectory
+                                            with
+                                        | Some value -> rejection <- Some value
+                                        | None -> ()
                                     | Ok _ -> rejection <- Some { Path = targetDirectory; Classification = Untracked }
 
                     for targetFile in orderedTargetFiles targetFiles.Values do
@@ -393,12 +397,18 @@ module internal WorkingDirectoryUpdate =
                         then
                             match fullPathUnderRoot scanInput.RootDirectory fileVersion.RelativePath with
                             | Error value -> rejection <- Some value
-                            | Ok fullPath when actualKind fullPath = File ->
-                                match localClassification classifier trackedFiles trackedDirectories fullPath fileVersion.RelativePath File with
-                                | Ok "tracked-file" -> addRemoval fileVersion.RelativePath (RemoveTrackedFile fileVersion.RelativePath)
-                                | Error value -> rejection <- Some value
-                                | Ok _ -> rejection <- Some { Path = fileVersion.RelativePath; Classification = Untracked }
-                            | Ok _ -> ()
+                            | Ok fullPath ->
+                                match actualKind fullPath with
+                                | Missing -> ()
+                                | File ->
+                                    match localClassification classifier trackedFiles trackedDirectories fullPath fileVersion.RelativePath File with
+                                    | Ok "tracked-file" -> addRemoval fileVersion.RelativePath (RemoveTrackedFile fileVersion.RelativePath)
+                                    | Error value -> rejection <- Some value
+                                    | Ok _ -> rejection <- Some { Path = fileVersion.RelativePath; Classification = Untracked }
+                                | Directory ->
+                                    match localClassification classifier trackedFiles trackedDirectories fullPath fileVersion.RelativePath Directory with
+                                    | Error value -> rejection <- Some value
+                                    | Ok _ -> rejection <- Some { Path = fileVersion.RelativePath; Classification = Untracked }
 
                     for directoryVersion in orderedTrackedDirectories trackedDirectories.Values do
                         let directoryPath = directoryVersion.RelativePath
@@ -411,15 +421,22 @@ module internal WorkingDirectoryUpdate =
                         then
                             match fullPathUnderRoot scanInput.RootDirectory directoryPath with
                             | Error value -> rejection <- Some value
-                            | Ok fullPath when actualKind fullPath = Directory ->
-                                match localClassification classifier trackedFiles trackedDirectories fullPath directoryPath Directory with
-                                | Error value -> rejection <- Some value
-                                | Ok "tracked-directory" ->
-                                    match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath directoryPath with
-                                    | Some value -> rejection <- Some value
-                                    | None -> addRemoval directoryPath (RemoveTrackedDirectory directoryPath)
-                                | Ok _ -> rejection <- Some { Path = directoryPath; Classification = Untracked }
-                            | Ok _ -> ()
+                            | Ok fullPath ->
+                                match actualKind fullPath with
+                                | Missing -> ()
+                                | Directory ->
+                                    match localClassification classifier trackedFiles trackedDirectories fullPath directoryPath Directory with
+                                    | Error value -> rejection <- Some value
+                                    | Ok "tracked-directory" ->
+                                        match firstUnsafeDescendant classifier trackedFiles trackedDirectories scanInput.RootDirectory fullPath directoryPath
+                                            with
+                                        | Some value -> rejection <- Some value
+                                        | None -> addRemoval directoryPath (RemoveTrackedDirectory directoryPath)
+                                    | Ok _ -> rejection <- Some { Path = directoryPath; Classification = Untracked }
+                                | File ->
+                                    match localClassification classifier trackedFiles trackedDirectories fullPath directoryPath File with
+                                    | Error value -> rejection <- Some value
+                                    | Ok _ -> rejection <- Some { Path = directoryPath; Classification = Untracked }
 
                     match rejection with
                     | Some value -> return Rejected value
