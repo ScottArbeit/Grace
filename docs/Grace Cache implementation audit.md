@@ -41,7 +41,7 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 | [PR #723](https://github.com/ScottArbeit/Grace/pull/723) | Closed as superseded without merge at `647f4067252e5f2805e76a492d26096a854a75a9`. | Selectively inspect independent work; do not merge or replay it wholesale. |
 | [Issues #622](https://github.com/ScottArbeit/Grace/issues/622) and [#724](https://github.com/ScottArbeit/Grace/issues/724) | Closed and not planned. | Do not resume as cache work. |
 | [Issue #855](https://github.com/ScottArbeit/Grace/issues/855) | Complete R0: prune cache service-identity rotation contracts. | R1 builds on the revised static contract. |
-| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | Implemented R1: static enrollment and redacted status. | The inactive-orphan proof gate passed. |
+| [Issue #856](https://github.com/ScottArbeit/Grace/issues/856) | R1 feasibility passed; PR #883 contains the current static enrollment and redacted-status implementation. | Current-head review and Validate remain required before this row can be marked proven. |
 | [Issue #857](https://github.com/ScottArbeit/Grace/issues/857) | Open R2: bounded registration liveness. | Starts after R1 and its liveness research gate. |
 | [Issue #835](https://github.com/ScottArbeit/Grace/issues/835) | Open. Later local materialization is blocked until it merges to `main` and Epic #597 is refreshed. | Required sequence for #628 to #630 and #634. |
 
@@ -98,7 +98,7 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 
 ### R0: static contract pruning (#855)
 
-- **Status classification:** `planned`.
+- **Status classification:** `implemented and proven`.
 - **Required result:** Remove cache service-identity rotation and candidate surfaces from types, actor state/events,
   routes, CLI settings and status, local configuration, OpenAPI, generated SDKs, docs, fixtures, serializers, AOT
   roots, and command catalogs. Do not remove artifact-grant validation-key rollover.
@@ -107,8 +107,8 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
 
 ### R1: static enrollment and redacted status (#856)
 
-- **Status classification:** `implemented` with focused local proof; Linux unit-managed owner and mode verification
-  remains the required deployment-host operator check.
+- **Status classification:** `current implementation` in PR #883; R1 feasibility passed. Linux system-managed account
+  ownership and mode verification remains the required deployment-host operator check.
 - **Result:** Server enrollment always persists `Unhealthy`. `grace cache enroll` creates a P-256 PKCS#8 key below the
   protected Linux root, calls the normal authenticated SDK route, and commits one same-parent ready directory only after
   acceptance. `grace cache status` is a pure local, redacted observation.

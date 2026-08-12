@@ -238,16 +238,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 206
+        |> should equal 208
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 197
+        |> should equal 199
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 185
+        |> should equal 187
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -289,7 +289,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 185
+        jsonReady |> should equal 187
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -466,7 +466,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 187
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -484,7 +484,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 187
 
         let parserInvalidEntries =
             commonEntries

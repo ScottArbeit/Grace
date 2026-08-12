@@ -129,8 +129,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `206`
-- JSON-ready routed commands: `185`
+- Total leaf commands: `208`
+- JSON-ready routed commands: `187`
 - Intentionally human-only commands: `1`
 - Deferred routed commands with explicit V2 scope: `11`
 - Source-only/unrouted commands: `9`
@@ -172,7 +172,8 @@ behavior because it is a continuous foreground workflow; JSON mode returns an ex
 starting the watcher.
 
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
-supports `--schema`, `--examples`, and `--select`.
+supports `--schema`, `--examples`, and `--select`. The two repository-independent Cache commands are also JSON-ready:
+`cache.enroll` emits the existing enrollment result envelope and `cache.status` emits the redacted local status envelope.
 
 ## Agent Recipes
 

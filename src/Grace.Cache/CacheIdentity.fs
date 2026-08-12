@@ -6,6 +6,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Text.Json.Serialization
+open System.Threading
 
 /// Represents the public P-256 half generated for one local cache enrollment attempt.
 [<CLIMutable>]
@@ -109,6 +110,13 @@ module CacheIdentity =
     /// Returns a generic local failure without disclosing protected filesystem paths or exception details to callers.
     let private localFailure () = Error "The protected local cache identity state could not be prepared."
 
+    /// Classifies a protected directory without conflating an absent state marker with one the service account cannot inspect.
+    type private ProtectedDirectoryState =
+        | Absent
+        | Accessible
+        | Inaccessible
+        | Invalid
+
     /// Validates that a ready configuration is complete enough to represent a real static enrollment.
     let private isValidConfiguration (configuration: CacheReadyConfiguration) =
         let endpointValid =
@@ -127,21 +135,45 @@ module CacheIdentity =
         && not (String.IsNullOrWhiteSpace(configuration.ProtocolVersion))
         && not (String.IsNullOrWhiteSpace(configuration.PublicKeyFingerprint))
 
+    /// Probes a protected directory using an enumeration operation that distinguishes absent and inaccessible Linux service-account state.
+    let private probeDirectory path =
+        try
+            Directory.GetFileSystemEntries(path) |> ignore
+            Accessible
+        with
+        | :? DirectoryNotFoundException -> Absent
+        | :? UnauthorizedAccessException -> Inaccessible
+        | _ -> Invalid
+
+    /// Verifies one protected path has the required Linux mode without exposing its path or filesystem exception.
+    let private verifyMode (path: string) (expectedMode: UnixFileMode) =
+        try
+            if File.GetUnixFileMode(path) = expectedMode then Ok() else Error "invalid"
+        with
+        | :? UnauthorizedAccessException -> Error "inaccessible"
+        | :? FileNotFoundException
+        | :? DirectoryNotFoundException -> Error "missing"
+        | _ -> Error "invalid"
+
     /// Verifies the service-managed root exists and has the required private Linux mode before any enrollment send.
-    let private verifyRoot root =
+    let private verifyRoot root (cancellationToken: CancellationToken) =
+        cancellationToken.ThrowIfCancellationRequested()
+
         if not (OperatingSystem.IsLinux()) then
             Error "Grace Cache enrollment is supported only on Linux."
-        elif not (Directory.Exists(root)) then
-            Error "The protected Grace Cache state root is unavailable."
         else
-            try
-                if File.GetUnixFileMode(root) <> directoryMode then
-                    Error "The protected Grace Cache state root is not configured with mode 0700."
-                else
-                    Ok()
-            with
-            | :? UnauthorizedAccessException -> Error "The protected Grace Cache state root is inaccessible."
-            | _ -> Error "The protected Grace Cache state root is unavailable."
+            match probeDirectory root with
+            | Absent -> Error "The protected Grace Cache state root is unavailable."
+            | Inaccessible -> Error "The protected Grace Cache state root is inaccessible."
+            | Invalid -> Error "The protected Grace Cache state root is unavailable."
+            | Accessible ->
+                match verifyMode root directoryMode with
+                | Ok () -> Ok()
+                | Error "inaccessible" -> Error "The protected Grace Cache state root is inaccessible."
+                | _ -> Error "The protected Grace Cache state root is not configured with mode 0700."
+
+    /// Validates the supported service-managed root before any cache key staging or authenticated server request.
+    let validateStateRoot root (cancellationToken: CancellationToken) = verifyRoot root cancellationToken
 
     /// Writes one private file with the required mode and a durable flush before it becomes eligible for ready-state commit.
     let private writePrivateFile path bytes =
@@ -155,21 +187,27 @@ module CacheIdentity =
         | _ -> localFailure ()
 
     /// Removes a staging directory created by this component and intentionally suppresses cleanup failures after a failed attempt.
-    let discard (prepared: PreparedCacheIdentity) =
+    let discard (prepared: PreparedCacheIdentity) (cancellationToken: CancellationToken) =
         try
+            cancellationToken.ThrowIfCancellationRequested()
+
             if Directory.Exists(prepared.StagingDirectory) then
                 Directory.Delete(prepared.StagingDirectory, true)
         with
         | _ -> ()
 
     /// Deletes unreferenced prior attempt directories while never touching the ready enrollment marker.
-    let cleanupStaleStaging root =
-        match verifyRoot root with
+    let cleanupStaleStaging root (cancellationToken: CancellationToken) =
+        match verifyRoot root cancellationToken with
         | Error _ -> ()
         | Ok () ->
             try
+                cancellationToken.ThrowIfCancellationRequested()
+
                 Directory.GetDirectories(root, $"{StagingPrefix}*")
                 |> Array.iter (fun directory ->
+                    cancellationToken.ThrowIfCancellationRequested()
+
                     try
                         Directory.Delete(directory, true)
                     with
@@ -178,8 +216,8 @@ module CacheIdentity =
             | _ -> ()
 
     /// Generates and persists one P-256 identity key below the protected root before the server enrollment request is sent.
-    let prepare root =
-        match verifyRoot root with
+    let prepare root (cancellationToken: CancellationToken) =
+        match verifyRoot root cancellationToken with
         | Error error -> Error error
         | Ok () ->
             let ready = Path.Combine(root, ReadyDirectoryName)
@@ -190,6 +228,8 @@ module CacheIdentity =
                 let staging = Path.Combine(root, StagingPrefix + Guid.NewGuid().ToString("N"))
 
                 try
+                    cancellationToken.ThrowIfCancellationRequested()
+
                     Directory.CreateDirectory(staging, directoryMode)
                     |> ignore
 
@@ -218,7 +258,8 @@ module CacheIdentity =
                     localFailure ()
 
     /// Commits a prepared key and its verified local configuration using one same-parent no-overwrite directory rename.
-    let commitReady (prepared: PreparedCacheIdentity) (configuration: CacheReadyConfiguration) =
+    let commitReady (prepared: PreparedCacheIdentity) (configuration: CacheReadyConfiguration) (cancellationToken: CancellationToken) =
+        cancellationToken.ThrowIfCancellationRequested()
         let root = Directory.GetParent(prepared.StagingDirectory)
 
         if isNull root then
@@ -233,6 +274,7 @@ module CacheIdentity =
                 localFailure ()
             else
                 try
+                    cancellationToken.ThrowIfCancellationRequested()
                     let payload = JsonSerializer.SerializeToUtf8Bytes(configuration)
 
                     match writePrivateFile configurationPath payload with
@@ -244,8 +286,9 @@ module CacheIdentity =
                 | _ -> localFailure ()
 
     /// Reads one protected ready-state file while reducing filesystem failures to the approved status classifications.
-    let private readPrivateReadyFile path =
+    let private readPrivateReadyFile path (cancellationToken: CancellationToken) =
         try
+            cancellationToken.ThrowIfCancellationRequested()
             Ok(File.ReadAllBytes(path))
         with
         | :? FileNotFoundException
@@ -254,7 +297,9 @@ module CacheIdentity =
         | _ -> Error "invalid"
 
     /// Reads ready state without changing any local files and returns only approved redacted fields.
-    let status root =
+    let status root (cancellationToken: CancellationToken) =
+        cancellationToken.ThrowIfCancellationRequested()
+
         let notEnrolled =
             {
                 Class = nameof CacheLocalStatus
@@ -270,46 +315,66 @@ module CacheIdentity =
         let ready = Path.Combine(root, ReadyDirectoryName)
 
         try
-            if not (Directory.Exists(ready)) then
-                notEnrolled
-            else
-                let configurationPath = Path.Combine(ready, ConfigurationFileName)
-                let privateKeyPath = Path.Combine(ready, PrivateKeyFileName)
-
-                match readPrivateReadyFile configurationPath, readPrivateReadyFile privateKeyPath with
+            match probeDirectory root with
+            | Absent -> notEnrolled
+            | Inaccessible -> invalid "inaccessible"
+            | Invalid -> invalid "invalid"
+            | Accessible ->
+                match verifyMode root directoryMode, probeDirectory ready with
                 | Error "inaccessible", _
-                | _, Error "inaccessible" -> invalid "inaccessible"
-                | Error _, _ -> invalid "invalid"
-                | _, Error "missing" -> invalid "missing"
-                | _, Error _ -> invalid "invalid"
-                | Ok configurationBytes, Ok privateKeyBytes ->
-                    let configuration = JsonSerializer.Deserialize<CacheReadyConfiguration>(configurationBytes)
+                | _, Inaccessible -> invalid "inaccessible"
+                | Error _, _
+                | _, Invalid -> invalid "invalid"
+                | Ok (), Absent -> notEnrolled
+                | Ok (), Accessible ->
+                    let configurationPath = Path.Combine(ready, ConfigurationFileName)
+                    let privateKeyPath = Path.Combine(ready, PrivateKeyFileName)
 
-                    if
-                        isNull (box configuration)
-                        || not (isValidConfiguration configuration)
-                    then
-                        invalid "invalid"
-                    else
-                        use key = ECDsa.Create()
-                        let mutable bytesRead = 0
-                        key.ImportPkcs8PrivateKey(privateKeyBytes, &bytesRead)
-                        let parameters = key.ExportParameters(false)
-                        let publicKey = { PublicKeyX = base64Url parameters.Q.X; PublicKeyY = base64Url parameters.Q.Y }
+                    match verifyMode ready directoryMode, verifyMode configurationPath fileMode, verifyMode privateKeyPath fileMode with
+                    | Error "inaccessible", _, _
+                    | _, Error "inaccessible", _
+                    | _, _, Error "inaccessible" -> invalid "inaccessible"
+                    | _, Error "missing", _
+                    | _, _, Error "missing" -> invalid "missing"
+                    | Error _, _, _
+                    | _, Error _, _
+                    | _, _, Error _ -> invalid "invalid"
+                    | Ok (), Ok (), Ok () ->
+                        match readPrivateReadyFile configurationPath cancellationToken, readPrivateReadyFile privateKeyPath cancellationToken with
+                        | Error "inaccessible", _
+                        | _, Error "inaccessible" -> invalid "inaccessible"
+                        | Error "missing", _
+                        | _, Error "missing" -> invalid "missing"
+                        | Error _, _
+                        | _, Error _ -> invalid "invalid"
+                        | Ok configurationBytes, Ok privateKeyBytes ->
+                            let configuration = JsonSerializer.Deserialize<CacheReadyConfiguration>(configurationBytes)
 
-                        if configuration.PublicKeyFingerprint
-                           <> fingerprint publicKey then
-                            invalid "invalid"
-                        else
-                            {
-                                Class = nameof CacheLocalStatus
-                                Enrollment = "enrolled"
-                                CacheId = Some configuration.CacheId
-                                Endpoint = Some configuration.Endpoint
-                                BoundaryKind = Some configuration.BoundaryKind
-                                RepositoryCount = Some configuration.RepositoryIds.Length
-                                Key = "available"
-                            }
+                            if
+                                isNull (box configuration)
+                                || not (isValidConfiguration configuration)
+                            then
+                                invalid "invalid"
+                            else
+                                use key = ECDsa.Create()
+                                let mutable bytesRead = 0
+                                key.ImportPkcs8PrivateKey(privateKeyBytes, &bytesRead)
+                                let parameters = key.ExportParameters(false)
+                                let publicKey = { PublicKeyX = base64Url parameters.Q.X; PublicKeyY = base64Url parameters.Q.Y }
+
+                                if configuration.PublicKeyFingerprint
+                                   <> fingerprint publicKey then
+                                    invalid "invalid"
+                                else
+                                    {
+                                        Class = nameof CacheLocalStatus
+                                        Enrollment = "enrolled"
+                                        CacheId = Some configuration.CacheId
+                                        Endpoint = Some configuration.Endpoint
+                                        BoundaryKind = Some configuration.BoundaryKind
+                                        RepositoryCount = Some configuration.RepositoryIds.Length
+                                        Key = "available"
+                                    }
         with
         | :? UnauthorizedAccessException -> invalid "inaccessible"
         | _ -> invalid "invalid"

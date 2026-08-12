@@ -648,22 +648,10 @@ type RestartDurabilityServer() =
             )
 
             let! selectedStatus, selectedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
-            Assert.That(selectedStatus, Is.EqualTo(HttpStatusCode.OK), selectedBody)
+            Assert.That(selectedStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable), selectedBody)
 
-            let selectedPlan =
-                deserialize<GraceReturnValue<MaterializationPlan>>(
-                    selectedBody
-                )
-                    .ReturnValue
-
-            let selectedGrant =
-                match selectedPlan.ArtifactGrant with
-                | Some grant -> grant
-                | None ->
-                    Assert.Fail("Cache-required plan did not include the selected Cache artifact grant.")
-                    Unchecked.defaultof<_>
-
-            Assert.That(selectedGrant.Payload.CacheId, Is.EqualTo(cacheId.ToString("D")))
+            let selectedError = deserialize<GraceError> (selectedBody)
+            Assert.That(selectedError.Error, Does.Contain("No eligible Cache registration is currently available."))
 
             let! unrelatedRepositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-cache-unrelated"
             let! unrelatedStatus, unrelatedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync unrelatedRepositoryId

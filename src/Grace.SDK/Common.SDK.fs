@@ -19,6 +19,7 @@ open System.Net.Http.Json
 open System.Net.Security
 open System.Text
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Caching.Memory
 
@@ -123,6 +124,60 @@ module Common =
                         |> enhance "StatusCode" $"{response.StatusCode}"
                         |> ClientIdentity.enhanceWithLifecycleDiagnostics response
             with
+            | ex ->
+                let exceptionResponse = Utilities.ExceptionResponse.Create ex
+                return Error(GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
+        }
+
+    /// Sends one POST command to Grace Server while honoring the caller's cancellation request before and during transport.
+    let postServerWithCancellation<'T, 'U when 'T :> CommonParameters>
+        (
+            parameters: 'T,
+            route: string,
+            cancellationToken: CancellationToken
+        )
+        : (Task<GraceResult<'U>>)
+        =
+        task {
+            try
+                cancellationToken.ThrowIfCancellationRequested()
+                use httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
+                do! Auth.addAuthorizationHeader httpClient
+                let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
+                let startTime = getCurrentInstant ()
+                let! response = httpClient.PostAsync(serverUriWithRoute, createJsonContent parameters, cancellationToken)
+                let endTime = getCurrentInstant ()
+
+                if response.IsSuccessStatusCode then
+                    let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions, cancellationToken)
+
+                    return
+                        Ok graceReturnValue
+                        |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
+                else if response.StatusCode = HttpStatusCode.NotFound then
+                    return
+                        Error(GraceError.Create $"Server endpoint {route} not found." parameters.CorrelationId)
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
+                else if response.StatusCode = HttpStatusCode.BadRequest then
+                    let! errorMessage = response.Content.ReadAsStringAsync(cancellationToken)
+
+                    return
+                        Error(GraceError.Create $"{errorMessage}" parameters.CorrelationId)
+                        |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> enhance "StatusCode" $"{response.StatusCode}"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
+                else
+                    let! graceError = ResponseErrors.fromResponse parameters.CorrelationId route response
+
+                    return
+                        Error graceError
+                        |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> enhance "StatusCode" $"{response.StatusCode}"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
+            with
+            | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
+                return Error(GraceError.Create "Cache enrollment was canceled before completion." parameters.CorrelationId)
             | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex
                 return Error(GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)

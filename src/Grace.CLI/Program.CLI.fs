@@ -1464,6 +1464,7 @@ module GraceCommand =
                                 "connect"
                                 "alias"
                                 "doctor"
+                                "cache"
                             ]
 
                         let isAllowed =

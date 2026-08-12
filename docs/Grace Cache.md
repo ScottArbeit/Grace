@@ -188,6 +188,42 @@ proof before every serve, and validate exact prepared content before making late
 8. Missing, corrupt, or mismatched configured key material fails closed. The recovery is server revocation, local reset,
    and manual re-enrollment.
 
+#### Supported Linux operator workflow
+
+The operator provisions the system-managed `grace-cache` account and its private state directory. The account must own
+`/var/lib/grace-cache`, and that directory must remain mode `0700`. Grace does not install or configure systemd, and it
+does not issue or manage TLS certificates; the selected endpoint and host service remain operator-managed.
+
+PowerShell:
+
+```powershell
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+$env:GRACE_TOKEN = "<administrator PAT>"
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+Remove-Item Env:GRACE_TOKEN
+grace authenticate login
+```
+
+bash / zsh:
+
+```bash
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+export GRACE_TOKEN="<administrator PAT>"
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+unset GRACE_TOKEN
+grace authenticate login
+```
+
+`grace cache enroll` uses the normal Grace authentication path: interactive login, configured M2M credentials, or a
+`GRACE_TOKEN` PAT. It does not create a cache-specific credential. `grace cache status` is local-only and emits no
+private key, key fingerprint, opaque private reference, staging location, private path, or raw filesystem exception.
+An `enrolled` result has a locally valid ready state; `invalid` or `inaccessible` means the account must not treat the
+identity as usable. For recovery, revoke the server registration through the approved administrator route, stop the
+cache host, remove only `/var/lib/grace-cache/ready` and stale `staging-*` directories as the system-managed account,
+then re-establish mode `0700` and enroll again.
+
 ### Run and bounded registration liveness
 
 1. `grace cache run` acquires its machine-wide guard before configuration, key, listener, store, or server work.
