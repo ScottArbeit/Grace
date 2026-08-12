@@ -57,8 +57,31 @@ type private NoBillingPeriodCloseTransactionInterleaving() =
         member _.AfterLedgerInsertionAsync _ = Task.CompletedTask
         member _.AfterCloseEvidenceStagedAsync _ = Task.CompletedTask
 
+/// Supplies the transaction-local database clock used to prove eligibility boundaries without caller-supplied close time.
+type internal IBillingPeriodCloseClock =
+    /// Reads the UTC instant that decides preview and close eligibility inside the locked SQL transaction.
+    abstract UtcNowAsync: connection: SqlConnection * transaction: SqlTransaction * cancellationToken: CancellationToken -> Task<DateTime>
+
+/// Reads SQL Server's UTC clock for all production close decisions.
+type private DatabaseBillingPeriodCloseClock() =
+    interface IBillingPeriodCloseClock with
+        member _.UtcNowAsync(connection, transaction, cancellationToken) =
+            task {
+                use nowCommand = connection.CreateCommand()
+                nowCommand.Transaction <- transaction
+                nowCommand.CommandText <- "SELECT SYSUTCDATETIME();"
+                let! value = nowCommand.ExecuteScalarAsync cancellationToken
+                return value :?> DateTime
+            }
+
 /// Rebuilds previews and immutable initial postings under the same SQL lock used by accepted fact processing.
-type SqlBillingPeriodCloser private (connectionString: string, transactionInterleaving: IBillingPeriodCloseTransactionInterleaving) =
+type SqlBillingPeriodCloser
+    private
+    (
+        connectionString: string,
+        transactionInterleaving: IBillingPeriodCloseTransactionInterleaving,
+        clock: IBillingPeriodCloseClock
+    ) =
 
     /// Derives the deterministic period identity from every exact scope boundary without insertion-order dependence.
     let billingPeriodId (scope: BillingCompletenessScope) =
@@ -129,14 +152,6 @@ type SqlBillingPeriodCloser private (connectionString: string, transactionInterl
             lockCommand.Parameters.Add("@BillingCompletenessLockTimeoutMilliseconds", SqlDbType.Int).Value <- 60000
             let! _ = lockCommand.ExecuteNonQueryAsync cancellationToken
             return ()
-        }
-
-    /// Reads database UTC inside the mutation transaction so callers cannot decide persisted eligibility.
-    let databaseUtcNowAsync (connection: SqlConnection) (transaction: SqlTransaction) (cancellationToken: CancellationToken) =
-        task {
-            use nowCommand = command connection transaction "SELECT SYSUTCDATETIME();"
-            let! value = nowCommand.ExecuteScalarAsync cancellationToken
-            return value :?> DateTime
         }
 
     /// Inserts the deterministic period if discovery has not already materialized it, then locks its row for this close.
@@ -666,7 +681,7 @@ SELECT CAST
                     do! transaction.CommitAsync cancellationToken
                     return Closed(periodId, Convert.ToInt32 chargeCount)
                 else
-                    let! now = databaseUtcNowAsync connection transaction cancellationToken
+                    let! now = clock.UtcNowAsync(connection, transaction, cancellationToken)
 
                     let threshold =
                         (BillingCompletenessScope.nextMonthStart request.Scope)
@@ -751,7 +766,16 @@ SELECT CAST
 
     /// Creates the production closer without test-only failure injection.
     new(connectionString: string) =
-        SqlBillingPeriodCloser(connectionString, NoBillingPeriodCloseTransactionInterleaving() :> IBillingPeriodCloseTransactionInterleaving)
+        SqlBillingPeriodCloser(
+            connectionString,
+            NoBillingPeriodCloseTransactionInterleaving() :> IBillingPeriodCloseTransactionInterleaving,
+            DatabaseBillingPeriodCloseClock() :> IBillingPeriodCloseClock
+        )
 
     /// Creates a real-SQL closer that pauses or fails only at a named transaction-local proof seam.
-    static member internal CreateForTest(connectionString, transactionInterleaving) = SqlBillingPeriodCloser(connectionString, transactionInterleaving)
+    static member internal CreateForTest(connectionString, transactionInterleaving) =
+        SqlBillingPeriodCloser(connectionString, transactionInterleaving, DatabaseBillingPeriodCloseClock() :> IBillingPeriodCloseClock)
+
+    /// Creates a real-SQL closer with an internal transaction-local clock seam for exact threshold proof.
+    static member internal CreateForTest(connectionString, transactionInterleaving, clock) =
+        SqlBillingPeriodCloser(connectionString, transactionInterleaving, clock)

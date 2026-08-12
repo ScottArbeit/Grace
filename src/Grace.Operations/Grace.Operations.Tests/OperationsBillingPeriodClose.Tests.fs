@@ -40,6 +40,15 @@ type private BillingCloseInterleaving(stage: string, pause: bool) =
         member _.AfterLedgerInsertionAsync cancellationToken = observe "ledger" cancellationToken
         member _.AfterCloseEvidenceStagedAsync cancellationToken = observe "evidence" cancellationToken
 
+/// Returns a fixed transaction-local UTC instant while still requiring the production closer to acquire its SQL lock.
+type private FixedBillingCloseClock(now: DateTime) =
+    interface IBillingPeriodCloseClock with
+        member _.UtcNowAsync(_connection, _transaction, cancellationToken) =
+            task {
+                cancellationToken.ThrowIfCancellationRequested()
+                return now
+            }
+
 /// Proves billing-period close against isolated real SQL Server databases and production acceptance/close seams.
 [<TestFixture>]
 [<NonParallelizable>]
@@ -222,6 +231,17 @@ VALUES (@AssignmentId,@OwnerId,@OrganizationId,@RepositoryId,@PlanId,@EffectiveF
             return Convert.ToInt32 value
         }
 
+    /// Reads an independently queried integer total from the isolated SQL database.
+    let int64Async connectionString sql =
+        task {
+            use connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync CancellationToken.None
+            use command = connection.CreateCommand()
+            command.CommandText <- sql
+            let! value = command.ExecuteScalarAsync CancellationToken.None
+            return Convert.ToInt64 value
+        }
+
     /// Builds the fixed scheduled-operation request used by all close proofs.
     let request scope = { Scope = scope; ScheduledOperationProvenance = "operations-tests/billing-period-close/v1" }
 
@@ -363,6 +383,191 @@ END;
                         Assert.That(closedChargeCount targetClose, Is.Zero)
                         Assert.That(blockedCount, Is.EqualTo(100))
                         Assert.That(closedCount, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves only the database-owned instant at the exact +24h and +72h thresholds makes each operation eligible.
+    [<Test>]
+    member _.DatabaseClockTreatsPreviewAndCloseThresholdEqualityAsEligible() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                do! addPricingAsync connectionString scope
+
+                let nextMonthStartUtc =
+                    (BillingCompletenessScope.nextMonthStart scope)
+                        .ToDateTimeUtc()
+
+                let inert = BillingCloseInterleaving("none", false) :> IBillingPeriodCloseTransactionInterleaving
+
+                let previewTooEarly =
+                    SqlBillingPeriodCloser.CreateForTest(
+                        connectionString,
+                        inert,
+                        FixedBillingCloseClock(nextMonthStartUtc.AddHours(24.0).AddTicks(-1L)) :> IBillingPeriodCloseClock
+                    )
+                    :> IBillingPeriodCloser
+
+                let previewAtBoundary =
+                    SqlBillingPeriodCloser.CreateForTest(
+                        connectionString,
+                        inert,
+                        FixedBillingCloseClock(nextMonthStartUtc.AddHours 24.0) :> IBillingPeriodCloseClock
+                    )
+                    :> IBillingPeriodCloser
+
+                let closeTooEarly =
+                    SqlBillingPeriodCloser.CreateForTest(
+                        connectionString,
+                        inert,
+                        FixedBillingCloseClock(nextMonthStartUtc.AddHours(72.0).AddTicks(-1L)) :> IBillingPeriodCloseClock
+                    )
+                    :> IBillingPeriodCloser
+
+                let closeAtBoundary =
+                    SqlBillingPeriodCloser.CreateForTest(
+                        connectionString,
+                        inert,
+                        FixedBillingCloseClock(nextMonthStartUtc.AddHours 72.0) :> IBillingPeriodCloseClock
+                    )
+                    :> IBillingPeriodCloser
+
+                let! previewBefore = previewTooEarly.PreviewAsync(request scope, CancellationToken.None)
+                let! previewAt = previewAtBoundary.PreviewAsync(request scope, CancellationToken.None)
+                let! closeBefore = closeTooEarly.CloseAsync(request scope, CancellationToken.None)
+                let! closeAt = closeAtBoundary.CloseAsync(request scope, CancellationToken.None)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(previewBefore, Is.EqualTo(BillingPeriodCloseResult.NotEligible))
+
+                        Assert.That(
+                            (match previewAt with
+                             | BillingPeriodCloseResult.Provisional _ -> true
+                             | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(closeBefore, Is.EqualTo(BillingPeriodCloseResult.NotEligible))
+                        Assert.That(closedChargeCount closeAt, Is.Zero))
+                )
+            })
+
+    /// Proves the half-open billing month includes its first instant and excludes the next month's first instant.
+    [<Test>]
+    member _.CloseIncludesMonthStartFactAndExcludesNextMonthStartFact() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                let nextMonthStart = BillingCompletenessScope.nextMonthStart scope
+                do! acceptAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId scope.MonthStart 7L)
+                do! acceptAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId nextMonthStart 11L)
+                do! addPricingAsync connectionString scope
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! closed = closer.CloseAsync(request scope, CancellationToken.None)
+
+                let! postedQuantity =
+                    int64Async
+                        connectionString
+                        "SELECT COALESCE(SUM(TotalQuantity),0) FROM ops.ChargePreviewLine WHERE PeriodFromUtc='2026-06-01T00:00:00' AND PeriodToUtc='2026-07-01T00:00:00';"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(closedChargeCount closed, Is.EqualTo(1))
+                        Assert.That(postedQuantity, Is.EqualTo(7L)))
+                )
+            })
+
+    /// Proves physical constraints and immutable triggers reject mutation while preserving the original close records.
+    [<Test>]
+    member _.PhysicalChargeAndEvidenceMutationsAreRejectedWithoutChangingDurableState() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId, organizationId, repositoryId = Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()
+                let scope = scopeFor ownerId organizationId repositoryId
+                do! acceptAsync connectionString (usageFact (Guid.NewGuid()) ownerId organizationId repositoryId (monthStart + Duration.FromDays 2) 7L)
+                do! addPricingAsync connectionString scope
+                let closer = SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser
+                let! _ = closer.CloseAsync(request scope, CancellationToken.None)
+                use connection = new SqlConnection(connectionString)
+                do! connection.OpenAsync CancellationToken.None
+
+                let rejectMutation sql =
+                    use command = connection.CreateCommand()
+                    command.CommandText <- sql
+
+                    Assert.ThrowsAsync<SqlException>(Func<Task>(fun () -> command.ExecuteNonQueryAsync(CancellationToken.None) :> Task))
+                    |> ignore
+
+                rejectMutation "UPDATE ops.Charge SET ChargeMicros=99;"
+                rejectMutation "DELETE FROM ops.Charge;"
+                rejectMutation "UPDATE ops.BillingPeriodCloseEvidence SET ScheduledOperationProvenance='tampered';"
+                rejectMutation "DELETE FROM ops.BillingPeriodCloseEvidence;"
+                let! charges = countAsync connectionString "SELECT COUNT(*) FROM ops.Charge;"
+                let! evidence = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(charges, Is.EqualTo(1))
+                        Assert.That(evidence, Is.EqualTo(1)))
+                )
+            })
+
+    /// Proves owner concurrency and repository identity remain isolated at the exact close scope.
+    [<Test>]
+    member _.ConcurrentOwnersAndSiblingRepositoriesCloseAsSeparateScopes() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let organizationId = Guid.NewGuid()
+                let ownerA, ownerB = Guid.NewGuid(), Guid.NewGuid()
+                let repositoryA, repositoryB = Guid.NewGuid(), Guid.NewGuid()
+                let ownerAScope = scopeFor ownerA organizationId repositoryA
+                let ownerBScope = scopeFor ownerB organizationId repositoryA
+                let siblingRepositoryScope = scopeFor ownerA organizationId repositoryB
+                do! addPricingAsync connectionString ownerAScope
+                use setup = new SqlConnection(connectionString)
+                do! setup.OpenAsync CancellationToken.None
+                use copyAssignments = setup.CreateCommand()
+
+                copyAssignments.CommandText <-
+                    """
+INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc)
+SELECT NEWID(), @OwnerB, @OrganizationId, @RepositoryA, PricingPlanId, EffectiveFromUtc
+FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryA;
+INSERT INTO ops.PricingAssignment (PricingAssignmentId,OwnerId,OrganizationId,RepositoryId,PricingPlanId,EffectiveFromUtc)
+SELECT NEWID(), @OwnerA, @OrganizationId, @RepositoryB, PricingPlanId, EffectiveFromUtc
+FROM ops.PricingAssignment WHERE OwnerId=@OwnerA AND OrganizationId=@OrganizationId AND RepositoryId=@RepositoryA;
+"""
+
+                copyAssignments.Parameters.Add("@OwnerA", System.Data.SqlDbType.UniqueIdentifier).Value <- ownerA
+                copyAssignments.Parameters.Add("@OwnerB", System.Data.SqlDbType.UniqueIdentifier).Value <- ownerB
+                copyAssignments.Parameters.Add("@OrganizationId", System.Data.SqlDbType.UniqueIdentifier).Value <- organizationId
+                copyAssignments.Parameters.Add("@RepositoryA", System.Data.SqlDbType.UniqueIdentifier).Value <- repositoryA
+                copyAssignments.Parameters.Add("@RepositoryB", System.Data.SqlDbType.UniqueIdentifier).Value <- repositoryB
+                let! _ = copyAssignments.ExecuteNonQueryAsync CancellationToken.None
+
+                let close scope =
+                    (SqlBillingPeriodCloser(connectionString) :> IBillingPeriodCloser)
+                        .CloseAsync(request scope, CancellationToken.None)
+
+                let! results = Task.WhenAll(close ownerAScope, close ownerBScope, close siblingRepositoryScope)
+                let! periodCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriod WHERE State=2;"
+                let! evidenceCount = countAsync connectionString "SELECT COUNT(*) FROM ops.BillingPeriodCloseEvidence;"
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(
+                            results
+                            |> Array.forall (function
+                                | BillingPeriodCloseResult.Closed _ -> true
+                                | _ -> false),
+                            Is.True
+                        )
+
+                        Assert.That(periodCount, Is.EqualTo(3))
+                        Assert.That(evidenceCount, Is.EqualTo(3)))
                 )
             })
 
