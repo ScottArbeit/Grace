@@ -48,6 +48,37 @@ open System.CommandLine.Completions
 /// Groups the branch command parser, handlers, and output helpers.
 module Branch =
 
+    /// Reads only selected object-cache bytes and exposes their normalized paths to the immutable WDU preparation boundary.
+    type private BranchObjectCachePreparedReader(objectRoot: string, files: LocalFileVersion array) =
+        let paths =
+            files
+            |> Array.map (fun file -> string file.RelativePath)
+
+        let lookup = Dictionary<string, LocalFileVersion>(StringComparer.OrdinalIgnoreCase)
+
+        do
+            files
+            |> Array.iter (fun file -> lookup[string file.RelativePath] <- file)
+
+        interface WorkingDirectoryUpdateContracts.IPreparedContentReader with
+            member _.FilePaths = paths :> seq<string>
+
+            member _.OpenReadAsync(relativePath, cancellationToken) =
+                task {
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let key = string relativePath
+
+                    match lookup.TryGetValue(key) with
+                    | true, file ->
+                        let objectPath =
+                            Path.Combine(objectRoot, string file.RelativePath, getLocalObjectCacheFileName file.RelativePath file.Sha256Hash file.Blake3Hash)
+
+                        return File.Open(objectPath, FileMode.Open, FileAccess.Read, FileShare.Read) :> Stream
+                    | false, _ -> return raise (FileNotFoundException($"Prepared object '{key}' was not selected."))
+                }
+
+            member _.Dispose() = ()
+
     /// Derives the retry-stable child Rebase identity owned by one caller-selected Promotion identity.
     let internal buildPromotionRebaseReferenceId (promotionReferenceId: ReferenceId) =
         let seed = $"grace.branch.promote-rebase-reference.v1|{promotionReferenceId:N}"
@@ -3242,7 +3273,7 @@ module Branch =
         inherit AsynchronousCommandLineAction()
 
         /// Routes the switch command from parsed options through validation, the SDK call, and result rendering.
-        let switchHandler (parseResult: ParseResult) (switchParameters: SwitchParameters) =
+        let switchHandler (parseResult: ParseResult) (switchParameters: SwitchParameters) (actionToken: CancellationToken) =
             task {
                 try
                     let graceIds = getNormalizedIdsAndNames parseResult
@@ -3257,6 +3288,7 @@ module Branch =
                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                     /// The set of DirectoryIds in the working directory after the current version is saved.
                     let mutable directoryIdsInNewGraceStatus: HashSet<DirectoryVersionId> = null
+                    let mutable acceptedHashPhase: WorkingDirectoryUpdateContracts.AcceptedBranchPhase option = None
 
                     let showOutput = parseResult |> hasOutput
 
@@ -3316,11 +3348,29 @@ module Branch =
                     let readGraceStatusFile (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: SwitchParameters, currentBranch: BranchDto) =
                         task {
                             t |> startProgressTask showOutput
-                            let! existingGraceStaus = readGraceStatusFile ()
-                            previousGraceStatus <- existingGraceStaus
-                            newGraceStatus <- existingGraceStaus
-                            t |> setProgressTaskValue showOutput 100.0
-                            return Ok(showOutput, parseResult, parameters, currentBranch)
+
+                            let hashSelected =
+                                not (String.IsNullOrWhiteSpace switchParameters.Sha256Hash)
+                                || not (String.IsNullOrWhiteSpace switchParameters.Blake3Hash)
+
+                            if hashSelected && currentBranch.SaveEnabled then
+                                return
+                                    Error(
+                                        GraceError.Create
+                                            "Hash-selected switching currently requires a Branch with Save disabled."
+                                            (getCorrelationId parseResult)
+                                    )
+                            else
+                                let! existingGraceStaus = readGraceStatusFile ()
+                                previousGraceStatus <- existingGraceStaus
+                                newGraceStatus <- existingGraceStaus
+
+                                if hashSelected then
+                                    let! phase = WorkingDirectoryUpdate.captureAcceptedBranchPhase (Current().GraceStatusFile) actionToken
+                                    acceptedHashPhase <- Some phase
+
+                                t |> setProgressTaskValue showOutput 100.0
+                                return Ok(showOutput, parseResult, parameters, currentBranch)
                         }
 
                     // 2. Scan the working directory for differences.
@@ -3849,7 +3899,96 @@ module Branch =
                                         logToAnsiConsole Colors.Error $"{error}"
                                         isError <- true
 
-                                if not <| isError then
+                                let hashSelected =
+                                    not (String.IsNullOrWhiteSpace switchParameters.Sha256Hash)
+                                    || not (String.IsNullOrWhiteSpace switchParameters.Blake3Hash)
+
+                                if hashSelected && not isError then
+                                    try
+                                        let target =
+                                            WorkingDirectoryUpdateContracts.Target.create
+                                                currentBranch.RepositoryId
+                                                currentBranch.BranchId
+                                                graceStatusWithNewDirectoryVersionsFromServer.RootDirectoryId
+                                                graceStatusWithNewDirectoryVersionsFromServer.RootDirectorySha256Hash
+                                                graceStatusWithNewDirectoryVersionsFromServer.RootDirectoryBlake3Hash
+                                            |> Result.defaultWith invalidOp
+
+                                        let graph =
+                                            WorkingDirectoryUpdate.TargetGraph.create target graceStatusWithNewDirectoryVersionsFromServer
+                                            |> Result.defaultWith invalidOp
+
+                                        let manifestEntries =
+                                            graceStatusWithNewDirectoryVersionsFromServer.Index.Values
+                                            |> Seq.collect (fun directory ->
+                                                seq {
+                                                    if directory.RelativePath
+                                                       <> Constants.RootDirectoryPath then
+                                                        yield WorkingDirectoryUpdateContracts.PreparedManifestEntry.Directory directory.RelativePath
+
+                                                    for file in directory.Files do
+                                                        yield
+                                                            WorkingDirectoryUpdateContracts.PreparedManifestEntry.File(
+                                                                file.RelativePath,
+                                                                file.Sha256Hash,
+                                                                file.Blake3Hash
+                                                            )
+                                                })
+                                            |> Seq.toArray
+
+                                        let manifest =
+                                            WorkingDirectoryUpdateContracts.PreparedManifest.create manifestEntries
+                                            |> Result.defaultWith invalidOp
+
+                                        let selectedFiles =
+                                            graceStatusWithNewDirectoryVersionsFromServer.Index.Values
+                                            |> Seq.collect (fun directory -> directory.Files)
+                                            |> Seq.toArray
+
+                                        let! prepared =
+                                            WorkingDirectoryUpdateContracts.PreparedContent.create
+                                                manifest
+                                                (new BranchObjectCachePreparedReader(Current().ObjectDirectory, selectedFiles))
+                                                actionToken
+
+                                        let prepared = prepared |> Result.defaultWith invalidOp
+
+                                        let phase =
+                                            acceptedHashPhase
+                                            |> Option.defaultWith (fun () -> invalidOp "Hash-selected Branch update is missing its accepted no-Save phase.")
+
+                                        let! outcome =
+                                            WorkingDirectoryUpdate.run
+                                                phase
+                                                WorkingDirectoryUpdateContracts.BranchSelection.DirectoryVersion
+                                                graph
+                                                prepared
+                                                (getCorrelationId parseResult)
+
+                                        match outcome with
+                                        | WorkingDirectoryUpdateContracts.Updated _
+                                        | WorkingDirectoryUpdateContracts.Unchanged _ ->
+                                            newGraceStatus <- graceStatusWithNewDirectoryVersionsFromServer
+                                            rootDirectoryId <- newGraceStatus.RootDirectoryId
+                                            rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
+                                            directoryIdsInNewGraceStatus <- newGraceStatus.Index.Keys.ToHashSet()
+                                            t |> setProgressTaskValue showOutput 100.0
+                                            return Ok(showOutput, parseResult, parameters, currentBranch, "Working Directory Update completed.")
+                                        | WorkingDirectoryUpdateContracts.Rejected failure
+                                        | WorkingDirectoryUpdateContracts.UpdateIncomplete failure ->
+                                            return
+                                                Error(GraceError.Create (WorkingDirectoryUpdateContracts.Failure.value failure) (getCorrelationId parseResult))
+                                        | WorkingDirectoryUpdateContracts.FinalizationIncomplete (_, failure) ->
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        ($"Working-directory bytes were updated, but Branch finalization is incomplete: {WorkingDirectoryUpdateContracts.Failure.value failure}. Run `grace doctor --repair-local-state`.")
+                                                        (getCorrelationId parseResult)
+                                                )
+                                    with
+                                    | ex -> return Error(GraceError.Create ex.Message (getCorrelationId parseResult))
+
+                                elif not <| isError then
                                     let workingTreeUpdateMarkerFileName = updateInProgressFileName ()
                                     let workingTreeUpdateMarkerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
 
@@ -4054,7 +4193,7 @@ module Branch =
                             let blake3Hash = getBlake3HashPrefix parseResult
                             switchParameters.Blake3Hash <- blake3Hash
 
-                            let! result = switchHandler parseResult switchParameters
+                            let! result = switchHandler parseResult switchParameters cancellationToken
                             return result
                         })
 

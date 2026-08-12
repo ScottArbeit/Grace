@@ -234,6 +234,15 @@ module internal WorkingDirectoryUpdateContracts =
         /// Returns the branch selected by this target.
         let branchId (Target (_, branchId, _, _, _, _)) = branchId
 
+        /// Returns the exact root DirectoryVersion selected for the local transaction.
+        let rootDirectoryVersionId (Target (_, _, rootDirectoryVersionId, _, _, _)) = rootDirectoryVersionId
+
+        /// Returns the exact SHA-256 root hash that local bytes must prove before completion.
+        let sha256Hash (Target (_, _, _, sha256Hash, _, _)) = sha256Hash
+
+        /// Returns the exact BLAKE3 root hash that local bytes must prove before completion.
+        let blake3Hash (Target (_, _, _, _, blake3Hash, _)) = blake3Hash
+
         /// Returns the canonical target encoding included in caller operation tuples.
         let canonical (Target (_, _, _, _, _, canonical)) = canonical
 
@@ -446,6 +455,9 @@ module internal WorkingDirectoryUpdateContracts =
 
     /// Supplies actual-byte validation and lifetime functions for prepared content.
     module PreparedContent =
+        /// Returns the immutable declared manifest only to the canonical transaction that owns prepared bytes.
+        let internal manifest (PreparedContent (manifest, _, _)) = manifest
+
         /// Validates exact reader coverage and actual dual-hash bytes before a future lease can be acquired.
         let create manifest (reader: IPreparedContentReader) (cancellationToken: CancellationToken) =
             task {
@@ -587,3 +599,6 @@ module internal WorkingDirectoryUpdateContracts =
                 Error "Working Directory Update failure reason must not be empty."
             else
                 Ok(Failure reason)
+
+        /// Returns the user-safe terminal reason without exposing any mutable transaction state.
+        let value (Failure reason) = reason
