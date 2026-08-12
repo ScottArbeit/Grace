@@ -95,6 +95,8 @@ type OperationsUsageFactStoreAdapter(journal: IOperationsUsageJournalStore) =
                     match result with
                     | AcceptedFromJournal -> Ok { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = fact.UsageFactId; Aggregate = None }
                     | AlreadyAccepted -> Ok { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = fact.UsageFactId; Aggregate = None }
+                    | UsageFactJournalProcessResult.AlreadyRejected ->
+                        Ok { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = fact.UsageFactId; Aggregate = None }
                     | MissingJournal -> Error [ "Unsupported UsageFact message has no matching journal row." ]
                     | JournalConflict -> Error [ "Unsupported UsageFact message conflicts with its immutable journal row." ]
             }
@@ -2409,7 +2411,12 @@ type OperationsUsageJournalDispatcherService
 
                             while index < pending.Length do
                                 let entry = pending[index]
-                                do! sender.SendMessageAsync(createMessage entry, cancellationToken)
+                                let! currentEntry = journal.TryGetPendingAsync(entry.UsageFactId, cancellationToken)
+
+                                match currentEntry with
+                                | Some pendingEntry -> do! sender.SendMessageAsync(createMessage pendingEntry, cancellationToken)
+                                | None -> ()
+
                                 index <- index + 1
 
                             do! Task.Delay(retryDelay, cancellationToken)

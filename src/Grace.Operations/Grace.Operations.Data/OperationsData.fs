@@ -2,6 +2,7 @@ namespace Grace.Operations.Data
 
 open Grace.Types.Common
 open Grace.Types.Usage
+open Grace.Shared
 open Microsoft.EntityFrameworkCore
 open Microsoft.Data.SqlClient
 open NodaTime
@@ -675,6 +676,11 @@ module UsageFactPersistencePlan =
                     }
 
                 Ok { RawFact = rawFact; Aggregate = aggregate }
+
+    /// Validates a supported fact and serializes it with the shared options used by the worker parser.
+    let tryCreateCanonical (fact: UsageFact) =
+        let rawPayload = JsonSerializer.SerializeToUtf8Bytes<UsageFact>(fact, Constants.JsonSerializerOptions)
+        tryCreate fact rawPayload
 
 /// Represents the commands available inside one durable operations usage transaction.
 type IOperationsUsageTransaction =

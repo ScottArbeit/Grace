@@ -41,6 +41,7 @@ type UsageFactJournalAppendResult =
 type UsageFactJournalProcessResult =
     | AcceptedFromJournal
     | AlreadyAccepted
+    | AlreadyRejected
     | MissingJournal
     | JournalConflict
 
@@ -55,18 +56,23 @@ type UsageFactJournalRejectResult =
 /// Owns the internal Operations append, dispatch scan, and transactionally verified journal processing seam.
 type IOperationsUsageJournalStore =
 
-    /// Commits a complete supported fact as immutable Pending truth before any broker send.
-    abstract AppendAsync:
-        fact: UsageFact * rawPayload: byte array * cancellationToken: CancellationToken -> Task<Result<UsageFactJournalAppendResult, string list>>
+    /// Commits a complete supported fact as immutable canonical Pending truth before any broker send.
+    abstract AppendAsync: fact: UsageFact * cancellationToken: CancellationToken -> Task<Result<UsageFactJournalAppendResult, string list>>
 
     /// Reads a bounded stable set of currently Pending immutable facts for retryable Service Bus signalling.
     abstract ListPendingAsync: batchSize: int * cancellationToken: CancellationToken -> Task<UsageFactJournalEntry list>
+
+    /// Rereads one candidate immediately before send and returns it only while its durable state remains Pending.
+    abstract TryGetPendingAsync: usageFactId: UsageFactId * cancellationToken: CancellationToken -> Task<UsageFactJournalEntry option>
 
     /// Rechecks the matching immutable journal row inside the raw, aggregate, and state transaction before accepting it.
     abstract ProcessAsync: fact: UsageFact * rawPayload: byte array * cancellationToken: CancellationToken -> Task<UsageFactJournalProcessResult>
 
     /// Atomically records scoped rejection evidence and the Rejected state for an already journaled supported fact.
     abstract RejectAsync: fact: UsageFact * rawPayload: byte array * reason: string * cancellationToken: CancellationToken -> Task<UsageFactJournalRejectResult>
+
+    /// Explicitly replays one matching Rejected fact into accepted raw and aggregate storage.
+    abstract RepairAsync: fact: UsageFact * cancellationToken: CancellationToken -> Task<UsageFactJournalProcessResult>
 
 /// Stores immutable usage facts in the SQL journal and treats Service Bus delivery as a retryable signal only.
 type SqlOperationsUsageJournalStore(connectionString: string) =
@@ -349,9 +355,9 @@ WHERE UsageFactId = @UsageFactId AND State = 0;
         }
 
     /// Appends one supported fact with immutable-idempotence semantics before a dispatcher can observe it.
-    member _.AppendAsync(fact: UsageFact, rawPayload: byte array, cancellationToken: CancellationToken) =
+    member _.AppendAsync(fact: UsageFact, cancellationToken: CancellationToken) =
         task {
-            match UsageFactPersistencePlan.tryCreate fact rawPayload with
+            match UsageFactPersistencePlan.tryCreateCanonical fact with
             | Error errors -> return Error errors
             | Ok plan ->
                 let! result =
@@ -425,10 +431,48 @@ ORDER BY CreatedAtUtc ASC, UsageFactId ASC;
             return rows |> Seq.toList
         }
 
+    /// Rereads a selected identity immediately before Service Bus send so stale scans cannot signal a terminal row.
+    member _.TryGetPendingAsync(usageFactId: UsageFactId, cancellationToken: CancellationToken) =
+        task {
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+
+            command.CommandText <-
+                """
+SELECT UsageFactId, RawPayload, CorrelationId, FactKind, OwnerId, OrganizationId, RepositoryId, StoragePoolId, Quantity, ObservedAtUtc, State
+FROM ops.UsageFactJournal WITH (READCOMMITTEDLOCK)
+WHERE UsageFactId = @UsageFactId AND State = 0;
+"""
+
+            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
+            use! reader = command.ExecuteReaderAsync cancellationToken
+            let! hasRow = reader.ReadAsync cancellationToken
+
+            if not hasRow then
+                return None
+            else
+                return
+                    Some
+                        {
+                            UsageFactId = reader.GetGuid 0
+                            RawPayload = reader.GetFieldValue<byte array> 1
+                            CorrelationId = reader.GetString 2
+                            FactKind = enum<UsageFactKind> (reader.GetInt32 3)
+                            OwnerId = reader.GetGuid 4
+                            OrganizationId = reader.GetGuid 5
+                            RepositoryId = reader.GetGuid 6
+                            StoragePoolId = reader.GetString 7
+                            Quantity = reader.GetInt64 8
+                            ObservedAt = reader.GetDateTime 9 |> toInstant
+                            State = enum<UsageFactJournalState> (reader.GetInt32 10)
+                        }
+        }
+
     /// Processes only a matching journalled fact and atomically commits raw, aggregate, rejection repair, and Accepted.
     member _.ProcessAsync(fact: UsageFact, rawPayload: byte array, cancellationToken: CancellationToken) =
         task {
-            match UsageFactPersistencePlan.tryCreate fact rawPayload with
+            match UsageFactPersistencePlan.tryCreateCanonical fact with
             | Error errors -> return raise (InvalidOperationException(String.Join("; ", errors)))
             | Ok plan ->
                 return!
@@ -443,6 +487,39 @@ ORDER BY CreatedAtUtc ASC, UsageFactId ASC;
                                 | None -> return MissingJournal
                                 | Some entry when not (matches plan.RawFact entry) -> return JournalConflict
                                 | Some entry when entry.State = UsageFactJournalState.Accepted -> return AlreadyAccepted
+                                | Some entry when entry.State = UsageFactJournalState.Rejected -> return UsageFactJournalProcessResult.AlreadyRejected
+                                | Some _ ->
+                                    let! inserted = tryInsertRawAsync connection transaction plan.RawFact operationCancellationToken
+
+                                    if inserted then
+                                        do! addAggregateAsync connection transaction plan.Aggregate operationCancellationToken
+
+                                    do! resolveRejectionAsync connection transaction plan.RawFact.UsageFactId scope operationCancellationToken
+                                    do! markAcceptedAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken
+                                    return AcceptedFromJournal
+                            })
+                        cancellationToken
+        }
+
+    /// Explicitly repairs a matching Rejected fact by resolving its evidence and accepting it in one transaction.
+    member _.RepairAsync(fact: UsageFact, cancellationToken: CancellationToken) =
+        task {
+            match UsageFactPersistencePlan.tryCreateCanonical fact with
+            | Error errors -> return raise (InvalidOperationException(String.Join("; ", errors)))
+            | Ok plan ->
+                return!
+                    executeAsync
+                        (fun connection transaction operationCancellationToken ->
+                            task {
+                                let scope = scopeFor plan.RawFact
+                                do! acquireScopeAsync connection transaction scope operationCancellationToken
+                                let! journal = readJournalForUpdateAsync connection transaction plan.RawFact.UsageFactId operationCancellationToken
+
+                                match journal with
+                                | None -> return MissingJournal
+                                | Some entry when not (matches plan.RawFact entry) -> return JournalConflict
+                                | Some entry when entry.State = UsageFactJournalState.Accepted -> return AlreadyAccepted
+                                | Some entry when entry.State = UsageFactJournalState.Pending -> return JournalConflict
                                 | Some _ ->
                                     let! inserted = tryInsertRawAsync connection transaction plan.RawFact operationCancellationToken
 
@@ -459,7 +536,7 @@ ORDER BY CreatedAtUtc ASC, UsageFactId ASC;
     /// Marks an existing matching Pending journal row Rejected with its exact-scope evidence in one transaction.
     member _.RejectAsync(fact: UsageFact, rawPayload: byte array, reason: string, cancellationToken: CancellationToken) =
         task {
-            match UsageFactPersistencePlan.tryCreate fact rawPayload with
+            match UsageFactPersistencePlan.tryCreateCanonical fact with
             | Error errors -> return raise (InvalidOperationException(String.Join("; ", errors)))
             | Ok plan ->
                 return!
@@ -485,7 +562,9 @@ ORDER BY CreatedAtUtc ASC, UsageFactId ASC;
 
     interface IOperationsUsageJournalStore with
 
-        member this.AppendAsync(fact, rawPayload, cancellationToken) = this.AppendAsync(fact, rawPayload, cancellationToken)
+        member this.AppendAsync(fact, cancellationToken) = this.AppendAsync(fact, cancellationToken)
         member this.ListPendingAsync(batchSize, cancellationToken) = this.ListPendingAsync(batchSize, cancellationToken)
+        member this.TryGetPendingAsync(usageFactId, cancellationToken) = this.TryGetPendingAsync(usageFactId, cancellationToken)
         member this.ProcessAsync(fact, rawPayload, cancellationToken) = this.ProcessAsync(fact, rawPayload, cancellationToken)
         member this.RejectAsync(fact, rawPayload, reason, cancellationToken) = this.RejectAsync(fact, rawPayload, reason, cancellationToken)
+        member this.RepairAsync(fact, cancellationToken) = this.RepairAsync(fact, cancellationToken)

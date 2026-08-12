@@ -34,18 +34,18 @@ CREATE TABLE ops.UsageFactJournal
     CONSTRAINT PK_ops_UsageFactJournal PRIMARY KEY (UsageFactId),
     CONSTRAINT CK_ops_UsageFactJournal_Identity CHECK
     (
-        UsageFactId <> '00000000-0000-0000-0000-000000000000'
-        AND OwnerId <> '00000000-0000-0000-0000-000000000000'
-        AND OrganizationId <> '00000000-0000-0000-0000-000000000000'
-        AND RepositoryId <> '00000000-0000-0000-0000-000000000000'
-        AND LEN(LTRIM(RTRIM(CorrelationId))) > 0
-        AND LEN(LTRIM(RTRIM(StoragePoolId))) > 0
-        AND DATALENGTH(RawPayload) > 0
+        [UsageFactId] <> '00000000-0000-0000-0000-000000000000'
+        AND [OwnerId] <> '00000000-0000-0000-0000-000000000000'
+        AND [OrganizationId] <> '00000000-0000-0000-0000-000000000000'
+        AND [RepositoryId] <> '00000000-0000-0000-0000-000000000000'
+        AND LEN(LTRIM(RTRIM([CorrelationId]))) > 0
+        AND LEN(LTRIM(RTRIM([StoragePoolId]))) > 0
+        AND DATALENGTH([RawPayload]) > 0
     ),
     CONSTRAINT CK_ops_UsageFactJournal_State CHECK
     (
-        (State = 0 AND TerminalAtUtc IS NULL)
-        OR (State IN (1, 2) AND TerminalAtUtc IS NOT NULL)
+        ([State] = 0 AND [TerminalAtUtc] IS NULL)
+        OR ([State] IN (1, 2) AND [TerminalAtUtc] IS NOT NULL)
     )
 );
 
@@ -344,7 +344,22 @@ CREATE INDEX IX_ops_UsageFactJournal_PendingDispatch
 
         let journal = modelBuilder.Entity<UsageFactJournalEntity>()
 
-        journal.ToTable("UsageFactJournal", "ops")
+        journal.ToTable(
+            "UsageFactJournal",
+            "ops",
+            fun (table: TableBuilder<UsageFactJournalEntity>) ->
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactJournal_Identity",
+                    "[UsageFactId] <> '00000000-0000-0000-0000-000000000000' AND [OwnerId] <> '00000000-0000-0000-0000-000000000000' AND [OrganizationId] <> '00000000-0000-0000-0000-000000000000' AND [RepositoryId] <> '00000000-0000-0000-0000-000000000000' AND LEN(LTRIM(RTRIM([CorrelationId]))) > 0 AND LEN(LTRIM(RTRIM([StoragePoolId]))) > 0 AND DATALENGTH([RawPayload]) > 0"
+                )
+                |> ignore
+
+                table.HasCheckConstraint(
+                    "CK_ops_UsageFactJournal_State",
+                    "([State] = 0 AND [TerminalAtUtc] IS NULL) OR ([State] IN (1, 2) AND [TerminalAtUtc] IS NOT NULL)"
+                )
+                |> ignore
+        )
         |> ignore
 
         journal

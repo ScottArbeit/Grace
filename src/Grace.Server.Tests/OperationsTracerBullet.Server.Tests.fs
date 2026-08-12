@@ -1,7 +1,6 @@
 namespace Grace.Server.Tests
 
 open Azure.Messaging.ServiceBus
-open Grace.Operations.Data
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Types.Common
@@ -92,20 +91,33 @@ type OperationsTracerBulletServerTests() =
 
         message
 
-    /// Appends the supported immutable fact through the production Operations seam before the hosted dispatcher emits its Service Bus signal.
+    /// Inserts a canonical Pending journal fact through the AppHost SQL boundary before the hosted dispatcher emits its Service Bus signal.
     let appendJournalFactAsync (fact: UsageFact) =
         task {
-            let payload = JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
-            let journal = SqlOperationsUsageJournalStore(operationsSqlConnectionString)
-            let! result = journal.AppendAsync(fact, payload, CancellationToken.None)
+            use connection = new SqlConnection(operationsSqlConnectionString)
+            do! connection.OpenAsync()
+            use command = connection.CreateCommand()
 
-            match result with
-            | Ok AppendedPending
-            | Ok AlreadyPending -> return ()
-            | Ok terminal -> return invalidOp $"Tracer journal fact unexpectedly reached terminal state {terminal} before dispatch."
-            | Error errors ->
-                let details = String.Join("; ", errors)
-                return invalidOp $"Tracer journal append failed: {details}"
+            command.CommandText <-
+                $"""
+INSERT INTO {operationsUsageFactJournalTable}
+    (UsageFactId, RawPayload, CorrelationId, FactKind, OwnerId, OrganizationId, RepositoryId, StoragePoolId, Quantity, ObservedAtUtc, State)
+VALUES
+    (@UsageFactId, @RawPayload, @CorrelationId, @FactKind, @OwnerId, @OrganizationId, @RepositoryId, @StoragePoolId, @Quantity, @ObservedAtUtc, 0);
+"""
+
+            command.Parameters.Add("@UsageFactId", SqlDbType.UniqueIdentifier).Value <- fact.UsageFactId
+            command.Parameters.Add("@RawPayload", SqlDbType.VarBinary, -1).Value <- JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
+            command.Parameters.Add("@CorrelationId", SqlDbType.NVarChar, 200).Value <- fact.CorrelationId
+            command.Parameters.Add("@FactKind", SqlDbType.Int).Value <- int fact.FactKind
+            command.Parameters.Add("@OwnerId", SqlDbType.UniqueIdentifier).Value <- fact.Scope.OwnerId
+            command.Parameters.Add("@OrganizationId", SqlDbType.UniqueIdentifier).Value <- fact.Scope.OrganizationId
+            command.Parameters.Add("@RepositoryId", SqlDbType.UniqueIdentifier).Value <- fact.Scope.RepositoryId
+            command.Parameters.Add("@StoragePoolId", SqlDbType.NVarChar, operationsStoragePoolIdMaxLength).Value <- fact.Resource.StoragePoolId
+            command.Parameters.Add("@Quantity", SqlDbType.BigInt).Value <- fact.Quantity
+            command.Parameters.Add("@ObservedAtUtc", SqlDbType.DateTime2).Value <- fact.ObservedAt.ToDateTimeUtc()
+            let! _ = command.ExecuteNonQueryAsync()
+            return ()
         }
 
     /// Sends one raw message directly to the operational facts topic for duplicate and invalid-payload proof.

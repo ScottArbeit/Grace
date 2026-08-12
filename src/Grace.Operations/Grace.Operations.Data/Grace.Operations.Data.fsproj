@@ -36,6 +36,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Grace.Operations.fsproj" />
+    <ProjectReference Include="..\..\Grace.Shared\Grace.Shared.fsproj" />
     <ProjectReference Include="..\..\Grace.Types\Grace.Types.fsproj" />
   </ItemGroup>
 

@@ -1382,8 +1382,8 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 let journal = SqlOperationsUsageJournalStore(connectionString)
                 let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
 
-                let! firstAppend = journal.AppendAsync(usageFact, rawPayload, CancellationToken.None)
-                let! secondAppend = journal.AppendAsync(usageFact, rawPayload, CancellationToken.None)
+                let! firstAppend = journal.AppendAsync(usageFact, CancellationToken.None)
+                let! secondAppend = journal.AppendAsync(usageFact, CancellationToken.None)
                 let! blocked = completeness.EvaluateBillingCompletenessAsync(exactScope, CancellationToken.None)
                 let! unrelated = completeness.EvaluateBillingCompletenessAsync(unrelatedScope, CancellationToken.None)
                 let! firstProcess = journal.ProcessAsync(usageFact, rawPayload, CancellationToken.None)
@@ -1419,7 +1419,7 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 )
             })
 
-    /// Proves deterministic rejection writes exact-scope evidence and Rejected atomically, then explicit same-payload processing repairs it.
+    /// Proves normal delivery leaves Rejected truth intact and only explicit same-payload replay repairs it.
     [<Test>]
     member _.JournalRejectionIsAtomicAndAcceptanceRepairsOnlyMatchingEvidence() =
         withDatabaseAsync (fun connectionString ->
@@ -1434,7 +1434,7 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                 let journal = SqlOperationsUsageJournalStore(connectionString)
                 let completeness = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
 
-                let! appended = journal.AppendAsync(usageFact, rawPayload, CancellationToken.None)
+                let! appended = journal.AppendAsync(usageFact, CancellationToken.None)
                 let! rejected = journal.RejectAsync(usageFact, rawPayload, "deterministic policy rejection", CancellationToken.None)
                 let! blockedByRejected = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
 
@@ -1448,7 +1448,13 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                         connectionString
                         $"SELECT COUNT(*) FROM ops.UsageFactJournal WHERE UsageFactId = '{usageFact.UsageFactId:D}' AND State = 2;"
 
-                let! accepted = journal.ProcessAsync(usageFact, rawPayload, CancellationToken.None)
+                let! normalDelivery = journal.ProcessAsync(usageFact, rawPayload, CancellationToken.None)
+                let! rejectedAfterNormalDelivery = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+
+                let! rawCountAfterNormalDelivery =
+                    executeInt32Async connectionString $"SELECT COUNT(*) FROM ops.RawUsageFact WHERE UsageFactId = '{usageFact.UsageFactId:D}';"
+
+                let! accepted = journal.RepairAsync(usageFact, CancellationToken.None)
                 let! completeAfterRepair = completeness.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
 
                 let! activeRejectionCount =
@@ -1471,6 +1477,9 @@ WHERE RejectionId = '{rejection.RejectionId:D}'
                         Assert.That(blockedByRejected, Is.EqualTo(BlockedByActiveScopedRejection))
                         Assert.That(rejectionCount, Is.EqualTo(1))
                         Assert.That(rejectedJournalCount, Is.EqualTo(1))
+                        Assert.That(normalDelivery, Is.EqualTo(UsageFactJournalProcessResult.AlreadyRejected))
+                        Assert.That(rejectedAfterNormalDelivery, Is.EqualTo(BlockedByActiveScopedRejection))
+                        Assert.That(rawCountAfterNormalDelivery, Is.Zero)
                         Assert.That(accepted, Is.EqualTo(AcceptedFromJournal))
                         Assert.That(completeAfterRepair, Is.EqualTo(Complete))
                         Assert.That(activeRejectionCount, Is.Zero)
