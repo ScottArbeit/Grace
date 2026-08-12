@@ -359,32 +359,7 @@ module WorkingDirectoryUpdatePreparedContentTests =
             WorkingDirectoryUpdate.Operation.watchReplay repositoryId branchId "cursor-002"
             |> required
 
-        let firstRequest =
-            WorkingDirectoryUpdate.Request.create target first preparedContent "diagnostic-42"
-            |> required
-
-        let secondRequest =
-            WorkingDirectoryUpdate.Request.create target second preparedContent "diagnostic-42"
-            |> required
-
-        let differentCorrelationRequest =
-            WorkingDirectoryUpdate.Request.create target first preparedContent "diagnostic-99"
-            |> required
-
-        WorkingDirectoryUpdate.Request.operation firstRequest
-        |> WorkingDirectoryUpdate.Operation.value
-        |> should
-            equal
-            (WorkingDirectoryUpdate.Request.operation differentCorrelationRequest
-             |> WorkingDirectoryUpdate.Operation.value)
-
-        WorkingDirectoryUpdate.Request.operation firstRequest
-        |> WorkingDirectoryUpdate.Operation.value
-        |> should
-            not'
-            (equal (
-                WorkingDirectoryUpdate.Request.operation secondRequest
-                |> WorkingDirectoryUpdate.Operation.value
-            ))
+        WorkingDirectoryUpdate.Operation.value first
+        |> should not' (equal (WorkingDirectoryUpdate.Operation.value second))
 
         WorkingDirectoryUpdate.PreparedContent.dispose preparedContent

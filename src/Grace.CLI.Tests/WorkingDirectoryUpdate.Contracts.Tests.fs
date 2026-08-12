@@ -6,11 +6,7 @@ open Grace.Shared
 open Grace.Types.Common
 open NUnit.Framework
 open System
-open System.IO
-open System.Security.Cryptography
-open System.Text
 open System.Threading
-open System.Threading.Tasks
 
 module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
 
@@ -56,40 +52,6 @@ module WorkingDirectoryUpdateContractsTests =
         WorkingDirectoryUpdate.Operation.value operation
         |> should not' (equal baseline)
 
-    /// Supplies deterministic bytes to the private request constructor without a filesystem dependency.
-    type private BindingReader(bytes: byte array) =
-        interface WorkingDirectoryUpdate.IPreparedContentReader with
-            /// Lists the single deterministic file used by target-binding tests.
-            member _.FilePaths = seq { "binding.txt" }
-
-            /// Opens a fresh stream so preparation owns immutable verified bytes.
-            member _.OpenReadAsync(_relativePath, _cancellationToken) = Task.FromResult<Stream>(new MemoryStream(bytes, writable = false))
-
-            /// Requires no cleanup because this test reader owns no external resource.
-            member _.Dispose() = ()
-
-    /// Builds verified private content required to construct a Request in target-binding scenarios.
-    let private preparedContent () =
-        let bytes = Encoding.UTF8.GetBytes("target binding")
-
-        let sha256Hash =
-            SHA256.HashData(bytes)
-            |> Convert.ToHexString
-            |> fun value -> Sha256Hash(value.ToLowerInvariant())
-
-        let blake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
-
-        let preparedManifest =
-            WorkingDirectoryUpdate.PreparedManifest.create [ WorkingDirectoryUpdate.PreparedManifestEntry.File(
-                                                                 RelativePath "binding.txt",
-                                                                 sha256Hash,
-                                                                 blake3Hash
-                                                             ) ]
-            |> required
-
-        WorkingDirectoryUpdate.PreparedContent.create preparedManifest (new BindingReader(bytes)) CancellationToken.None
-        |> fun task -> task.GetAwaiter().GetResult()
-        |> required
 
     /// Verifies target construction rejects incomplete identifiers and noncanonical hashes.
     [<Test>]
@@ -340,11 +302,10 @@ module WorkingDirectoryUpdateContractsTests =
         WorkingDirectoryUpdate.Operation.value operation
         |> should equal "sha256:66d663c833c8a6984092cbd243d78dd7c01518aae7fa3456f234e7c7339f94f2"
 
-    /// Verifies Branch and Connect requests and receipts cannot substitute any root identity fact.
+    /// Verifies Branch and Connect receipts cannot substitute any root identity fact.
     [<Test>]
-    let ``Branch and Connect bind requests and receipts to their complete selected target`` () =
+    let ``Branch and Connect bind receipts to their complete selected target`` () =
         let selectedTarget = selectedTarget ()
-        let preparedContent = preparedContent ()
 
         let branchOperation =
             WorkingDirectoryUpdate.Operation.branchSwitch
@@ -369,20 +330,12 @@ module WorkingDirectoryUpdateContractsTests =
             ]
 
         let assertCompleteBinding operation =
-            WorkingDirectoryUpdate.Request.create selectedTarget operation preparedContent "target-binding"
-            |> Result.isOk
-            |> should equal true
-
             WorkingDirectoryUpdate.Receipt.create selectedTarget operation true
             |> Result.isOk
             |> should equal true
 
             mismatchedTargets
             |> List.iter (fun mismatchedTarget ->
-                WorkingDirectoryUpdate.Request.create mismatchedTarget operation preparedContent "target-binding"
-                |> Result.isError
-                |> should equal true
-
                 WorkingDirectoryUpdate.Receipt.create mismatchedTarget operation true
                 |> Result.isError
                 |> should equal true)
@@ -390,4 +343,28 @@ module WorkingDirectoryUpdateContractsTests =
         assertCompleteBinding branchOperation
         assertCompleteBinding connectOperation
 
-        WorkingDirectoryUpdate.PreparedContent.dispose preparedContent
+    /// Proves no-Save admission seals its revision, status fingerprint, and original action token before preparation.
+    [<Test>]
+    let ``Accepted Branch phase requires one complete immutable admission baseline`` () =
+        use cancellation = new CancellationTokenSource()
+
+        let accepted =
+            WorkingDirectoryUpdate.AcceptedBranchPhase.create 42L "canonical-complete-status-fingerprint" cancellation.Token
+            |> required
+
+        WorkingDirectoryUpdate.AcceptedBranchPhase.localStatusRevision accepted
+        |> should equal 42L
+
+        WorkingDirectoryUpdate.AcceptedBranchPhase.statusFingerprint accepted
+        |> should equal "canonical-complete-status-fingerprint"
+
+        WorkingDirectoryUpdate.AcceptedBranchPhase.actionToken accepted
+        |> should equal cancellation.Token
+
+        WorkingDirectoryUpdate.AcceptedBranchPhase.create -1L "canonical-complete-status-fingerprint" cancellation.Token
+        |> Result.isError
+        |> should equal true
+
+        WorkingDirectoryUpdate.AcceptedBranchPhase.create 42L "" cancellation.Token
+        |> Result.isError
+        |> should equal true

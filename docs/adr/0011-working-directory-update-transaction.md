@@ -26,8 +26,10 @@ justify three local-integrity implementations.
 
 ## Decision
 
-- The internal module exposes one generic `run` operation and one `retryFinalization` operation. Caller-specific
-  constructors create private normalized requests.
+- The internal module exposes one canonical five-input `run` operation: sealed `AcceptedBranchPhase`, typed Branch
+  selection, exact resolved target graph, immutable prepared content, and diagnostic correlation. The Branch caller
+  seals the accepted phase immediately after admission and retains it unchanged through preparation; no generic
+  normalized request or caller finalizer can bypass that seam.
 - Target identity contains repository, branch, root DirectoryVersion, SHA-256, and BLAKE3. Caller operation identity is
   separate and deterministic. Each execution attempt receives a separate random marker token.
 - Prepared-content adapters expose exact immutable manifests and readable uncompressed bytes. They never provide
