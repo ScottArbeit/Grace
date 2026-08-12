@@ -329,27 +329,11 @@ module WorkingDirectoryUpdatePreparedContentTests =
 
             reader.Disposed |> should equal true)
 
-    /// Verifies diagnostic correlations cannot redefine or merge Watch operation identities.
+    /// Verifies each Watch replay cursor contributes to the deterministic operation identity.
     [<Test>]
-    let ``diagnostic correlations preserve operation identity boundaries`` () =
-        let bytes = Encoding.UTF8.GetBytes("request bytes")
-        let preparedManifest = manifest [ fileEntry "content.txt" bytes ]
-
-        let preparedContent =
-            prepare preparedManifest (new TrackingReader([ "content.txt" ], [ "content.txt", bytes ]))
-            |> required
-
-        let target =
-            WorkingDirectoryUpdate.Target.create
-                (Guid.Parse("5f48b9a7-5537-4d2d-aeda-16c6d66a1bbc"))
-                (Guid.Parse("f191d2d1-8194-4e48-b4e0-9f183dab177e"))
-                (Guid.Parse("b1f5373a-7303-4dc1-b085-113e8efed444"))
-                (Sha256Hash "40786b40bc5f3bc9070bf49f72bbf1f8b160bb952156e3c9894438c82d03dbd9")
-                (Blake3Hash "dc938391649e1c587adcf4ddfe0b06b7a6c47df9e9812c4bea6d01a7c9eab836")
-            |> required
-
-        let repositoryId = WorkingDirectoryUpdate.Target.repositoryId target
-        let branchId = WorkingDirectoryUpdate.Target.branchId target
+    let ``Watch cursors participate in operation identity`` () =
+        let repositoryId = Guid.Parse("5f48b9a7-5537-4d2d-aeda-16c6d66a1bbc")
+        let branchId = Guid.Parse("f191d2d1-8194-4e48-b4e0-9f183dab177e")
 
         let first =
             WorkingDirectoryUpdate.Operation.watchReplay repositoryId branchId "cursor-001"
@@ -361,5 +345,3 @@ module WorkingDirectoryUpdatePreparedContentTests =
 
         WorkingDirectoryUpdate.Operation.value first
         |> should not' (equal (WorkingDirectoryUpdate.Operation.value second))
-
-        WorkingDirectoryUpdate.PreparedContent.dispose preparedContent

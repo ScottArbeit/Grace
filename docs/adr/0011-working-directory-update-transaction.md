@@ -132,8 +132,8 @@ duplicated and unprovable as one contract.
 
 ### Expose separate Branch, Watch, and Connect transaction operations
 
-Caller-oriented entries are ergonomic but make today's caller taxonomy the architecture. Private request constructors
-provide the same ergonomics without three transaction implementations.
+Caller-oriented entries are ergonomic but make today's caller taxonomy the architecture. Branch instead prepares the
+five canonical facts for the one `run` seam without an intermediate request object or constructor.
 
 ### Expose generic transaction participants
 
