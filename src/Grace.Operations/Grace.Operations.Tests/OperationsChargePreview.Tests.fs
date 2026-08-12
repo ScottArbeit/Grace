@@ -244,7 +244,7 @@ type OperationsChargePreviewTests() =
                 "..",
                 "Grace.Operations.Data",
                 "Migrations",
-                "20260711090000_AddChargePreviewLines.fs"
+                "20260812090000_AddBillingCompletenessCoordination.fs"
             )
             |> Path.GetFullPath
 
@@ -329,6 +329,8 @@ type OperationsChargePreviewTests() =
 
         ChargePreviewTestData.multiple (fun () ->
             Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
+            Assert.That(targetModelSource, Does.Not.Match(@"\bOperationsModel\.configure(?:Model)?\b"))
+            Assert.That(targetModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)[A-Za-z0-9_]*\b"))
             Assert.That(snapshotModelSource, Does.Not.Match(@"\bOperations[A-Za-z0-9_]*(?:Sql|Model|Configuration|Options|Schema)\."))
             Assert.That(targetModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
             Assert.That(snapshotModelSource, Does.Not.Match(@"(?im)^\s*[A-Za-z0-9_.]*(?:configure|configureModel)\s+modelBuilder\s*$"))
@@ -338,6 +340,9 @@ type OperationsChargePreviewTests() =
             Assert.That(snapshotModelSource, Does.Contain("let rawFact = modelBuilder.Entity<RawUsageFactEntity>()"))
             Assert.That(targetModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
             Assert.That(snapshotModelSource, Does.Contain("let line = modelBuilder.Entity<ChargePreviewLineEntity>()"))
+            Assert.That(targetModelSource, Does.Contain("let rejection = modelBuilder.Entity<UsageFactRejectionEntity>()"))
+            Assert.That(targetModelSource, Does.Contain("CK_ops_UsageFactRejection_CompleteScopeRequiresFact"))
+            Assert.That(targetModelSource, Does.Contain("UX_ops_UsageFactRejection_ActiveScopedFact"))
             Assert.That((migrationShape = snapshotShape), Is.True)
 
             Assert.That(

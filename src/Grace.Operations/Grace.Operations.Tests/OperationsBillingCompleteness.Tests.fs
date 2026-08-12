@@ -18,7 +18,8 @@ type private ObservedOperationsUsageTransaction
     (
         inner: IOperationsUsageTransaction,
         beforeScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task,
-        afterScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task
+        afterScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task,
+        afterUsageAggregateAsync: UsageAggregateMinute -> CancellationToken -> Task
     ) =
 
     interface IOperationsUsageTransaction with
@@ -35,7 +36,11 @@ type private ObservedOperationsUsageTransaction
         member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
             inner.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken)
 
-        member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) = inner.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken)
+        member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) =
+            task {
+                do! inner.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken)
+                do! afterUsageAggregateAsync aggregate cancellationToken
+            }
 
         member _.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken) = inner.RecordScopedUsageFactRejectionAsync(rejection, cancellationToken)
 
@@ -51,7 +56,8 @@ type private ObservedOperationsUsageTransactionScope
     (
         inner: IOperationsUsageTransactionScope,
         beforeScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task,
-        afterScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task
+        afterScopeLockAsync: BillingCompletenessScope -> CancellationToken -> Task,
+        afterUsageAggregateAsync: UsageAggregateMinute -> CancellationToken -> Task
     ) =
 
     interface IOperationsUsageTransactionScope with
@@ -60,7 +66,8 @@ type private ObservedOperationsUsageTransactionScope
             inner.ExecuteAsync(
                 (fun transaction operationCancellationToken ->
                     operation
-                        (ObservedOperationsUsageTransaction(transaction, beforeScopeLockAsync, afterScopeLockAsync) :> IOperationsUsageTransaction)
+                        (ObservedOperationsUsageTransaction(transaction, beforeScopeLockAsync, afterScopeLockAsync, afterUsageAggregateAsync)
+                        :> IOperationsUsageTransaction)
                         operationCancellationToken),
                 cancellationToken
             )
@@ -234,7 +241,12 @@ END;
             :> Task)
 
         OperationsUsageStore(
-            ObservedOperationsUsageTransactionScope(SqlOperationsUsageTransactionScope connectionString, (fun _ _ -> Task.CompletedTask), afterScopeLockAsync)
+            ObservedOperationsUsageTransactionScope(
+                SqlOperationsUsageTransactionScope connectionString,
+                (fun _ _ -> Task.CompletedTask),
+                afterScopeLockAsync,
+                (fun _ _ -> Task.CompletedTask)
+            )
         )
 
     /// Creates a production store that signals after a real SQL lock grant without pausing its durable operation.
@@ -244,7 +256,42 @@ END;
             Task.CompletedTask
 
         OperationsUsageStore(
-            ObservedOperationsUsageTransactionScope(SqlOperationsUsageTransactionScope connectionString, (fun _ _ -> Task.CompletedTask), afterScopeLockAsync)
+            ObservedOperationsUsageTransactionScope(
+                SqlOperationsUsageTransactionScope connectionString,
+                (fun _ _ -> Task.CompletedTask),
+                afterScopeLockAsync,
+                (fun _ _ -> Task.CompletedTask)
+            )
+        )
+
+    /// Creates a production store that cancels only after a real transaction has staged its aggregate under the granted scope lock.
+    let cancellingStore
+        (connectionString: string)
+        (lockGranted: TaskCompletionSource<unit>)
+        (usageStaged: TaskCompletionSource<unit>)
+        (releaseCancellation: TaskCompletionSource<unit>)
+        (cancellation: CancellationTokenSource)
+        =
+        let afterScopeLockAsync (_: BillingCompletenessScope) (_: CancellationToken) =
+            lockGranted.TrySetResult() |> ignore
+            Task.CompletedTask
+
+        let afterUsageAggregateAsync (_: UsageAggregateMinute) (cancellationToken: CancellationToken) =
+            (task {
+                usageStaged.TrySetResult() |> ignore
+                do! releaseCancellation.Task.WaitAsync CancellationToken.None
+                cancellation.Cancel()
+                cancellationToken.ThrowIfCancellationRequested()
+            }
+            :> Task)
+
+        OperationsUsageStore(
+            ObservedOperationsUsageTransactionScope(
+                SqlOperationsUsageTransactionScope connectionString,
+                (fun _ _ -> Task.CompletedTask),
+                afterScopeLockAsync,
+                afterUsageAggregateAsync
+            )
         )
 
     /// Creates scoped active rejection evidence for the supplied exact accepted-fact tuple.
@@ -563,6 +610,85 @@ VALUES
                 let! complete = setupStore.EvaluateBillingCompletenessAsync(nextScope, CancellationToken.None)
 
                 Assert.That(complete, Is.EqualTo(Complete))
+            })
+
+    /// Proves cancellation after staged repair and usage rolls back, releases the real scope lock, and leaves completeness truthful.
+    [<Test>]
+    member _.CancellationAfterLockGrantRollsBackStagedRepairAndUsageBeforeTheNextStoreAction() =
+        withDatabaseAsync (fun connectionString ->
+            task {
+                let ownerId = Guid.NewGuid()
+                let organizationId = Guid.NewGuid()
+                let repositoryId = Guid.NewGuid()
+                let usageFact = fact (Guid.NewGuid()) ownerId organizationId repositoryId (Instant.FromUtc(2026, 8, 4, 12, 0))
+                let scope = scopeFor ownerId organizationId repositoryId usageFact.ObservedAt
+                let setupStore = OperationsUsageStore(SqlOperationsUsageTransactionScope connectionString)
+                let! rejection = setupStore.RecordUsageFactRejectionAsync(scopedRejection usageFact.UsageFactId scope, CancellationToken.None)
+                Assert.That(rejection.IsOk, Is.True)
+
+                use cancellation = new CancellationTokenSource()
+                let lockGranted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let usageStaged = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let releaseCancellation = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let blockedReaderLockGranted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let recoveryLockGranted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let failingConnection = withApplicationName connectionString $"GraceBillingCancellationFirst-{Guid.NewGuid():N}"
+                let blockedReaderApplicationName = $"GraceBillingCancellationReader-{Guid.NewGuid():N}"
+                let blockedReaderConnection = withApplicationName connectionString blockedReaderApplicationName
+                let failingStore = cancellingStore failingConnection lockGranted usageStaged releaseCancellation cancellation
+                let blockedReader = observedStore blockedReaderConnection blockedReaderLockGranted
+                let recoveryStore = observedStore connectionString recoveryLockGranted
+                let failedWrite = failingStore.StoreUsageFactAsync(usageFact, payloadFor usageFact, cancellation.Token)
+
+                try
+                    do! lockGranted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+                    do! usageStaged.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+                    let reader = blockedReader.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+                    do! waitForApplicationLockWaitAsync connectionString blockedReaderApplicationName
+                    releaseCancellation.TrySetResult() |> ignore
+
+                    Assert.ThrowsAsync<OperationCanceledException>(Func<Task>(fun () -> failedWrite :> Task))
+                    |> ignore
+
+                    let! completenessAfterRollback = reader
+                    do! blockedReaderLockGranted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+                    let! rawFactCount = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.RawUsageFact;"
+                    let! aggregateCount = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageAggregateMinute;"
+                    let! activeBlockerCount = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageFactRejection WHERE IsActive = 1;"
+
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(completenessAfterRollback, Is.EqualTo(BlockedByActiveScopedRejection))
+                            Assert.That(rawFactCount, Is.Zero)
+                            Assert.That(aggregateCount, Is.Zero)
+                            Assert.That(activeBlockerCount, Is.EqualTo(1)))
+                    )
+
+                    let! recovered = recoveryStore.StoreUsageFactAsync(usageFact, payloadFor usageFact, CancellationToken.None)
+                    do! recoveryLockGranted.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+                    let! completenessAfterRecovery = setupStore.EvaluateBillingCompletenessAsync(scope, CancellationToken.None)
+                    let! rawFactCountAfterRecovery = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.RawUsageFact;"
+                    let! aggregateCountAfterRecovery = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageAggregateMinute;"
+                    let! activeBlockerCountAfterRecovery = executeInt32Async connectionString "SELECT COUNT(*) FROM ops.UsageFactRejection WHERE IsActive = 1;"
+
+                    Assert.Multiple(
+                        Action (fun () ->
+                            Assert.That(recovered.IsOk, Is.True)
+
+                            Assert.That(
+                                recovered
+                                |> Result.exists (fun result -> result.Status = UsageFactPersistenceStatus.Accepted),
+                                Is.True
+                            )
+
+                            Assert.That(completenessAfterRecovery, Is.EqualTo(Complete))
+                            Assert.That(rawFactCountAfterRecovery, Is.EqualTo(1))
+                            Assert.That(aggregateCountAfterRecovery, Is.EqualTo(1))
+                            Assert.That(activeBlockerCountAfterRecovery, Is.Zero))
+                    )
+                finally
+                    releaseCancellation.TrySetResult() |> ignore
+                    cancellation.Cancel()
             })
 
     /// Proves different repository and organization tuples acquire real SQL locks independently while one scope remains held.
