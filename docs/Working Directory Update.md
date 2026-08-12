@@ -68,6 +68,7 @@ tests cite `WDU-LC-*` row IDs; they must not restate or reorder the transition s
 predicate language; consumers such as #882 parse that grammar and must not infer aliases, wildcard behavior, or row
 precedence.
 
+<!-- grace:wdu-lifecycle-contract:start -->
 ```json
 {
   "schema": "grace.wdu.branch-lifecycle/v1",
@@ -215,6 +216,7 @@ precedence.
   ]
 }
 ```
+<!-- grace:wdu-lifecycle-contract:end -->
 
 Rows `WDU-LC-200`–`WDU-LC-212` own pre-local marker admission, exact adoption, refusal, cleanup, fresh planning, and the
 final pre-mutation reread. Rows `WDU-LC-010`–`WDU-LC-015` prohibit Branch publication for every disallowed marker
