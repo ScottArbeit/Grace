@@ -17,20 +17,6 @@ module CacheRegistrationProof =
     [<Literal>]
     let RefreshOperation = "cache-registration-refresh-v1"
 
-    /// Identifies the canonical runtime operation for Cache public-key rotation.
-    [<Literal>]
-    let RotateKeyOperation = "cache-registration-rotate-key-v1"
-
-    /// Writes one Cache identity public key in canonical field order.
-    let private writePublicKey (writer: Utf8JsonWriter) (key: CacheIdentityPublicKey) =
-        writer.WriteStartObject()
-        writer.WriteString("alg", key.Algorithm)
-        writer.WriteString("class", key.Class)
-        writer.WriteString("crv", key.Curve)
-        writer.WriteString("x", key.PublicKeyX)
-        writer.WriteString("y", key.PublicKeyY)
-        writer.WriteEndObject()
-
     /// Hashes canonical request bytes with SHA-256 and encodes the result as base64url.
     let private digest (write: Utf8JsonWriter -> unit) =
         use stream = new MemoryStream()
@@ -54,16 +40,6 @@ module CacheRegistrationProof =
             writer.WriteBoolean("prefetch", request.PrefetchSupported)
             writer.WriteString("protocol", request.ProtocolVersion)
             writer.WriteString("software", request.SoftwareVersion)
-            writer.WriteEndObject())
-
-    /// Computes the canonical digest bound into a key-rotation proof without including its signature.
-    let rotationRequestDigest (request: CacheKeyRotationRequest) =
-        digest (fun writer ->
-            writer.WriteStartObject()
-            writer.WriteString("cache", request.CacheId.ToString("D"))
-            writer.WriteString("class", request.Class)
-            writer.WritePropertyName("newKey")
-            writePublicKey writer request.NewPublicKey
             writer.WriteEndObject())
 
     /// Encodes the signed Cache proof payload in canonical JSON field order.

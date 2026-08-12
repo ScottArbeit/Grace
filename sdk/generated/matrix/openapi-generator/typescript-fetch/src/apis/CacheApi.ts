@@ -24,11 +24,6 @@ import {
     CacheEnrollmentRequestToJSON,
 } from '../models/CacheEnrollmentRequest';
 import {
-    type CacheKeyRotationRequest,
-    CacheKeyRotationRequestFromJSON,
-    CacheKeyRotationRequestToJSON,
-} from '../models/CacheKeyRotationRequest';
-import {
     type CacheRegistrationRefreshRequest,
     CacheRegistrationRefreshRequestFromJSON,
     CacheRegistrationRefreshRequestToJSON,
@@ -68,10 +63,6 @@ export interface RefreshCacheRequest {
 
 export interface RevokeCacheRequest {
     cacheRevocationRequest: CacheRevocationRequest;
-}
-
-export interface RotateCacheKeyRequest {
-    cacheKeyRotationRequest: CacheKeyRotationRequest;
 }
 
 /**
@@ -327,53 +318,6 @@ export class CacheApi extends runtime.BaseAPI {
      */
     async revokeCache(requestParameters: RevokeCacheRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
         const response = await this.revokeCacheRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
-
-    /**
-     * Creates request options for rotateCacheKey without sending the request
-     */
-    async rotateCacheKeyRequestOpts(requestParameters: RotateCacheKeyRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['cacheKeyRotationRequest'] == null) {
-            throw new runtime.RequiredError(
-                'cacheKeyRotationRequest',
-                'Required parameter "cacheKeyRotationRequest" was null or undefined when calling rotateCacheKey().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        headerParameters['Content-Type'] = 'application/json';
-
-
-        let urlPath = `/cache/rotate-key`;
-
-        return {
-            path: urlPath,
-            method: 'POST',
-            headers: headerParameters,
-            query: queryParameters,
-            body: CacheKeyRotationRequestToJSON(requestParameters['cacheKeyRotationRequest']),
-        };
-    }
-
-    /**
-     * Rotate a Cache identity key after proof by the currently accepted key.
-     */
-    async rotateCacheKeyRaw(requestParameters: RotateCacheKeyRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<CacheRegistrationReturnValue>> {
-        const requestOptions = await this.rotateCacheKeyRequestOpts(requestParameters);
-        const response = await this.request(requestOptions, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => CacheRegistrationReturnValueFromJSON(jsonValue));
-    }
-
-    /**
-     * Rotate a Cache identity key after proof by the currently accepted key.
-     */
-    async rotateCacheKey(requestParameters: RotateCacheKeyRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<CacheRegistrationReturnValue> {
-        const response = await this.rotateCacheKeyRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

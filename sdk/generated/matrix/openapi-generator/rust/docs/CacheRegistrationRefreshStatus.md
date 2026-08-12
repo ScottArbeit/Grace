@@ -11,7 +11,6 @@
 | NotFound | notFound |
 | Revoked | revoked |
 | Updated | updated |
-| Rotated | rotated |
 | EndpointMismatch | endpointMismatch |
 
 

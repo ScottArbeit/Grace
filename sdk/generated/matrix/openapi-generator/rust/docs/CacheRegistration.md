@@ -23,7 +23,6 @@ Name | Type | Description | Notes
 **last_refreshed_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **refresh_after** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **expires_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
-**rotation_due_at** | **chrono::DateTime<chrono::FixedOffset>** |  | 
 **revoked_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

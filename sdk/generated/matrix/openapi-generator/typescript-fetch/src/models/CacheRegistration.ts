@@ -167,12 +167,6 @@ export interface CacheRegistration {
      * @type {Date}
      * @memberof CacheRegistration
      */
-    rotationDueAt: Date;
-    /**
-     * 
-     * @type {Date}
-     * @memberof CacheRegistration
-     */
     revokedAt?: Date;
 }
 
@@ -200,7 +194,6 @@ export function instanceOfCacheRegistration(value: object): value is CacheRegist
     if (!('lastRefreshedAt' in value) || value['lastRefreshedAt'] === undefined) return false;
     if (!('refreshAfter' in value) || value['refreshAfter'] === undefined) return false;
     if (!('expiresAt' in value) || value['expiresAt'] === undefined) return false;
-    if (!('rotationDueAt' in value) || value['rotationDueAt'] === undefined) return false;
     return true;
 }
 
@@ -233,7 +226,6 @@ export function CacheRegistrationFromJSONTyped(json: any, ignoreDiscriminator: b
         'lastRefreshedAt': (new Date(json['LastRefreshedAt'])),
         'refreshAfter': (new Date(json['RefreshAfter'])),
         'expiresAt': (new Date(json['ExpiresAt'])),
-        'rotationDueAt': (new Date(json['RotationDueAt'])),
         'revokedAt': json['RevokedAt'] == null ? undefined : (new Date(json['RevokedAt'])),
     };
 }
@@ -268,7 +260,6 @@ export function CacheRegistrationToJSONTyped(value?: CacheRegistration | null, i
         'LastRefreshedAt': value['lastRefreshedAt'].toISOString(),
         'RefreshAfter': value['refreshAfter'].toISOString(),
         'ExpiresAt': value['expiresAt'].toISOString(),
-        'RotationDueAt': value['rotationDueAt'].toISOString(),
         'RevokedAt': value['revokedAt'] == null ? value['revokedAt'] : value['revokedAt'].toISOString(),
     };
 }

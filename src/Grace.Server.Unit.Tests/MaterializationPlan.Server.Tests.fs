@@ -65,7 +65,6 @@ type MaterializationPlanRouteTests() =
             LastRefreshedAt = Instant.FromUtc(2026, 7, 11, 20, 0)
             RefreshAfter = Instant.FromUtc(2026, 7, 11, 21, 0)
             ExpiresAt = Instant.FromUtc(2026, 7, 11, 22, 0)
-            RotationDueAt = Instant.FromUtc(2026, 7, 12, 0, 0)
             RevokedAt = None
         }
 

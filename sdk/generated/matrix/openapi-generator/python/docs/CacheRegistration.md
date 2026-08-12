@@ -25,7 +25,6 @@ Name | Type | Description | Notes
 **last_refreshed_at** | **datetime** |  | 
 **refresh_after** | **datetime** |  | 
 **expires_at** | **datetime** |  | 
-**rotation_due_at** | **datetime** |  | 
 **revoked_at** | **datetime** |  | [optional] 
 
 ## Example

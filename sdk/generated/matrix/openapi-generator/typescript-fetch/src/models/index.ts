@@ -40,7 +40,6 @@ export * from './CacheBoundaryKind';
 export * from './CacheEnrollmentRequest';
 export * from './CacheHealthStatus';
 export * from './CacheIdentityPublicKey';
-export * from './CacheKeyRotationRequest';
 export * from './CacheRegistration';
 export * from './CacheRegistrationRefreshRequest';
 export * from './CacheRegistrationRefreshStatus';

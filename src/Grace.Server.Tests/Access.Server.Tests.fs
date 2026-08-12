@@ -1489,25 +1489,6 @@ type EndpointAuthorizationTests() =
                 Assert.That(unsupportedHealthResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
                 Assert.That(unsupportedHealthBody, Does.Contain "Health must be Healthy or Unhealthy.")
 
-            let invalidKey = { Class = nameof CacheIdentityPublicKey; Algorithm = "ES256"; Curve = "P-256"; PublicKeyX = "invalid"; PublicKeyY = "invalid" }
-
-            let rotationRequest =
-                {
-                    Class = nameof CacheKeyRotationRequest
-                    CacheId = cacheId
-                    NewPublicKey = invalidKey
-                    Proof = invalidCacheProof cacheId CacheRegistrationProof.RotateKeyOperation "invalid-rotation-digest"
-                }
-
-            let! rotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent rotationRequest)
-            Assert.That(rotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
-
-            let missingKeyRotationRequest = { rotationRequest with NewPublicKey = Unchecked.defaultof<CacheIdentityPublicKey> }
-
-            let! missingKeyRotationResponse = unauthenticatedClient.PostAsync("/cache/rotate-key", createJsonContent missingKeyRotationRequest)
-
-            Assert.That(missingKeyRotationResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
-
             let! enrollmentResponse = unauthenticatedClient.PostAsync("/cache/enroll", createJsonContent Unchecked.defaultof<CacheEnrollmentRequest>)
             Assert.That(enrollmentResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 

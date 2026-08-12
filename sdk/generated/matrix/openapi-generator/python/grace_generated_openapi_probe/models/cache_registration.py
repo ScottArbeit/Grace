@@ -53,9 +53,8 @@ class CacheRegistration(BaseModel):
     last_refreshed_at: datetime = Field(alias="LastRefreshedAt")
     refresh_after: datetime = Field(alias="RefreshAfter")
     expires_at: datetime = Field(alias="ExpiresAt")
-    rotation_due_at: datetime = Field(alias="RotationDueAt")
     revoked_at: Optional[datetime] = Field(default=None, alias="RevokedAt")
-    __properties: ClassVar[List[str]] = ["Class", "CacheId", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "EnrolledBy", "EnrolledAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "RotationDueAt", "RevokedAt"]
+    __properties: ClassVar[List[str]] = ["Class", "CacheId", "DisplayName", "BoundaryKind", "OwnerId", "OrganizationId", "RepositoryScopes", "PublicKey", "Endpoint", "AllowHttpEndpoint", "Health", "SoftwareVersion", "ProtocolVersion", "PrefetchSupported", "EnrolledBy", "EnrolledAt", "LastRefreshedAt", "RefreshAfter", "ExpiresAt", "RevokedAt"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -137,7 +136,6 @@ class CacheRegistration(BaseModel):
             "LastRefreshedAt": obj.get("LastRefreshedAt"),
             "RefreshAfter": obj.get("RefreshAfter"),
             "ExpiresAt": obj.get("ExpiresAt"),
-            "RotationDueAt": obj.get("RotationDueAt"),
             "RevokedAt": obj.get("RevokedAt")
         })
         return _obj

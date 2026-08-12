@@ -7,9 +7,10 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types
-open Grace.Types.Common
 open Grace.Types.CacheRegistration
+open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.MaterializationPlan
 open Grace.Types.Reminder
 open Grace.Types.UploadSession
 open Grace.Types.WorkItem
@@ -406,6 +407,71 @@ module private RestartDurabilityHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Sends a canonical static-key refresh request after restart and returns the lifecycle result from the rehydrated actor.
+    let refreshCacheAsync (privateKey: ECDsa) (cacheId: Guid) (endpoint: string) =
+        task {
+            let observedAt = getCurrentInstant ()
+
+            let unsignedRequest =
+                {
+                    Class = nameof CacheRegistrationRefreshRequest
+                    CacheId = cacheId
+                    Endpoint = endpoint
+                    Health = CacheHealthStatus.Healthy
+                    SoftwareVersion = "1.0.1"
+                    ProtocolVersion = "v1"
+                    PrefetchSupported = false
+                    ObservedAt = observedAt
+                    Proof = Unchecked.defaultof<SignedCacheRequestProof>
+                }
+
+            let request =
+                { unsignedRequest with
+                    Proof =
+                        CacheRegistrationProof.createProof
+                            privateKey
+                            cacheId
+                            CacheRegistrationProof.RefreshOperation
+                            (CacheRegistrationProof.refreshRequestDigest unsignedRequest)
+                            observedAt
+                }
+
+            let! response = Client.PostAsync("/cache/refresh", createJsonContent request)
+            let! body = requireOkAsync response
+            let result = deserialize<GraceReturnValue<CacheRegistrationResult>> body
+            return result.ReturnValue
+        }
+
+    /// Requests a cache-required plan so the server's materialization path selects from the reactivated Cache registration actor.
+    let requestCacheRequiredPlanAsync repositoryId =
+        task {
+            use holderKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+
+            let request =
+                MaterializationPlanRequest
+                    .Create(
+                        MaterializationTargetSelector.ForBranch(BranchName Constants.InitialBranchName),
+                        MaterializationExecutionMode.CacheRequired,
+                        MaterializationCacheSelection.Required,
+                        [
+                            MaterializationArtifactKind.DirectoryVersionZip
+                            MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        ]
+                    )
+                    .WithHolderPublicKey(ArtifactGrant.exportHolderPublicKey holderKey)
+
+            let parameters = Parameters.Materialization.PlanParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.CorrelationId <- generateCorrelationId ()
+            parameters.Request <- request
+
+            let! response = Client.PostAsync("/materialization/plan", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            return response.StatusCode, body
+        }
+
 /// Covers restart durability server scenarios.
 [<NonParallelizable>]
 type RestartDurabilityServer() =
@@ -516,4 +582,75 @@ type RestartDurabilityServer() =
                     Assert.That(registration.ProtocolVersion, Is.EqualTo(request.ProtocolVersion))
                     Assert.That(registration.PrefetchSupported, Is.EqualTo(request.PrefetchSupported)))
             )
+        }
+
+    /// Verifies a persisted static cache identity rehydrates after server restart for signed refresh and exact repository selection.
+    [<Test>]
+    [<Order(4)>]
+    member _.StaticCacheRegistrationRehydratesForSignedRefreshAndExactRepositorySelection() =
+        task {
+            use privateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256)
+            let! selectedRepositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-cache-selected"
+            let displayName = $"restart-cache-{Guid.NewGuid():N}"
+            let endpoint = $"http://restart-cache-{Guid.NewGuid():N}.example.test"
+
+            let! _, enrolled = RestartDurabilityHelpers.enrollCacheAsync privateKey selectedRepositoryId displayName endpoint
+            Assert.That(enrolled.Status, Is.EqualTo(CacheRegistrationRefreshStatus.Enrolled))
+
+            let cacheId =
+                match enrolled.Registration with
+                | Some registration ->
+                    Assert.That(registration.PublicKey, Is.EqualTo(RestartDurabilityHelpers.cacheIdentityPublicKey privateKey))
+                    registration.CacheId
+                | None ->
+                    Assert.Fail("Cache enrollment did not return the persisted registration.")
+                    Guid.Empty
+
+            do! RestartDurabilityHelpers.restartGraceServerAsync ()
+
+            let! refreshed = RestartDurabilityHelpers.refreshCacheAsync privateKey cacheId endpoint
+            Assert.That(refreshed.Status, Is.EqualTo(CacheRegistrationRefreshStatus.RefreshNotDue))
+
+            let rehydratedRegistration =
+                match refreshed.Registration with
+                | Some registration -> registration
+                | None ->
+                    Assert.Fail("Signed refresh after restart did not return the rehydrated registration.")
+                    Unchecked.defaultof<CacheRegistration>
+
+            Assert.That(rehydratedRegistration.CacheId, Is.EqualTo(cacheId))
+            Assert.That(rehydratedRegistration.PublicKey, Is.EqualTo(RestartDurabilityHelpers.cacheIdentityPublicKey privateKey))
+            Assert.That(rehydratedRegistration.RepositoryScopes, Has.Length.EqualTo(1))
+
+            Assert.That(
+                rehydratedRegistration.RepositoryScopes[0]
+                    .RepositoryId,
+                Is.EqualTo(Guid.Parse selectedRepositoryId)
+            )
+
+            let! selectedStatus, selectedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync selectedRepositoryId
+            Assert.That(selectedStatus, Is.EqualTo(HttpStatusCode.OK), selectedBody)
+
+            let selectedPlan =
+                deserialize<GraceReturnValue<MaterializationPlan>>(
+                    selectedBody
+                )
+                    .ReturnValue
+
+            let selectedGrant =
+                match selectedPlan.ArtifactGrant with
+                | Some grant -> grant
+                | None ->
+                    Assert.Fail("Cache-required plan did not include the selected Cache artifact grant.")
+                    Unchecked.defaultof<_>
+
+            Assert.That(selectedGrant.Payload.CacheId, Is.EqualTo(cacheId.ToString("D")))
+
+            let! unrelatedRepositoryId = RestartDurabilityHelpers.createRepositoryAsync "restart-cache-unrelated"
+            let! unrelatedStatus, unrelatedBody = RestartDurabilityHelpers.requestCacheRequiredPlanAsync unrelatedRepositoryId
+
+            Assert.That(unrelatedStatus, Is.EqualTo(HttpStatusCode.ServiceUnavailable), unrelatedBody)
+
+            let unrelatedError = deserialize<GraceError> (unrelatedBody)
+            Assert.That(unrelatedError.Error, Does.Contain("No eligible Cache registration is currently available."))
         }

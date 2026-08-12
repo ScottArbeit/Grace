@@ -60,7 +60,6 @@ type CacheRegistrationLifecycleTests() =
         Assert.That(registration.RepositoryScopes[0].RepositoryId, Is.EqualTo repositoryId)
         Assert.That(registration.EnrolledBy, Is.EqualTo "admin-user")
         Assert.That(registration.PrefetchSupported, Is.True)
-        Assert.That(registration.RotationDueAt, Is.EqualTo(now.Plus RegistrationLifetime.KeyRotationInterval))
 
     /// Verifies HTTP enrollment remains an administrator-selected exception stored with the exact endpoint.
     [<Test>]
@@ -345,7 +344,7 @@ type CacheRegistrationLifecycleTests() =
         let digest = "canonical-request-digest"
         let proof = CacheRegistrationProof.createProof privateKey cacheId CacheRegistrationProof.RefreshOperation digest now
         Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.RefreshOperation digest proof, Is.True)
-        Assert.That(CacheRegistrationProof.validate now key cacheId CacheRegistrationProof.RotateKeyOperation digest proof, Is.False)
+        Assert.That(CacheRegistrationProof.validate now key cacheId "unexpected-operation" digest proof, Is.False)
 
         Assert.That(
             CacheRegistrationProof.validate (now.Plus(Duration.FromSeconds 31L)) key cacheId CacheRegistrationProof.RefreshOperation digest proof,
@@ -369,7 +368,6 @@ type CacheRegistrationLifecycleTests() =
                 for operation in
                     [
                         CacheRegistrationProof.RefreshOperation
-                        CacheRegistrationProof.RotateKeyOperation
                     ] do
                     Assert.That(validateAt operation (now.Minus(Duration.FromSeconds 30L)), Is.True)
                     Assert.That(validateAt operation (now.Plus(Duration.FromSeconds 30L)), Is.True)

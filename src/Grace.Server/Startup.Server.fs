@@ -1363,11 +1363,7 @@ module Application =
                                |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRepositoryAssignmentRequest>
 
                                route "/revoke" CacheRegistration.Revoke
-                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRevocationRequest>
-
-                               route "/rotate-key" CacheRegistration.RotateKey
-                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheKeyRotationRequest>
-                               |> addMetadata (AllowAnonymousAttribute()) ]
+                               |> addMetadata typeof<Grace.Types.CacheRegistration.CacheRevocationRequest> ]
                     ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute

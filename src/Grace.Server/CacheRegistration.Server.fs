@@ -303,32 +303,6 @@ module CacheRegistration =
                             | Error error -> return! context |> result400BadRequest error
             }
 
-    /// Handles POST /cache/rotate-key using proof of the old key before the actor durably accepts the new key.
-    let RotateKey: HttpHandler =
-        fun _next context ->
-            task {
-                let correlationId = getCorrelationId context
-
-                match! bindJson<CacheKeyRotationRequest> context correlationId with
-                | Error error -> return! context |> result400BadRequest error
-                | Ok request when
-                    isNull (box request)
-                    || request.Class <> nameof CacheKeyRotationRequest
-                    || request.CacheId = Guid.Empty
-                    || isNull (box request.Proof)
-                    || not (CacheRegistrationProof.isValidPublicKey request.NewPublicKey)
-                    ->
-                    return!
-                        context
-                        |> result400BadRequest (cacheError correlationId "Cache key rotation request is invalid.")
-                | Ok request ->
-                    let actor = ActorProxy.CacheRegistration.CreateActorProxy correlationId
-
-                    match! actor.RotateKey(request, getCurrentInstant (), correlationId) with
-                    | Ok result -> return! context |> result200Ok result
-                    | Error error -> return! context |> result400BadRequest error
-            }
-
     /// Handles GET /cache/validation-keys without exposing server private signing material.
     let GetValidationKeys: HttpHandler =
         fun _next context ->

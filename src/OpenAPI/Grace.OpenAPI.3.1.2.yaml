@@ -1806,28 +1806,6 @@ paths:
           $ref: '#/components/responses/403'
         '500':
           $ref: '#/components/responses/500'
-  /cache/rotate-key:
-    post:
-      tags:
-        - Cache
-      summary: Rotate a Cache identity key after proof by the currently accepted key.
-      operationId: RotateCacheKey
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CacheKeyRotationRequest'
-      responses:
-        '200':
-          $ref: '#/components/responses/CacheRegistrationResponse'
-        '400':
-          $ref: '#/components/responses/400'
-        '401':
-          $ref: '#/components/responses/401'
-        '500':
-          $ref: '#/components/responses/500'
   /cache/validation-keys:
     get:
       tags:
@@ -4459,24 +4437,6 @@ components:
       required:
         - Class
         - CacheId
-    CacheKeyRotationRequest:
-      type: object
-      properties:
-        Class:
-          type: string
-          example: CacheKeyRotationRequest
-        CacheId:
-          type: string
-          format: uuid
-        NewPublicKey:
-          $ref: '#/components/schemas/CacheIdentityPublicKey'
-        Proof:
-          $ref: '#/components/schemas/SignedCacheRequestProof'
-      required:
-        - Class
-        - CacheId
-        - NewPublicKey
-        - Proof
     CacheRegistrationRefreshStatus:
       description: Result classification for Cache enrollment and lifecycle operations.
       type: string
@@ -4488,7 +4448,6 @@ components:
         - notFound
         - revoked
         - updated
-        - rotated
         - endpointMismatch
       x-enumNames:
         - Enrolled
@@ -4498,7 +4457,6 @@ components:
         - NotFound
         - Revoked
         - Updated
-        - Rotated
         - EndpointMismatch
       example: enrolled
     CacheRegistration:
@@ -4552,8 +4510,6 @@ components:
           $ref: '#/components/schemas/Instant'
         ExpiresAt:
           $ref: '#/components/schemas/Instant'
-        RotationDueAt:
-          $ref: '#/components/schemas/Instant'
         RevokedAt:
           $ref: '#/components/schemas/Instant'
           nullable: true
@@ -4576,7 +4532,6 @@ components:
         - LastRefreshedAt
         - RefreshAfter
         - ExpiresAt
-        - RotationDueAt
     CacheRegistrationResult:
       description: Result returned by Cache registration and refresh routes.
       type: object

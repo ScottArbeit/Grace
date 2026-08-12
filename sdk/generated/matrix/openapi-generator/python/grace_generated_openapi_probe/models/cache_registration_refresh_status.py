@@ -34,7 +34,6 @@ class CacheRegistrationRefreshStatus(str, Enum):
     NOTFOUND = 'notFound'
     REVOKED = 'revoked'
     UPDATED = 'updated'
-    ROTATED = 'rotated'
     ENDPOINTMISMATCH = 'endpointMismatch'
 
     @classmethod
