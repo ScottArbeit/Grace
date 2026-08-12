@@ -189,16 +189,31 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Contain("addCacheProject builder isTestRun useFixedTestPorts")))
         )
 
-    /// Verifies both standard validation profiles inherit the Fast cache-test selection.
+    /// Verifies Fast filters test selection while Full runs every Grace.slnx test project without a filter.
     [<Test>]
-    member _.ValidateScriptSelectsCacheTestsForFastAndFullProfiles() =
+    member _.ValidateScriptUsesFastFilterAndFullSolutionPath() =
         let validationScript = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "scripts", "validate.ps1")))
 
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(validationScript, Does.Contain("\"FullyQualifiedName~Grace.Cache.Tests\","))
-                Assert.That(validationScript, Does.Contain("$terms = Get-FastTestFilterTerms"))
-                Assert.That(validationScript, Does.Contain("if ($IncludeFullTests)")))
+                Assert.That(validationScript, Does.Contain("function Get-FastTestFilterTerms"))
+                Assert.That(validationScript, Does.Contain("function Get-FastTestFilter {"))
+                Assert.That(validationScript, Does.Contain("Join-TestFilter (Get-FastTestFilterTerms)"))
+                Assert.That(validationScript, Does.Contain("function Invoke-SolutionTests([string]$Configuration, [bool]$UseFastFilter)"))
+                Assert.That(validationScript, Does.Contain("$testFilter = if ($UseFastFilter) { Get-FastTestFilter } else { $null }"))
+
+                Assert.That(validationScript, Does.Contain("dotnet test \"src/Grace.slnx\" -c $Configuration --no-build --no-restore --filter $testFilter"))
+
+                Assert.That(
+                    validationScript,
+                    Does.Contain(
+                        "} else {\n            Write-Host (\"Running: dotnet test `\"src/Grace.slnx`\" -c {0} --no-build --no-restore\" -f $Configuration)\n            Invoke-External \"Grace solution tests\" {\n                dotnet test \"src/Grace.slnx\" -c $Configuration --no-build --no-restore\n            }\n        }"
+                    )
+                )
+
+                Assert.That(validationScript, Does.Contain("Test filter: none (-Full runs every test project in src/Grace.slnx)."))
+                Assert.That(validationScript, Does.Contain("Invoke-SolutionTests $Configuration $Fast")))
         )
 
     /// Verifies the hand-authored F# marker preserves Aspire's generated AppHost test-entry contract.
