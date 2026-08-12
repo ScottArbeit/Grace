@@ -203,6 +203,7 @@ PowerShell:
 ```powershell
 sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
 sudo -iu grace-cache pwsh -NoProfile
+$env:GRACE_SERVER_URI = "https://grace.example.test"
 
 # Authenticate with exactly one supported credential before enrollment.
 # Interactive login, when no existing login is present: grace authenticate login
@@ -216,17 +217,38 @@ Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
 exit
 ```
 
-bash / zsh:
+bash:
 
 ```bash
 sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
 sudo -iu grace-cache
+export GRACE_SERVER_URI="https://grace.example.test"
 
 # Authenticate with exactly one supported credential before enrollment.
 # Interactive login, when no existing login is present: grace authenticate login
 # Existing operator-configured M2M credentials require no interactive command.
 # PAT alternative, entered without echoing it or adding it to shell history:
 # read -rsp "Grace administrator PAT: " GRACE_TOKEN; echo; export GRACE_TOKEN
+
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+unset GRACE_TOKEN
+exit
+```
+
+zsh:
+
+```zsh
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+sudo -iu grace-cache
+export GRACE_SERVER_URI="https://grace.example.test"
+
+# Authenticate with exactly one supported credential before enrollment.
+# Interactive login, when no existing login is present: grace authenticate login
+# Existing operator-configured M2M credentials require no interactive command.
+# PAT alternative, entered without echoing it or adding it to shell history:
+# read -rs "GRACE_TOKEN?Grace administrator PAT: "; print; export GRACE_TOKEN
+# Parser proof: zsh -n -c 'read -rs "GRACE_TOKEN?Grace administrator PAT: "; print; export GRACE_TOKEN'
 
 grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
 grace --output Json cache status
@@ -249,6 +271,7 @@ PowerShell:
 
 ```powershell
 sudo -iu grace-cache pwsh -NoProfile
+$env:GRACE_SERVER_URI = "https://grace.example.test"
 $env:GRACE_TOKEN = [System.Net.NetworkCredential]::new("", (Read-Host "Grace administrator PAT" -AsSecureString)).Password
 $cacheId = "<CacheId from grace --output Json cache status>"
 $revokeRequest = @{ Class = "CacheRevocationRequest"; CacheId = $cacheId } | ConvertTo-Json -Compress
@@ -267,6 +290,7 @@ Get-ChildItem -LiteralPath $root -Directory -Force |
 '@
 sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
 sudo -iu grace-cache pwsh -NoProfile
+$env:GRACE_SERVER_URI = "https://grace.example.test"
 $env:GRACE_TOKEN = [System.Net.NetworkCredential]::new("", (Read-Host "Grace administrator PAT" -AsSecureString)).Password
 grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
 grace --output Json cache status
@@ -274,10 +298,11 @@ Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
 exit
 ```
 
-bash / zsh:
+bash:
 
 ```bash
 sudo -iu grace-cache
+export GRACE_SERVER_URI="https://grace.example.test"
 read -rsp "Grace administrator PAT: " GRACE_TOKEN; echo
 export GRACE_TOKEN
 cache_id="<CacheId from grace --output Json cache status>"
@@ -294,7 +319,40 @@ find "$root" -mindepth 1 -maxdepth 1 -type d -name "staging-*" -exec rm -rf -- {
 '
 sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
 sudo -iu grace-cache
+export GRACE_SERVER_URI="https://grace.example.test"
 read -rsp "Grace administrator PAT: " GRACE_TOKEN; echo
+export GRACE_TOKEN
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+unset GRACE_TOKEN
+exit
+```
+
+zsh:
+
+```zsh
+sudo -iu grace-cache
+export GRACE_SERVER_URI="https://grace.example.test"
+read -rs "GRACE_TOKEN?Grace administrator PAT: "
+print
+export GRACE_TOKEN
+cache_id="<CacheId from grace --output Json cache status>"
+: "${GRACE_SERVER_URI:?Set GRACE_SERVER_URI for the Grace Server before revoking.}"
+curl --fail-with-body --show-error --request POST "$GRACE_SERVER_URI/cache/revoke" --header "Authorization: Bearer $GRACE_TOKEN" --header "Content-Type: application/json" --data "{\"Class\":\"CacheRevocationRequest\",\"CacheId\":\"$cache_id\"}"
+unset GRACE_TOKEN
+exit
+
+sudo -u grace-cache -- sh -c '
+set -eu
+root=/var/lib/grace-cache
+rm -rf -- "$root/ready"
+find "$root" -mindepth 1 -maxdepth 1 -type d -name "staging-*" -exec rm -rf -- {} +
+'
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+sudo -iu grace-cache
+export GRACE_SERVER_URI="https://grace.example.test"
+read -rs "GRACE_TOKEN?Grace administrator PAT: "
+print
 export GRACE_TOKEN
 grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
 grace --output Json cache status

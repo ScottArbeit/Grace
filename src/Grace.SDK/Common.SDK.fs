@@ -129,10 +129,11 @@ module Common =
                 return Error(GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
         }
 
-    /// Sends one POST command to Grace Server while honoring the caller's cancellation request before and during transport.
-    let postServerWithCancellation<'T, 'U when 'T :> CommonParameters>
+    /// Sends one POST command to an explicit Grace Server URI while honoring the caller's cancellation request before and during transport.
+    let postServerWithCancellationAtUri<'T, 'U when 'T :> CommonParameters>
         (
             parameters: 'T,
+            serverUri: Uri,
             route: string,
             cancellationToken: CancellationToken
         )
@@ -143,7 +144,7 @@ module Common =
                 cancellationToken.ThrowIfCancellationRequested()
                 use httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                 do! Auth.addAuthorizationHeader httpClient
-                let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
+                let serverUriWithRoute = Uri($"{serverUri.AbsoluteUri.TrimEnd('/')}/{route}")
                 let startTime = getCurrentInstant ()
                 let! response = httpClient.PostAsync(serverUriWithRoute, createJsonContent parameters, cancellationToken)
                 let endTime = getCurrentInstant ()
@@ -182,6 +183,17 @@ module Common =
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex
                 return Error(GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
         }
+
+    /// Sends one POST command to the current repository's Grace Server while honoring the caller's cancellation request.
+    let postServerWithCancellation<'T, 'U when 'T :> CommonParameters>
+        (
+            parameters: 'T,
+            route: string,
+            cancellationToken: CancellationToken
+        )
+        : (Task<GraceResult<'U>>)
+        =
+        postServerWithCancellationAtUri<'T, 'U> (parameters, Uri(Current().ServerUri), route, cancellationToken)
 
     /// Ensures that the CorrelationId is set in the parameters for calling Grace Server. If it hasn't already been set, one will be created.
     let ensureCorrelationIdIsSet<'T when 'T :> CommonParameters> (parameters: 'T) =

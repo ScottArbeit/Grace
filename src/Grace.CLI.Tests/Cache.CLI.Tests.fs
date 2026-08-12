@@ -5,13 +5,19 @@ open Grace.Cache
 open Grace.CLI
 open Grace.CLI.Command
 open Grace.CLI.CommandOutputContract
+open Grace.SDK
 open Grace.Shared
+open Grace.Types.CacheRegistration
+open Grace.Types.Common
+open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Generic
 open System.IO
 open System.Net
 open System.Net.Sockets
+open System.Text
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
@@ -42,7 +48,7 @@ module CacheCliTests =
             Console.SetOut(output)
             setAnsiConsoleOutput output
             let exitCode = GraceCommand.main args
-            exitCode, output.ToString()
+            exitCode, output.ToString(), Directory.Exists(Path.Combine(temporaryDirectory, ".grace"))
         finally
             Environment.CurrentDirectory <- originalDirectory
             Console.SetOut(originalOutput)
@@ -102,6 +108,86 @@ module CacheCliTests =
             if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
                 Assert.Fail("Timed out waiting for the loopback request counter to stop.")
 
+    /// Runs an authenticated enrollment request against a loopback endpoint and returns the request path and bearer header it received.
+    let private withEnrollmentEndpoint action =
+        use probe = new TcpListener(IPAddress.Loopback, 0)
+        probe.Start()
+        let port = (probe.LocalEndpoint :?> IPEndPoint).Port
+        probe.Stop()
+
+        use listener = new HttpListener()
+        let serverUri = Uri($"http://127.0.0.1:{port}")
+        listener.Prefixes.Add(serverUri.AbsoluteUri)
+        listener.Start()
+
+        let mutable requestPath = String.Empty
+        let mutable authorization = String.Empty
+        let mutable responseBody = String.Empty
+
+        let serverTask =
+            Task.Run(
+                Func<Task> (fun () ->
+                    task {
+                        let! context = listener.GetContextAsync()
+                        requestPath <- context.Request.RawUrl
+                        authorization <- context.Request.Headers["Authorization"]
+
+                        let now = SystemClock.Instance.GetCurrentInstant()
+
+                        let registration: Grace.Types.CacheRegistration.CacheRegistration =
+                            {
+                                Class = nameof Grace.Types.CacheRegistration.CacheRegistration
+                                CacheId = Guid.Parse "11111111-1111-1111-1111-111111111111"
+                                DisplayName = "Loopback cache"
+                                BoundaryKind = CacheBoundaryKind.Owner
+                                OwnerId = Guid.Parse "22222222-2222-2222-2222-222222222222"
+                                OrganizationId = None
+                                RepositoryScopes = [||]
+                                PublicKey = Grace.Types.CacheRegistration.CacheIdentityPublicKey.Create("x", "y")
+                                Endpoint = "http://127.0.0.1:5001"
+                                AllowHttpEndpoint = true
+                                Health = CacheHealthStatus.Unhealthy
+                                SoftwareVersion = "test"
+                                ProtocolVersion = "v1"
+                                PrefetchSupported = false
+                                EnrolledBy = "cache-cli-test"
+                                EnrolledAt = now
+                                LastRefreshedAt = now
+                                RefreshAfter = now
+                                ExpiresAt = now
+                                RevokedAt = None
+                            }
+
+                        let envelope: GraceReturnValue<CacheRegistrationResult> =
+                            {
+                                ReturnValue = CacheRegistrationResult.Create(CacheRegistrationRefreshStatus.Enrolled, Some registration, "enrolled")
+                                EventTime = now
+                                CorrelationId = "cache-cli-test"
+                                Properties = Dictionary<string, obj>()
+                            }
+
+                        let response = JsonSerializer.Serialize<GraceReturnValue<CacheRegistrationResult>>(envelope, Constants.JsonSerializerOptions)
+
+                        responseBody <- response
+                        let responseBytes = Encoding.UTF8.GetBytes(response)
+                        context.Response.StatusCode <- int HttpStatusCode.OK
+                        context.Response.ContentType <- "application/json"
+                        context.Response.ContentLength64 <- int64 responseBytes.Length
+                        context.Response.OutputStream.Write(responseBytes, 0, responseBytes.Length)
+                        context.Response.Close()
+                    })
+            )
+
+        try
+            let result = action serverUri
+
+            if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
+                Assert.Fail("Timed out waiting for the loopback enrollment endpoint to receive a request.")
+
+            result, requestPath, authorization, responseBody
+        finally
+            listener.Stop()
+
     /// Verifies that cache enrollment and redacted local status are registered with standard CLI output handling.
     [<Test>]
     let ``cache commands are registered in the output contract`` () =
@@ -116,13 +202,13 @@ module CacheCliTests =
     [<Test>]
     let ``cache status runs without repository config and emits redacted status`` () =
         withRequestCounter (fun requestCount ->
-            let jsonExitCode, jsonOutput =
+            let jsonExitCode, jsonOutput, jsonCreatedGraceDirectory =
                 invokeWithoutRepositoryConfig [| "--output"
                                                  "Json"
                                                  "cache"
                                                  "status" |]
 
-            let humanExitCode, humanOutput =
+            let humanExitCode, humanOutput, humanCreatedGraceDirectory =
                 invokeWithoutRepositoryConfig [| "cache"
                                                  "status" |]
 
@@ -139,6 +225,8 @@ module CacheCliTests =
             |> should not' (contain "identity.pkcs8")
 
             jsonOutput |> should not' (contain "staging-")
+            jsonCreatedGraceDirectory |> should equal false
+            humanCreatedGraceDirectory |> should equal false
 
             use document = JsonDocument.Parse(jsonOutput)
             let status = document.RootElement.GetProperty("ReturnValue")
@@ -155,7 +243,7 @@ module CacheCliTests =
     [<Test>]
     let ``cache enroll validates before repository config or key staging`` () =
         withRequestCounter (fun requestCount ->
-            let exitCode, output =
+            let exitCode, output, createdGraceDirectory =
                 invokeWithoutRepositoryConfig [| "--output"
                                                  "Json"
                                                  "cache"
@@ -176,6 +264,7 @@ module CacheCliTests =
             exitCode |> should equal -1
             output |> should not' (contain "graceconfig.json")
             output |> should not' (contain "staging-")
+            createdGraceDirectory |> should equal false
 
             use document = JsonDocument.Parse(output)
 
@@ -186,6 +275,92 @@ module CacheCliTests =
             |> should contain "Endpoint"
 
             requestCount () |> should equal 0)
+
+    /// Verifies valid cache enrollment input rejects an absent standalone server URI before protected-state staging.
+    [<Test>]
+    let ``cache enroll requires a configured standalone server before local staging`` () =
+        let originalServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+
+        try
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, null)
+
+            let args =
+                [|
+                    "--output"
+                    "Json"
+                    "cache"
+                    "enroll"
+                    "--display-name"
+                    "valid"
+                    "--endpoint"
+                    "http://127.0.0.1:5001"
+                    "--allow-http"
+                    "--boundary"
+                    "owner"
+                    "--owner-id"
+                    "11111111-1111-1111-1111-111111111111"
+                    "--repository-organization-id"
+                    "22222222-2222-2222-2222-222222222222"
+                    "--repository-id"
+                    "33333333-3333-3333-3333-333333333333"
+                |]
+
+            let exitCode, output, createdGraceDirectory = invokeWithoutRepositoryConfig args
+
+            exitCode |> should equal -1
+            createdGraceDirectory |> should equal false
+
+            use document = JsonDocument.Parse(output)
+
+            document
+                .RootElement
+                .GetProperty("Error")
+                .GetString()
+            |> should contain (Constants.EnvironmentVariables.GraceServerUri)
+        finally
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri)
+
+    /// Verifies standalone enrollment transport honors the configured endpoint and normal bearer authentication without repository configuration.
+    [<Test>]
+    let ``cache enrollment transport uses configured server without repository configuration`` () =
+        let temporaryDirectory = Path.Combine(Path.GetTempPath(), $"grace-cache-cli-tests-{Guid.NewGuid():N}")
+        let originalDirectory = Environment.CurrentDirectory
+        let originalServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+
+        Directory.CreateDirectory(temporaryDirectory)
+        |> ignore
+
+        try
+            Environment.CurrentDirectory <- temporaryDirectory
+            Auth.setTokenProvider (fun () -> Task.FromResult(Some "cache-cli-test-token"))
+
+            let parameters = Grace.Shared.Parameters.CacheRegistration.EnrollCacheParameters()
+            parameters.CorrelationId <- "cache-cli-test"
+
+            let result, requestPath, authorization, responseBody =
+                withEnrollmentEndpoint (fun serverUri ->
+                    Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, serverUri.AbsoluteUri)
+                    let configuredServerUri = Uri(Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri))
+
+                    Grace.SDK.CacheRegistration.Enroll(parameters, configuredServerUri, CancellationToken.None)
+                    |> fun task -> task.GetAwaiter().GetResult())
+
+            match result with
+            | Ok _ -> ()
+            | Error error -> Assert.Fail($"Expected loopback enrollment success, got: {error.Error}{Environment.NewLine}Response: {responseBody}")
+
+            requestPath |> should equal "/cache/enroll"
+
+            authorization
+            |> should equal "Bearer cache-cli-test-token"
+
+            Directory.Exists(Path.Combine(temporaryDirectory, ".grace"))
+            |> should equal false
+        finally
+            Auth.clearTokenProvider ()
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri, originalServerUri)
+            Environment.CurrentDirectory <- originalDirectory
+            Directory.Delete(temporaryDirectory, true)
 
     /// Verifies cancellation immediately after private-key staging neither starts transport nor leaves a staging directory.
     [<Test>]

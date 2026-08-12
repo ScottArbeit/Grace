@@ -3,6 +3,7 @@ namespace Grace.SDK
 open Grace.SDK.Common
 open Grace.Shared.Parameters.CacheRegistration
 open Grace.Types.CacheRegistration
+open System
 open System.Threading
 
 /// Provides the authenticated SDK facade for static Cache enrollment.
@@ -14,3 +15,12 @@ type CacheRegistration() =
     /// Enrolls one static Cache while propagating CLI cancellation through the authenticated server request.
     static member public Enroll(parameters: EnrollCacheParameters, cancellationToken: CancellationToken) =
         postServerWithCancellation<EnrollCacheParameters, CacheRegistrationResult> (parameters |> ensureCorrelationIdIsSet, "cache/enroll", cancellationToken)
+
+    /// Enrolls one static Cache through an explicitly configured server without loading repository configuration.
+    static member public Enroll(parameters: EnrollCacheParameters, serverUri: Uri, cancellationToken: CancellationToken) =
+        postServerWithCancellationAtUri<EnrollCacheParameters, CacheRegistrationResult> (
+            parameters |> ensureCorrelationIdIsSet,
+            serverUri,
+            "cache/enroll",
+            cancellationToken
+        )

@@ -178,10 +178,30 @@ type CacheIdentityTests() =
             let serialized = JsonSerializer.Serialize(status)
 
             Assert.That(status.Enrollment, Is.EqualTo "invalid")
-            Assert.That(status.Key, Is.EqualTo "invalid")
+            let expectedKey = if target = "root" || target = "ready" then "inaccessible" else "invalid"
+            Assert.That(status.Key, Is.EqualTo expectedKey)
             Assert.That(serialized, Does.Not.Contain(root))
             Assert.That(serialized, Does.Not.Contain("identity.pkcs8"))
         finally
+            if target = "root" && Directory.Exists(root) then
+                File.SetUnixFileMode(
+                    root,
+                    UnixFileMode.UserRead
+                    ||| UnixFileMode.UserWrite
+                    ||| UnixFileMode.UserExecute
+                )
+
+            if target = "ready" then
+                let ready = Path.Combine(root, "ready")
+
+                if Directory.Exists(ready) then
+                    File.SetUnixFileMode(
+                        ready,
+                        UnixFileMode.UserRead
+                        ||| UnixFileMode.UserWrite
+                        ||| UnixFileMode.UserExecute
+                    )
+
             deleteRoot root
 
     /// Verifies a ready directory the supported service account cannot inspect is never presented as not enrolled.
