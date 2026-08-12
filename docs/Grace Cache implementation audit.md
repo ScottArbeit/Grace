@@ -120,6 +120,31 @@ outcomes. Correctness cleanup for incomplete staging or failed commits remains p
   #857 owns signed refreshes that remain `Unhealthy`; #625 publishes `Healthy` only after serving readiness is proven.
   R1A adds neither serving, rotation, reconciliation, non-Linux support, nor CacheStore behavior.
 
+### R1B: repository-independent enrollment and status commands (#887)
+
+- **Status classification:** `implementation leaf`.
+- **Required result:** `grace cache enroll` validates local inputs and state, resolves one existing bearer before key
+  staging, sends one selected-server request, and publishes ready only after the accepted configuration commits.
+  `grace cache status` reads local state only and returns a redacted result with an enrolled exit code only for a valid
+  ready identity.
+- **Propagation:** CLI root dispatch bypasses repository configuration and invocation history; the narrow SDK facade
+  accepts the selected URI and resolved bearer directly. Server routes, DTOs, OpenAPI, generated clients, cache host,
+  liveness, storage, retries, and reconciliation are unchanged.
+- **Proof:** The focused Linux CLI root-command suite passes 18 cases: parser registration, inert help/schema/examples,
+  complete-buffer JSON parsing, pure repository-independent status, ready/weak/corrupt redaction and exit codes, PAT
+  success/rejection/invalid input, M2M success/acquisition failure, missing and expired interactive results,
+  cancellation before and after staging, malformed nominal success, and forced local-commit failure. The bounded
+  internal test dependencies default to the production credential resolver and ready commit, then exercise controlled
+  outcomes through actual root command dispatch. The suite records exact M2M token and enrollment request counts, PAT
+  bearer forwarding, protected ready publication, failure cleanup, redacted JSON, and no repository `.grace` state. A
+  separate unprivileged Linux executable run observes inaccessible state as redacted `invalid`/`inaccessible` JSON with
+  exit code `1`.
+- **Interactive proof composition:** Existing Auth tests cover normal producer selection and invalid token behavior.
+  Cache root-command tests consume one resolved stored interactive bearer and one expired interactive error through the
+  same production command path. The available Linux SDK image has no dbus or libsecret service, so it cannot execute a
+  real secure-store-backed login. This is an environment limitation, not a cache product branch; hosted Linux may add
+  that exercise only when its documented secure-store dependencies are available.
+
 ### R2: registration liveness (#857)
 
 - **Status classification:** `planned`.

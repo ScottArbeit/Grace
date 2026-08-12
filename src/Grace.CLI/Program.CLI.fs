@@ -507,7 +507,16 @@ module GraceCommand =
 
     let private rootHelpSections =
         [
-            { Heading = "Getting started"; CommandNames = [ "authenticate"; "connect"; "config" ] }
+            {
+                Heading = "Getting started"
+                CommandNames =
+                    [
+                        "authenticate"
+                        "connect"
+                        "config"
+                        "cache"
+                    ]
+            }
             {
                 Heading = "Day-to-day development"
                 CommandNames =
@@ -881,6 +890,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(Doctor.Build)
+        rootCommand.Subcommands.Add(CacheCommand.Build)
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(CandidateCommand.Build)
@@ -1004,6 +1014,14 @@ module GraceCommand =
         else
             Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
             |> Seq.exists (fun command -> command.Name.Equals("doctor", StringComparison.OrdinalIgnoreCase))
+
+    /// Checks whether the parsed command belongs to the repository-independent Cache command group.
+    let isGraceCache (parseResult: ParseResult) =
+        if isNull parseResult then
+            false
+        else
+            Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
+            |> Seq.exists (fun command -> command.Name.Equals("cache", StringComparison.OrdinalIgnoreCase))
 
     /// Checks if the command is a foreground `grace watch` command.
     let isGraceWatchForeground (parseResult: ParseResult) =
@@ -1202,7 +1220,10 @@ module GraceCommand =
                                 raise (IntrospectionExit returnValue)
                             | None -> ()
 
-                        if not (parseResult |> isGraceDoctor) then
+                        if
+                            not (parseResult |> isGraceDoctor)
+                            && not (parseResult |> isGraceCache)
+                        then
                             LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
@@ -1373,6 +1394,9 @@ module GraceCommand =
 
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
+                    else if parseResult |> isGraceCache then
+                        let! invokedReturnValue = parseResult.InvokeAsync()
+                        returnValue <- invokedReturnValue
                     else if parseResult |> isGraceDoctor then
                         let invokedReturnValue = parseResult.Invoke()
                         returnValue <- invokedReturnValue
@@ -1526,6 +1550,7 @@ module GraceCommand =
                 if
                     not isIntrospection
                     && not (parseResult |> isGraceDoctor)
+                    && not (parseResult |> isGraceCache)
                 then
                     HistoryStorage.tryRecordInvocation
                         {

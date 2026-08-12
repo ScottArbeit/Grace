@@ -57,6 +57,18 @@ type internal CacheIdentityInspection =
     | Invalid
     | Inaccessible
 
+/// Represents the only redacted local enrollment facts that CLI status may publish.
+type internal CacheIdentityStatus =
+    {
+        Class: string
+        Enrollment: string
+        CacheId: Guid option
+        Endpoint: string option
+        BoundaryKind: string option
+        RepositoryCount: int option
+        Key: string
+    }
+
 /// Represents the only failures exposed by the protected local identity boundary.
 [<RequireQualifiedAccess>]
 type internal CacheIdentityError =
@@ -65,6 +77,10 @@ type internal CacheIdentityError =
 
 /// Owns Linux-only protected static-key staging, ready publication, and opaque local inspection.
 module internal CacheIdentity =
+
+    /// Identifies the systemd-managed state root for the supported Linux cache installation.
+    [<Literal>]
+    let StateRoot = "/var/lib/grace-cache"
 
     [<Literal>]
     let private AttemptDirectoryName = "attempt"
@@ -738,6 +754,64 @@ module internal CacheIdentity =
                     | Ok true, Ok true -> Ok CacheIdentityInspection.Invalid
                     | Ok true, Ok false -> Ok(inspectAttempt attempt)
                     | Ok false, Ok true -> Ok(inspectReady ready)
+
+    /// Rejects roots that are not an empty, protected location before a command resolves credentials or stages a key.
+    let validateEnrollmentRoot root =
+        match validateRoot root with
+        | Error error -> Error error
+        | Ok () ->
+            match inspect root with
+            | Ok CacheIdentityInspection.Missing -> Ok()
+            | _ -> Error CacheIdentityError.StateUnavailable
+
+    /// Reads the approved ready-state fields after protected inspection has established that the local identity is valid.
+    let private tryReadReadyStatus root =
+        try
+            let registrationPath = child (child root ReadyDirectoryName) RegistrationFileName
+
+            File.ReadAllBytes(registrationPath)
+            |> tryParseReadyRegistration
+            |> Option.bind (fun registration ->
+                tryReadyRegistrationFingerprint registration
+                |> Option.map (fun _ -> registration))
+            |> Option.map (fun registration ->
+                {
+                    Class = "Grace.Cache.Status"
+                    Enrollment = "enrolled"
+                    CacheId = Some registration.CacheId
+                    Endpoint = Some registration.Endpoint
+                    BoundaryKind = Some registration.BoundaryKind
+                    RepositoryCount = Some registration.RepositoryScopes.Length
+                    Key = "available"
+                })
+        with
+        | _ -> None
+
+    /// Observes protected local identity state without network, repair, cleanup, or private-material disclosure.
+    let status root =
+        let notEnrolled key =
+            {
+                Class = "Grace.Cache.Status"
+                Enrollment = "notEnrolled"
+                CacheId = None
+                Endpoint = None
+                BoundaryKind = None
+                RepositoryCount = None
+                Key = key
+            }
+
+        let invalid key =
+            { Class = "Grace.Cache.Status"; Enrollment = "invalid"; CacheId = None; Endpoint = None; BoundaryKind = None; RepositoryCount = None; Key = key }
+
+        match inspect root with
+        | Ok CacheIdentityInspection.Missing -> notEnrolled "missing"
+        | Ok CacheIdentityInspection.AttemptPresent -> notEnrolled "available"
+        | Ok CacheIdentityInspection.Ready ->
+            tryReadReadyStatus root
+            |> Option.defaultValue (invalid "invalid")
+        | Ok CacheIdentityInspection.Invalid -> invalid "invalid"
+        | Ok CacheIdentityInspection.Inaccessible -> invalid "inaccessible"
+        | Error _ -> invalid "inaccessible"
 
     /// Best-effort cleanup for a failed caller operation; it intentionally has no cancellation token or failure result.
     let discardAttempt root =

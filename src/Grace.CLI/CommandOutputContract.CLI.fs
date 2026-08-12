@@ -192,6 +192,13 @@ module CommandOutputContract =
         schema["description"] <- description
         box schema
 
+    /// Builds the nullable integer schema used in generated command-output metadata.
+    let private nullableIntegerSchema description =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- [| "integer"; "null" |]
+        schema["description"] <- description
+        box schema
+
     /// Constructs an array schema and attaches the item schema used by repeated command-output fields.
     let private arraySchema itemSchema description =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
@@ -546,6 +553,42 @@ module CommandOutputContract =
                 Summary = {| Total = 1; Ok = 1; Warning = 0; Failed = 0; Skipped = 0 |}
             |}
 
+    /// Defines the redacted local identity shape shared by successful Cache enrollment and status output.
+    let private cacheStatusSchema =
+        schemaObject
+            "CacheStatusDto"
+            [
+                "Class", scalarSchema "string"
+                "Enrollment", scalarSchema "string"
+                "CacheId", nullableStringSchema "Cache identifier when protected ready state is valid."
+                "Endpoint", nullableStringSchema "Registered cache endpoint when protected ready state is valid."
+                "BoundaryKind", nullableStringSchema "Registered boundary kind when protected ready state is valid."
+                "RepositoryCount", nullableIntegerSchema "Repository assignment count when protected ready state is valid."
+                "Key", scalarSchema "string"
+            ]
+            [|
+                "Class"
+                "Enrollment"
+                "CacheId"
+                "Endpoint"
+                "BoundaryKind"
+                "RepositoryCount"
+                "Key"
+            |]
+
+    /// Provides the representative enrolled local identity output used by inert Cache command examples.
+    let private cacheStatusExample =
+        box
+            {|
+                Class = "Grace.Cache.Status"
+                Enrollment = "enrolled"
+                CacheId = "11111111-1111-1111-1111-111111111111"
+                Endpoint = "https://cache.example.test"
+                BoundaryKind = "Organization"
+                RepositoryCount = 1
+                Key = "available"
+            |}
+
     /// Builds command-output contract metadata for supported return value contract so automation can rely on stable JSON shapes.
     let private supportedReturnValueContract name provenance schema example notes =
         { Name = name; Provenance = provenance; Status = SchemaReady; Schema = schema; Example = example; Notes = notes }
@@ -604,6 +647,17 @@ module CommandOutputContract =
     /// Builds command-output contract metadata for return value contract for so automation can rely on stable JSON shapes.
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
         match identity.CommandId, envelopeContract with
+        | ("cache.enroll"
+          | "cache.status"),
+          ExistingGraceResultEnvelope _ ->
+            supportedReturnValueContract
+                "CacheStatusDto"
+                "Grace.CLI.Command.CacheCommand"
+                cacheStatusSchema
+                cacheStatusExample
+                [
+                    "The command never exposes private key material, filesystem paths, or enrollment attempt details."
+                ]
         | "maintenance.check-ignore-entries", ExistingGraceResultEnvelope RequiresCliDto ->
             supportedReturnValueContract
                 "MaintenanceIgnoreEntriesDto"
@@ -959,6 +1013,8 @@ module CommandOutputContract =
 
     let entries =
         [
+            row [ "cache" ] "enroll" true true common_renderOutput_envelope mutating_state_transition server_via_sdk RequiresCliDto
+            row [ "cache" ] "status" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "authorize" ] "can" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "grant-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto

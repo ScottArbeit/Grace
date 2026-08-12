@@ -15,6 +15,7 @@ The contract version is `cli-json-v1`. The charter is recorded in
 - Human text, progress, prompts, and diagnostics must not be mixed into JSON stdout.
 - `--schema` and `--examples` are inert introspection options. They do not run the selected command.
 - `--select` projects fields from `ReturnValue` only. It does not read envelope metadata.
+- `cache status` returns only redacted local enrollment facts and never contacts Grace Server.
 
 PowerShell:
 
@@ -24,6 +25,7 @@ grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
+grace --output Json cache status
 ```
 
 bash / zsh:
@@ -34,6 +36,7 @@ grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
+grace --output Json cache status
 ```
 
 ## Output Envelopes
@@ -129,8 +132,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `206`
-- JSON-ready routed commands: `185`
+- Total leaf commands: `208`
+- JSON-ready routed commands: `187`
 - Intentionally human-only commands: `1`
 - Deferred routed commands with explicit V2 scope: `11`
 - Source-only/unrouted commands: `9`
@@ -173,6 +176,10 @@ starting the watcher.
 
 `doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
 supports `--schema`, `--examples`, and `--select`.
+
+`cache enroll` and `cache status` are included in the JSON-ready routed count. Their successful return value contains
+only `Class`, `Enrollment`, `Key`, and, for an enrolled ready identity, `CacheId`, `Endpoint`, `BoundaryKind`, and
+`RepositoryCount`. JSON stdout is one complete document with no progress or repository-configuration text.
 
 ## Agent Recipes
 

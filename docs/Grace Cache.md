@@ -433,6 +433,47 @@ to establish the static Product V1 shape.
 | Artifact fetch or validation fails | Incomplete staging is not committed as hit | Mode-specific unavailable or failure result | Hash/size/partial-store proof |
 | Unknown artifact-grant key | One advertised refresh attempt, then fail closed | No cache artifact served | Grant-key rollover proof |
 
+### Static enrollment commands
+
+`grace cache enroll` and `grace cache status` are repository-independent commands for the supported Linux x64 systemd
+profile. They run as the system-managed `grace-cache` account against the protected `/var/lib/grace-cache` root.
+Neither command reads, creates, or records repository `.grace` state.
+
+Enrollment validates its explicit boundary, repository assignments, endpoint, protocol version, configured absolute
+`GRACE_SERVER_URI`, and protected root before it obtains one normal Grace credential. It supports the existing
+interactive login, M2M configuration, and `GRACE_TOKEN` PAT producers. The selected bearer is forwarded unchanged to
+one non-retrying `POST /cache/enroll` request. Only an accepted server response followed by a protected ready commit
+reports enrollment. Rejection, cancellation, unknown response, and local commit failure do not publish ready state.
+
+Status is a pure local observation. Its JSON and human output expose only `class`, `enrollment`, `key`, and, for a
+valid ready identity, `cacheId`, `endpoint`, `boundaryKind`, and `repositoryCount`. It returns `0` only for an enrolled
+ready identity and otherwise returns `1`.
+
+Cache V1 has no implicit reset or re-enrollment. After a server-side revocation or invalid local identity, an operator
+uses the existing registration administration workflow to revoke the registration, stops the cache service, applies
+the local recovery procedure for the protected root, and runs `grace cache enroll` again. The command never discovers,
+reconciles, or replaces a prior registration by itself.
+
+PowerShell:
+
+```powershell
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+sudo -iu grace-cache pwsh -NoProfile
+$env:GRACE_SERVER_URI = "https://grace.example.test"
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+```
+
+bash / zsh:
+
+```bash
+sudo install -d -o grace-cache -g grace-cache -m 0700 /var/lib/grace-cache
+sudo -iu grace-cache
+export GRACE_SERVER_URI="https://grace.example.test"
+grace cache enroll --display-name "Seattle cache" --endpoint "https://cache.example.test" --boundary organization --owner-id "<owner-id>" --organization-id "<organization-id>" --repository-organization-id "<organization-id>" --repository-id "<repository-id>"
+grace --output Json cache status
+```
+
 ## 11. Non-functional, security, durability, and operations
 
 - The listener binds only the exact enrolled endpoint after the process guard and local validation succeed.
@@ -443,8 +484,8 @@ to establish the static Product V1 shape.
   abandoned staging and incomplete commits; scheduled retention is absent.
 - Grant verification supports the already-advertised validation-key rollover. Cache service identity remains static;
   these key lifecycles have separate names, data, routes, and tests.
-- Status is an operational contract. It must reflect current local protected state and current server liveness, not a
-  historical successful run.
+- `grace cache status` is an operational contract for current local protected state. It performs no liveness request;
+  registration liveness belongs to R2.
 - The supported profile is one Linux x64 systemd deployment. The implementation rejects or declines unsupported host
   profiles instead of implying Windows or macOS support.
 

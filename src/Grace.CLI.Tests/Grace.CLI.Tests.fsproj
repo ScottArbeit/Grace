@@ -5,6 +5,7 @@
 		<Prefer32Bit>false</Prefer32Bit>
 		<LangVersion>preview</LangVersion>
 		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
 		<GenerateProgramFile>false</GenerateProgramFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
@@ -20,6 +21,8 @@
     <Compile Include="AuthTokenBundle.Tests.fs" />
     <Compile Include="Branch.CLI.Parsing.Tests.fs" />
     <Compile Include="Branch.CLI.Tests.fs" />
+    <Compile Include="Cache.CLI.Parsing.Tests.fs" />
+    <Compile Include="Cache.CLI.Tests.fs" />
     <Compile Include="Connect.CLI.Parsing.Tests.fs" />
     <Compile Include="Connect.CLI.Tests.fs" />
     <Compile Include="BuildInfo.Tests.fs" />
