@@ -52,12 +52,19 @@ module BillingCompletenessScope =
             .AtStartOfDayInZone(DateTimeZone.Utc)
             .ToInstant()
 
-    /// Derives a reported month only when the caller supplied an observation timestamp.
-    let monthStartForObservedAt observedAt = monthStart observedAt
+    /// Derives a reported month only when the timestamp denotes a supplied observation rather than the absent-observation sentinel.
+    let monthStartForObservedAt observedAt =
+        if observedAt = Grace.Shared.Constants.DefaultTimestamp then
+            None
+        else
+            Some(monthStart observedAt)
 
     /// Validates a complete repository scope and derives its UTC calendar month from an accepted observation.
     let tryCreate ownerId organizationId repositoryId observedAt =
         let errors = ResizeArray<string>()
+
+        if observedAt = Grace.Shared.Constants.DefaultTimestamp then
+            errors.Add("ObservedAt is required for billing completeness.")
 
         if ownerId = OwnerId.Empty then
             errors.Add("OwnerId is required for billing completeness.")
@@ -922,11 +929,8 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
                     SqlDbType.DateTime2
                     (reported
                      |> Option.bind (fun value -> value.ObservedAt)
-                     |> Option.filter (fun value -> value <> Grace.Shared.Constants.DefaultTimestamp)
-                     |> Option.map (
-                         BillingCompletenessScope.monthStartForObservedAt
-                         >> fun value -> box (toUtcDateTime value)
-                     )
+                     |> Option.bind BillingCompletenessScope.monthStartForObservedAt
+                     |> Option.map (fun value -> box (toUtcDateTime value))
                      |> Option.defaultValue DBNull.Value)
 
                 addStringParameter command "@Reason" OperationsUsageSql.ArchiveFailureReasonMaxLength rejection.Reason

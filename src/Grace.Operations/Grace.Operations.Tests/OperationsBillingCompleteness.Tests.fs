@@ -1175,6 +1175,31 @@ WHERE Reason IN
                 Assert.That(BillingCompletenessScope.databaseLockIdentity august, Is.Not.EqualTo(BillingCompletenessScope.databaseLockIdentity september)))
         )
 
+    /// Proves the absent-observation sentinel cannot become January 2000 while that real UTC month remains valid.
+    [<Test>]
+    member _.DefaultTimestampDoesNotCreateABillingScopeButJanuary2000Does() =
+        let ownerId = Guid.NewGuid()
+        let organizationId = Guid.NewGuid()
+        let repositoryId = Guid.NewGuid()
+        let january2000 = Instant.FromUtc(2000, 1, 15, 12, 34, 56)
+
+        let missingObservation = BillingCompletenessScope.tryCreate ownerId organizationId repositoryId Constants.DefaultTimestamp
+
+        let realJanuary2000 = BillingCompletenessScope.tryCreate ownerId organizationId repositoryId january2000
+        let missingMonth = BillingCompletenessScope.monthStartForObservedAt Constants.DefaultTimestamp
+        let realJanuary2000Month = BillingCompletenessScope.monthStartForObservedAt january2000
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(missingObservation |> Result.isError, Is.True)
+                Assert.That(missingMonth, Is.EqualTo(None))
+                Assert.That(realJanuary2000Month, Is.EqualTo(Some(Instant.FromUtc(2000, 1, 1, 0, 0))))
+
+                match realJanuary2000 with
+                | Ok scope -> Assert.That(scope.MonthStart, Is.EqualTo(Instant.FromUtc(2000, 1, 1, 0, 0)))
+                | Error errors -> Assert.Fail(String.Join("; ", errors)))
+        )
+
     /// Verifies tuple and fact identities are rejected before they could acquire an ambiguous owner-month lock.
     [<Test>]
     member _.EmptyStableIdentifiersAreRejectedAtCoordinationBoundaries() =
