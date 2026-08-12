@@ -10,6 +10,8 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
+module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
+
 /// Owns branch-independent leases and marker evidence for one repository and local working root.
 module internal WorkingDirectoryUpdateCoordination =
     let private markerSchemaVersion = 1

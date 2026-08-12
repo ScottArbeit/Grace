@@ -18,6 +18,8 @@ open Microsoft.Data.Sqlite
 open NodaTime
 open SQLitePCL
 
+module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
+
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
