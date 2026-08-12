@@ -16,6 +16,11 @@ they do not add inputs or lifecycle rules here. Doctor issue #842 consumes Branc
 files. Runtime, SQLite schema, public CLI, SDK, OpenAPI, generated artifacts, migration, rollback, journals, and automatic
 recovery are unchanged by this planning-only slice.
 
+Working-directory mutation is currently distributed across caller implementations, so cleanup, finalization, and
+failure behavior can drift apart. One lifecycle contract prevents Grace from publishing a selected Branch after marker
+cleanup fails, keeps partial failures truthful and recoverable, and gives implementation workers one user-safety goal
+when lower-level details are incomplete.
+
 ## 2. Accepted decisions
 
 | ID | Decision | Lasting consequence | Owner |
