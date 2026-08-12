@@ -12,6 +12,8 @@ open System.Text
 open System.Threading
 open System.Threading.Tasks
 
+module WorkingDirectoryUpdate = WorkingDirectoryUpdateContracts
+
 /// Covers exact prepared-content manifests and byte-validation boundaries.
 module WorkingDirectoryUpdatePreparedContentTests =
     /// Extracts a valid test value or fails with the contract rejection reason.
