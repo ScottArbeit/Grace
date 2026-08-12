@@ -78,24 +78,32 @@ function Get-FencedJsonPayload([string] $text, [string] $artifact, [string] $sch
     $matching = @()
     foreach ($match in $matches) {
         $json = $match.Groups[1].Value
-        # A block that names this schema is a candidate even when malformed.  Do not let a later valid block hide it.
-        $identifiesSchema = $json -match [regex]::Escape($schema)
         try {
-            Assert-NoDuplicateJsonProperties $json $artifact
             $document = [System.Text.Json.JsonDocument]::Parse($json)
             $raw = $document.RootElement.Clone()
             $document.Dispose()
             $value = $json | ConvertFrom-Json -Depth 100
         } catch {
-            if ($identifiesSchema) { Fail-Contract $artifact "malformed JSON candidate for '$schema'" }
+            $declaresTarget = $false
+            foreach ($propertyMatch in [regex]::Matches($json, '(?s)"((?:\\.|[^"\\])*)"\s*:\s*"((?:\\.|[^"\\])*)"')) {
+                try {
+                    $probe = "{`"name`":`"$($propertyMatch.Groups[1].Value)`",`"value`":`"$($propertyMatch.Groups[2].Value)`"}" | ConvertFrom-Json
+                    if ($probe.name -ieq 'schema' -and $probe.value -ceq $schema) { $declaresTarget = $true; break }
+                } catch { }
+            }
+            if ($declaresTarget) { Fail-Contract $artifact "malformed JSON candidate for '$schema'" }
             continue
         }
-        $schemaProperty = @($raw.EnumerateObject() | Where-Object { $_.Name -ieq 'schema' })
-        if ($schemaProperty.Count -gt 0 -and $schemaProperty[0].Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String -and
-            $schemaProperty[0].Value.GetString() -eq $schema) {
+        $schemaProperties = @($raw.EnumerateObject() | Where-Object { $_.Name -ieq 'schema' })
+        if ($schemaProperties.Count -eq 0) { continue }
+        # Schema candidacy comes from decoded top-level property names, never from raw text embedded in another value.
+        Assert-NoDuplicateJsonProperties $json $artifact
+        $targetProperties = @($schemaProperties | Where-Object {
+                $_.Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String -and $_.Value.GetString() -ceq $schema
+            })
+        if ($targetProperties.Count -gt 1) { Fail-Contract $artifact "duplicate target schema declaration '$schema'" }
+        if ($targetProperties.Count -eq 1) {
             $matching += [pscustomobject]@{ Json = $json; Value = $value; Raw = $raw }
-        } elseif ($identifiesSchema) {
-            Fail-Contract $artifact "ambiguous JSON candidate for '$schema'"
         }
     }
     if ($matching.Count -ne 1) { Fail-Contract $artifact "expected exactly one '$schema' JSON block" }
@@ -264,7 +272,7 @@ function Test-LifecycleSchema($payload, [string] $artifact) {
     Assert-ExactMembers (Get-JsonStringArray (Get-JsonProperty $retry 'requiredActions' $artifact '$/retryAdmission') $artifact '$/retryAdmission/requiredActions') @('reconstructPersistedTypedFacts', 'acquireLocalLease', 'rereadMarkerAndCurrentBranch', 'selectRowFromFreshEvidence') $artifact 'retry admission actions'
     Assert-JsonString (Get-JsonProperty $retry 'staleEvidenceAction' $artifact '$/retryAdmission') $artifact '$/retryAdmission/staleEvidenceAction' 'retainPendingAndDisallowedEvidenceWithoutBranchPublication'
     $order = Get-JsonStringArray (Get-JsonProperty $root 'order' $artifact '$') $artifact '$/order'
-    Assert-ExactMembers $order @('sqliteLocalCompletion', 'postCompletionMarkerInspection', 'conditionalExactCleanup', 'typedBranchPublicationOrProof', 'terminalRecording') $artifact 'lifecycle order'
+    Assert-ExactSequence $order @('sqliteLocalCompletion', 'postCompletionMarkerInspection', 'conditionalExactCleanup', 'typedBranchPublicationOrProof', 'terminalRecording') $artifact 'lifecycle order'
 
     $rows = Get-JsonProperty $root 'rows' $artifact '$'
     Assert-JsonKind $rows ([System.Text.Json.JsonValueKind]::Array) $artifact '$/rows'
@@ -393,6 +401,14 @@ function Assert-ExactMembers($actual, [string[]] $expected, [string] $artifact, 
     }
 }
 
+function Assert-ExactSequence($actual, [string[]] $expected, [string] $artifact, [string] $label) {
+    $actualValues = @($actual)
+    if ($actualValues.Count -ne $expected.Count) { Fail-Contract $artifact "$label is not the exact canonical member set or order" }
+    for ($index = 0; $index -lt $expected.Count; $index++) {
+        if ($actualValues[$index] -cne $expected[$index]) { Fail-Contract $artifact "$label is not the exact canonical member set or order at position $index" }
+    }
+}
+
 function Expand-Predicate($grammar, [string] $axis, $expression, [string] $rowId) {
     if ($null -eq $expression.kind) { Fail-Contract $rowId "$axis predicate has no kind" }
     $concrete = @($grammar.concreteEnums.$axis)
@@ -474,6 +490,32 @@ function Test-LifecycleRowSemantics($normalizedRows, [string] $artifact) {
             Fail-Contract $row.Id 'FinalizationIncomplete lacks nonzero exit or Doctor guidance'
         }
 
+        $isPreLocalRefusal = $row.Trigger -contains 'preLocalAdmissionRefused'
+        $isPostLocalDisallowed = $row.Invocation -contains 'initial' -and $row.Trigger -contains 'afterSqliteLocalCompletion' -and
+            @($row.Marker | Where-Object { $_ -in @('differentOperation', 'malformed', 'unsupported', 'unreadable') }).Count -gt 0
+        $isRetryDisallowed = $row.Invocation -contains 'finalizationRetry' -and $row.Trigger -contains 'disallowedMarker'
+        if ($isPreLocalRefusal) {
+            if ($row.Actions -notcontains 'retainMarkerEvidence' -or $row.Actions -contains 'retainPending' -or
+                $row.Outcome -ne 'Rejected' -or $row.DurableResult -ne 'noCompletion' -or $row.FirstWrite -ne 'none' -or
+                $row.WorkingFiles -ne 'unchanged' -or $row.BranchIdentity -ne 'unchanged') {
+                Fail-Contract $row.Id 'pre-local disallowed admission has incoherent evidence, result, or mutation boundary'
+            }
+        }
+        if ($isPostLocalDisallowed) {
+            if ((@($row.Actions | Where-Object { $_ -in @('retainMarker', 'retainEvidence') }).Count -eq 0) -or $row.Actions -notcontains 'retainPending' -or
+                $row.Outcome -ne 'FinalizationIncomplete' -or $row.DurableResult -ne 'pending' -or $row.FirstWrite -ne 'none' -or
+                $row.WorkingFiles -ne 'verifiedTarget' -or $row.BranchIdentity -ne 'unchanged') {
+                Fail-Contract $row.Id 'post-local disallowed evidence has incoherent retention, result, or mutation boundary'
+            }
+        }
+        if ($isRetryDisallowed) {
+            if ($row.Actions -notcontains 'retainEvidence' -or $row.Actions -notcontains 'retainPending' -or
+                $row.Outcome -ne 'FinalizationIncomplete' -or $row.DurableResult -ne 'pending' -or $row.FirstWrite -ne 'none' -or
+                $row.WorkingFiles -ne 'unchanged' -or $row.BranchIdentity -ne 'unchanged') {
+                Fail-Contract $row.Id 'retry disallowed evidence has incoherent retention, result, or mutation boundary'
+            }
+        }
+
         $hasDisallowedMarker = @($row.Marker | Where-Object { $_ -in $disallowedMarkers }).Count -gt 0
         if ($hasDisallowedMarker -and $row.Invocation -contains 'finalizationRetry') {
             foreach ($required in @('retainEvidence', 'retainPending')) {
@@ -516,9 +558,36 @@ function Test-LifecycleRowSemantics($normalizedRows, [string] $artifact) {
             $effect = if (@($row.PublicationEffects).Count -eq 1) { [array]::IndexOf($row.Actions, @($row.PublicationEffects)[0]) } else { [array]::IndexOf($row.Actions, @($row.TerminalEffects)[0]) }
             if ($cleanup -lt 0 -or $cleanup -ge $effect) { Fail-Contract $row.Id 'exact cleanup must precede publication or terminal effect' }
         }
+        if ($row.Outcome -eq 'Updated' -and $row.DurableResult -eq 'terminal') {
+            if ($row.Selection.Count -ne 1 -or $row.Actions -notcontains 'recordTerminal' -or $row.ExitClass -ne 'success' -or $row.DoctorGuidance -ne $false) {
+                Fail-Contract $row.Id 'successful terminal row lacks one selected identity, terminal record, success exit, or no Doctor guidance'
+            }
+            switch ($row.Selection[0]) {
+                'referencePrevious' {
+                    if ($row.Actions -notcontains 'publishSelectedBranch' -or $row.Actions -notcontains 'provePublication' -or $row.BranchIdentity -ne 'selected') {
+                        Fail-Contract $row.Id 'successful previous-Reference publication must end on the selected Branch'
+                    }
+                }
+                'referenceSelected' {
+                    if ($row.Actions -notcontains 'proveSelectedBranch' -or $row.BranchIdentity -ne 'selected') {
+                        Fail-Contract $row.Id 'successful selected-Reference finalization must end on the selected Branch'
+                    }
+                }
+                'directoryVersion' {
+                    if ($row.Actions -notcontains 'proveCurrentBranchUnchanged' -or $row.BranchIdentity -ne 'currentUnchanged') {
+                        Fail-Contract $row.Id 'successful DirectoryVersion proof must leave the current Branch unchanged'
+                    }
+                }
+                'referenceThird' { Fail-Contract $row.Id 'third Branch cannot reach a successful terminal row' }
+            }
+        }
+        if ($row.Selection -contains 'referenceThird' -and $row.Outcome -eq 'Updated') { Fail-Contract $row.Id 'third Branch cannot reach a successful terminal row' }
         if ($row.Outcome -eq 'Unchanged' -and ($row.Actions.Count -ne 0 -or $row.ResultingMarker -or $row.FirstWrite -ne 'none' -or
                 $row.WorkingFiles -ne 'unchanged' -or $row.BranchIdentity -ne 'unchanged' -or $row.DurableResult -ne 'existingTerminal')) {
             Fail-Contract $row.Id 'unchanged terminal replay must be mutation-free and coherent'
+        }
+        if ($row.Invocation -contains 'terminalReplay' -and ($row.Outcome -ne 'Unchanged' -or $row.ExitClass -ne 'success' -or $row.DoctorGuidance -ne $false)) {
+            Fail-Contract $row.Id 'terminal replay must be success without Doctor guidance'
         }
     }
 }
@@ -834,30 +903,31 @@ function Test-NoCompetingProjection([string] $text, $block, [string] $path) {
 }
 
 function Test-CompetingLifecycleSource([string] $outside, [string] $path) {
-    $normalized = $outside -replace "`r`n|`r", "`n"
-    $paragraphs = @($normalized -split '(?:\n\s*){2,}' | Where-Object { $_.Trim() })
-    foreach ($paragraph in $paragraphs) {
-        # Preserve the original word order across wrapped/split prose while treating ordinary isolated words as harmless.
-        $sequence = (($paragraph -split '(?<=[.!?])\s+|\n+') | ForEach-Object Trim | Where-Object { $_ }) -join ' '
-        $cleanup = '(?:(?:clean(?:up)?|remove)\s+(?:the\s+)?(?:exact\s+)?(?:owned\s+)?marker|(?:exact\s+)?marker\s+cleanup)'
-        $publication = '(?:(?:attempt\s+to\s+)?publish(?:ing|ed)?\s+(?:the\s+)?(?:selected\s+)?Branch|Branch\s+publication)'
-        $terminal = '(?:record(?:ing)?\s+(?:terminal\s+)?(?:completion|recording)|terminal\s+completion)'
-        $proof = '(?:prove\s+(?:publication|the\s+selected\s+Branch|the\s+current\s+Branch\s+(?:is\s+)?unchanged)|proof\s+of\s+(?:publication|selected\s+Branch|current\s+Branch))'
-        if ($sequence -match "(?is)$publication.{0,240}(?:before|then|after).{0,160}$cleanup" -or
-            $sequence -match "(?is)$publication.{0,240}$cleanup") {
+    $sequence = $outside -replace "`r`n|`r", "`n"
+    $sequence = $sequence -replace '`([^`]*)`', '$1' -replace '<[^>]+>', ''
+    $sequence = $sequence -replace '\[([^\]]+)\]\([^\)]+\)', '$1' -replace '\[([^\]]+)\]\[[^\]]*\]', '$1'
+    $sequence = $sequence -replace '\\([\\`*_{}\[\]()#+.!-])', '$1' -replace '[*_]', '' -replace '\s+', ' '
+    $sentences = @($sequence -split '(?<=[.!?])\s+' | Where-Object { $_.Trim() })
+    $cleanup = '(?:(?:clean(?:up)?|remove)\s+(?:the\s+)?(?:exact\s+)?(?:owned\s+)?marker|(?:exact\s+)?marker\s+cleanup)'
+    $publication = '(?:(?:attempt\s+to\s+)?publish(?:ing|ed)?\s+(?:the\s+)?(?:selected\s+)?Branch|Branch\s+publication)'
+    $terminal = '(?:record(?:ing)?\s+(?:terminal\s+)?(?:completion|recording)|terminal\s+completion)'
+    $proof = '(?:prove\s+(?:publication|(?:the\s+)?selected\s+Branch|(?:the\s+)?current\s+Branch\s+(?:is\s+)?unchanged)|proof\s+of\s+(?:publication|selected\s+Branch|current\s+Branch))'
+    $continuedRules = @($sentences)
+    for ($index = 0; $index -lt ($sentences.Count - 1); $index++) { $continuedRules += "$($sentences[$index]) $($sentences[$index + 1])" }
+    foreach ($sentence in $continuedRules) {
+        # A source rule must assert an effect or ordering; explanations of rejection/comparison are not operational rules.
+        if ($sentence -match '(?i)\b(rejects?|forbids?|must not|cannot|distinguishes?)\b') { continue }
+        if ($sentence -match "(?is)$publication.{0,240}(?:before|then|after).{0,160}$cleanup" -or
+            $sentence -match "(?is)$publication.{0,240}$cleanup") {
             Fail-Contract $path 'contains competing lifecycle source outside its projection: publication precedes exact cleanup'
         }
-        if ($sequence -match "(?is)$cleanup.{0,260}$publication.{0,260}$proof.{0,260}$terminal") {
+        if ($sentence -match "(?is)$cleanup.{0,260}$publication.{0,260}$proof.{0,260}$terminal") {
             Fail-Contract $path 'contains competing lifecycle source outside its projection: copied cleanup/publication/proof/terminal sequence'
         }
-        foreach ($branch in @('previous', 'selected', 'current')) {
-            $branchProof = if ($branch -eq 'previous') { 'prove\s+(?:publication|the\s+selected\s+Branch)' } else { "prove\s+(?:the\s+)?$branch\s+Branch(?:\s+(?:is\s+)?unchanged)?" }
-            if ($sequence -match "(?is)(?:$branch\s+Branch|$branch\s+Reference|Reference\s+$branch\s+Branch).{0,260}$branchProof.{0,260}$terminal" -or
-                $sequence -match "(?is)$branchProof.{0,260}$terminal") {
-                Fail-Contract $path "contains competing lifecycle source outside its projection: $branch-Branch proof/terminal sequence"
-            }
+        if ($sentence -match "(?is)$proof.{0,160}(?:before|then|after|and\s+then|,|and).{0,120}$terminal") {
+            Fail-Contract $path 'contains competing lifecycle source outside its projection: Branch proof/terminal sequence'
         }
-        if ($sequence -match '(?is)retry.{0,160}first\s+applicable\s+write.{0,160}(?:is|before|then).{0,160}(?:exact\s+cleanup|Branch\s+publication|terminal\s+recording)') {
+        if ($sentence -match '(?is)retry.{0,160}first\s+applicable\s+write.{0,160}(?:is|before|then|must).{0,160}(?:exact\s+cleanup|Branch\s+publication|terminal\s+recording)') {
             Fail-Contract $path 'contains competing lifecycle source outside its projection: retry first-write sequence'
         }
     }

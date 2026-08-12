@@ -232,7 +232,7 @@ Historical supersession reference: [PR #873](https://github.com/ScottArbeit/Grac
         $packet = New-Packet 'refusal-publication'
         Replace-Text $packet.Canonical '"requiredActions":["retainMarkerEvidence"],"workingFiles":"unchanged"' `
             '"requiredActions":["attemptPublishSelectedBranch"],"workingFiles":"unchanged"'
-        Assert-ValidatorFails $packet 'disallowed marker cell cannot|Branch publication is only legal'
+        Assert-ValidatorFails $packet 'disallowed marker cell cannot|Branch publication is only legal|pre-local disallowed admission'
     }
 
     Invoke-Case 'unknown durable action fails with row diagnostic' {
@@ -413,7 +413,7 @@ Historical supersession reference: publish before cleanup.
                 }, 1)
             if ($changed -ceq $text) { throw 'WDU-LC-100 action fixture anchor not found' }
             [IO.File]::WriteAllText($packet.Canonical, $changed, [Text.UTF8Encoding]::new($false))
-            Assert-ValidatorFails $packet 'WDU-LC-100.*disallowed marker cell'
+            Assert-ValidatorFails $packet 'WDU-LC-100.*disallowed marker cell|WDU-LC-100.*retry disallowed evidence'
         }
     }
 
@@ -478,6 +478,57 @@ Historical supersession reference: publish before cleanup.
             $packet = New-Packet "history-$([Guid]::NewGuid().ToString('N'))"
             Add-OutsideProjection $packet.Adr "<!-- grace:wdu-lifecycle-historical-evidence:start -->`n$history`n<!-- grace:wdu-lifecycle-historical-evidence:end -->"
             Assert-ValidatorFails $packet 'historical evidence must be the exact generated PR #873 reference'
+        }
+    }
+    Invoke-Case 'cycle 4 ordered and cross-field mutations fail independently' {
+        $packet = New-Packet 'cycle4-row-order'
+        Replace-Text $packet.Canonical "    `"conditionalExactCleanup`",`n    `"typedBranchPublicationOrProof`"" "    `"typedBranchPublicationOrProof`",`n    `"conditionalExactCleanup`""
+        Assert-ValidatorFails $packet 'lifecycle order is not the exact canonical member set or order'
+
+        $packet = New-Packet 'cycle4-terminal-replay'
+        $text = [IO.File]::ReadAllText($packet.Canonical)
+        $changed = [regex]::Replace($text, '("id":"WDU-LC-003".*?"exitClass":)"success","doctorGuidance":false', '$1"nonzero","doctorGuidance":true', 1)
+        [IO.File]::WriteAllText($packet.Canonical, $changed, [Text.UTF8Encoding]::new($false))
+        Assert-ValidatorFails $packet 'WDU-LC-003.*terminal replay'
+
+        $packet = New-Packet 'cycle4-previous-third'
+        $text = [IO.File]::ReadAllText($packet.Canonical)
+        $changed = [regex]::Replace($text, '("id":"WDU-LC-020".*?"branchIdentity":)"selected"', '$1"third"', 1)
+        [IO.File]::WriteAllText($packet.Canonical, $changed, [Text.UTF8Encoding]::new($false))
+        Assert-ValidatorFails $packet 'WDU-LC-020.*selected Branch'
+
+        $packet = New-Packet 'cycle4-post-local-retention'
+        $text = [IO.File]::ReadAllText($packet.Canonical)
+        $changed = [regex]::Replace($text, '("id":"WDU-LC-010".*?"requiredActions":)\["retainMarker","retainPending"\]', '$1[]', 1)
+        [IO.File]::WriteAllText($packet.Canonical, $changed, [Text.UTF8Encoding]::new($false))
+        Assert-ValidatorFails $packet 'WDU-LC-010.*post-local disallowed evidence'
+    }
+
+    Invoke-Case 'cycle 4 decoded schema candidates ignore notes and reject escaped duplicates' {
+        $packet = New-Packet 'cycle4-escaped-schema'
+        Add-OutsideProjection $packet.Canonical "```json`n{`"\u0073chema`":`"grace.wdu.branch-lifecycle\u002fv1`",`"Schema`":`"grace.wdu.branch-lifecycle\u002fv1`"}`n```"
+        Assert-ValidatorFails $packet 'duplicate-equivalent JSON property'
+
+        $packet = New-Packet 'cycle4-schema-note'
+        Add-OutsideProjection $packet.Adr "```json`n{`"note`":`"example identifier grace.wdu.branch-lifecycle/v1`"}`n```"
+        $null = Invoke-Validator $packet
+    }
+
+    Invoke-Case 'cycle 4 Markdown normalization is polarity aware' {
+        foreach ($sentence in @(
+                'On retry, prove the `current Branch` is unchanged, then record terminal completion.',
+                'On retry, prove the <em>current Branch</em> is unchanged, then record terminal completion.',
+                "On retry, prove the current Branch is unchanged.`n`nThen record terminal completion.")) {
+            $packet = New-Packet "cycle4-markdown-$([Guid]::NewGuid().ToString('N'))"
+            Add-OutsideProjection $packet.Adr $sentence
+            Assert-ValidatorFails $packet 'competing lifecycle source outside its projection'
+        }
+        foreach ($sentence in @(
+                'The validator distinguishes Branch publication failures from exact marker cleanup failures.',
+                'The validator rejects attempts to prove the current Branch and record terminal completion without persisted selection.')) {
+            $packet = New-Packet "cycle4-polarity-$([Guid]::NewGuid().ToString('N'))"
+            Add-OutsideProjection $packet.Adr $sentence
+            $null = Invoke-Validator $packet
         }
     }
 } finally {
